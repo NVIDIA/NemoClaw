@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
-import type { StepMutationOptions } from "../state/onboard-step-mutation";
+import {
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+} from "../state/onboard-step-mutation";
 import type { OnboardStateFailedResult, OnboardStateResult } from "./machine/result";
 import { OnboardRuntime } from "./machine/runtime";
 import { assertValidOnboardMachineTransition } from "./machine/transitions";
@@ -23,6 +26,11 @@ export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   maybeForceE2eStepFailure(stepName: string): void;
   createRuntime?(): OnboardRuntime;
+  /**
+   * Override for legacy/test harnesses. Production boundary writes default to
+   * status-only step mutations so explicit OnboardStateResult transitions stay
+   * the durable machine source of truth.
+   */
   stepMutationOptions?: StepMutationOptions;
 }
 
@@ -56,8 +64,6 @@ export class OnboardRuntimeBoundary {
       recordStateResult: this.recordStateResult.bind(this),
       recordStepCompleteWithStateResult: this.recordStepCompleteWithStateResult.bind(this),
       recordStepFailedWithStateResult: this.recordStepFailedWithStateResult.bind(this),
-      recordStateResultWithStepCompatibility:
-        this.recordStateResultWithStepCompatibility.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
@@ -78,7 +84,7 @@ export class OnboardRuntimeBoundary {
     } = {},
   ): Promise<void> {
     const runtime = this.getRuntime();
-    await runtime.markStepStarted(stepName, this.options.stepMutationOptions);
+    await runtime.markStepStarted(stepName, this.stepMutationOptions());
     if (Object.keys(updates).length > 0) {
       await runtime.updateContext(this.options.toSessionUpdates(updates));
     }
@@ -86,7 +92,7 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
-    return this.getRuntime().markStepComplete(stepName, updates, this.options.stepMutationOptions);
+    return this.getRuntime().markStepComplete(stepName, updates, this.stepMutationOptions());
   }
 
   async recordStepSkipped(stepName: string): Promise<Session> {
@@ -94,7 +100,11 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordStepFailed(stepName: string, message: string | null): Promise<Session> {
-    return this.getRuntime().markStepFailed(stepName, message, this.options.stepMutationOptions);
+    return this.getRuntime().markStepFailed(stepName, message, this.stepMutationOptions());
+  }
+
+  private stepMutationOptions(): StepMutationOptions {
+    return this.options.stepMutationOptions ?? RECORD_ONLY_STEP_MUTATION_OPTIONS;
   }
 
   async recordStateSkipped(
@@ -197,14 +207,6 @@ export class OnboardRuntimeBoundary {
     }
 
     return runtime.applyResult(result);
-  }
-
-  async recordStateResultsWithStepCompatibility(results: OnboardStateResult[]): Promise<Session> {
-    let session = await this.getRuntime().session();
-    for (const result of results) {
-      session = await this.recordStateResultWithStepCompatibility(result);
-    }
-    return session;
   }
 
   async recordResumeConflict(conflict: ResumeConfigConflict): Promise<Session> {

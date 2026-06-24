@@ -23,6 +23,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { sleepSeconds, waitUntil } from "../../core/wait";
+import { getActiveMessagingHostForward } from "../../messaging/host-forward";
+import type { SandboxMessagingHostForwardPlan } from "../../messaging/manifest";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persistence";
+import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { ROOT, shellQuote } from "../../runner";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import * as registry from "../../state/registry";
@@ -417,6 +421,17 @@ function recoverDeclaredAgentForwardPorts(
   return recovered;
 }
 
+function recoverMessagingHostForward(
+  sandboxName: string,
+  { quiet }: { quiet: boolean },
+): boolean | null {
+  const recovered = ensureMessagingHostForwardHealthy(sandboxName);
+  if (!quiet && recovered === false) {
+    console.error("  Messaging webhook port forward could not be re-established.");
+  }
+  return recovered;
+}
+
 function readNonNegativeNumberEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
@@ -542,6 +557,24 @@ function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean
     isPortForwardHealthy: isSandboxPortForwardHealthy,
     ensurePortForward: ensureSandboxPortForwardForPort,
   });
+}
+
+function getSandboxMessagingHostForward(
+  sandboxName: string,
+): SandboxMessagingHostForwardPlan | null {
+  const entry = registry.getSandbox(sandboxName);
+  const parsed = parseSandboxMessagingPlan(entry?.messaging?.plan, { sandboxName });
+  const plan = parsed ? hydrateDerivedSandboxMessagingPlanFields(parsed) : null;
+  return getActiveMessagingHostForward(plan);
+}
+
+function ensureMessagingHostForwardHealthy(sandboxName: string): boolean | null {
+  const forward = getSandboxMessagingHostForward(sandboxName);
+  if (!forward) return null;
+  const health = isSandboxPortForwardHealthy(sandboxName, forward.port);
+  if (health === true) return true;
+  if (health === "occupied") return false;
+  return ensureSandboxPortForwardForPort(sandboxName, forward.port);
 }
 
 /**
@@ -758,6 +791,7 @@ export function checkAndRecoverSandboxProcesses(
       }
       const forwardRecovered = ensureSandboxPortForward(sandboxName);
       const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+      const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
       const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(
         sandboxName,
         recoveryPort,
@@ -783,6 +817,7 @@ export function checkAndRecoverSandboxProcesses(
           forwardRecovered ||
           dashboardForwardRecovered === true ||
           dashboardProcessRecovered === true ||
+          messagingForwardRecovered === true ||
           declaredForwardsRecovered === true,
       };
     }
@@ -795,6 +830,7 @@ export function checkAndRecoverSandboxProcesses(
       return { checked: true, wasRunning: true, recovered: false, forwardRecovered: false };
     }
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+    const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
     const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
       quiet,
     });
@@ -805,6 +841,7 @@ export function checkAndRecoverSandboxProcesses(
       forwardRecovered:
         dashboardForwardRecovered === true ||
         dashboardProcessRecovered === true ||
+        messagingForwardRecovered === true ||
         declaredForwardsRecovered === true,
     };
   }
@@ -836,6 +873,7 @@ export function checkAndRecoverSandboxProcesses(
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);
+    const messagingForwardRecovered = recoverMessagingHostForward(sandboxName, { quiet });
     const declaredForwardsRecovered = recoverDeclaredAgentForwardPorts(sandboxName, recoveryPort, {
       quiet,
     });
@@ -859,6 +897,7 @@ export function checkAndRecoverSandboxProcesses(
       forwardRecovered:
         forwardRecovered ||
         dashboardForwardRecovered === true ||
+        messagingForwardRecovered === true ||
         declaredForwardsRecovered === true,
     };
   }

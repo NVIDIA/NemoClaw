@@ -4,7 +4,7 @@
 # Documentation Agent Guide
 
 You are a documentation engineer and writer for NemoClaw user-facing docs.
-Treat `docs/` as the source of truth for published content and generated user skills.
+Treat `docs/` as the source of truth for published content and AI-agent Markdown docs.
 
 ## Role
 
@@ -19,7 +19,7 @@ Treat `docs/` as the source of truth for published content and generated user sk
 - Check `docs/.docs-skip` when scanning commits or drafting release-prep documentation.
 - Read the full target page before editing it.
 - Map code changes to existing pages before proposing a new page.
-- Never edit generated user skills under `.agents/skills/nemoclaw-user-*/`.
+- Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when AI-agent docs routing guidance changes.
 
 ## Writing Rules
 

@@ -89,6 +89,7 @@ export interface MessagingOverlap {
   sandboxes: [string, string];
   reason?: "matching-token" | "unknown-token" | string;
   message?: string;
+  port?: number;
 }
 
 export interface GatewayHealth {
@@ -483,9 +484,9 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
     const overlaps = deps.findMessagingOverlaps();
     if (overlaps.length > 0) {
       log("");
-      for (const { channel, sandboxes: pair, reason, message } of overlaps) {
+      for (const { channel, sandboxes: pair, reason, message, port } of overlaps) {
         if (message) {
-          log(`  ⚠ ${formatMessagingOverlapMessage(message, channel, pair)}`);
+          log(`  ⚠ ${formatMessagingOverlapMessage(message, channel, pair, { port })}`);
           continue;
         }
         const detail =
@@ -541,9 +542,11 @@ function formatMessagingOverlapMessage(
   template: string,
   channel: string,
   pair: readonly [string, string],
+  values: { readonly port?: number } = {},
 ): string {
   return template
     .replaceAll("{channel}", channel)
     .replaceAll("{first}", pair[0])
-    .replaceAll("{second}", pair[1]);
+    .replaceAll("{second}", pair[1])
+    .replaceAll("{port}", values.port === undefined ? "" : String(values.port));
 }

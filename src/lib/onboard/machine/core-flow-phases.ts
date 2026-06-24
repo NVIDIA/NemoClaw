@@ -161,18 +161,19 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
     context: options.context,
     runtime: options.runtime,
     phases: options.phases,
-    resume: options.resume,
     runWhenState: ["provider_selection"],
-    compatibilityWhenState: [
-      "provider_selection",
-      "inference",
-      "sandbox",
-      "openclaw",
-      "agent_setup",
-      "policies",
-      "finalizing",
-      "post_verify",
-    ],
+    compatibilityWhenState: options.resume
+      ? [
+          "provider_selection",
+          "inference",
+          "sandbox",
+          "openclaw",
+          "agent_setup",
+          "policies",
+          "finalizing",
+          "post_verify",
+        ]
+      : ["inference", "sandbox", "openclaw", "agent_setup"],
     runSlice: runCoreOnboardFlowSequence,
     applyCompatibleResult: options.recordStateResult,
   });

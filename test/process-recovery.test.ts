@@ -51,6 +51,44 @@ function withFakeOpenshellBinary<T>(fn: () => T): T {
   }
 }
 
+function compactTeamsMessagingPlan(port = "3978") {
+  return {
+    schemaVersion: 1,
+    sandboxName: "beta",
+    agent: "openclaw",
+    workflow: "onboard",
+    disabledChannels: [],
+    networkPolicy: {
+      presets: ["teams"],
+      entries: [
+        {
+          channelId: "teams",
+          presetName: "teams",
+          policyKeys: ["teams"],
+          source: "manifest",
+        },
+      ],
+    },
+    channels: [
+      {
+        channelId: "teams",
+        active: true,
+        configured: true,
+        disabled: false,
+        inputs: [
+          { inputId: "allowedUsers", value: "00000000-0000-0000-0000-000000000001" },
+          { inputId: "appId", value: "test-teams-app-id" },
+          { inputId: "clientSecret", credentialAvailable: true },
+          { inputId: "requireMention", value: "1" },
+          { inputId: "tenantId", value: "test-teams-tenant-id" },
+          { inputId: "webhookPort", value: port },
+        ],
+      },
+    ],
+    credentialBindings: [],
+  };
+}
+
 describe("resolveSandboxDashboardPort", () => {
   it("uses the recorded OpenClaw dashboard port for multi-sandbox recovery", () => {
     expect(
@@ -378,6 +416,121 @@ beta  127.0.0.1  18789  12345  running`;
           Array.isArray(args) && args[0] === "forward" && args[1] === "stop" && args.length === 3,
       ),
     ).toBe(false);
+  });
+
+  it("checkAndRecoverSandboxProcesses re-establishes an active Teams messaging host forward from a compact plan when the dashboard forward is healthy", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireDist("node:child_process");
+    const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18789  12345  running`;
+    const dashboardAndTeamsForwards = `${dashboardForward}
+beta  127.0.0.1  3978  12346  running`;
+    let teamsForwardStarted = false;
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+      messaging: { schemaVersion: 1, plan: compactTeamsMessagingPlan() },
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
+      (port: unknown) => Number(port) === 18789 || teamsForwardStarted,
+    );
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation(() => ({
+      status: 0,
+      output: teamsForwardStarted ? dashboardAndTeamsForwards : dashboardForward,
+    }));
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        teamsForwardStarted =
+          teamsForwardStarted ||
+          (args[0] === "forward" &&
+            args[1] === "start" &&
+            args.includes("--background") &&
+            args.includes("3978") &&
+            args.includes("beta"));
+        return { status: 0 } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: true,
+    });
+    expect(teamsForwardStarted).toBe(true);
+    expect(runOpenshell).toHaveBeenCalledWith(["forward", "stop", "3978", "beta"], {
+      ignoreError: true,
+      stdio: "ignore",
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "3978", "beta"],
+      { ignoreError: true },
+    );
+  });
+
+  it("checkAndRecoverSandboxProcesses reports messaging webhook recovery failure without claiming forwardRecovered", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireDist("node:child_process");
+    const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18789  12345  running`;
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+      messaging: { schemaVersion: 1, plan: compactTeamsMessagingPlan() },
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockImplementation(
+      (port: unknown) => Number(port) === 18789,
+    );
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+      status: 0,
+      output: dashboardForward,
+    });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockImplementation((rawArgs: unknown) => {
+        const args = Array.isArray(rawArgs) ? rawArgs.map(String) : [];
+        return {
+          status: args[0] === "forward" && args[1] === "start" && args.includes("3978") ? 1 : 0,
+        } as never;
+      });
+
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: false,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "start", "--background", "3978", "beta"],
+      { ignoreError: true },
+    );
   });
 
   it("waits for a recovered sandbox gateway before declaring recovery", () => {

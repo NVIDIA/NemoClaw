@@ -144,6 +144,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.openclaw.generated.mdx
                 slug: enterprise-readiness
@@ -166,7 +169,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"
@@ -284,6 +287,9 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
               - page: "Enterprise Readiness"
                 path: _build/agent-variants/reference/enterprise-readiness.hermes.generated.mdx
                 slug: enterprise-readiness
@@ -306,7 +312,7 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
               - link: "Community Examples"
