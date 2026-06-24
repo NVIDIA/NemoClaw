@@ -43,6 +43,69 @@ TABLES = [
             REPO_ROOT / "docs" / "inference" / "inference-options.mdx",
         ],
     ),
+    (
+        "platform-matrix-full",
+        "platforms_full",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "provider-status-full",
+        "providers_full",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "agent-status",
+        "agents",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "integration-status",
+        "integrations",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "deployment-status",
+        "deployment_paths",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "capability-status",
+        "capabilities",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "out-of-scope",
+        "out_of_scope",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "project-status",
+        "project_status",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
+    (
+        "matrix-owners",
+        "owners",
+        [
+            REPO_ROOT / "docs" / "reference" / "platform-support.mdx",
+        ],
+    ),
 ]
 
 
@@ -65,17 +128,120 @@ def load_matrix() -> dict:
         return json.load(f)
 
 
+# Strings that should never reach a generated page as a real value. Owner
+# fields are reviewed gates for launch-facing claims; placeholder text means
+# the gate is undefined and the docs would ship with an unresolved sign-off
+# path. Matched case-insensitively against the raw field value.
+_PLACEHOLDER_OWNER_VALUES = (
+    "",
+    "tbd",
+    "todo",
+    "fixme",
+    "see pr review",
+    "n/a",
+    "none",
+)
+
+
+def _is_placeholder_owner(value: str) -> bool:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return True
+    if raw in _PLACEHOLDER_OWNER_VALUES:
+        return True
+    # Catch composite forms like "TBD (see PR review)" or "TODO: pick someone".
+    for marker in ("tbd", "todo", "fixme", "see pr review"):
+        if marker in raw:
+            return True
+    return False
+
+
+def _escape_cell(value) -> str:
+    """Escape Markdown table cells for safe MDX rendering.
+
+    `|` breaks the column count; literal newlines break the row layout (an
+    embedded newline turns one row into two malformed rows). `<` and `>` are
+    HTML control characters in MDX, so a future matrix edit that contains
+    `<script>` or even a benign `<...>` snippet would be interpreted as JSX,
+    not literal text. `{` and `}` are MDX expression delimiters, so a raw
+    `{foo}` in a matrix note would be evaluated as a JSX expression rather
+    than rendered as text. Backticks already protect inline code spans in
+    the notes; this function targets the structural, HTML, and MDX
+    expression hazards. Encoding is HTML-entity style so MDX renders the
+    original glyph.
+    """
+    text = "" if value is None else str(value)
+    text = text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
+    text = text.replace("|", "\\|")
+    text = text.replace("<", "&lt;").replace(">", "&gt;")
+    text = text.replace("{", "&#123;").replace("}", "&#125;")
+    return text
+
+
+def _validate_matrix(matrix: dict) -> None:
+    """Fail fast on shapes that would silently corrupt generated docs.
+
+    Required keys are explicit so the generator doesn't render `None` or
+    crash mid-row. Status values are checked against the declared vocabulary
+    so unknown statuses surface as an error instead of being silently
+    title-cased into the output.
+    """
+    allowed_statuses = set(matrix.get("statuses", {}).keys())
+    if not allowed_statuses:
+        raise ValueError("ci/platform-matrix.json: 'statuses' vocabulary is required")
+
+    def _check_status(section: str, idx: int, status: str) -> None:
+        if status not in allowed_statuses:
+            raise ValueError(
+                f"ci/platform-matrix.json: {section}[{idx}] has unknown status "
+                f"{status!r}; allowed: {sorted(allowed_statuses)}"
+            )
+
+    def _require_keys(section: str, idx: int, entry: dict, keys: tuple[str, ...]) -> None:
+        missing = [k for k in keys if k not in entry or entry[k] in (None, "")]
+        if missing:
+            raise ValueError(
+                f"ci/platform-matrix.json: {section}[{idx}] missing required keys: {missing}"
+            )
+
+    sections = {
+        "platforms": ("name", "runtimes", "status", "notes"),
+        "providers": ("name", "status", "endpoint_type", "notes"),
+        "agents": ("name", "status", "notes"),
+        "integrations": ("name", "status", "notes"),
+        "deployment_paths": ("name", "status", "notes"),
+        "capabilities": ("name", "status", "notes"),
+        "out_of_scope": ("name", "status", "notes"),
+    }
+    for section, keys in sections.items():
+        for idx, entry in enumerate(matrix.get(section, [])):
+            _require_keys(section, idx, entry, keys)
+            _check_status(section, idx, entry["status"])
+
+    owners = matrix.get("owners") or {}
+    engineering = owners.get("engineering")
+    if not engineering or _is_placeholder_owner(engineering):
+        raise ValueError(
+            "ci/platform-matrix.json: owners.engineering must be a real reviewer "
+            f"alias; got {engineering!r}"
+        )
+    # Reject any other owner field that snuck back in as a placeholder.
+    for key, value in owners.items():
+        if key in ("engineering", "$comment"):
+            continue
+        if _is_placeholder_owner(value):
+            raise ValueError(
+                f"ci/platform-matrix.json: owners.{key} is a placeholder ({value!r}); "
+                "remove the field or set a real value before generating docs"
+            )
+
+
 def generate_platform_table(platforms: list[dict]) -> str:
     """Build a markdown table from platform entries.
 
     Deferred entries are tracked in the metadata but excluded from
-    user-facing tables — they have no validated setup path yet.
+    user-facing tables because they have no validated setup path yet.
     """
-    STATUS_LABELS = {
-        "tested": "Tested",
-        "caveated": "Tested with limitations",
-        "experimental": "Experimental",
-    }
     header = "| OS | Container runtime | Status | Notes |"
     separator = "|----|-------------------|--------|-------|"
     rows = []
@@ -83,8 +249,10 @@ def generate_platform_table(platforms: list[dict]) -> str:
         if p["status"] == "deferred":
             continue
         runtimes = ", ".join(p["runtimes"])
-        status = STATUS_LABELS.get(p["status"], p["status"].capitalize())
-        rows.append(f"| {p['name']} | {runtimes} | {status} | {p['notes']} |")
+        rows.append(
+            f"| {_escape_cell(p['name'])} | {_escape_cell(runtimes)} | "
+            f"{_escape_cell(_label(p['status']))} | {_escape_cell(p['notes'])} |"
+        )
     return "\n".join([header, separator, *rows])
 
 
@@ -99,14 +267,165 @@ def generate_provider_table(providers: list[dict]) -> str:
     for p in providers:
         if p["status"] == "deferred":
             continue
-        status = p["status"].capitalize()
-        rows.append(f"| {p['name']} | {status} | {p['endpoint_type']} | {p['notes']} |")
+        rows.append(
+            f"| {_escape_cell(p['name'])} | {_escape_cell(_label(p['status']))} | "
+            f"{_escape_cell(p['endpoint_type'])} | {_escape_cell(p['notes'])} |"
+        )
     return "\n".join([header, separator, *rows])
+
+
+STATUS_LABELS = {
+    "tested": "Tested",
+    "caveated": "Tested with limitations",
+    "experimental": "Experimental",
+    "deferred": "Deferred",
+    "hermes only": "Hermes only",
+}
+
+
+def _label(status: str) -> str:
+    return STATUS_LABELS.get(status, status.capitalize())
+
+
+def generate_platform_table_full(platforms: list[dict]) -> str:
+    """Full platform table including deferred entries.
+
+    Used by the canonical launch claims page. Includes PRD priority and
+    CI columns and exposes deferred entries so the page reflects the
+    complete support surface, not just shippable rows. The CI column
+    distinguishes "Tested with limitations + in CI" from "Tested with
+    limitations + not in CI", a caveat that the status label alone
+    does not carry.
+    """
+    header = "| OS | Container runtime | Status | PRD priority | CI | Notes |"
+    separator = "|----|-------------------|--------|--------------|----|-------|"
+    rows = []
+    for p in platforms:
+        runtimes = ", ".join(p["runtimes"])
+        priority = p.get("prd_priority", "Unset")
+        ci = "Yes" if p.get("ci_tested") else "No"
+        rows.append(
+            f"| {_escape_cell(p['name'])} | {_escape_cell(runtimes)} | "
+            f"{_escape_cell(_label(p['status']))} | {_escape_cell(priority)} | "
+            f"{_escape_cell(ci)} | {_escape_cell(p['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_provider_table_full(providers: list[dict]) -> str:
+    """Full provider table including deferred entries.
+
+    Used by the canonical launch claims page.
+    """
+    header = "| Provider | Status | Endpoint type | Notes |"
+    separator = "|----------|--------|---------------|-------|"
+    rows = []
+    for p in providers:
+        rows.append(
+            f"| {_escape_cell(p['name'])} | {_escape_cell(_label(p['status']))} | "
+            f"{_escape_cell(p['endpoint_type'])} | {_escape_cell(p['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_agent_table(agents: list[dict]) -> str:
+    header = "| Agent | Status | Default | Notes |"
+    separator = "|-------|--------|---------|-------|"
+    rows = []
+    for a in agents:
+        default = "Yes" if a.get("default") else "No"
+        rows.append(
+            f"| {_escape_cell(a['name'])} | {_escape_cell(_label(a['status']))} | "
+            f"{_escape_cell(default)} | {_escape_cell(a['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_integration_table(integrations: list[dict]) -> str:
+    header = "| Channel | Status | Notes |"
+    separator = "|---------|--------|-------|"
+    rows = []
+    for i in integrations:
+        rows.append(
+            f"| {_escape_cell(i['name'])} | {_escape_cell(_label(i['status']))} | "
+            f"{_escape_cell(i['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_deployment_table(deployment_paths: list[dict]) -> str:
+    header = "| Path | Status | Notes |"
+    separator = "|------|--------|-------|"
+    rows = []
+    for d in deployment_paths:
+        rows.append(
+            f"| {_escape_cell(d['name'])} | {_escape_cell(_label(d['status']))} | "
+            f"{_escape_cell(d['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_capability_table(capabilities: list[dict]) -> str:
+    header = "| Capability | Status | Notes |"
+    separator = "|------------|--------|-------|"
+    rows = []
+    for c in capabilities:
+        rows.append(
+            f"| {_escape_cell(c['name'])} | {_escape_cell(_label(c['status']))} | "
+            f"{_escape_cell(c['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_out_of_scope_table(out_of_scope: list[dict]) -> str:
+    header = "| Item | Status | Why |"
+    separator = "|------|--------|-----|"
+    rows = []
+    for o in out_of_scope:
+        rows.append(
+            f"| {_escape_cell(o['name'])} | {_escape_cell(_label(o['status']))} | "
+            f"{_escape_cell(o['notes'])} |"
+        )
+    return "\n".join([header, separator, *rows])
+
+
+def generate_project_status_block(status: dict) -> str:
+    lines = [
+        f"- **Stage:** {_escape_cell(status['stage'])}",
+        f"- **Label:** {_escape_cell(status['label'])}",
+        f"- **Since:** {_escape_cell(status['since'])}",
+        f"- **Notes:** {_escape_cell(status['notes'])}",
+    ]
+    return "\n".join(lines)
+
+
+def generate_owners_block(owners: dict) -> str:
+    return (
+        f"- **Engineering owner:** {_escape_cell(owners['engineering'])} "
+        "(reviews through CODEOWNERS and signs off on launch-facing claim changes "
+        "before they reach demos or sales material)."
+    )
 
 
 TABLE_GENERATORS = {
     "platforms": generate_platform_table,
     "providers": generate_provider_table,
+    "platforms_full": generate_platform_table_full,
+    "providers_full": generate_provider_table_full,
+    "agents": generate_agent_table,
+    "integrations": generate_integration_table,
+    "deployment_paths": generate_deployment_table,
+    "capabilities": generate_capability_table,
+    "out_of_scope": generate_out_of_scope_table,
+    "project_status": generate_project_status_block,
+    "owners": generate_owners_block,
+}
+
+# The generator key isn't always the matrix dict key. The "full" tables
+# read the same JSON arrays as the partial views but render them differently.
+GENERATOR_MATRIX_KEY = {
+    "platforms_full": "platforms",
+    "providers_full": "providers",
 }
 
 
@@ -162,6 +481,11 @@ def main():
         sys.exit(1)
 
     matrix = load_matrix()
+    try:
+        _validate_matrix(matrix)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"{'Checking' if args.check else 'Patching'} tables from {MATRIX_PATH.name}:")
     diffs = []
@@ -170,7 +494,8 @@ def main():
 
     for sentinel_name, data_key, target_files in TABLES:
         generator = TABLE_GENERATORS[data_key]
-        table = generator(matrix[data_key])
+        matrix_key = GENERATOR_MATRIX_KEY.get(data_key, data_key)
+        table = generator(matrix[matrix_key])
         for path in target_files:
             if not path.exists():
                 print(f"  MISS {path.relative_to(REPO_ROOT)}", file=sys.stderr)
