@@ -227,30 +227,15 @@ jobs:
           set -euo pipefail
 
           case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in
-            nvidia-internal)
-              # Internal hosted route source of truth: callers pass the repository
-              # NVIDIA_INFERENCE_API_KEY secret to the OpenAI-compatible internal
-              # inference endpoint. COMPATIBLE_API_KEY is an env alias required by
-              # the custom provider runtime, not a separate secret value.
+            nvidia-internal|hosted-custom)
+              # Source of truth: both labels intentionally export the same
+              # internal hosted-compatible runtime env. `hosted-custom` remains
+              # the default legacy route; `nvidia-internal` is only an explicit
+              # caller-selection label for jobs moved away from public NVIDIA
+              # Endpoints/Build after HTTP 429s. Remove the split once those jobs
+              # no longer need an auditable opt-in label.
               if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
-                echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for internal CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
-                exit 1
-              fi
-              {
-                printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
-                printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
-                printf 'NEMOCLAW_PROVIDER=custom\n'
-                printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
-                printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
-                printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3\n'
-                printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
-                printf 'COMPATIBLE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
-              } >> "$GITHUB_ENV"
-              ;;
-            hosted-custom)
-              # Hosted custom route remains the default legacy CI route.
-              if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
-                echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
+                echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for ${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom} CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1
               fi
 

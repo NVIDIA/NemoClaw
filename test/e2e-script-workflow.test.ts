@@ -975,11 +975,9 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.env?.HOSTED_NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
     expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBeUndefined();
     expect(exportStep?.run).toContain('case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in');
-    expect(exportStep?.run).toContain("nvidia-internal)");
-    expect(exportStep?.run).toContain(
-      "NVIDIA_INFERENCE_API_KEY secret is required for internal CI inference",
-    );
-    expect(exportStep?.run).toContain("hosted-custom)");
+    expect(exportStep?.run).toContain("nvidia-internal|hosted-custom)");
+    expect(exportStep?.run).toContain("both labels intentionally export the same");
+    expect(exportStep?.run).toContain("Remove the split once those jobs");
     expect(exportStep?.run).toContain("Unsupported inference_route");
 
     const script = exportStep?.run ?? "";
@@ -1023,6 +1021,12 @@ describe("E2E reusable workflow contract", () => {
     });
     expect(internalInferenceEnv.NVIDIA_API_KEY).toBeUndefined();
 
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "",
+      }),
+    ).toThrow();
     expect(() =>
       runInferenceExportStep(script, {
         NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
