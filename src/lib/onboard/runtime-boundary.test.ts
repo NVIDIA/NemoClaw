@@ -336,12 +336,12 @@ describe("OnboardRuntimeBoundary", () => {
     });
     await boundary.startRecordedStep("inference", { provider: "nvidia", model: "nemotron" });
     await boundary.recordStepComplete("inference", { provider: "nvidia", model: "nemotron" });
-    await boundary.recordStateResultsWithStepCompatibility([
-      retryResult,
+    await boundary.recordStateResultWithStepCompatibility(retryResult);
+    await boundary.recordStateResultWithStepCompatibility(
       advanceTo("sandbox", {
         metadata: { state: "inference", provider: "nvidia", model: "nemotron" },
       }),
-    ]);
+    );
 
     await boundary.startRecordedStep("sandbox");
     await boundary.recordStepComplete("sandbox", { sandboxName: "openclaw-sb" });
