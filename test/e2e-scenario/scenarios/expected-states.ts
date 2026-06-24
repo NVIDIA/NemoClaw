@@ -31,6 +31,15 @@ const cloudHermesReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
+const cloudDeepAgentsCodeReady: ExpectedState = {
+  id: "cloud-deepagents-code-ready",
+  cli: { installed: true },
+  gateway: { expected: "present", health: "healthy" },
+  sandbox: { expected: "present", status: "running", agent: "langchain-deepagents-code" },
+  inference: { expected: "available", provider: "nvidia" },
+  credentials: { expected: "present" },
+};
+
 const localOllamaOpenclawReady: ExpectedState = {
   id: "local-ollama-openclaw-ready",
   cli: { installed: true },
@@ -102,6 +111,7 @@ const REGISTRY: readonly ExpectedState[] = [
   cloudOpenclawReady,
   cloudOpenclawCustomPoliciesReady,
   cloudHermesReady,
+  cloudDeepAgentsCodeReady,
   localOllamaOpenclawReady,
   macosCliReadyDockerOptional,
   preflightFailureNoSandbox,

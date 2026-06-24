@@ -537,7 +537,7 @@ The exit code is the remote command's exit code.
 
 | Flag | Description |
 |------|-------------|
-| `--workdir <dir>` | Working directory inside the sandbox |
+| `--workdir <dir>` | Working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
 | `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
@@ -807,7 +807,7 @@ $$nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] 
 
 | Flag | Description |
 |------|-------------|
-| `--workdir <dir>` | Set the working directory inside the sandbox |
+| `--workdir <dir>` | Set the working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
 | `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
 

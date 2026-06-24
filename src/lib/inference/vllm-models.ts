@@ -156,7 +156,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     id: "nvidia/Qwen3.6-35B-A3B-NVFP4",
     label: "Qwen3.6 35B-A3B NVFP4",
     envValue: "qwen3.6-35b-a3b-nvfp4",
-    maxModelLen: 131072,
+    maxModelLen: 262144,
     // Additive flags on top of the shared serving defaults. The shared flags
     // already cover --tensor-parallel-size/--pipeline-parallel-size/
     // --data-parallel-size (all 1 — harmless on a single Spark node),
@@ -164,7 +164,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     // maxModelLen above.
     modelArgs: [
       "--gpu-memory-utilization",
-      "0.7",
+      "0.4",
       "--dtype",
       "auto",
       "--quantization",
@@ -184,7 +184,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--enable-prefix-caching",
       "--enable-auto-tool-choice",
       "--tool-call-parser",
-      "qwen3_coder",
+      "qwen3_xml",
       "--reasoning-parser",
       "qwen3",
       "--speculative-config",
@@ -194,14 +194,6 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
     ],
     gated: false,
     platforms: ["spark"],
-    // Arch- and backend-specific knobs required for the NVFP4 MoE checkpoint
-    // on DGX Spark (GB10 / sm_121a) with the FlashInfer CUTLASS FP8 path.
-    serveEnv: {
-      VLLM_USE_FLASHINFER_MOE_FP4: "0",
-      VLLM_FP8_MOE_BACKEND: "flashinfer_cutlass",
-      FLASHINFER_DISABLE_VERSION_CHECK: "1",
-      CUTE_DSL_ARCH: "sm_121a",
-    },
   },
 ] as const;
 

@@ -141,6 +141,34 @@ describe("onboard dashboard helpers", () => {
     ).toHaveLength(1);
   });
 
+  it("skips dashboard forwarding for terminal agents without declared ports", () => {
+    const runOpenshell = vi.fn((_args: string[], _opts?: Record<string, unknown>) => ({
+      status: 0,
+    }));
+    const helpers = createOnboardDashboardHelpers({
+      runOpenshell,
+      runCaptureOpenshell: vi.fn(() => ""),
+      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      cliName: () => "nemoclaw",
+      agentProductName: () => "NemoClaw",
+      getProviderLabel: (provider: string) => provider,
+      note: vi.fn(),
+      isWsl: () => false,
+      redact: (value: unknown) => String(value),
+      sleep: vi.fn(),
+      printAgentDashboardUi: vi.fn(),
+    });
+
+    expect(
+      helpers.ensureAgentDashboardForward("my-sandbox", {
+        runtime: { kind: "terminal" },
+        forwardPort: 0,
+        forward_ports: [],
+      } as never),
+    ).toBe(0);
+    expect(runOpenshell).not.toHaveBeenCalled();
+  });
+
   it("prints the dashboard-url command instead of raw gateway-token guidance", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
     const nimStatus = vi.fn(() => ({ running: false, container: "nemoclaw-nim-test" }));

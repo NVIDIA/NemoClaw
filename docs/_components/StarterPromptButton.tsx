@@ -45,7 +45,6 @@ After I choose, use the matching documentation variant. Do not mix OpenClaw-spec
 Use these Markdown documentation pages as the first sources:
 
 - Documentation index for AI clients: https://docs.nvidia.com/nemoclaw/llms.txt
-- Full Markdown documentation bundle: https://docs.nvidia.com/nemoclaw/llms-full.txt
 - OpenClaw home: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md
 - OpenClaw prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md
 - OpenClaw quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md

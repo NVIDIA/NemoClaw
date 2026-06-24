@@ -314,9 +314,13 @@ function buildCreateSandboxChatUiUrl(
   effectivePort: number,
 ): string {
   if (chatUiUrlEnv && controlUiPort == null) {
-    const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
-    parsed.port = String(effectivePort);
-    return parsed.toString().replace(/\/$/, "");
+    try {
+      const parsed = new URL(normalizeChatUiUrlForParsing(chatUiUrlEnv));
+      parsed.port = String(effectivePort);
+      return parsed.toString().replace(/\/$/, "");
+    } catch {
+      /* malformed URL - keep the local default */
+    }
   }
   return `http://127.0.0.1:${effectivePort}`;
 }

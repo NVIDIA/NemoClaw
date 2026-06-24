@@ -79,6 +79,15 @@ const canonicalScenarioInputs: CanonicalScenarioInput[] = [
     requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
   },
   {
+    id: "ubuntu-repo-cloud-langchain-deepagents-code",
+    manifestName: "langchain-deepagents-code-nvidia",
+    environment: ubuntuRepoDocker("cloud-langchain-deepagents-code"),
+    expectedStateId: "cloud-deepagents-code-ready",
+    suiteIds: ["smoke", "inference", "terminal-agent"],
+    description: "Ubuntu repo checkout with Docker and LangChain Deep Agents Code onboarding.",
+    requiredSecrets: ["NVIDIA_INFERENCE_API_KEY"],
+  },
+  {
     id: "gpu-repo-local-ollama-openclaw",
     manifestName: "openclaw-ollama-gpu",
     environment: gpuRepoDockerCdi("local-ollama-openclaw"),
