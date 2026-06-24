@@ -120,8 +120,16 @@ prepare_runtime_env() {
 load_messaging_env
 prepare_runtime_env
 
+# With no command, this invocation IS the sandbox's long-running entrypoint.
+# Deep Agents Code is a terminal-runtime agent invoked on demand via
+# `openshell sandbox exec`, so the entrypoint has no daemon to run and must
+# stay alive as a stable foreground process. A bare `/bin/bash` exits
+# immediately in a non-interactive sandbox (no TTY, EOF on stdin), leaving the
+# sandbox with no persistent process: OpenShell then flaps it into the Error
+# phase, which breaks the Docker GPU-patch supervisor reconnect and leaves GPU
+# posture unreliable (#5717). Idle forever instead so the sandbox stays Ready.
 if [ "$#" -eq 0 ]; then
-  set -- /bin/bash
+  exec sleep infinity
 fi
 
 exec "$@"

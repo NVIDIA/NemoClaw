@@ -101,6 +101,7 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   reportProviderSelectionFailure,
 }: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
@@ -3481,11 +3482,7 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-
-  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
-    saveCredential(routerCredentialEnv, _providerKeyHint);
-  }
+  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
   if (isNonInteractive()) {
     if (!resolveProviderCredential(routerCredentialEnv)) {
       console.error(
@@ -3778,17 +3775,9 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-
   hydrateCredentialEnv(state.credentialEnv);
-
   if (selected.key === "build") {
-    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-      .find(Boolean);
-    if (_nvProviderKey && !existingNvidiaKey) {
-      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-    }
+    providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -3813,15 +3802,7 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
-    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (_providerKeyHint && state.credentialEnv) {
-      const existingCredentialKey = normalizeCredentialValue(
-        process.env[state.credentialEnv] ?? "",
-      );
-      if (!existingCredentialKey) {
-        process.env[state.credentialEnv] = _providerKeyHint;
-      }
-    }
+    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
