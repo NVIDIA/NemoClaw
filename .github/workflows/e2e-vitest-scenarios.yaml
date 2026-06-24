@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs such as jetson-nvmap-gpu-vitest are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -635,6 +635,50 @@ jobs:
         with:
           name: e2e-vitest-scenarios-hermes-root-entrypoint-smoke
           path: e2e-artifacts/vitest/hermes-root-entrypoint-smoke/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  hermes-sandbox-secret-boundary-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-sandbox-secret-boundary-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-sandbox-secret-boundary,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-sandbox-secret-boundary"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-sandbox-secret-boundary
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Hermes sandbox secret-boundary live test
+        # Migrated from test/e2e/test-hermes-sandbox-secret-boundary.sh. This
+        # builds the real Hermes images unless prebuilt NEMOCLAW_HERMES_* image
+        # env vars are supplied, then probes image and startup secret boundaries.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-sandbox-secret-boundary.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes sandbox secret-boundary artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-sandbox-secret-boundary
+          path: e2e-artifacts/vitest/hermes-sandbox-secret-boundary/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -1371,8 +1415,8 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail
@@ -1519,6 +1563,103 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hermes-slack-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-slack-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-slack,') }}
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 75
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-slack"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-slack-e2e
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_POLICY_TIER: open
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-slack
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-slack" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes Slack live test
+        # Migrated from test/e2e/test-hermes-slack-e2e.sh. Preserves the
+        # linux-amd64-cpu4 Docker/OpenShell/Hermes Slack policy, placeholder,
+        # provider, secret-boundary, and Python Slack egress contracts.
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          SLACK_BOT_TOKEN: xoxb-test-hermes-slack-token
+          SLACK_APP_TOKEN: xapp-test-hermes-slack-app-token
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-slack-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes Slack artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-slack
+          path: e2e-artifacts/vitest/hermes-slack-e2e/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   hermes-e2e-vitest:
     needs: generate-matrix
     if: ${{ needs.generate-matrix.outputs.hermes_selected == 'true' }}
@@ -1572,6 +1713,100 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  hermes-discord-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-discord-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-discord,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-discord"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-discord
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-discord
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_POLICY_TIER: open
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Isolate Docker auth
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-discord" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes Discord live test
+        # Migrated from test/e2e/test-hermes-discord-e2e.sh. Preserves the
+        # ubuntu-latest Docker/OpenShell/Hermes Discord schema, provider,
+        # placeholder isolation, native gateway rewrite, and rebuild contracts.
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          DISCORD_BOT_TOKEN: test-fake-discord-token-hermes-e2e
+          DISCORD_SERVER_IDS: "1491590992753590594"
+          DISCORD_ALLOWED_IDS: "1005536447329222676"
+          DISCORD_REQUIRE_MENTION: "0"
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-discord.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes Discord artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-discord
+          path: e2e-artifacts/vitest/hermes-discord/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG:-}"
 
   network-policy-vitest:
     needs: generate-matrix
@@ -1900,8 +2135,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes
       OPENSHELL_GATEWAY: nemoclaw
@@ -1983,8 +2218,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
       OPENSHELL_GATEWAY: nemoclaw
@@ -2144,6 +2379,93 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  overlayfs-autofix-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',overlayfs-autofix-vitest,') || contains(format(',{0},', inputs.scenarios), ',overlayfs-autofix,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "overlayfs-autofix"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/overlayfs-autofix
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-overlayfs
+      NEMOCLAW_E2E_TIMEOUT_SECONDS: "1500"
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-overlayfs-autofix" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run overlayfs autofix live test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/overlayfs-autofix.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload overlayfs autofix artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-overlayfs-autofix
+          path: e2e-artifacts/vitest/overlayfs-autofix/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean Docker auth
+        if: always()
+        run: rm -rf "${DOCKER_CONFIG}"
 
   state-backup-restore-vitest:
     needs: generate-matrix
@@ -2437,6 +2759,112 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  jetson-nvmap-gpu-vitest:
+    needs: generate-matrix
+    # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
+    # Required validation path: dispatch with jobs=jetson-nvmap-gpu-vitest or scenarios=jetson-nvmap-gpu.
+    # Re-enable default dispatch only after a stable Jetson runner exists, then remove this job from FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
+    runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "jetson-nvmap-gpu"
+      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/jetson-nvmap-gpu
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-jetson-nvmap"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_PROVIDER: "ollama"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          mkdir -p "${DOCKER_CONFIG}"
+          chmod 700 "${DOCKER_CONFIG}"
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Verify Jetson GPU availability
+        run: |
+          set -euo pipefail
+          echo "=== Tegra release ==="
+          cat /etc/nv_tegra_release 2>/dev/null || echo "(no /etc/nv_tegra_release)"
+          echo ""
+          echo "=== /dev/nvmap ==="
+          ls -l /dev/nvmap 2>/dev/null || echo "(no /dev/nvmap)"
+          echo ""
+          echo "=== Docker ==="
+          docker info --format '{{.ServerVersion}}'
+          docker info --format '{{json .Runtimes}}'
+
+      - name: Run Jetson nvmap GPU live Vitest test
+        # Migrated from test/e2e/test-jetson-nvmap-gpu.sh. Keeps the
+        # Jetson/Tegra host, NVIDIA Docker runtime, install.sh, OpenShell
+        # sandbox exec, /dev/nvmap, CUDA cuInit(0), and status-proof boundary.
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/jetson-nvmap-gpu.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Jetson nvmap GPU artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-jetson-nvmap-gpu
+          path: e2e-artifacts/vitest/jetson-nvmap-gpu/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          docker logout docker.io || true
+          rm -rf "${DOCKER_CONFIG}"
+
   concurrent-gateway-ports-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',concurrent-gateway-ports-vitest,') || contains(format(',{0},', inputs.scenarios), ',concurrent-gateway-ports,') }}
@@ -2542,8 +2970,8 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-resume"
       NEMOCLAW_PROVIDER: "custom"
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1"
-      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
-      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra"
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -2658,7 +3086,6 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
-
 
   cloud-onboard-vitest:
     needs: generate-matrix
@@ -3054,6 +3481,98 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+  openshell-gateway-upgrade-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-gateway-upgrade,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "openshell-gateway-upgrade"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openshell-gateway-upgrade
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME: "e2e-gateway-upgrade-survivor"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openshell-gateway-upgrade" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          login_succeeded=0
+          for attempt in 1 2 3; do
+            if echo "${DOCKERHUB_TOKEN}" | timeout 30s docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin; then
+              login_succeeded=1
+              break
+            fi
+            if [[ "$attempt" -lt 3 ]]; then
+              echo "::warning::Docker Hub login attempt ${attempt} failed; retrying."
+              sleep 5
+            fi
+          done
+          if [[ "$login_succeeded" -ne 1 ]]; then
+            echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
+          fi
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run OpenShell gateway upgrade live Vitest test
+        # Migrated from test/e2e/test-openshell-gateway-upgrade.sh. This
+        # preserves the legacy ubuntu-latest + Docker/OpenShell runner lane,
+        # old installer/current installer upgrade boundary, survivor sandbox
+        # restore checks, and hermetic macOS installer regressions.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/openshell-gateway-upgrade.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenShell gateway upgrade artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-openshell-gateway-upgrade
+          path: e2e-artifacts/vitest/openshell-gateway-upgrade/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        shell: bash
+        run: |
+          docker logout docker.io >/dev/null 2>&1 || true
+          rm -rf "${DOCKER_CONFIG}"
 
   messaging-providers-vitest:
     needs: generate-matrix
@@ -4867,6 +5386,59 @@ jobs:
           docker logout docker.io || true
           rm -rf "${DOCKER_CONFIG}"
 
+  spark-install-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',spark-install-vitest,') || contains(format(',{0},', inputs.scenarios), ',spark-install,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "spark-install"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/spark-install
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_FRESH: "1"
+      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install-vitest"
+      NEMOCLAW_PROVIDER: "cloud"
+      OPENSHELL_GATEWAY: "nemoclaw"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run Spark install live test
+        # Migrated from test/e2e/test-spark-install.sh. This preserves the
+        # Linux + Docker prerequisite gate, the plain non-interactive
+        # install.sh/public curl|bash boundary, install-log retention, PATH
+        # refresh, and post-install nemoclaw/openshell/--help checks.
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/spark-install.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Spark install artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-spark-install
+          path: e2e-artifacts/vitest/spark-install/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the
@@ -4901,7 +5473,10 @@ jobs:
         sessions-agents-cli-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,
+        hermes-slack-vitest,
+        hermes-discord-vitest,
         hermes-root-entrypoint-smoke-vitest,
+        hermes-sandbox-secret-boundary-vitest,
         network-policy-vitest,
         common-egress-agent-vitest,
         shields-config-vitest,
@@ -4909,13 +5484,16 @@ jobs:
         rebuild-hermes-vitest,
         rebuild-hermes-stale-base-vitest,
         sandbox-rebuild-vitest,
+        overlayfs-autofix-vitest,
         state-backup-restore-vitest,
         upgrade-stale-sandbox-vitest,
+        openshell-gateway-upgrade-vitest,
         token-rotation-vitest,
         messaging-compatible-endpoint-vitest,
         messaging-providers-vitest,
         launchable-smoke-vitest,
         double-onboard-vitest,
+        jetson-nvmap-gpu-vitest,
         concurrent-gateway-ports-vitest,
         full-e2e-vitest,
         cloud-onboard-vitest,
@@ -4942,6 +5520,7 @@ jobs:
         openclaw-discord-pairing-vitest,
         openclaw-slack-pairing-vitest,
         channels-stop-start-vitest,
+        spark-install-vitest,
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
@@ -4965,6 +5544,13 @@ jobs:
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const explicitOnlySkippedJobs = [
+              {
+                job: 'jetson-nvmap-gpu-vitest',
+                scenario: 'jetson-nvmap-gpu',
+                reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
+              },
+            ];
             const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
             const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
@@ -5023,7 +5609,7 @@ jobs:
               ? '✅ All requested jobs passed'
               : selectiveDispatch
                 ? '✅ All selected jobs passed'
-                : '✅ All jobs passed';
+                : '✅ All default jobs passed';
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
@@ -5049,13 +5635,22 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
               ...rows,
             ];
+            if (!selectiveDispatch) {
+              const skippedJobHints = explicitOnlySkippedJobs
+                .map(
+                  ({ job, scenario, reason }) =>
+                    `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`scenarios=${scenario}\`)`,
+                )
+                .join(', ');
+              lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
+            }
             if (failed.length > 0) {
               const failedNames = failed.map(([name]) => name).join(', ');
               lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);

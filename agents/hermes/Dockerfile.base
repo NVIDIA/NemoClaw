@@ -162,6 +162,8 @@ RUN printf '%s\n' \
 # and pty (optional browser TUI bridge). These extras are resolved from the
 # selected Hermes release's uv.lock via `uv sync --frozen`, so dependency
 # changes remain tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review.
+# Microsoft Teams adapter dependencies are installed by the manifest-driven
+# final image when selected.
 # New Hermes integrations should be installed by the agent workflow when they
 # are enabled rather than shipped in the base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.

@@ -30,6 +30,7 @@ import { planAgentRender } from "./engines/agent-render-engine";
 import { planBuildSteps } from "./engines/build-step-engine";
 import { planCredentialBindings } from "./engines/credential-binding-engine";
 import { planHealthChecks } from "./engines/health-check-engine";
+import { planHostForward } from "./engines/host-forward-engine";
 import { planNetworkPolicy } from "./engines/policy-resolver";
 import { planRuntimeSetup } from "./engines/runtime-setup-engine";
 import { planStateUpdates } from "./engines/state-update-engine";
@@ -63,9 +64,15 @@ export class ManifestCompiler {
       planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []),
     );
     const networkPolicy = planNetworkPolicy(manifests, context);
+    const channelRegistry = new Map(
+      channels.map((channel) => [channel.channelId, channel] as const),
+    );
+    const activeManifests = manifests.filter(
+      (manifest) => channelRegistry.get(manifest.id)?.active === true,
+    );
     const agentRender = (
       await Promise.all(
-        manifests.map((manifest) =>
+        activeManifests.map((manifest) =>
           planAgentRender(
             manifest,
             context,
@@ -76,12 +83,9 @@ export class ManifestCompiler {
         ),
       )
     ).flat();
-    const channelRegistry = new Map(
-      channels.map((channel) => [channel.channelId, channel] as const),
-    );
     const buildSteps = (
       await Promise.all(
-        manifests.map((manifest) =>
+        activeManifests.map((manifest) =>
           planBuildSteps(
             manifest,
             context.agent,
@@ -94,7 +98,7 @@ export class ManifestCompiler {
     ).flat();
     const runtimeSetup = planRuntimeSetup(manifests, context.agent, channels);
     const stateUpdates = manifests.flatMap((manifest) => planStateUpdates(manifest));
-    const healthChecks = manifests.flatMap((manifest) => planHealthChecks(manifest));
+    const healthChecks = activeManifests.flatMap((manifest) => planHealthChecks(manifest));
 
     return {
       schemaVersion: 1,
@@ -118,10 +122,9 @@ export class ManifestCompiler {
     context: ManifestCompilerContext,
   ): ChannelManifest[] {
     const requestedIds = new Set(channelIds);
-    const supportedIds =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedIds = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     const manifests = this.registry
       .list()
@@ -154,6 +157,12 @@ export class ManifestCompiler {
     });
     const requiredInputsAvailable = hasRequiredInputsAvailable(manifest, resolvedInputs.inputs);
     const active = requestedActive && !resolvedInputs.skipped && requiredInputsAvailable;
+    const hostForward = planHostForward(
+      manifest,
+      resolvedInputs.inputs,
+      active,
+      this.renderTemplateResolver,
+    );
 
     return {
       channelId: manifest.id,
@@ -164,6 +173,7 @@ export class ManifestCompiler {
       configured: configured && !resolvedInputs.skipped,
       disabled: disabled || resolvedInputs.skipped || (requestedActive && !requiredInputsAvailable),
       inputs: resolvedInputs.inputs,
+      ...(hostForward ? { hostForward } : {}),
       hooks: requested
         ? manifest.hooks
             .filter((hook) => isHookForAgent(hook, context.agent))

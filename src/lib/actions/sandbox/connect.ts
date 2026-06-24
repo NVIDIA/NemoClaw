@@ -51,6 +51,7 @@ import {
 } from "./connect-autopair-budget";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
@@ -211,9 +212,20 @@ function exitOnSecretBoundaryRefusal(
 }
 
 function runSandboxConnectProbe(sandboxName: string): void {
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
+    runTerminalAgentConnectProbe({
+      agent,
+      agentName,
+      capture: captureOpenshell,
+      ensureInferenceRoute: ensureSandboxInferenceRoute,
+      sandboxName,
+    });
+    return;
+  }
+
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
@@ -1043,7 +1055,11 @@ export async function connectSandbox(
   ) {
     console.log("");
     const agentName = sb?.agent || "openclaw";
-    const agentCmd = agentName === "openclaw" ? "openclaw tui" : agentName;
+    const terminalCommand = agentRuntime.getTerminalCommand(
+      agentRuntime.getSessionAgent(sandboxName),
+      "interactive",
+    );
+    const agentCmd = terminalCommand ?? (agentName === "openclaw" ? "openclaw tui" : agentName);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,

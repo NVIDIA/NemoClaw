@@ -85,6 +85,7 @@ const {
   agentSupportsWebSearch,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
 const onboardDashboard: typeof import("./onboard/dashboard") = require("./onboard/dashboard");
+const dashboardRuntime: typeof import("./onboard/dashboard-runtime") = require("./onboard/dashboard-runtime");
 const {
   buildGatewayBootstrapSecretsScript,
   createGatewayBootstrapRepairHelpers,
@@ -124,6 +125,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -339,6 +341,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const {
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -2575,17 +2580,21 @@ async function createSandbox(
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
-
-  let { effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
-    sandboxName,
-    controlUiPort,
-    chatUiUrlEnv: process.env.CHAT_UI_URL,
-    persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
-    agentForwardPort: agent?.forwardPort,
-    defaultPort: DASHBOARD_PORT,
-    forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-    warn: (message) => console.warn(message),
-  });
+  const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  let effectivePort = 0,
+    chatUiUrl = "";
+  if (manageDashboard) {
+    ({ effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+      sandboxName,
+      controlUiPort,
+      chatUiUrlEnv: process.env.CHAT_UI_URL,
+      persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
+      agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
+      defaultPort: DASHBOARD_PORT,
+      forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+      warn: (message) => console.warn(message),
+    }));
+  }
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2790,6 +2799,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2832,6 +2842,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2986,6 +2997,7 @@ async function createSandbox(
     getMessagingChannelForEnvKey,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    agentName: agent?.name,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -3002,10 +3014,9 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  const configuredMessagingChannels =
-    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels,
+    configuredMessagingChannels:
+      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3033,6 +3044,7 @@ async function createSandbox(
       extraPlaceholderKeys,
       getDashboardForwardPort,
       hermesDashboardState,
+      manageDashboard,
       openshellShellCommand,
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
@@ -3150,18 +3162,15 @@ async function createSandbox(
     process.exit(1);
   }
 
-  // Wait for the branded dashboard to become fully ready (web server live)
-  // This prevents port forwards from connecting to a non-existent port
-  // or seeing 502/503 errors during initial load.
-  // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
-  // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
-  console.log("  Waiting for NemoClaw dashboard to become ready...");
-  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
-    sandboxName,
-    port: effectiveDashboardPort,
-    runCaptureOpenshell,
-    sleep: sleepSeconds,
-  });
+  if (manageDashboard) {
+    console.log("  Waiting for NemoClaw dashboard to become ready...");
+    sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+      sandboxName,
+      port: effectiveDashboardPort,
+      runCaptureOpenshell,
+      sleep: sleepSeconds,
+    });
+  }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     // Runs the GPU proof, preserving Docker-GPU patch Error-phase diagnostics
@@ -3178,24 +3187,19 @@ async function createSandbox(
     });
   }
 
-  // Release any stale forward on the dashboard port before claiming it for the new sandbox.
-  // A previous onboard run may have left the port forwarded to a different sandbox,
-  // which would silently prevent the new sandbox's dashboard from being reachable.
-  // Auto-allocates the next free port if the preferred one is taken (Fixes #2174).
-  // Roll back the just-created openshell sandbox on unrecoverable allocation
-  // failure so the registry and `openshell sandbox list` don't drift (#2174).
-  const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
-    rollbackSandboxOnFailure: true,
-  });
-  // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
-  // see the final port (they re-read process.env.CHAT_UI_URL independently).
-  if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
-    chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+  let actualDashboardPort = 0;
+  let finalHermesDashboardState = hermesDashboardState;
+  if (manageDashboard) {
+    actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
+      rollbackSandboxOnFailure: true,
+    });
+    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
+      chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+    }
+    process.env.CHAT_UI_URL = chatUiUrl;
+    finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
+    hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
-  process.env.CHAT_UI_URL = chatUiUrl;
-  const finalHermesDashboardState =
-    hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
-  hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
@@ -4647,7 +4651,6 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
-  stepMutationOptions: { updateMachine: false },
 });
 
 const sandboxCancelRollback = installSandboxCancelRollback({
@@ -4664,6 +4667,8 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
+const recordCompatibleStateResult =
+  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
@@ -4829,13 +4834,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
-    // Backstop for the resume path: a session may exist (so the early guard
-    // skipped because resume === true) but never have recorded a sandboxName
-    // — sandbox creation could have failed before that step ran. Without a
-    // --name or env-var seed, the downstream prompt path would fall back to
-    // 'my-assistant' under no TTY, exactly the silent-default the early
-    // guard is meant to prevent.
+    await (resume ? recordCompatibleStateResult : recordStateResult)(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    // Resume backstop: a session may exist without a sandboxName if sandbox
+    // creation failed before that step. Non-interactive --from cannot infer a
+    // safe name in that state.
     if (
       resume &&
       cannotPrompt &&
@@ -4853,15 +4857,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        const current = onboardSession.loadSession();
-        const failedStep = current?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
-        }
-      }
-    });
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -5007,7 +5003,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -5129,6 +5125,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>
@@ -5148,15 +5145,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;
@@ -5262,7 +5257,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
+          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");
@@ -5308,7 +5303,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },
@@ -5316,6 +5311,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
@@ -5449,6 +5445,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

@@ -6,6 +6,8 @@ import {
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
+import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
+import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -15,7 +17,6 @@ import {
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
-import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { SandboxGatewayState } from "./gateway-state";
 import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
@@ -69,6 +70,10 @@ export interface SandboxStatusReport {
   schemaVersion: 1;
   name: string;
   found: boolean;
+  agent: string;
+  agentDisplayName: string;
+  agentRuntime: "gateway" | "terminal" | "unknown";
+  agentLoadError?: string;
   model: string;
   provider: string;
   phase: string | null;
@@ -104,9 +109,43 @@ export interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
 }
 
+export interface SandboxStatusAgentInfo {
+  agentName: string;
+  agentDisplayName: string;
+  agentRuntime: "gateway" | "terminal" | "unknown";
+  agentLoadError?: string;
+  agentDefinition: AgentDefinition | null;
+}
+
+export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
+  let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
+  let agentRuntime: SandboxStatusAgentInfo["agentRuntime"] = "gateway";
+  let agentLoadError: string | undefined;
+  let agentDefinition: AgentDefinition | null = null;
+  try {
+    const agent = loadAgent(agentName);
+    agentDisplayName = agent.displayName;
+    agentRuntime = getAgentRuntimeKind(agent);
+    agentDefinition = agentName === "openclaw" ? null : agent;
+  } catch (err) {
+    if (agentName !== "openclaw") {
+      agentRuntime = "unknown";
+      agentLoadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return {
+    agentName,
+    agentDisplayName,
+    agentRuntime,
+    ...(agentLoadError ? { agentLoadError } : {}),
+    agentDefinition,
+  };
+}
+
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
 
 interface CollectSandboxStatusSnapshotDeps {
+  getSandbox?: typeof registry.getSandbox;
   probeProviderHealthImpl?: ProbeProviderHealth;
   reconcile?: ReconcileSandboxGatewayState;
 }
@@ -124,7 +163,8 @@ export async function collectSandboxStatusSnapshot(
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
       }));
-  const sb = registry.getSandbox(sandboxName);
+  const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
     lookup = await reconcile(sandboxName);
@@ -209,7 +249,8 @@ async function buildSandboxStatusReport(
   sandboxName: string,
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
-  const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const preflight = await getSandboxStatusPreflight(getSandbox(sandboxName));
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
     deps,
@@ -223,10 +264,15 @@ async function buildSandboxStatusReport(
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
       : [];
+  const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
     name: sandboxName,
     found: !!sb,
+    agent: agent.agentName,
+    agentDisplayName: agent.agentDisplayName,
+    agentRuntime: agent.agentRuntime,
+    ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
     model: currentModel,
     provider: currentProvider,
     phase,

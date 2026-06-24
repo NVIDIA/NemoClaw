@@ -2109,8 +2109,9 @@ run_onboard() {
     info "Starting a fresh onboarding session (--fresh)."
     onboard_cmd+=(--fresh)
   elif command_exists node && [[ -f "$session_file" ]]; then
-    # Classify the session: "resume" (auto-attach --resume), "failed"
-    # (last run reported a step failure — user must choose), "skip"
+    # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
+    # (interrupted before sandbox creation — nothing to resume, start over),
+    # "failed" (last run reported a step failure — user must choose), "skip"
     # (complete / missing / unreadable — nothing to resume), or "corrupt".
     local session_state
     session_state="$(
@@ -2124,7 +2125,19 @@ run_onboard() {
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
           } else if (data.status === "in_progress") {
-            out = "resume";
+            // A run interrupted before confirmed sandbox creation has no
+            // sandbox to resume. Auto-attaching --resume here dead-ends at the
+            // CLI non-interactive resume guard (#2753) with no recovery path
+            // for curl|bash installs (#5626), so start fresh instead. Only
+            // auto-resume once the session has both the sandbox name and the
+            // completed sandbox step that onboard-session.ts records.
+            const sandboxCreated =
+              typeof data.sandboxName === "string" &&
+              data.sandboxName.trim() !== "" &&
+              data.steps &&
+              data.steps.sandbox &&
+              data.steps.sandbox.status === "complete";
+            out = sandboxCreated ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2141,6 +2154,11 @@ run_onboard() {
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
+        ;;
+      fresh-recover)
+        # #5626: interrupted before sandbox creation; nothing to resume.
+        info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
+        onboard_cmd+=(--fresh)
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
@@ -2193,6 +2211,7 @@ run_onboard() {
   # whenever the binary is found on disk; if it is empty the caller has
   # already errored out via verify_nemoclaw's "binary not found" branch.
   local cli_invoke="${_CLI_PATH:-$_CLI_BIN}"
+  local status=0
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -2202,18 +2221,17 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif [ -t 0 ]; then
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    local status=0
     "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
-    return "$status"
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
+  return "$status"
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -2658,7 +2676,7 @@ main() {
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
-      run_onboard
+      run_onboard || error "Onboarding did not complete successfully."
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
@@ -2667,6 +2685,8 @@ main() {
         "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi
       restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+      error "Skipping onboarding until the host prerequisites above are fixed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
