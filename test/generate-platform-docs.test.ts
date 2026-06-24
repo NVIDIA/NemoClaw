@@ -409,8 +409,11 @@ print(block)
       // been triggered. Editing the canonical page alone without the
       // trigger pattern covering it means the regenerator never runs
       // for that edit. Assert the regex-escaped target appears in the
-      // `files:` pattern as well.
-      const escapedForTrigger = target.replace(/\./g, "\\.");
+      // `files:` pattern as well. Escape backslashes before dots so the
+      // helper remains correct even if a future target ever includes a
+      // literal backslash (none do today; this also silences CodeQL's
+      // incomplete-escape SAST flag).
+      const escapedForTrigger = target.replace(/\\/g, "\\\\").replace(/\./g, "\\.");
       expect(
         hookSection?.includes(escapedForTrigger),
         `.pre-commit-config.yaml platform-matrix-sync hook \`files:\` pattern does not trigger on edits to ${target}`,
