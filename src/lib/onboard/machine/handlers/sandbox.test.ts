@@ -77,7 +77,7 @@ async function withEnv<T>(key: string, value: string, run: () => Promise<T>): Pr
 }
 
 type Gpu = { type: string } | null;
-type Agent = { displayName?: string } | null;
+type Agent = { displayName?: string; name?: string; messagingPlatforms?: string[] } | null;
 type WebSearchConfig = { fetchEnabled: true };
 type MessagingChannelConfig = Record<string, string>;
 type SandboxGpuConfig = { sandboxGpuEnabled: boolean; mode: string };
@@ -103,6 +103,7 @@ function createDeps(
       return session;
     }),
     persistMessaging: vi.fn(),
+    clearPlanEnv: vi.fn(),
     removeSandbox: vi.fn(),
     repairSandbox: vi.fn(),
     validateBrave: vi.fn(async () => "brave-key"),
@@ -152,6 +153,7 @@ function createDeps(
       setupMessagingChannels: calls.setupMessaging,
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: () => undefined,
+      clearPlanEnv: calls.clearPlanEnv,
       getRegistrySandboxMessagingPlan: () => null,
       promptValidatedSandboxName: calls.promptName,
       selectResourceProfileForSandbox: calls.selectResourceProfile,
@@ -571,6 +573,56 @@ describe("handleSandboxState", () => {
     const createSandboxCall = calls.createSandbox.mock.calls[0] as unknown[];
     expect(createSandboxCall[6]).toEqual([]);
     expect(getSession().messagingPlan).toEqual(emptyRebuildPlan);
+  });
+
+  it("clears env-staged messaging plans when the current agent declares an empty allowlist", async () => {
+    const stalePlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
+    const session = createSession({ sandboxName: "my-assistant", messagingPlan: stalePlan });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
+    const writePlanToEnv = vi.fn();
+    const { deps, calls, getSession } = createDeps({
+      getRecordedMessagingChannelsForResume,
+      writePlanToEnv,
+      readMessagingPlanFromEnv: () => stalePlan,
+    });
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "openclaw", messagingPlatforms: [] },
+    });
+
+    expect(calls.clearPlanEnv).toHaveBeenCalledTimes(1);
+    expect(writePlanToEnv).not.toHaveBeenCalled();
+    expect(result.selectedMessagingChannels).toEqual([]);
+    expect((calls.createSandbox.mock.calls[0] as unknown[])[6]).toEqual([]);
+    expect(getSession().messagingPlan).toBeNull();
+  });
+
+  it("clears registry messaging plans when the current agent is unknown", async () => {
+    const registryPlan = makeMinimalPlan("my-assistant", "openclaw", ["discord"]);
+    const session = createSession({ sandboxName: "my-assistant", messagingPlan: registryPlan });
+    const getRecordedMessagingChannelsForResume = vi.fn(() => ["discord"]);
+    const writePlanToEnv = vi.fn();
+    const { deps, calls, getSession } = createDeps({
+      getRecordedMessagingChannelsForResume,
+      writePlanToEnv,
+      readMessagingPlanFromEnv: () => null,
+      getRegistrySandboxMessagingPlan: () => registryPlan,
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "custom-agent", messagingPlatforms: ["discord"] },
+    });
+
+    expect(calls.clearPlanEnv).toHaveBeenCalledTimes(1);
+    expect(writePlanToEnv).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[])[6]).toEqual([]);
+    expect(getSession().messagingPlan).toBeNull();
   });
 
   it("does not restore plan to env when registry has no entry", async () => {

@@ -8,7 +8,7 @@ export const discordManifest = {
   id: "discord",
   displayName: "Discord",
   description: "Discord bot messaging",
-  supportedAgents: ["openclaw", "hermes", "langchain-deepagents-code"],
+  supportedAgents: ["openclaw", "hermes"],
   auth: {
     mode: "token-paste",
   },

@@ -51,13 +51,31 @@ write_proxy_export_pair() {
   write_export_if_set "$secondary"
 }
 
+is_messaging_env_key_allowed() {
+  case "$1" in
+    TELEGRAM_BOT_TOKEN | TELEGRAM_ALLOWED_USERS | DISCORD_BOT_TOKEN | NEMOCLAW_DISCORD_GUILD_IDS) return 0 ;;
+    DISCORD_ALLOWED_USERS | DISCORD_ALLOW_ALL_USERS | SLACK_BOT_TOKEN | SLACK_APP_TOKEN) return 0 ;;
+    SLACK_ALLOWED_USERS | SLACK_ALLOWED_CHANNELS) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 load_messaging_env() {
   local env_file="/sandbox/.deepagents/.env"
+  local line key value
   [ -r "$env_file" ] || return 0
-  set -a
-  # shellcheck disable=SC1090
-  . "$env_file"
-  set +a
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    key="${line%%=*}"
+    if [ "$key" = "$line" ] || ! is_messaging_env_key_allowed "$key"; then
+      printf 'Skipping invalid Deep Agents Code messaging env line for key %s.\n' "$key" >&2
+      continue
+    fi
+    value="${line#*=}"
+    export "$key=$value"
+  done <"$env_file"
 }
 
 prepare_runtime_env() {

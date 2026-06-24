@@ -108,9 +108,7 @@ describe("addSandboxChannel agent gate", () => {
       .map((call) => call.map(String).join(" "))
       .join("\n");
     expect(errorText).toMatch(/Agent 'custom-agent' does not support messaging channels/);
-    expect(errorText).toMatch(
-      /Messaging-capable agents: openclaw, hermes, langchain-deepagents-code/,
-    );
+    expect(errorText).toMatch(/Messaging-capable agents: openclaw, hermes/);
 
     expect(loadPresetMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();

@@ -125,6 +125,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -5124,6 +5125,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>

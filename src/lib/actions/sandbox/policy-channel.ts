@@ -925,7 +925,7 @@ export async function addSandboxChannel(
     console.error(
       `  Agent '${agent.name}' does not support messaging channels for sandbox '${sandboxName}'.`,
     );
-    console.error("  Messaging-capable agents: openclaw, hermes, langchain-deepagents-code.");
+    console.error("  Messaging-capable agents: openclaw, hermes.");
     process.exit(1);
   }
   if (!channelSupportedByAgent(canonical, agent)) {
