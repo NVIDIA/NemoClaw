@@ -57,6 +57,7 @@ export function parseSandboxMessagingPlan(
     if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
     if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
     if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
+    if (Object.hasOwn(channel, "hostForward") && !isHostForward(channel.hostForward)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
     if (
       Array.isArray(channel.inputs) &&
@@ -169,6 +170,18 @@ function isOptionalObjectArray(value: Record<string, unknown>, key: string): boo
   if (!Object.hasOwn(value, key)) return true;
   const entries = value[key];
   return Array.isArray(entries) && entries.every(isObject);
+}
+
+function isHostForward(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    typeof value.channelId === "string" &&
+    typeof value.port === "number" &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535 &&
+    typeof value.label === "string"
+  );
 }
 
 function isRuntimeSetup(value: unknown): boolean {

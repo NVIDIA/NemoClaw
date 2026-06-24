@@ -60,6 +60,7 @@ import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-f
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -759,11 +760,15 @@ async function persistManifestChannelDisabledPlan(
   sandboxName: string,
   channelId: string,
   disabled: boolean,
-): Promise<boolean> {
+): Promise<SandboxMessagingPlan | null> {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry?.messaging?.plan) return false;
+  if (!entry?.messaging?.plan) return null;
   const agent = resolveAgentForSandbox(sandboxName);
-  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const planner = new MessagingWorkflowPlanner(
+    messagingManifestRegistry,
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const context = {
     sandboxName,
     agent: toMessagingAgentId(agent),
@@ -774,7 +779,8 @@ async function persistManifestChannelDisabledPlan(
   const plan = disabled
     ? await planner.buildChannelStopPlanFromSandboxEntry(context)
     : await planner.buildChannelStartPlanFromSandboxEntry(context);
-  return plan ? MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) : false;
+  if (!plan) return null;
+  return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) ? plan : null;
 }
 
 async function persistManifestChannelRemovePlan(
@@ -784,7 +790,11 @@ async function persistManifestChannelRemovePlan(
   const entry = registry.getSandbox(sandboxName);
   if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
-  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const planner = new MessagingWorkflowPlanner(
+    messagingManifestRegistry,
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
     sandboxName,
     agent: toMessagingAgentId(agent),
@@ -965,7 +975,10 @@ export async function addSandboxChannel(
       console.log(`  ${line}`);
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-    if (rebuilt) await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+    if (rebuilt) {
+      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+    }
     return;
   }
 
@@ -1010,7 +1023,10 @@ export async function addSandboxChannel(
   }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-  if (rebuilt) await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+  if (rebuilt) {
+    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+  }
 }
 
 async function rollbackChannelAdd(
@@ -1374,13 +1390,17 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  if (!(await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled))) {
+  const plan = await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
+  if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
-  await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
+  if (rebuilt && !disabled) {
+    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+  }
 }
 
 export async function stopSandboxChannel(
