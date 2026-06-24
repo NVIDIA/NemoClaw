@@ -238,6 +238,10 @@ jobs:
                 echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for ${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom} CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
                 exit 1
               fi
+              if [[ "${HOSTED_NVIDIA_INFERENCE_API_KEY}" == *$'\n'* || "${HOSTED_NVIDIA_INFERENCE_API_KEY}" == *$'\r'* ]]; then
+                echo "::error::NVIDIA_INFERENCE_API_KEY secret must be a single-line value before export to GITHUB_ENV." >&2
+                exit 1
+              fi
 
               {
                 printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
@@ -251,7 +255,7 @@ jobs:
               } >> "$GITHUB_ENV"
               ;;
             *)
-              echo "::error::Unsupported inference_route: ${NEMOCLAW_E2E_INFERENCE_ROUTE}" >&2
+              echo "::error::Unsupported inference_route value." >&2
               exit 1
               ;;
           esac

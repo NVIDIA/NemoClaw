@@ -137,35 +137,64 @@ function envReferencesHostedInferenceSecret(env?: Record<string, string>): boole
   );
 }
 
-function runInferenceExportStep(
+type InferenceExportResult = {
+  env: Record<string, string>;
+  stderr: string;
+  failed: boolean;
+};
+
+function parseGithubEnv(pathname: string): Record<string, string> {
+  return Object.fromEntries(
+    readFileSync(pathname, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const index = line.indexOf("=");
+        return [line.slice(0, index), line.slice(index + 1)];
+      }),
+  );
+}
+
+function runInferenceExportStepRaw(
   script: string,
   env: Record<string, string>,
-): Record<string, string> {
+): InferenceExportResult {
   const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-e2e-inference-export-"));
   const githubEnv = path.join(tempDir, "github-env");
   writeFileSync(githubEnv, "", "utf8");
   try {
-    execFileSync("bash", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        PATH: process.env.PATH ?? "",
-        GITHUB_ENV: githubEnv,
-        ...env,
-      },
-    });
-    return Object.fromEntries(
-      readFileSync(githubEnv, "utf8")
-        .trim()
-        .split("\n")
-        .filter(Boolean)
-        .map((line) => {
-          const index = line.indexOf("=");
-          return [line.slice(0, index), line.slice(index + 1)];
-        }),
-    );
+    try {
+      execFileSync("bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "",
+          GITHUB_ENV: githubEnv,
+          ...env,
+        },
+      });
+      return { env: parseGithubEnv(githubEnv), stderr: "", failed: false };
+    } catch (error) {
+      return {
+        env: parseGithubEnv(githubEnv),
+        stderr: error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "",
+        failed: true,
+      };
+    }
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+function runInferenceExportStep(
+  script: string,
+  env: Record<string, string>,
+): Record<string, string> {
+  const result = runInferenceExportStepRaw(script, env);
+  if (result.failed) {
+    throw new Error(result.stderr || "Inference export step failed");
+  }
+  return result.env;
 }
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
@@ -1033,6 +1062,25 @@ describe("E2E reusable workflow contract", () => {
         HOSTED_NVIDIA_INFERENCE_API_KEY: "",
       }),
     ).toThrow();
+
+    const multilineSecretResult = runInferenceExportStepRaw(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key\nINJECTED_ENV=1",
+    });
+    expect(multilineSecretResult.failed).toBe(true);
+    expect(multilineSecretResult.stderr).toContain("secret must be a single-line value");
+    expect(multilineSecretResult.env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(multilineSecretResult.env.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(multilineSecretResult.env.INJECTED_ENV).toBeUndefined();
+
+    const unsupportedRouteResult = runInferenceExportStepRaw(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route\n::error::injected",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+    });
+    expect(unsupportedRouteResult.failed).toBe(true);
+    expect(unsupportedRouteResult.stderr).toContain("Unsupported inference_route value.");
+    expect(unsupportedRouteResult.stderr).not.toContain("unsupported-route");
+    expect(unsupportedRouteResult.stderr).not.toContain("injected");
     expect(() =>
       runInferenceExportStep(script, {
         NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route",
