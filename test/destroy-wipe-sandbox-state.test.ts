@@ -158,6 +158,42 @@ describe("wipeSandboxState (#5449)", () => {
     }
   });
 
+  // PRA-2 on #5455 (round 4): a manifest declaring an unsafe top-level config
+  // dir (e.g. `/`, `/etc`, or even `/sandbox` itself with no subdir) would let
+  // the `cd ${dir} && rm -rf -- ...` script wipe outside the intended agent
+  // scope. Refuse to issue the wipe and warn in that case.
+  it.each([
+    { dir: "/", label: "filesystem root" },
+    { dir: "/etc", label: "system dir" },
+    { dir: "/sandbox", label: "shared sandbox root with no agent subdir" },
+    { dir: "/sandbox/", label: "shared sandbox root trailing slash" },
+    { dir: ".openclaw", label: "relative config dir" },
+    { dir: "../escape", label: "relative escape" },
+  ])("refuses to wipe when the agent config dir is unsafe ($label) (#5455 PRA-2)", ({ dir }) => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir },
+        stateDirs: ["workspace"],
+        stateFiles: [],
+      })),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      destroy.wipeSandboxState("test-sb", deps as never);
+      // No exec was issued; the wipe refused to run.
+      expect(
+        runOpenshell.mock.calls.find(
+          (args) => Array.isArray(args[0]) && args[0][0] === "sandbox" && args[0][1] === "exec",
+        ),
+        `wipe should not issue an exec when dir is '${dir}'`,
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Refusing to wipe"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   // PRA-7 #5455: regression coverage should prove the destroy/re-onboard
   // contract, not just helper-command construction. After a destroy, the
   // re-onboard must NOT inherit USER.md from the prior sandbox. The proof

@@ -96,6 +96,23 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
   const dir = agent.configPaths?.dir;
   if (!dir) return;
 
+  // Reject unsafe agent config roots before constructing the wipe command
+  // (#5455 PRA-2). The script issues `cd ${dir} && rm -rf -- ...` so a
+  // manifest that declared a top-level dir like `/`, `/etc`, or even
+  // `/sandbox` (no subdirectory) would let the rm phase delete outside the
+  // intended agent scope. Require `/sandbox/<subdir>` and reject everything
+  // else; every shipped agent manifest declares `/sandbox/.<agent>` so this
+  // is a precondition, not a behavior change.
+  const SANDBOX_ROOT = "/sandbox/";
+  if (!path.posix.isAbsolute(dir) || !dir.startsWith(SANDBOX_ROOT) || dir === SANDBOX_ROOT) {
+    console.warn(
+      `  ${YW}⚠${R} Refusing to wipe workspace state for '${sandboxName}': ` +
+        `agent '${agentName}' declared config dir '${dir}' which is not an absolute ` +
+        `path under ${SANDBOX_ROOT}<agent-name>`,
+    );
+    return;
+  }
+
   // Validate every manifest-derived relative path resolves under `dir`. A
   // manifest declaring `state_dirs: ["../etc"]` or an absolute path like
   // `/etc/passwd` would otherwise be shell-quoted and fed straight into
