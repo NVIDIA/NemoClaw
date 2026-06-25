@@ -176,6 +176,11 @@ function safeStatusString(value: string | null | undefined): string | null {
   return redactFull(value);
 }
 
+/**
+ * Project a stored or recovered {@link SandboxEntry} into a display row,
+ * resolving inference/GPU fields and marking gateway-recovered rows so unknown
+ * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
+ */
 function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,

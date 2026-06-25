@@ -23,6 +23,11 @@ type RecoveredSandboxMetadata = Partial<
   policyPresets?: string[] | null;
 };
 
+/**
+ * Build a minimal-safe registry entry for a recovered sandbox from whatever
+ * metadata is known, asserting `agent` only when the seed actually provides it
+ * so recovery never clobbers a persisted agent or invents one.
+ */
 function buildRecoveredSandboxEntry(
   name: string,
   metadata: RecoveredSandboxMetadata = {},
@@ -50,6 +55,11 @@ function buildRecoveredSandboxEntry(
   return entry;
 }
 
+/**
+ * Persist a recovered sandbox into the registry, registering a new entry or
+ * merging into an existing one. Returns true only when a new entry was created.
+ * Invalid sandbox names are skipped (returns false).
+ */
 function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata = {}) {
   let validName;
   try {
@@ -67,6 +77,12 @@ function upsertRecoveredSandbox(name: string, metadata: RecoveredSandboxMetadata
   return true;
 }
 
+/**
+ * Decide whether registry recovery should run and whether the requested
+ * sandbox is missing from the on-disk registry. Recovery is attempted whenever
+ * the registry is empty (the #5714 unseeded `list` case) or a seed (session or
+ * requested name) points at a sandbox the registry does not yet contain.
+ */
 function shouldRecoverRegistryEntries(
   current: { sandboxes: Array<{ name: string }>; defaultSandbox?: string | null },
   session: Session | null,
@@ -106,6 +122,11 @@ function isSessionSandboxConfirmed(session: Session | null): boolean {
   return session.steps?.sandbox?.status === "complete";
 }
 
+/**
+ * Build the name→metadata seed map used to enrich gateway-recovered entries,
+ * and recover a confirmed onboard-session sandbox into the registry when it is
+ * missing. Returns the seed map and whether a session sandbox was recovered.
+ */
 function seedRecoveryMetadata(
   current: { sandboxes: SandboxEntry[] },
   session: Session | null,
@@ -146,6 +167,12 @@ function seedRecoveryMetadata(
   return { metadataByName, recoveredFromSession };
 }
 
+/**
+ * Decide whether the unseeded (#5714) `nemoclaw list` recovery may read the
+ * live `openshell sandbox list` without mutating gateway state. Returns true
+ * only when OpenShell is connected to a NemoClaw-managed gateway (the bare
+ * `nemoclaw` or a per-port `nemoclaw-<port>`), never a foreign gateway.
+ */
 function canInspectLiveGatewayReadOnly(): boolean {
   // #5714: unseeded `nemoclaw list` recovery must never mutate gateway state
   // (no select/start). Probes are non-fatal so a hung gateway falls back to the
@@ -166,6 +193,12 @@ function canInspectLiveGatewayReadOnly(): boolean {
   return false;
 }
 
+/**
+ * Decide whether the seeded recovery path may read the live sandbox list,
+ * actively recovering the named NemoClaw gateway (select/start) first when
+ * needed. Used when an existing entry, onboard session, or requested name
+ * signals a specific sandbox the user expects to exist.
+ */
 async function canInspectLiveGatewayViaRecovery(): Promise<boolean> {
   const recovery = await recoverNamedGatewayRuntime();
   return (
@@ -184,6 +217,12 @@ interface LiveGatewayRecovery {
   ephemeralSandboxes: SandboxEntry[];
 }
 
+/**
+ * Inspect the live OpenShell gateway and recover its sandboxes. In `readOnly`
+ * mode (unseeded #5714 `list`) recovered sandboxes are returned as display-only
+ * `ephemeralSandboxes` and never persisted; otherwise they are upserted into
+ * the on-disk registry. Returns the recovered count and any ephemeral entries.
+ */
 async function recoverRegistryFromLiveGateway(
   metadataByName: Map<string, RecoveredSandboxMetadata>,
   { readOnly = false }: { readOnly?: boolean } = {},
@@ -242,6 +281,11 @@ async function recoverRegistryFromLiveGateway(
   return { recoveredFromGateway, ephemeralSandboxes };
 }
 
+/**
+ * Set the registry default to the requested name (or the session sandbox when
+ * no default exists) once it is present in the registry, then return the
+ * refreshed registry listing.
+ */
 function applyRecoveredDefault(
   currentDefaultSandbox: string | null,
   requestedSandboxName: string | null,
@@ -259,6 +303,14 @@ function applyRecoveredDefault(
   return registry.listSandboxes();
 }
 
+/**
+ * Reconcile the local sandbox registry against the onboard session and the live
+ * OpenShell gateway. With a seed (existing entry, session, or requested name)
+ * it actively recovers and persists entries; for an empty registry with no seed
+ * (#5714) it performs a bounded, read-only gateway inspection and returns the
+ * live sandboxes as display-only entries without persisting them. Returns the
+ * registry listing plus `recoveredFromSession`/`recoveredFromGateway` markers.
+ */
 export async function recoverRegistryEntries({
   requestedSandboxName = null,
 }: {

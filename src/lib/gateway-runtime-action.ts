@@ -26,6 +26,13 @@ function getActiveGatewayName(output = ""): string | null {
   return match ? match[1].trim() : null;
 }
 
+/**
+ * Classify the lifecycle state of the named gateway (healthy_named,
+ * named_unreachable, named_unhealthy, connected_other, or missing_named) from
+ * `openshell status` and `gateway info`. Pass `ignoreProbeErrors` to keep the
+ * probes non-fatal so a hung/timed-out gateway is classified rather than
+ * exiting the process.
+ */
 export function getNamedGatewayLifecycleState(
   gatewayName: string = resolveGatewayName(GATEWAY_PORT),
   opts: { ignoreProbeErrors?: boolean } = {},

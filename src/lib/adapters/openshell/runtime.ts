@@ -51,6 +51,11 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   });
 }
 
+/**
+ * Run an OpenShell command and capture its output. `includeStderr` keeps stderr
+ * in the captured output even when `ignoreError` is set (needed for probes that
+ * must stay non-fatal yet still read status text OpenShell writes to stderr).
+ */
 export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   return captureOpenshellCommand(getOpenshellBinary(), args, {
     cwd: ROOT,
