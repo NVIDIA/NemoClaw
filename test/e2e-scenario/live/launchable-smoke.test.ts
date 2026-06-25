@@ -424,24 +424,19 @@ runLaunchableSmokeTest(
       max_tokens: 100,
     });
     const direct = await host.command(
-      "curl",
+      "bash",
       [
-        "-s",
-        "--max-time",
-        "30",
-        "-X",
-        "POST",
-        `${hosted.endpointUrl}/chat/completions`,
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        `Authorization: Bearer ${apiKey}`,
-        "-d",
-        directPayload,
+        "-lc",
+        'cfg=$(mktemp); payload=$(mktemp); trap \'rm -f "$cfg" "$payload"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; printf \'%s\' "$DIRECT_PAYLOAD" > "$payload"; curl -s --max-time 30 -X POST --config "$cfg" -H \'Content-Type: application/json\' -d @"$payload" "$HOSTED_ENDPOINT_URL/chat/completions"',
       ],
       {
         artifactName: "phase-6-direct-nvidia-chat",
-        env: pathEnv,
+        env: runEnv({
+          ...pathEnv,
+          DIRECT_PAYLOAD: directPayload,
+          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+        }),
         redactionValues: [apiKey],
         timeoutMs: INFERENCE_TIMEOUT_MS,
       },
