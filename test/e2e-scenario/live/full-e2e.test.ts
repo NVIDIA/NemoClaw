@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -204,7 +205,9 @@ liveTest(
       },
     );
     expect(sandboxInference.exitCode, resultText(sandboxInference)).toBe(0);
-    expect(sandboxInference.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+    expect(containsInteger42Answer(sandboxInference.stdout), resultText(sandboxInference)).toBe(
+      true,
+    );
 
     const logs = await repoNemoclaw(
       host,

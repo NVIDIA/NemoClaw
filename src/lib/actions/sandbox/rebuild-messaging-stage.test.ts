@@ -30,6 +30,21 @@ const { stageMessagingManifestPlanForRebuild } = D("actions/sandbox/rebuild.js")
   ) => Promise<unknown>;
 };
 
+const emptyStoredMessagingPlan = {
+  schemaVersion: 1,
+  sandboxName: "openclaw-sandbox",
+  agent: "openclaw",
+  workflow: "remove-channel",
+  channels: [],
+  disabledChannels: [],
+  credentialBindings: [],
+  networkPolicy: { presets: [], entries: [] },
+  agentRender: [],
+  buildSteps: [],
+  stateUpdates: [],
+  healthChecks: [],
+};
+
 describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -59,6 +74,38 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
       false,
     );
     expect(result).toBeNull();
+  });
+
+  it("stages an explicit empty rebuild plan so token-backed channels are not rediscovered", async () => {
+    vi.spyOn(defs, "loadAgent").mockReturnValue({
+      name: "openclaw",
+      messagingPlatforms: ["telegram"],
+    });
+    const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
+    const writePlanEnvSpy = vi
+      .spyOn(messaging.MessagingSetupApplier, "writePlanToEnv")
+      .mockImplementation(() => undefined);
+
+    const messages: string[] = [];
+    const result = await stageMessagingManifestPlanForRebuild(
+      "openclaw-sandbox",
+      {
+        name: "openclaw-sandbox",
+        messaging: { schemaVersion: 1, plan: emptyStoredMessagingPlan },
+      },
+      "openclaw",
+      (msg) => messages.push(msg),
+    );
+
+    expect(clearPlanEnvSpy).not.toHaveBeenCalled();
+    expect(writePlanEnvSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workflow: "rebuild",
+        channels: [],
+      }),
+    );
+    expect(messages).toContain("Messaging manifest rebuild plan staged: no configured channels");
+    expect(result).toMatchObject({ workflow: "rebuild", channels: [] });
   });
 
   it("emits the empty-allowlist skip message for a known agent whose messagingPlatforms is an explicit empty allowlist", async () => {

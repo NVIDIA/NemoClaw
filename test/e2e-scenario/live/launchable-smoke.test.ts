@@ -6,8 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import type { ArtifactSink } from "../fixtures/artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -463,7 +464,7 @@ runLaunchableSmokeTest(
     ).toBe(0);
     const agentReply = parseAgentText(agent.stdout);
     expect(
-      /(^|[^0-9])42([^0-9]|$)/.test(agentReply),
+      containsInteger42Answer(agentReply),
       `expected agent reply to contain 42; rc=${agent.exitCode}; reply='${agentReply.slice(0, 200)}'; stdout='${agent.stdout.slice(0, 300)}'; stderr='${agent.stderr.slice(0, 300)}'`,
     ).toBe(true);
 
