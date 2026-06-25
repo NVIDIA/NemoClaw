@@ -51,6 +51,8 @@ The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update check
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, generated config, and hooks config when those files exist.
+Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
+For `langchain-deepagents-code` sandboxes, NemoClaw refuses before backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime.
 
 ## Optional Web Search

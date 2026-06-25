@@ -9,6 +9,7 @@ import {
   getOpenshellBinary,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt } from "../../credentials/store";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
@@ -35,6 +36,14 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+const DEEPAGENTS_CODE_AGENT = "langchain-deepagents-code";
+const DCODE_BUSY_PROBE_SCRIPT = String.raw`processes="$(ps -eo pid=,args= 2>/dev/null)" || exit 2
+printf '%s\n' "$processes" | awk '
+/python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code/ { found = 1 }
+/(^|[[:space:]])[d]code($|[[:space:]])/ { found = 1 }
+/(^|[[:space:]])deepagents[-]code($|[[:space:]])/ { found = 1 }
+END { exit found ? 0 : 1 }
+'`;
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -340,6 +349,35 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   return isShieldsDown(sandboxName);
 }
 
+function shouldProbeDcodeActivity(sandboxName: string): boolean {
+  return registry.getSandbox(sandboxName)?.agent === DEEPAGENTS_CODE_AGENT;
+}
+
+function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean {
+  if (!shouldProbeDcodeActivity(sandboxName)) return true;
+
+  const probe = captureOpenshell(
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", DCODE_BUSY_PROBE_SCRIPT],
+    {
+      ignoreError: true,
+      includeStderr: true,
+      timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    },
+  );
+  if (probe.status === 1) return true;
+  if (probe.status === 0) {
+    console.error(
+      "  Sandbox is actively running a dcode task. Please retry after the task completes.",
+    );
+    return false;
+  }
+
+  console.error(
+    `  Cannot verify whether sandbox '${sandboxName}' is actively running a dcode task. Refusing to create snapshot.`,
+  );
+  return false;
+}
+
 function runSnapshotCreate(
   sandboxName: string,
   request: Extract<SnapshotRequest, { kind: "create" }>,
@@ -355,6 +393,9 @@ function runSnapshotCreate(
   if (!isSnapshotCreationAllowedByShields(sandboxName)) {
     console.error("  Cannot create snapshot while shields are up.");
     console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
+    snapshotExit(1);
+  }
+  if (!isSnapshotCreationAllowedByDcodeActivity(sandboxName)) {
     snapshotExit(1);
   }
   const label = request.name ? ` (--name ${request.name})` : "";

@@ -3,6 +3,9 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type OpenshellCaptureResult = { status: number; output: string };
+type SandboxRecord = { name: string; agent?: string | null };
+
 const shieldsMock = vi.hoisted(() => {
   const isShieldsDownMock = vi.fn(() => true);
   let isShieldsDownExport: unknown = isShieldsDownMock;
@@ -16,7 +19,9 @@ const shieldsMock = vi.hoisted(() => {
 });
 
 const backupSandboxStateMock = vi.fn();
-const captureOpenshellMock = vi.fn(() => ({
+const captureOpenshellMock = vi.fn<
+  (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
+>(() => ({
   status: 0,
   output: "alpha Ready\n",
 }));
@@ -32,12 +37,16 @@ const applyPresetContentMock = vi.fn(
   (_sandbox: string, _name: string, _content: string, _options?: unknown) => true,
 );
 const removePresetMock = vi.fn((_sandbox: string, _preset: string) => true);
-const getSandboxMock = vi.fn(() => null);
+const getSandboxMock = vi.fn<(name?: string) => SandboxRecord | null>(() => null);
 const isGatewayHealthyMock = vi.fn(() => true);
 const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 const registerSandboxMock = vi.fn();
 const restoreSandboxStateMock = vi.fn();
+const dcodeSandboxEntry = {
+  name: "alpha",
+  agent: "langchain-deepagents-code",
+};
 
 vi.mock("../../adapters/docker", () => ({
   dockerCapture: vi.fn(() => ""),
@@ -149,6 +158,27 @@ describe("runSandboxSnapshot", () => {
     vi.restoreAllMocks();
   });
 
+  function mockDcodeProbe(status: number, output = "") {
+    captureOpenshellMock.mockImplementation((args: string[]) => {
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return {
+          status: 0,
+          output: "alpha Ready\n",
+        };
+      }
+      if (args[0] === "sandbox" && args[1] === "exec") {
+        return {
+          status,
+          output,
+        };
+      }
+      return {
+        status: 0,
+        output: "",
+      };
+    });
+  }
+
   it("refuses snapshot creation before backup when the shields gate helper is unavailable", async () => {
     shieldsMock.setIsShieldsDownExport(undefined);
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -197,6 +227,105 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("Creating snapshot of 'alpha' (--name before-upgrade)");
     expect(output).toContain("Snapshot v7 name=before-upgrade created");
     expect(output).toContain("/tmp/backup-alpha");
+  });
+
+  it("refuses snapshot creation before backup when a dcode task is active", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbe(0, "123 python3 -m deepagents_code -n write a script\n");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(
+      captureOpenshellMock.mock.calls.some(
+        ([args]) =>
+          args[0] === "sandbox" &&
+          args[1] === "exec" &&
+          args.includes("--name") &&
+          args.includes("alpha"),
+      ),
+    ).toBe(true);
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Sandbox is actively running a dcode task. Please retry after the task completes.",
+    );
+  });
+
+  it("allows dcode snapshot creation when the process probe finds no active task", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbe(1);
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const manifest = {
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+      name: "idle",
+    };
+    backupSandboxStateMock.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      backedUpFiles: ["config.toml"],
+      failedDirs: [],
+      failedFiles: [],
+      manifest,
+    });
+    findBackupMock.mockReturnValue({
+      match: { ...manifest, snapshotVersion: 8, name: "idle" },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "create", name: "idle" });
+
+    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+      name: "idle",
+    });
+    expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v8 name=idle created");
+  });
+
+  it("refuses dcode snapshot creation before backup when task state cannot be verified", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbe(2, "ps: command failed\n");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
+    );
+  });
+
+  it("does not run the dcode process probe for non-dcode sandboxes", async () => {
+    getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const manifest = {
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    };
+    backupSandboxStateMock.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      backedUpFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+      manifest,
+    });
+    findBackupMock.mockReturnValue({
+      match: { ...manifest, snapshotVersion: 3 },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "create" });
+
+    expect(
+      captureOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "exec"),
+    ).toBe(false);
+    expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 
   it("renders a stable snapshot list with versions, names, timestamps, and paths", async () => {
