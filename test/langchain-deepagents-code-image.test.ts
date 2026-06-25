@@ -249,6 +249,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
     expect(policy).toContain("- { path: /opt/venv/bin/python3* }");
     expect(policy).toContain("- { path: /opt/venv/bin/pip3 }");
+    expect(policy).toContain("- { path: /sandbox/**/bin/python3* }");
+    expect(policy).toContain("- { path: /sandbox/**/bin/pip3 }");
     expect(policy).not.toContain("- { path: /usr/bin/python3* }");
     expect(policy).not.toContain("- { path: /usr/local/bin/pip3 }");
   });
@@ -286,6 +288,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("/usr is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/opt/venv is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
+    expect(pythonEgressCheck).toContain(`DCODE_CANONICAL_PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(pythonEgressCheck).toContain('grep -Fxq "PATH=${DCODE_CANONICAL_PATH}"');
     expect(pythonEgressCheck).toContain('printf "PYTHON_REAL=%s\\n"');
     expect(pythonEgressCheck).toContain("^PYTHON=/opt/venv/bin/python3$");
     expect(pythonEgressCheck).toContain("^PIP=/opt/venv/bin/pip3$");

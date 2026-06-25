@@ -93,6 +93,9 @@ network_policies:
       - { path: /opt/venv/bin/pip3 }
       # pip and dcode package-install traffic execute through Python. This is
       # intentionally process-wide only for the read-only PyPI hosts listed
-      # above; optional service egress must be added explicitly by policy.
+      # above, including project venvs under /sandbox; optional service egress
+      # must be added explicitly by policy.
+      - { path: /sandbox/**/bin/pip3 }
       - { path: /opt/venv/bin/python3* }
+      - { path: /sandbox/**/bin/python3* }
       - { path: /usr/local/bin/dcode }

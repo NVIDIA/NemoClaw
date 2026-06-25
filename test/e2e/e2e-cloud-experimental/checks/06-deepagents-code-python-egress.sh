@@ -14,6 +14,7 @@ set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="06-deepagents-code-python-egress"
+DCODE_CANONICAL_PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -81,7 +82,7 @@ info "Running Deep Agents Code arbitrary-Python egress checks in sandbox: $SANDB
 
 # shellcheck disable=SC2016
 OUT=$(sandbox_exec 'printf "PATH=%s\n" "$PATH"; printf "PYTHON=%s\n" "$(command -v python3)"; printf "PIP=%s\n" "$(command -v pip3)"; printf "PYTHON_REAL=%s\n" "$(readlink -f "$(command -v python3)")"; printf "PIP_REAL=%s\n" "$(readlink -f "$(command -v pip3)")"; printf "USRLOCAL_COUNT=%s\n" "$(printf "%s" "$PATH" | tr ":" "\n" | grep -cx "/usr/local/bin")"' || true)
-if echo "$OUT" | grep -q '^PATH=/usr/local/bin:/opt/venv/bin:' \
+if echo "$OUT" | grep -Fxq "PATH=${DCODE_CANONICAL_PATH}" \
   && echo "$OUT" | grep -q '^PYTHON=/opt/venv/bin/python3$' \
   && echo "$OUT" | grep -q '^PIP=/opt/venv/bin/pip3$' \
   && echo "$OUT" | grep -q '^PYTHON_REAL=/opt/venv/' \
