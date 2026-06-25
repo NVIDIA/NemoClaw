@@ -26,6 +26,7 @@ export type KimiInferenceMode = "mock" | "public-nvidia";
 export interface KimiEnvOptions {
   mode?: KimiInferenceMode;
   apiKey?: string;
+  includeSecret?: boolean;
 }
 
 export function resolveKimiInferenceMode(env: NodeJS.ProcessEnv = process.env): KimiInferenceMode {
@@ -80,7 +81,7 @@ export function env(
       ...common,
       NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
       NEMOCLAW_PROVIDER: "cloud",
-      ...(options.apiKey
+      ...(options.includeSecret && options.apiKey
         ? { NVIDIA_API_KEY: options.apiKey, NVIDIA_INFERENCE_API_KEY: options.apiKey }
         : {}),
       ...extra,
@@ -138,7 +139,11 @@ export function kimiOnboardEnv(
   mode: KimiInferenceMode,
   apiKey: string | undefined,
 ): NodeJS.ProcessEnv {
-  return env(fake ? { NEMOCLAW_ENDPOINT_URL: fake.baseUrl } : {}, { mode, apiKey });
+  return env(fake ? { NEMOCLAW_ENDPOINT_URL: fake.baseUrl } : {}, {
+    mode,
+    apiKey,
+    includeSecret: true,
+  });
 }
 
 export async function assertKimiUpstreamTraffic(options: {
@@ -399,10 +404,7 @@ export function parseConfig(raw: string): {
 }
 
 export async function assertTrajectory(sandbox: SandboxClient): Promise<void> {
-  const trajectory = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(String.raw`python3 - <<'PY'
-import json, pathlib, sys
+  const checkScript = String.raw`import json, pathlib, sys
 root=pathlib.Path('/sandbox/.openclaw')
 base=pathlib.Path('/sandbox/.openclaw/agents/main/sessions')
 session=base/'e2e-kimi-tools.jsonl'
@@ -441,8 +443,11 @@ if not final_texts or normalize_final_text(final_texts[-1]) != 'hostname, date, 
 roles=[m.get('role') for m in messages]
 if not ('toolResult' in roles and roles[-1]=='assistant'): errors.append('final assistant not after tool result')
 print(json.dumps({'errors':errors,'source':source,'toolMetas':metas,'roles':roles}, indent=2))
-sys.exit(1 if errors else 0)
-PY`),
+sys.exit(1 if errors else 0)`;
+  const encoded = Buffer.from(checkScript, "utf8").toString("base64");
+  const trajectory = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(`python3 -c "$(printf %s '${encoded}' | base64 -d)"`),
     { artifactName: "kimi-trajectory-tool-splitting-check", env: env(), timeoutMs: 60_000 },
   );
   expect(trajectory.exitCode, resultText(trajectory)).toBe(0);

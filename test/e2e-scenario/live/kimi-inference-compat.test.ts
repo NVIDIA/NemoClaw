@@ -75,7 +75,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const config = await sandbox.exec(SANDBOX_NAME, ["cat", "/sandbox/.openclaw/openclaw.json"], {
       artifactName: "openclaw-config",
-      env: env({}, { mode, apiKey }),
+      env: env({}, { mode }),
       timeoutMs: 60_000,
     });
     expect(config.exitCode, resultText(config)).toBe(0);
@@ -100,25 +100,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const modelsRoute = await sandbox.exec(
       SANDBOX_NAME,
       ["curl", "-sk", "--max-time", "20", "https://inference.local/v1/models"],
-      { artifactName: "inference-local-models", env: env({}, { mode, apiKey }), timeoutMs: 60_000 },
+      { artifactName: "inference-local-models", env: env({}, { mode }), timeoutMs: 60_000 },
     );
     expect(modelsRoute.exitCode, resultText(modelsRoute)).toBe(0);
     expect(resultText(modelsRoute)).toContain(KIMI_MODEL);
-
-    const agent = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(
-        "openclaw agent --agent main --json --session-id e2e-kimi-compat -m 'Reply with exactly: OK'",
-      ),
-      {
-        artifactName: "kimi-agent-smoke",
-        env: env({}, { mode, apiKey }),
-        redactionValues: ["test-kimi-key", apiKey ?? ""],
-        timeoutMs: 150_000,
-      },
-    );
-    expect(agent.exitCode, resultText(agent)).toBe(0);
-    expect(resultText(agent)).toMatch(/OK/i);
 
     const toolAgent = await sandbox.execShell(
       SANDBOX_NAME,
@@ -127,7 +112,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       ),
       {
         artifactName: "kimi-agent-tool-splitting",
-        env: env({}, { mode, apiKey }),
+        env: env({}, { mode, apiKey, includeSecret: true }),
         redactionValues: ["test-kimi-key", apiKey ?? ""],
         timeoutMs: 420_000,
       },
