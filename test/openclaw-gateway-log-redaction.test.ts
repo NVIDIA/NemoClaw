@@ -108,6 +108,29 @@ describe("OpenClaw gateway log redaction", () => {
     }
   });
 
+  it("redacts nested OpenClaw message.content text before gateway log upload", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-nested-redact-"));
+    const source = path.join(tmp, "gateway.jsonl");
+    const output = path.join(tmp, "gateway.redacted.jsonl");
+    fs.writeFileSync(
+      source,
+      JSON.stringify({
+        event: "chat",
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text: "nested sensitive prompt text" }],
+        },
+      }),
+      "utf8",
+    );
+
+    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
+
+    const redacted = fs.readFileSync(output, "utf8");
+    expect(redacted).toContain('"text":"[REDACTED_TEXT]"');
+    expect(redacted).not.toContain("nested sensitive prompt text");
+  });
+
   it("removes stale output and raw logs when redaction fails", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-fail-closed-"));
     const output = path.join(tmp, "gateway.redacted.log");
