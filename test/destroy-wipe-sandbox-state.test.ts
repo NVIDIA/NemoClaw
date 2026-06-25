@@ -158,6 +158,34 @@ describe("wipeSandboxState (#5449)", () => {
     }
   });
 
+  // PRA-3 on #5455: an accepted manifest path containing shell metacharacters
+  // (single quote, backtick, dollar sign, space) must reach the destructive
+  // script intact, single-quoted, with no expansion or word-splitting risk.
+  // shellQuote already handles this; the assertion locks the contract in so a
+  // future refactor of the targets-construction can't accidentally drop it.
+  it("shell-quotes accepted manifest paths so metacharacters cannot break out of `rm -rf` (#5455 PRA-3)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        // All relative + under config dir, so all should be accepted, but
+        // each carries a shell metacharacter that an unsafe construction
+        // would let the shell interpret.
+        stateDirs: ["state with space", "state'with'quote", "state`with`backtick"],
+        stateFiles: [{ path: "file$with$dollar" }],
+      })),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+    const { script } = execCommand(runOpenshell);
+    // Every accepted target appears single-quoted in the script. The escaped
+    // single-quote form is `'\''` (close, escaped quote, reopen). Assert each
+    // metacharacter target is present in its quoted form.
+    expect(script).toContain("'state with space'");
+    expect(script).toContain("'state'\\''with'\\''quote'");
+    expect(script).toContain("'state`with`backtick'");
+    expect(script).toContain("'file$with$dollar'");
+  });
+
   // PRA-2 on #5455 (round 4): a manifest declaring an unsafe top-level config
   // dir (e.g. `/`, `/etc`, or even `/sandbox` itself with no subdir) would let
   // the `cd ${dir} && rm -rf -- ...` script wipe outside the intended agent

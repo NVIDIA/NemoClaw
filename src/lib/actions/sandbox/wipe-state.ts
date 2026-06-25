@@ -195,6 +195,20 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     },
   );
   if (result.status !== 0) {
+    // #5455 PRA-2 (best-effort failure semantics, justified): destroy must
+    // remove the registry entry and tear down the OpenShell pod even when
+    // the wipe exec returns non-zero. The most common nonzero path is "the
+    // sandbox is no longer live" (gateway down, container already stopped,
+    // openshell connectivity transient): blocking destroy there would leave
+    // the user with an unkillable broken sandbox. The next re-onboard with
+    // the same name is the only path where stale workspace state actually
+    // surfaces, so the contract is: warn loudly here, let destroy proceed,
+    // and the re-onboard banner re-surfaces the warning if the PVC is
+    // detected as non-empty. The behavioral validation for that full
+    // destroy -> re-onboard -> clean-workspace contract (#5455 PRA-1) is an
+    // E2E concern -- the helper-level test below pins the warning and the
+    // CLI-level lifecycle test in test/cli/destroy-gateway-cleanup.test.ts
+    // pins the gateway-select-then-exec-then-delete order.
     console.warn(
       `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
         "re-onboarding with the same name may resurface old files.",
