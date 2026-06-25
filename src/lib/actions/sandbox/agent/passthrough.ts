@@ -128,9 +128,10 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
   // the complete argv grammar; NemoClaw mirrors documented flags only to choose
   // the host transport path. Unknown options fail conservative to normal
   // passthrough, where OpenClaw parses argv itself. Regression tests cover each
-  // documented value flag, documented boolean flags, unknown flag fallback, and
-  // the `--` terminator. Removal condition: OpenClaw exposes a machine-readable
-  // argv schema or NemoClaw stops special-casing the JSON transport path.
+  // documented value flag, documented equals-form value flags, documented
+  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
+  // special-casing the JSON transport path.
   let skipNextValue = false;
   for (const arg of extraArgs) {
     if (skipNextValue) {
@@ -144,6 +145,14 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
     }
     if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
       skipNextValue = true;
+      continue;
+    }
+    const equalsIndex = arg.indexOf("=");
+    if (
+      equalsIndex > 0 &&
+      arg.startsWith("--") &&
+      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
+    ) {
       continue;
     }
     if (OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) continue;

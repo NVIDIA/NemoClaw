@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { isRecord } from "../core/json-types";
+import { redactFull } from "../security/redact";
 
 const FAILURE_STATUS_VALUES = new Set(["error", "errored", "failed", "failure"]);
 const UNTRUSTED_CHILD_BEGIN = "BEGIN_UNTRUSTED_CHILD_RESULT";
@@ -9,6 +10,10 @@ const UNTRUSTED_CHILD_END = "END_UNTRUSTED_CHILD_RESULT";
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
 const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const CONTROL_PATTERN = /[\u0000-\u0007\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu;
+const PEM_PRIVATE_KEY_PATTERN =
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/gu;
+const SECRET_KV_PATTERN =
+  /\b([A-Z0-9_.-]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)[A-Z0-9_.-]*)\s*[:=]\s*["']?[^"'\s;,)]*/giu;
 const MAX_PROVENANCE_WALK_NODES = 10_000;
 const MAX_PROVENANCE_WALK_DEPTH = 80;
 
@@ -25,7 +30,15 @@ function snippet(value: string, limit = 300): string {
     .replace(CONTROL_PATTERN, "")
     .replace(/\s+/gu, " ")
     .trim();
-  return squashed.length <= limit ? squashed : `${squashed.slice(0, limit - 3)}...`;
+  const redacted = redactProvenanceDetail(squashed);
+  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit - 3)}...`;
+}
+
+function redactProvenanceDetail(value: string): string {
+  return redactFull(value.replace(PEM_PRIVATE_KEY_PATTERN, "<REDACTED_PRIVATE_KEY>")).replace(
+    SECRET_KV_PATTERN,
+    "$1=<REDACTED>",
+  );
 }
 
 function strings(value: unknown): string[] {

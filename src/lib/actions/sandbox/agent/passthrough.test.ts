@@ -168,6 +168,31 @@ describe("runAgentPassthrough", () => {
     );
   });
 
+  it("uses the captured JSON path after documented equals-form value flags", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    const execJson = vi.fn(() => {
+      throw new Error("__exit:0");
+    });
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { proc } = makeProcMock();
+
+    await expect(
+      runAgentPassthrough(
+        "alpha",
+        { extraArgs: ["--session-id=s1", "--json", "-m", "ping"] },
+        { execJson, process: proc },
+      ),
+    ).rejects.toThrow("__exit:0");
+
+    expect(execMock).not.toHaveBeenCalled();
+    expect(execJson).toHaveBeenCalledWith(
+      "alpha",
+      ["openclaw", "agent", "--session-id=s1", "--json", "-m", "ping"],
+      expect.objectContaining({ stderr: proc.stderr }),
+    );
+  });
+
   it.each([
     ["-a", "--json"],
     ["--agent", "--json"],

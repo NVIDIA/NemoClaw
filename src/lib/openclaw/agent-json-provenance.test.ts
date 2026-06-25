@@ -70,6 +70,39 @@ describe("openClawAgentJsonProvenanceLines", () => {
     expect(lines[0]).not.toContain("https://example.invalid");
   });
 
+  it("redacts secret-shaped values in failed tool output before stderr provenance", () => {
+    const rawApiKey = "nvapi-abcdefghijklmnopqrstuvwxyz123456";
+    const rawBearer = "secretbearertoken1234567890";
+    const rawPassword = "hunter2-password-value";
+    const rawPrivateKey = "private-key-material-that-must-not-leak";
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_secret",
+            toolName: "exec",
+            isError: true,
+            stderr: [
+              `NVIDIA_INFERENCE_API_KEY=${rawApiKey}`,
+              `Authorization: Bearer ${rawBearer}`,
+              `password: ${rawPassword}`,
+              `-----BEGIN PRIVATE KEY----- ${rawPrivateKey} -----END PRIVATE KEY-----`,
+            ].join("\n"),
+          },
+        ],
+      }),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("<REDACTED>");
+    expect(lines[0]).toContain("<REDACTED_PRIVATE_KEY>");
+    expect(lines[0]).not.toContain(rawApiKey);
+    expect(lines[0]).not.toContain(rawBearer);
+    expect(lines[0]).not.toContain(rawPassword);
+    expect(lines[0]).not.toContain(rawPrivateKey);
+  });
+
   it("labels untrusted child-agent result framing from log-prefixed JSON", () => {
     const childPayload = [
       "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
