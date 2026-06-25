@@ -30,9 +30,7 @@ function makeWrapperFixture(
       "exec python3 -m deepagents_code",
       `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : python3 -m deepagents_code`,
     );
-  if (!fs.existsSync(envFile)) {
-    fs.writeFileSync(envFile, "", "utf8");
-  }
+  fs.writeFileSync(envFile, "", "utf8");
   fs.writeFileSync(wrapperPath, fixture, "utf8");
   fs.chmodSync(wrapperPath, 0o755);
   return { wrapperPath, ranMarker, envFile };
@@ -531,6 +529,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
       { name: "xoxb", sample: "xoxb-1234567890" },
       { name: "xoxp", sample: "xoxp-1234567890" },
+      { name: "xoxa", sample: "xoxa-1234567890" },
+      { name: "xoxs", sample: "xoxs-1234567890" },
       { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
       { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
       { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
@@ -539,6 +539,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },
       { name: "pypi", sample: "pypi-abcdefghijklmnop" },
       { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
       {
         name: "discord",
         sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
