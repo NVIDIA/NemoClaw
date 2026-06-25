@@ -85,9 +85,7 @@ describe("probeUserManagedFiles", () => {
       name: "alpha",
       agent: "fake-agent",
     } as unknown as ReturnType<RegistryModule["getSandbox"]>);
-    vi.spyOn(defs, "loadAgent").mockImplementation(() =>
-      makeFakeAgent([".env", ".mcp.json"]),
-    );
+    vi.spyOn(defs, "loadAgent").mockImplementation(() => makeFakeAgent([".env", ".mcp.json"]));
     vi.spyOn(sandboxState, "getSshConfig").mockReturnValue(
       "Host openshell-alpha\n  HostName 127.0.0.1\n",
     );
@@ -112,21 +110,22 @@ describe("probeUserManagedFiles", () => {
   });
 
   function stubSpawnSync(stdout: string, status: number, stderr = ""): void {
-    spawnSpy = vi
-      .spyOn(child_process, "spawnSync")
-      .mockImplementation(((command: string, args?: readonly string[]) => {
-        const argList = Array.isArray(args) ? [...args] : [];
-        const sshCall = command === "ssh" && argList.length > 0;
-        sshCall && recordedArgs.push(argList);
-        return {
-          status,
-          signal: null,
-          output: [],
-          pid: 0,
-          stdout,
-          stderr,
-        } as ReturnType<typeof child_process.spawnSync>;
-      }) as typeof child_process.spawnSync);
+    spawnSpy = vi.spyOn(child_process, "spawnSync").mockImplementation(((
+      command: string,
+      args?: readonly string[],
+    ) => {
+      const argList = Array.isArray(args) ? [...args] : [];
+      const sshCall = command === "ssh" && argList.length > 0;
+      sshCall && recordedArgs.push(argList);
+      return {
+        status,
+        signal: null,
+        output: [],
+        pid: 0,
+        stdout,
+        stderr,
+      } as ReturnType<typeof child_process.spawnSync>;
+    }) as typeof child_process.spawnSync);
   }
 
   it("probes declared user-managed files at the sandbox root, not the agent config dir", () => {
@@ -159,21 +158,46 @@ describe("probeUserManagedFiles", () => {
     stubSpawnSync("", 255, "connection refused");
     const { probeUserManagedFiles } = loadProbe();
 
-    expect(() => probeUserManagedFiles("alpha")).toThrow(
-      /user-managed file probe failed/,
-    );
+    expect(() => probeUserManagedFiles("alpha")).toThrow(/user-managed file probe failed/);
   });
 
-  it("returns empty existing when sandbox has no SSH config", () => {
+  it("throws when sandbox has no SSH config and the agent declares user-managed files", () => {
     stubSpawnSync("", 0);
     const sandboxState = loadSandboxState();
     vi.spyOn(sandboxState, "getSshConfig").mockReturnValue(null);
     const { probeUserManagedFiles } = loadProbe();
 
+    expect(() => probeUserManagedFiles("alpha")).toThrow(
+      /user-managed file probe failed: no SSH config/,
+    );
+    expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns empty existing when sandbox has no SSH config but agent declares no user-managed files", () => {
+    stubSpawnSync("", 0);
+    const defs = loadDefs();
+    vi.spyOn(defs, "loadAgent").mockImplementation(() => makeFakeAgent([]));
+    const sandboxState = loadSandboxState();
+    vi.spyOn(sandboxState, "getSshConfig").mockReturnValue(null);
+    const { probeUserManagedFiles } = loadProbe();
+
     const result = probeUserManagedFiles("alpha");
-    expect(result.declared).toEqual([".env", ".mcp.json"]);
+    expect(result.declared).toEqual([]);
     expect(result.existing).toEqual([]);
     expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it("shell-quotes unusual but permitted filenames safely", () => {
+    const defs = loadDefs();
+    vi.spyOn(defs, "loadAgent").mockImplementation(() => makeFakeAgent(["user's.env", ".env"]));
+    stubSpawnSync("", 0);
+    const { probeUserManagedFiles } = loadProbe();
+
+    probeUserManagedFiles("alpha");
+    const lastArgs = recordedArgs[0] ?? [];
+    const probeCmd = lastArgs[lastArgs.length - 1] ?? "";
+    expect(probeCmd).toContain("'/sandbox/user'\\''s.env'");
+    expect(probeCmd).toContain("'/sandbox/.env'");
   });
 
   it("cleans up the temp SSH config on success", () => {

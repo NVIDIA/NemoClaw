@@ -20,8 +20,7 @@ export interface UserManagedFilesProbe {
 const _verbose = (): boolean => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
 function _log(msg: string): void {
-  if (_verbose())
-    console.error(`  [user-managed-files-probe ${new Date().toISOString()}] ${msg}`);
+  if (_verbose()) console.error(`  [user-managed-files-probe ${new Date().toISOString()}] ${msg}`);
 }
 
 export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProbe {
@@ -37,8 +36,10 @@ export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProb
 
   const sshConfig = getSshConfig(sandboxName);
   if (!sshConfig) {
-    _log("no SSH config — skipping probe");
-    return { declared, existing: [] };
+    _log("no SSH config — cannot probe declared user-managed files");
+    throw new Error(
+      "user-managed file probe failed: no SSH config available for sandbox " + sandboxName,
+    );
   }
 
   const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-umf-");

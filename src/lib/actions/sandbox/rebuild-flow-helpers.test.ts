@@ -201,8 +201,14 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
 
     expect(result).toBeTruthy();
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("Could not check declared user-managed files"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("Re-add any user-managed files"))).toBe(true);
+    expect(
+      warnLines.some((line: string) =>
+        line.includes("Could not check declared user-managed files"),
+      ),
+    ).toBe(true);
+    expect(warnLines.some((line: string) => line.includes("Re-add any user-managed files"))).toBe(
+      true,
+    );
     expect(errorSpy).not.toHaveBeenCalled();
   });
 });

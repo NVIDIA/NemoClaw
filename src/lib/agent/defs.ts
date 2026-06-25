@@ -180,7 +180,9 @@ function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
       );
     }
     if (entry.length === 0) {
-      throw new Error(`Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`);
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`,
+      );
     }
     if (CONTROL_CHAR_RE.test(entry)) {
       throw new Error(

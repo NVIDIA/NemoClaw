@@ -367,11 +367,9 @@ describe("agent definitions", () => {
     const agentName = `invalid-umf-nonarray-${String(Date.now())}`;
     writeTempAgentManifest(
       agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Broken UMF",
-        "user_managed_files: not-an-array",
-      ].join("\n"),
+      [`name: ${agentName}`, "display_name: Broken UMF", "user_managed_files: not-an-array"].join(
+        "\n",
+      ),
     );
 
     expect(() => loadAgent(agentName)).toThrow(/user_managed_files.*must be an array/);
@@ -381,12 +379,9 @@ describe("agent definitions", () => {
     const agentName = `invalid-umf-empty-${String(Date.now())}`;
     writeTempAgentManifest(
       agentName,
-      [
-        `name: ${agentName}`,
-        "display_name: Broken UMF",
-        "user_managed_files:",
-        '  - ""',
-      ].join("\n"),
+      [`name: ${agentName}`, "display_name: Broken UMF", "user_managed_files:", '  - ""'].join(
+        "\n",
+      ),
     );
 
     expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*empty/);
