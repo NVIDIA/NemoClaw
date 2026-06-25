@@ -79,6 +79,19 @@ fi
 
 info "Running Deep Agents Code arbitrary-Python egress checks in sandbox: $SANDBOX_NAME"
 
+# shellcheck disable=SC2016
+OUT=$(sandbox_exec 'printf "PATH=%s\n" "$PATH"; printf "PYTHON=%s\n" "$(command -v python3)"; printf "PIP=%s\n" "$(command -v pip3)"; printf "PYTHON_REAL=%s\n" "$(readlink -f "$(command -v python3)")"; printf "PIP_REAL=%s\n" "$(readlink -f "$(command -v pip3)")"; printf "USRLOCAL_COUNT=%s\n" "$(printf "%s" "$PATH" | tr ":" "\n" | grep -cx "/usr/local/bin")"' || true)
+if echo "$OUT" | grep -q '^PATH=/usr/local/bin:/opt/venv/bin:' \
+  && echo "$OUT" | grep -q '^PYTHON=/opt/venv/bin/python3$' \
+  && echo "$OUT" | grep -q '^PIP=/opt/venv/bin/pip3$' \
+  && echo "$OUT" | grep -q '^PYTHON_REAL=/opt/venv/' \
+  && echo "$OUT" | grep -q '^PIP_REAL=/opt/venv/' \
+  && echo "$OUT" | grep -q '^USRLOCAL_COUNT=1$'; then
+  pass "sandbox Python and pip resolve to the managed venv before system paths"
+else
+  fail_test "sandbox Python PATH does not resolve through the managed venv: $OUT"
+fi
+
 expect_reached "GitHub" "https://api.github.com/"
 expect_reached "PyPI" "https://pypi.org/"
 expect_blocked "Tavily" "https://api.tavily.com/"

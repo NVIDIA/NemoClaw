@@ -47,6 +47,13 @@ dcode -n "Summarize this repository"
 
 The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
 
+## Python Environment
+
+Deep Agents Code runs from a NemoClaw-managed Python virtual environment at `/opt/venv`.
+The sandbox puts `/opt/venv/bin` on `PATH` before the system Python directories, so `python3` and `pip3` resolve to that managed environment.
+NemoClaw keeps `/opt/venv` read-only to protect the installed harness.
+For project-specific Python dependencies, create a separate virtual environment under `/sandbox` and activate it before installing packages.
+
 ## State and Backup
 
 Deep Agents Code state lives under `/sandbox/.deepagents`.

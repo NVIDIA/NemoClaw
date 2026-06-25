@@ -381,7 +381,7 @@ The entrypoint locks the `PATH` environment variable to system directories, prev
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint sets `PATH` to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` at startup. |
+| Default | The default sandbox entrypoint sets `PATH` to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` at startup. Agent-specific images may add locked read-only runtime directories, such as `/opt/venv/bin` for LangChain Deep Agents Code. |
 | What you can change | This is not a user-facing knob. The entrypoint enforces it. |
 | Risk if relaxed | Without PATH hardening, the agent could create an executable named `curl` or `git` in a writable directory earlier in the PATH, intercepting commands run by the entrypoint or other processes. |
 | Recommendation | No action needed. The entrypoint handles this automatically. |
