@@ -40,6 +40,36 @@ describe("openClawAgentJsonProvenanceLines", () => {
     ]);
   });
 
+  it("strips ANSI, OSC, and control characters from failed tool details", () => {
+    const hostile = [
+      "\x1B[2Jexec failed",
+      "\x1B]8;;https://example.invalid/phish\x07linked text\x1B]8;;\x07",
+      "overwrite\rhidden",
+      "erase\bmark",
+      "\u0000done",
+    ].join(" ");
+
+    const lines = openClawAgentJsonProvenanceLines(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_hostile",
+            toolName: "exec",
+            isError: true,
+            text: hostile,
+          },
+        ],
+      }),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("exec failed");
+    expect(lines[0]).toContain("linked text");
+    expect(lines[0]).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/u);
+    expect(lines[0]).not.toContain("https://example.invalid");
+  });
+
   it("labels untrusted child-agent result framing from log-prefixed JSON", () => {
     const childPayload = [
       "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",

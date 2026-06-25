@@ -26,10 +26,32 @@ from typing import Any
 FAILURE_STATUS_VALUES = {"error", "errored", "failed", "failure"}
 UNTRUSTED_CHILD_BEGIN = "BEGIN_UNTRUSTED_CHILD_RESULT"
 UNTRUSTED_CHILD_END = "END_UNTRUSTED_CHILD_RESULT"
+ANSI_OSC_RE = re.compile(r"\x1B\][\s\S]*?(?:\x07|\x1B\\|$)")
+ANSI_CSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+CONTROL_RE = re.compile(r"[\x00-\x07\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+TEXT_KEYS = ("text", "content", "reasoning_content", "reasoning")
+CONTAINER_KEYS = (
+    "result",
+    "payloads",
+    "payload",
+    "messages",
+    "message",
+    "response",
+    "data",
+    "output",
+    "outputs",
+    "items",
+    "segments",
+    "delta",
+)
 
 
 def _snippet(value: str, limit: int = 300) -> str:
-    squashed = re.sub(r"\s+", " ", value).strip()
+    sanitized = ANSI_OSC_RE.sub("", value)
+    sanitized = ANSI_CSI_RE.sub("", sanitized)
+    sanitized = sanitized.replace("\r", "").replace("\b", "")
+    sanitized = CONTROL_RE.sub("", sanitized)
+    squashed = re.sub(r"\s+", " ", sanitized).strip()
     if len(squashed) <= limit:
         return squashed
     return f"{squashed[: limit - 3]}..."
@@ -204,16 +226,60 @@ def _collect_provenance(raw: str, docs: list[Any]) -> list[str]:
     return _dedupe(lines)
 
 
-def _payloads(doc: Any) -> list[Any]:
-    if not isinstance(doc, dict):
-        return []
-    top_level = doc.get("payloads")
-    if isinstance(top_level, list):
-        return top_level
-    result = doc.get("result")
-    if isinstance(result, dict) and isinstance(result.get("payloads"), list):
-        return result["payloads"]
-    return []
+def _add_text(parts: list[str], value: Any) -> None:
+    if isinstance(value, str) and value.strip():
+        parts.append(value.strip())
+
+
+def _collect_assistant_text(value: Any, parts: list[str], visited: set[int]) -> None:
+    if isinstance(value, str):
+        _add_text(parts, value)
+        return
+    if isinstance(value, list):
+        marker = id(value)
+        if marker in visited:
+            return
+        visited.add(marker)
+        for item in value:
+            _collect_assistant_text(item, parts, visited)
+        return
+    if not isinstance(value, dict):
+        return
+
+    marker = id(value)
+    if marker in visited:
+        return
+    visited.add(marker)
+
+    if _is_tool_like(value):
+        return
+
+    for key in TEXT_KEYS:
+        _add_text(parts, value.get(key))
+
+    choices = value.get("choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            _collect_assistant_text(choice.get("message"), parts, visited)
+            _collect_assistant_text(choice.get("delta"), parts, visited)
+            _add_text(parts, choice.get("text"))
+
+    for key in CONTAINER_KEYS:
+        if key in value:
+            _collect_assistant_text(value[key], parts, visited)
+
+
+def _assistant_text_parts(docs: list[Any]) -> list[str]:
+    parts: list[str] = []
+    visited: set[int] = set()
+    for doc in docs:
+        if isinstance(doc, dict) and "result" in doc:
+            _collect_assistant_text(doc["result"], parts, visited)
+        else:
+            _collect_assistant_text(doc, parts, visited)
+    return parts
 
 
 def _load_agent_json_docs(text: str) -> list[Any]:
@@ -224,6 +290,14 @@ def _load_agent_json_docs(text: str) -> list[Any]:
     else:
         return doc if isinstance(doc, list) else [doc]
 
+    # Invalid state: upstream OpenClaw has emitted log-prefixed/non-clean JSON
+    # framing for `openclaw agent --json`. Source boundary: OpenClaw owns the
+    # emitter/framing; this E2E helper consumes it so legacy smoke tests keep
+    # proving visible assistant text and provenance. Source-fix constraint: do
+    # not patch OpenClaw or narrow existing parser callers from this PR.
+    # Regression tests cover log-prefixed streams, later envelopes, OpenAI-style
+    # choices, and sanitized provenance. Removal condition: supported OpenClaw
+    # versions guarantee stable clean JSON framing on stdout.
     decoder = json.JSONDecoder()
     docs: list[Any] = []
     index = 0
@@ -251,12 +325,7 @@ def main() -> int:
         print(f"invalid JSON: {err}", file=sys.stderr)
         return 1
 
-    parts = [
-        payload["text"]
-        for doc in docs
-        for payload in _payloads(doc)
-        if isinstance(payload, dict) and isinstance(payload.get("text"), str)
-    ]
+    parts = _assistant_text_parts(docs)
     print("\n".join([*_collect_provenance(raw, docs), *parts]))
     return 0
 

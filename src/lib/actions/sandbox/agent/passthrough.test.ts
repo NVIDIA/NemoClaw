@@ -89,6 +89,34 @@ describe("runAgentPassthrough", () => {
     );
   });
 
+  it("keeps --json as a message value on the normal passthrough path", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    const execJson = vi.fn();
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+
+    await runAgentPassthrough("alpha", { extraArgs: ["-m", "--json"] }, { execJson });
+
+    expect(execJson).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "-m", "--json"], {
+      tty: false,
+    });
+  });
+
+  it("keeps --json after the argv terminator on the normal passthrough path", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    const execJson = vi.fn();
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+
+    await runAgentPassthrough("alpha", { extraArgs: ["--", "--json"] }, { execJson });
+
+    expect(execJson).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "--", "--json"], {
+      tty: false,
+    });
+  });
+
   it("treats a clean registry miss as OpenClaw (preserves bootstrap and recovery paths)", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce(null);

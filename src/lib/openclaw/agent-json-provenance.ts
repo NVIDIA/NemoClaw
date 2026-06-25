@@ -6,9 +6,18 @@ import { isRecord } from "../core/json-types";
 const FAILURE_STATUS_VALUES = new Set(["error", "errored", "failed", "failure"]);
 const UNTRUSTED_CHILD_BEGIN = "BEGIN_UNTRUSTED_CHILD_RESULT";
 const UNTRUSTED_CHILD_END = "END_UNTRUSTED_CHILD_RESULT";
+const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
+const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
+const CONTROL_PATTERN = /[\u0000-\u0007\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu;
 
 function snippet(value: string, limit = 300): string {
-  const squashed = value.replace(/\s+/gu, " ").trim();
+  const squashed = value
+    .replace(ANSI_OSC_PATTERN, "")
+    .replace(ANSI_CSI_PATTERN, "")
+    .replace(/\r|\u0008/gu, "")
+    .replace(CONTROL_PATTERN, "")
+    .replace(/\s+/gu, " ")
+    .trim();
   return squashed.length <= limit ? squashed : `${squashed.slice(0, limit - 3)}...`;
 }
 
@@ -182,7 +191,13 @@ function parseOpenClawJsonDocs(raw: string): unknown[] {
     const parsed = JSON.parse(raw) as unknown;
     return Array.isArray(parsed) ? parsed : [parsed];
   } catch {
-    // OpenClaw has emitted log-prefixed JSON streams; scan for later objects.
+    // Invalid state: upstream OpenClaw has emitted log-prefixed/non-clean JSON
+    // framing for `openclaw agent --json`. Source boundary: OpenClaw owns the
+    // emitter/framing; NemoClaw only consumes the stream to keep provenance
+    // visible. Source-fix constraint: do not patch or fork OpenClaw from this
+    // host-wrapper PR. Regression tests cover log-prefixed balanced candidates
+    // and provenance extraction. Removal condition: supported OpenClaw versions
+    // guarantee stable clean JSON framing on stdout.
   }
 
   return parseLogPrefixedJsonDocs(raw);

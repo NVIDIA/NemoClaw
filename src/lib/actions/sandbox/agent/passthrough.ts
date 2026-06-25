@@ -41,6 +41,18 @@ export {
   printAgentPassthroughHelp,
 } from "./passthrough-help";
 
+const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
+  "-a",
+  "--agent",
+  "-m",
+  "--message",
+  "--model",
+  "--provider",
+  "--session-id",
+  "--thinking",
+  "--timeout",
+]);
+
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
 }
@@ -106,6 +118,25 @@ function rejectRegistryReadError(
   return proc.exit(2);
 }
 
+function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
+  let skipNextValue = false;
+  for (const arg of extraArgs) {
+    if (skipNextValue) {
+      skipNextValue = false;
+      continue;
+    }
+    if (arg === "--") return false;
+    if (arg === "--json") return true;
+    if (arg.startsWith("--json=")) {
+      return !["0", "false", "no", "off"].includes(arg.slice("--json=".length).toLowerCase());
+    }
+    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
+      skipNextValue = true;
+    }
+  }
+  return false;
+}
+
 export async function runAgentPassthrough(
   sandboxName: string,
   { extraArgs = [] }: AgentPassthroughOptions = {},
@@ -122,7 +153,7 @@ export async function runAgentPassthrough(
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   await ensureLive(sandboxName, { allowNonReadyPhase: true });
   const command = ["openclaw", "agent", ...extraArgs];
-  if (extraArgs.includes("--json")) {
+  if (requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;
     execJson(sandboxName, command, {
       exit: proc.exit.bind(proc),

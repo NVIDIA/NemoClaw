@@ -105,6 +105,58 @@ describe("openclaw-agent-json.py", () => {
     );
   });
 
+  it("strips ANSI, OSC, and control characters from provenance details", () => {
+    const result = runHelper(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_hostile",
+            toolName: "exec",
+            isError: true,
+            text: [
+              "\x1B[2Jexec failed",
+              "\x1B]8;;https://example.invalid/phish\x07linked text\x1B]8;;\x07",
+              "overwrite\rhidden",
+              "erase\bmark",
+              "\u0000done",
+            ].join(" "),
+          },
+        ],
+      }),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[openclaw provenance] failed tool result");
+    expect(result.stdout).toContain("exec failed");
+    expect(result.stdout).toContain("linked text");
+    expect(result.stdout).not.toMatch(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/u);
+    expect(result.stdout).not.toContain("https://example.invalid");
+  });
+
+  it("preserves legacy assistant response shapes from choices and nested containers", () => {
+    const result = runHelper(
+      JSON.stringify([
+        {
+          choices: [
+            { message: { content: "choice message" } },
+            { delta: { content: "delta chunk" } },
+            { text: "choice text" },
+          ],
+        },
+        { response: { reasoning_content: "reasoning output" } },
+        { result: { messages: [{ content: "nested message content" }] } },
+      ]),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("choice message");
+    expect(result.stdout).toContain("delta chunk");
+    expect(result.stdout).toContain("choice text");
+    expect(result.stdout).toContain("reasoning output");
+    expect(result.stdout).toContain("nested message content");
+  });
+
   it("labels untrusted child-agent payloads before assistant text", () => {
     const childPayload = [
       "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
