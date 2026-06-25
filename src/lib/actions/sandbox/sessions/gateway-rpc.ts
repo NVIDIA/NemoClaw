@@ -22,6 +22,16 @@ export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPay
 const RETRYABLE_PAIRING_FAILURE =
   /scope upgrade pending|pairing required|device is not approved|GatewayClientRequestError/i;
 
+const LOCAL_GATEWAY_ENV_UNSET_ARGS = [
+  "env",
+  "-u",
+  "OPENCLAW_GATEWAY_URL",
+  "-u",
+  "OPENCLAW_GATEWAY_PORT",
+  "-u",
+  "OPENCLAW_GATEWAY_TOKEN",
+] as const;
+
 function captureGatewayCall(opts: GatewayCallOptions) {
   const params = JSON.stringify(opts.params);
   return captureOpenshell(
@@ -31,6 +41,7 @@ function captureGatewayCall(opts: GatewayCallOptions) {
       "--name",
       opts.sandboxName,
       "--",
+      ...LOCAL_GATEWAY_ENV_UNSET_ARGS,
       "openclaw",
       "gateway",
       "call",
@@ -47,9 +58,9 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
   opts: GatewayCallOptions,
 ): GatewayCallResult<T> {
   // Drain allowlisted CLI/webchat pairing or scope-upgrade requests before
-  // host-side gateway RPCs. This mirrors the connect/doctor recovery pass and
-  // keeps sessions reset/delete usable when OpenClaw 2026.5.x asks for a late
-  // operator.write upgrade on the sandbox-private gateway URL.
+  // host-side gateway RPCs. The RPC itself strips the sandbox-private gateway
+  // env so sessions reset/delete use OpenClaw's local gateway discovery instead
+  // of registering this admin call as another sandbox-origin device.
   runSandboxAutoPairApprovalPass(opts.sandboxName);
 
   let result = captureGatewayCall(opts);
