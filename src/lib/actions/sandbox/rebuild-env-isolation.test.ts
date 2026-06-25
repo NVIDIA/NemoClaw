@@ -34,6 +34,23 @@ describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
   });
 });
 
+describe("AMBIENT_RECREATE_ENV_VARS contract (#5735 PRA-4)", () => {
+  it("pins the exact onboard-selection env set the recreate must isolate", () => {
+    // Mirrors the ambient selection env vars `onboard --resume` reads at its
+    // source boundary. Adding a new onboard-selection env var must be a conscious
+    // change here too, or rebuild recreates could be re-contaminated by an
+    // unrelated onboard. Keep in sync with the documented source reads in
+    // rebuild-env-isolation.ts.
+    expect([...AMBIENT_RECREATE_ENV_VARS]).toEqual([
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+  });
+});
+
 describe("assessAmbientRecreateEnv", () => {
   it("reports no contamination when no ambient onboard env is set", () => {
     const result = assessAmbientRecreateEnv("openclaw", {});

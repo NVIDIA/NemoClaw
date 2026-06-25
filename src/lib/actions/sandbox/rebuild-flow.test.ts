@@ -553,6 +553,62 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("recreates a matching-session custom-endpoint sandbox from session, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+    // Matching session (sandboxName === target) with a custom endpoint recorded
+    // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
+    // be absent during recreate (so onboard --resume uses the session) and the
+    // session's own recorded endpoint must be preserved (not overwritten).
+    const restoreEnv = snapshotEnv([
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_MODEL",
+      "COMPATIBLE_API_KEY",
+    ]);
+    process.env.NEMOCLAW_ENDPOINT_URL = "https://attacker.example.test/v1";
+    process.env.NEMOCLAW_PROVIDER = "build";
+    process.env.NEMOCLAW_MODEL = "attacker-model";
+    process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
+
+    let envSeenInsideOnboard: Record<string, string | undefined> | null = null;
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        sandboxEntry: { provider: "compatible-endpoint", model: "session-model" },
+        onboard: () => {
+          envSeenInsideOnboard = {
+            endpoint: process.env.NEMOCLAW_ENDPOINT_URL,
+            provider: process.env.NEMOCLAW_PROVIDER,
+            model: process.env.NEMOCLAW_MODEL,
+          };
+        },
+      });
+      // The custom endpoint lives only in this sandbox's own (matching) session.
+      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1";
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      // Ambient selection env was isolated during the recreate.
+      expect(envSeenInsideOnboard).toEqual({
+        endpoint: undefined,
+        provider: undefined,
+        model: undefined,
+      });
+      // The matching session's own recorded endpoint is preserved (not pinned/overwritten).
+      expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
+      // Provider/model come from the registry entry, not the ambient values.
+      expect(harness.session.provider).toBe("compatible-endpoint");
+      expect(harness.session.model).toBe("session-model");
+      // Caller env restored afterward.
+      expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe("https://attacker.example.test/v1");
+      expect(process.env.NEMOCLAW_PROVIDER).toBe("build");
+      expect(process.env.NEMOCLAW_MODEL).toBe("attacker-model");
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("aborts before backup/delete when a custom-endpoint target has no matching session (#5735)", async () => {
     // Installer flow: the loaded onboard session belongs to a different
     // (just-created) sandbox, and the target uses a custom OpenAI-compatible

@@ -9,6 +9,21 @@
 // vars that onboard's resume path reads to pick the agent, provider, model,
 // endpoint, and credential — isolating them during the recreate forces the
 // pinned session + gateway-registered provider to win.
+//
+// SOURCE-OF-TRUTH NOTE (#5735, PRA-4): the real source boundary is
+// `onboard --resume`, which still reads these from the global `process.env`:
+//   - NEMOCLAW_AGENT        → src/lib/agent/defs.ts resolveAgentName()
+//   - NEMOCLAW_PROVIDER     → src/lib/onboard/providers.ts getNonInteractiveProvider()
+//   - NEMOCLAW_PROVIDER_KEY → src/lib/onboard/provider-key-bridge.ts / providers.ts
+//   - NEMOCLAW_ENDPOINT_URL → src/lib/onboard.ts (remote endpoint override)
+//   - NEMOCLAW_MODEL        → src/lib/onboard.ts (model override)
+// This list MUST stay in sync with those reads; a contract test in
+// rebuild-env-isolation.test.ts pins the exact set so adding a new
+// onboard-selection env var forces a conscious update here.
+// REMOVAL CONDITION: delete this isolation once `onboard --resume` accepts an
+// explicit registry-derived recreate config (or a constrained env map) and
+// stops consulting ambient selection env for rebuild recreates — then the
+// source boundary enforces the invariant and this wrapper is redundant.
 export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_AGENT",
   "NEMOCLAW_PROVIDER",
