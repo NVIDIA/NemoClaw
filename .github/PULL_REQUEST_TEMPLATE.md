@@ -23,8 +23,8 @@
 - [ ] Docs updated for user-facing behavior changes
 - [ ] Docs not applicable — justification:
 - [ ] Sensitive paths changed (security, policy, credentials, preflight, onboarding, inference, runner, sandbox, or messaging)
-- [ ] Sensitive-path review or waiver recorded — reviewer/justification:
-- [ ] Non-success, skipped, or missing CI check accepted — check name and waiver/follow-up issue:
+- [ ] Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:
+- [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
 
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
