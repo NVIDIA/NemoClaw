@@ -593,10 +593,8 @@ describe("E2E reusable workflow contract", () => {
       (step) => step.name === "Run Kimi compatibility live Vitest test",
     );
 
-    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe(
-      `\${{ (${TRUSTED_REF_GUARD}) && 'public-nvidia' || 'mock' }}`,
-    );
-    expect(runStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe("public-nvidia");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
