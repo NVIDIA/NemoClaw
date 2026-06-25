@@ -119,11 +119,15 @@ describe("wipeSandboxState (#5449)", () => {
       // Path escapes are NOT in the script.
       expect(script).not.toContain("../etc");
       expect(script).not.toContain("/etc/passwd");
-      // Warns about each rejected path.
+      // Warns about each rejected path. The defense-in-depth validator
+      // rejects `..` segments and absolute paths up front (before resolve),
+      // so the warning quotes the manifest contract ("must be relative and
+      // contain no '..' segments"), not the post-resolve "resolves outside"
+      // boundary check.
       const warningCalls = warn.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(warningCalls).toContain("../etc");
       expect(warningCalls).toContain("/etc/passwd");
-      expect(warningCalls).toContain("resolves outside");
+      expect(warningCalls).toMatch(/must be relative|resolves outside/);
     } finally {
       warn.mockRestore();
     }
