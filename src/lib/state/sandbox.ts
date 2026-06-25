@@ -1393,6 +1393,59 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   };
 }
 
+export interface UserManagedFilesProbe {
+  declared: string[];
+  existing: string[];
+}
+
+export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProbe {
+  const sb = registry.getSandbox(sandboxName);
+  const agentName = sb?.agent || "openclaw";
+  const agent = loadAgent(agentName);
+  const declared = Array.isArray(agent.userManagedFiles) ? [...agent.userManagedFiles] : [];
+  if (declared.length === 0) return { declared, existing: [] };
+
+  const dir = agent.configPaths.dir;
+  _log(
+    `probeUserManagedFiles: sandbox=${sandboxName}, agent=${agentName}, declared=[${declared.join(",")}]`,
+  );
+
+  const sshConfig = getSshConfig(sandboxName);
+  if (!sshConfig) {
+    _log("probeUserManagedFiles: no SSH config — skipping probe");
+    return { declared, existing: [] };
+  }
+
+  const tempSshConfig = createTempSshConfig(sshConfig, "nemoclaw-umf-");
+  const configFile = tempSshConfig.file;
+  try {
+    const probeCmd =
+      declared
+        .map(
+          (relPath) =>
+            `[ -f ${shellQuote(`${dir}/${relPath}`)} ] && printf '%s\\n' ${shellQuote(relPath)}`,
+        )
+        .join("; ") + " 2>/dev/null";
+    const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), probeCmd], {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30000,
+    });
+    const stdout = (result.stdout || "").trim();
+    if (result.status !== 0 && stdout.length === 0) {
+      _log(
+        `probeUserManagedFiles: SSH probe failed: exit=${result.status}, stderr=${(result.stderr || "").trim().substring(0, 200)}`,
+      );
+      return { declared, existing: [] };
+    }
+    const existing = stdout.split("\n").filter((line) => line.length > 0);
+    _log(`probeUserManagedFiles: ${existing.length}/${declared.length} present in sandbox`);
+    return { declared, existing };
+  } finally {
+    tempSshConfig.cleanup();
+  }
+}
+
 // ── Restore ────────────────────────────────────────────────────────
 
 /**

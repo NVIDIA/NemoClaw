@@ -220,5 +220,32 @@ export function backupSandboxStateForRebuild(
     );
   }
   console.log(`    Backup: ${backupManifest.backupPath}`);
+  warnUnpreservedUserManagedFiles(sandboxName, log);
   return backupManifest;
+}
+
+function warnUnpreservedUserManagedFiles(
+  sandboxName: string,
+  log: (msg: string) => void,
+): void {
+  let probe: sandboxState.UserManagedFilesProbe;
+  try {
+    probe = sandboxState.probeUserManagedFiles(sandboxName);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`User-managed file probe errored — skipping warning: ${message}`);
+    return;
+  }
+  if (probe.existing.length === 0) {
+    if (probe.declared.length > 0) {
+      log(
+        `User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`,
+      );
+    }
+    return;
+  }
+  console.warn(
+    `  ${YW}⚠${R} User-managed files in sandbox not preserved by rebuild: ${probe.existing.join(", ")}`,
+  );
+  console.warn("    Re-add them after rebuild, or manage them from the host.");
 }

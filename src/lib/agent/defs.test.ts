@@ -60,6 +60,7 @@ describe("agent definitions", () => {
     // #5027: openclaw.json must be declared as a durable state file so
     // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
     expect(openclaw.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
+    expect(openclaw.userManagedFiles).toEqual([]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -96,6 +97,7 @@ describe("agent definitions", () => {
       "whatsapp",
       "teams",
     ]);
+    expect(hermes.userManagedFiles).toEqual([]);
   });
 
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
@@ -130,6 +132,7 @@ describe("agent definitions", () => {
       { path: "hooks.json", strategy: "copy" },
     ]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
+    expect(deepAgentsCode.userManagedFiles).toEqual([".env", ".mcp.json"]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {

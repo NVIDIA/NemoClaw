@@ -82,6 +82,7 @@ export interface AgentDefinition {
   inference?: AgentInference;
   state_dirs?: string[];
   state_files?: AgentStateFile[];
+  user_managed_files?: string[];
   messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
   agentDir: string;
@@ -95,6 +96,7 @@ export interface AgentDefinition {
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
   readonly stateFiles: AgentStateFile[];
+  readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
@@ -384,6 +386,7 @@ export function loadAgent(name: string): AgentDefinition {
   const inference = readInference(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
+  const userManagedFiles = readStringArray(raw, "user_managed_files");
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
@@ -407,6 +410,7 @@ export function loadAgent(name: string): AgentDefinition {
     inference,
     state_dirs: stateDirs,
     state_files: stateFiles,
+    user_managed_files: userManagedFiles,
     messaging_platforms: messagingPlatforms,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -463,6 +467,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateFiles(): AgentStateFile[] {
       return stateFiles ?? [];
+    },
+
+    get userManagedFiles(): string[] {
+      return userManagedFiles ?? [];
     },
 
     get versionCommand(): string {

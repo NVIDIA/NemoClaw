@@ -34,6 +34,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "hermes --version",
     expectedVersion: "2026.4.30",
     hasDevicePairing: false,
