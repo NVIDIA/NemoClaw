@@ -13,6 +13,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -235,10 +236,8 @@ runLaunchableSmokeTest(
       workflowRetirement: "deferred to #5098 Phase 11",
     });
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
 
@@ -336,7 +335,7 @@ runLaunchableSmokeTest(
         cwd: cloneDir,
         env: runEnv({
           PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
+          ...hosted.env,
           NEMOCLAW_MODEL: MODEL,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
