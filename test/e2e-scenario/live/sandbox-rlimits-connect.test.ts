@@ -51,7 +51,7 @@ function connectAcceptanceScript(cliPath: string, sandboxName: string): string {
 runConnectRlimitTest(
   "connect shell enforces sandbox rlimits through rebuilt OpenClaw runtime (#2173)",
   { timeout: LIVE_TIMEOUT_MS },
-  async ({ artifacts, cleanup, host, secrets, skip }) => {
+  async ({ artifacts, cleanup, host, secrets }) => {
     const apiKey =
       secrets.optional("NVIDIA_API_KEY") ?? secrets.required("NVIDIA_INFERENCE_API_KEY");
     const redactionValues = secrets.redactionValues([apiKey]);
@@ -77,10 +77,7 @@ runConnectRlimitTest(
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
-    if (docker.exitCode !== 0) {
-      if (process.env.GITHUB_ACTIONS === "true") throw new Error(resultText(docker));
-      skip(`Docker is required for #2173 connect rlimit validation: ${resultText(docker)}`);
-    }
+    expect(docker.exitCode, resultText(docker)).toBe(0);
 
     cleanup.add("remove rlimit acceptance sandbox", () =>
       host.bestEffortCleanupSandbox(SANDBOX_NAME, {
