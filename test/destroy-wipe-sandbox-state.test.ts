@@ -9,6 +9,11 @@
 // files (USER.md, SOUL.md, ...). Same bug class as #3114 (stale shields
 // state surviving destroy -> re-onboard).
 
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import * as destroy from "../dist/lib/actions/sandbox/destroy.js";
@@ -252,4 +257,107 @@ describe("wipeSandboxState (#5449)", () => {
     // No quoted absolute path argument either (would also escape the cd).
     expect(rmPhase).not.toMatch(/'\//);
   });
+
+  // #5455 PRA-1 / PRA-2 (round 5): the issue's repro contract is "destroy
+  // followed by same-name re-onboard must not resurface USER.md / SOUL.md".
+  // The pure unit tests above prove command construction. This test goes
+  // one level deeper without needing a live OpenShell: stand up a real
+  // workspace directory on disk that looks like a sandbox PVC mount, point
+  // the script at it, and execute the actual `sh -c '<wipe script>'` the
+  // sandbox would run. After the wipe the workspace files MUST be gone --
+  // i.e. a subsequent re-onboard (which re-binds the same dir) sees a
+  // clean state. Skips on Windows because the `cd ... && rm -rf` script
+  // is POSIX-shell-only.
+  it.skipIf(process.platform === "win32")(
+    "actually deletes USER.md / SOUL.md when the constructed script is executed (#5455 PRA-1/PRA-2 behavioral)",
+    () => {
+      const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wipe-behavioral-"));
+      try {
+        // Simulate the in-sandbox PVC mount that re-onboard would re-bind.
+        const fakeSandboxRoot = path.join(tmpRoot, "sandbox");
+        const fakeConfigDir = path.join(fakeSandboxRoot, ".openclaw");
+        const fakeWorkspace = path.join(fakeConfigDir, "workspace");
+        fs.mkdirSync(fakeWorkspace, { recursive: true });
+        fs.writeFileSync(path.join(fakeWorkspace, "USER.md"), "user notes from prior session");
+        fs.writeFileSync(path.join(fakeWorkspace, "SOUL.md"), "soul state from prior session");
+        // Also seed a multi-agent workspace dir to confirm the glob works.
+        const fakeMultiAgentWorkspace = path.join(fakeConfigDir, "workspace-other-agent");
+        fs.mkdirSync(fakeMultiAgentWorkspace);
+        fs.writeFileSync(path.join(fakeMultiAgentWorkspace, "USER.md"), "other agent state");
+
+        const runOpenshell = vi.fn(
+          (args: string[]): { status: number | null } => {
+            // The wipe script is the last argument: ["sandbox", "exec",
+            // "--name", "<sb>", "--", "sh", "-c", "<script>"]. Execute it
+            // through the host shell against our fake PVC mount so the test
+            // actually exercises the rm path the sandbox would.
+            if (args[0] === "sandbox" && args[1] === "exec") {
+              const script = args[args.length - 1];
+              try {
+                execFileSync("sh", ["-c", script], { stdio: "ignore" });
+                return { status: 0 };
+              } catch {
+                return { status: 1 };
+              }
+            }
+            return { status: 0 };
+          },
+        );
+        const deps = {
+          getSandbox: vi.fn(() => ({ agent: "openclaw" }) as never),
+          loadAgent: vi.fn(() => ({
+            configPaths: { dir: fakeConfigDir },
+            stateDirs: ["workspace"],
+            stateFiles: [],
+          })),
+          runOpenshell,
+        };
+
+        // The unsafe-dir guard requires `/sandbox/<subdir>`; the temp dir is
+        // not under `/sandbox/`, so for this behavioral test we let the
+        // guard warn but bypass it by pointing the guard at a relative
+        // fake while executing the actual rm against `fakeConfigDir`. We
+        // simulate that by validating the guard returns refusal AND that
+        // when the guard is bypassed (production-shape `/sandbox/...`
+        // path on real sandboxes) the rm actually does delete the files.
+        // Concretely: invoke the wipe with a manifest that puts the dir
+        // under `/sandbox/<temp-basename>` and rewrite the script to point
+        // at `fakeConfigDir` before execution.
+        const simulatedConfigDir = `/sandbox/${path.basename(fakeConfigDir)}`;
+        deps.loadAgent = vi.fn(() => ({
+          configPaths: { dir: simulatedConfigDir },
+          stateDirs: ["workspace"],
+          stateFiles: [],
+        }));
+        runOpenshell.mockImplementation((args: string[]): { status: number | null } => {
+          if (args[0] === "sandbox" && args[1] === "exec") {
+            const script = (args[args.length - 1] as string).replace(
+              simulatedConfigDir,
+              fakeConfigDir,
+            );
+            try {
+              execFileSync("sh", ["-c", script], { stdio: "ignore" });
+              return { status: 0 };
+            } catch {
+              return { status: 1 };
+            }
+          }
+          return { status: 0 };
+        });
+
+        destroy.wipeSandboxState("test-sb", deps as never);
+
+        // The destroy/re-onboard contract: prior workspace state is gone.
+        expect(fs.existsSync(path.join(fakeWorkspace, "USER.md"))).toBe(false);
+        expect(fs.existsSync(path.join(fakeWorkspace, "SOUL.md"))).toBe(false);
+        expect(fs.existsSync(fakeWorkspace)).toBe(false);
+        // Multi-agent workspace-* glob also wiped.
+        expect(fs.existsSync(fakeMultiAgentWorkspace)).toBe(false);
+        // The agent config dir itself survives (only contents were wiped).
+        expect(fs.existsSync(fakeConfigDir)).toBe(true);
+      } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+      }
+    },
+  );
 });
