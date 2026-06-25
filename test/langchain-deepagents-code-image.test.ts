@@ -14,16 +14,28 @@ function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
 
-function makeWrapperFixture(tempDir: string): { wrapperPath: string; ranMarker: string } {
+function makeWrapperFixture(
+  tempDir: string,
+  envFileOverride?: string,
+): { wrapperPath: string; ranMarker: string; envFile: string } {
   const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
   const ranMarker = path.join(tempDir, "dcode-ran");
-  const fixture = readAgentFile("dcode-wrapper.sh").replace(
-    "exec python3 -m deepagents_code",
-    `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : python3 -m deepagents_code`,
-  );
+  const envFile = envFileOverride ?? path.join(tempDir, ".env");
+  const fixture = readAgentFile("dcode-wrapper.sh")
+    .replace(
+      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
+      `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
+    )
+    .replace(
+      "exec python3 -m deepagents_code",
+      `touch "${ranMarker}"; echo dcode-stub-ran; exit 0; : python3 -m deepagents_code`,
+    );
+  if (!fs.existsSync(envFile)) {
+    fs.writeFileSync(envFile, "", "utf8");
+  }
   fs.writeFileSync(wrapperPath, fixture, "utf8");
   fs.chmodSync(wrapperPath, 0o755);
-  return { wrapperPath, ranMarker };
+  return { wrapperPath, ranMarker, envFile };
 }
 
 function runWrapper(
@@ -323,14 +335,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("rejects runtime-injected secret-shaped env vars before dcode runs", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const emptyEnvFile = path.join(tempDir, "empty.env");
-    fs.writeFileSync(emptyEnvFile, "", "utf8");
 
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: emptyEnvFile,
-      OPENAI_API_KEY: fakeSecret,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { OPENAI_API_KEY: fakeSecret });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("OPENAI_API_KEY");
@@ -342,14 +349,11 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("rejects secret-shaped values written to the deepagents env file", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const envFile = path.join(tempDir, ".env");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
     fs.writeFileSync(envFile, `OPENAI_API_KEY=${fakeSecret}\n`, "utf8");
 
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: envFile,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("OPENAI_API_KEY");
@@ -363,11 +367,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const emptyEnvFile = path.join(tempDir, "empty.env");
-    fs.writeFileSync(emptyEnvFile, "", "utf8");
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: emptyEnvFile,
       SLACK_BOT_TOKEN: "xoxb-1234567890-abcdefghij",
       SLACK_APP_TOKEN: "xapp-1-A1B2C3-1234567890-abcdefghij",
       TELEGRAM_BOT_TOKEN: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
@@ -382,14 +383,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("rejects unmanaged runtime env vars holding Telegram-shaped bot tokens", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const emptyEnvFile = path.join(tempDir, "empty.env");
-    fs.writeFileSync(emptyEnvFile, "", "utf8");
 
     const fakeTelegram = "987654321:AbcDefGhiJklMnoPqrStuVwxYz012345678";
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: emptyEnvFile,
-      STRAY_TG_TOKEN: fakeTelegram,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { STRAY_TG_TOKEN: fakeTelegram });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("STRAY_TG_TOKEN");
@@ -401,14 +397,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
   it("rejects unmanaged runtime env vars holding Discord-shaped bot tokens", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const emptyEnvFile = path.join(tempDir, "empty.env");
-    fs.writeFileSync(emptyEnvFile, "", "utf8");
 
     const fakeDiscord = "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: emptyEnvFile,
-      STRAY_DISCORD: fakeDiscord,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { STRAY_DISCORD: fakeDiscord });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("STRAY_DISCORD");
@@ -417,14 +408,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("rejects Telegram and Discord token shapes written to the deepagents env file", () => {
+  it("rejects Telegram-shaped tokens written to the deepagents env file", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const envFile = path.join(tempDir, ".env");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     const fakeTelegram = "111222333:AbcDefGhiJklMnoPqrStuVwxYz012345678";
     fs.writeFileSync(envFile, `OTHER_BOT=${fakeTelegram}\n`, "utf8");
 
-    const result = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("OTHER_BOT");
     expect(result.stderr).toContain(envFile);
@@ -432,14 +422,27 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("rejects Discord-shaped tokens written to the deepagents env file", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const fakeDiscord = "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    fs.writeFileSync(envFile, `STRAY_DISCORD_FILE=${fakeDiscord}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("STRAY_DISCORD_FILE");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(fakeDiscord);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
   it("does not bypass classification when env-file values have surrounding whitespace", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const envFile = path.join(tempDir, ".env");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
     fs.writeFileSync(envFile, `  OPENAI_API_KEY   =   ${fakeSecret}   \n`, "utf8");
 
-    const result = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("OPENAI_API_KEY");
     expect(result.stderr).not.toContain(fakeSecret);
@@ -448,14 +451,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("recovers after the secret-bearing line is removed from the same env file", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const envFile = path.join(tempDir, ".env");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
     const secretLine = `OPENAI_API_KEY=${fakeSecret}`;
     const cleanLine = "DISCORD_ALLOWED_USERS=alice,bob";
     fs.writeFileSync(envFile, [secretLine, cleanLine].join("\n") + "\n", "utf8");
 
-    const rejected = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    const rejected = runWrapper(wrapperPath, ["-n", "hi"], {});
     expect(rejected.status).not.toBe(0);
     expect(fs.existsSync(ranMarker)).toBe(false);
 
@@ -466,7 +468,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       .join("\n");
     fs.writeFileSync(envFile, remaining, "utf8");
 
-    const recovered = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    const recovered = runWrapper(wrapperPath, ["-n", "hi"], {});
     expect(recovered.status).toBe(0);
     expect(recovered.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
@@ -474,39 +476,84 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
   it("prevents the dcode entry path from running when a runtime secret is rejected", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const emptyEnvFile = path.join(tempDir, "empty.env");
-    fs.writeFileSync(emptyEnvFile, "", "utf8");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
 
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: emptyEnvFile,
-      OPENAI_API_KEY: fakeSecret,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { OPENAI_API_KEY: fakeSecret });
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).not.toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(false);
-    expect(fs.readFileSync(emptyEnvFile, "utf8")).toBe("");
+    expect(fs.readFileSync(envFile, "utf8")).toBe("");
+  });
+
+  it("rejects a caller-supplied DEEPAGENTS_ENV_FILE override and scans only the hardcoded path", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    fs.writeFileSync(envFile, `OPENAI_API_KEY=${fakeSecret}\n`, "utf8");
+    const decoy = path.join(tempDir, "decoy.env");
+    fs.writeFileSync(decoy, "", "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: decoy });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(decoy);
+    expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
   it("passes through when no secret-shaped value is present in env or file", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
-    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
-    const envFile = path.join(tempDir, ".env");
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     fs.writeFileSync(
       envFile,
       ["# comment", "DISCORD_ALLOWED_USERS=alice,bob", "OPENAI_API_KEY=placeholder"].join("\n"),
       "utf8",
     );
 
-    const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      DEEPAGENTS_ENV_FILE: envFile,
-    });
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("rejects every canonical token shape declared by the secret-pattern contract", () => {
+    const cases: Array<{ name: string; sample: string }> = [
+      { name: "nvapi", sample: "nvapi-abcdefghijklmnop" },
+      { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" },
+      { name: "ghp", sample: "ghp_abcdefghijklmnopqr" },
+      { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
+      { name: "sk_proj", sample: "sk-proj-abcdefghij" },
+      { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
+      { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
+      { name: "xoxb", sample: "xoxb-1234567890" },
+      { name: "xoxp", sample: "xoxp-1234567890" },
+      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
+      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
+      { name: "hf", sample: "hf_abcdefghijklmnopq" },
+      { name: "glpat", sample: "glpat-abcdefghijklmn" },
+      { name: "gsk", sample: "gsk_abcdefghijklmnop" },
+      { name: "pypi", sample: "pypi-abcdefghijklmnop" },
+      { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      {
+        name: "discord",
+        sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      },
+    ];
+    for (const { name, sample } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-parity-${name}-`));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const varName = `NEMOCLAW_PARITY_${name.toUpperCase()}`;
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [varName]: sample });
+      expect(result.status, `${name} via runtime env not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(varName);
+      expect(result.stderr).not.toContain(sample);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
   });
 
   it("patches direct module execution back to NemoClaw managed posture", () => {

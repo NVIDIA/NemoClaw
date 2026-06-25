@@ -13,7 +13,7 @@ export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
-DEEPAGENTS_ENV_FILE="${DEEPAGENTS_ENV_FILE:-/sandbox/.deepagents/.env}"
+readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 
 run_dcode() {
   exec python3 -m deepagents_code "$@"
