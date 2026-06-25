@@ -242,6 +242,60 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
+  it("routes a hermes sandbox to `hermes sessions export` instead of `openclaw sessions list`", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-hermes-"));
+    try {
+      writeSandboxRegistry(home, "alpha", { agent: "hermes" });
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "[]");
+
+      const out = path.join(home, "hermes-sessions.jsonl");
+      const result = runWithEnv(`alpha sessions export --out ${out} --json 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(0);
+
+      const calls = fs.readFileSync(openshellLog, "utf8").split("\n");
+      const listLine = calls.find((line) => line.includes("openclaw sessions list"));
+      const hermesExportLine = calls.find(
+        (line) => line.includes("-- sh -c") && line.includes("hermes sessions export"),
+      );
+      const downloadLine = calls.find((line) => line.startsWith("sandbox download"));
+      const cleanupLine = calls.find((line) => line.includes("-- rm -f"));
+      expect(listLine).toBeUndefined();
+      expect(hermesExportLine).toBeDefined();
+      expect(hermesExportLine).toMatch(
+        /umask 077 && mkdir -p \/sandbox\/\.nemoclaw-staging && chmod 700 \/sandbox\/\.nemoclaw-staging && hermes sessions export \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl && chmod 600/,
+      );
+      expect(downloadLine).toContain("alpha");
+      expect(downloadLine).toMatch(
+        /sandbox download alpha \/sandbox\/\.nemoclaw-staging\/sessions-export-hermes-[0-9a-f]+\.jsonl/,
+      );
+      const escapedHome = home.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      expect(downloadLine).toMatch(
+        new RegExp(`${escapedHome}/\\.sessions-export-hermes-[^/]+/hermes-sessions\\.jsonl`),
+      );
+      expect(cleanupLine).toBeDefined();
+      expect(cleanupLine).toContain("/sandbox/.nemoclaw-staging/sessions-export-hermes-");
+
+      expect(fs.existsSync(out)).toBe(true);
+      expect(fs.readFileSync(out, "utf8")).toBe("session-data");
+
+      const manifest = JSON.parse(result.out.trim().split("\n").at(-1) as string);
+      expect(manifest).toMatchObject({
+        sandboxName: "alpha",
+        agent: "hermes",
+        format: "jsonl",
+        selectedKeys: "all",
+        hostDest: out,
+        resolvedFiles: ["hermes-sessions.jsonl"],
+      });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("rejects positional keys that start with '-' instead of silently exporting all sessions", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-stray-"));
     try {

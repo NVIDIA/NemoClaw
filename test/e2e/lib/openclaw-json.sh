@@ -7,7 +7,15 @@
 # payloads[]; keep E2E assertions focused on visible reply/provenance text
 # instead of one exact envelope shape. This also tolerates wrapper output before
 # the JSON blob while preserving failed-tool and untrusted-child provenance so
-# plausible assistant text cannot hide incomplete or unverified work.
+# plausible assistant text cannot hide incomplete or unverified work. Metadata
+# fields such as IDs, durations, session names, and model/provider details
+# should not satisfy reply assertions.
+e2e_text_contains_integer_42() {
+  local compact
+  compact="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
+  grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
+}
+
 parse_openclaw_agent_text() {
   local helper_dir
   helper_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

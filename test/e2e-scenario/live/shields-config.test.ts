@@ -24,6 +24,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -245,10 +246,8 @@ RUN_SHIELDS_TEST(
       skip("Docker is required for shields-config live E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await cleanupSandbox(host, sandbox, "pre-cleanup");
     cleanup.add(`destroy shields-config sandbox ${SANDBOX_NAME}`, async () => {
@@ -261,7 +260,7 @@ RUN_SHIELDS_TEST(
       {
         artifactName: "phase-1-install-shields-config",
         env: commandEnv({
-          NVIDIA_INFERENCE_API_KEY: apiKey,
+          ...hosted.env,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),
         redactionValues: [apiKey],

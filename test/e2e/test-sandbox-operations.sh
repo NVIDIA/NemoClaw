@@ -387,7 +387,7 @@ test_sbx_02_connect_chat() {
   local reply
   reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
-  if [[ $rc -eq 0 && -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
+  if [[ $rc -eq 0 && -n "$reply" ]] && e2e_text_contains_integer_42 "$reply"; then
     pass "TC-SBX-02: Agent computed 6×7=42 through openclaw → inference.local"
   else
     fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply (rc=$rc); reply='${reply:0:200}'; raw output='${raw:0:200}'"

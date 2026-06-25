@@ -34,7 +34,11 @@ export default class SandboxAgentCommand extends NemoClawCommand {
       printAgentPassthroughHelp();
       return;
     }
-    if (hasAgentPassthroughHelpToken(extraArgs)) {
+    // A bare `<name> agent` with no further args cannot succeed in-sandbox
+    // (`openclaw agent` requires `-m`), so treat it like a help request and
+    // print the wrapper summary locally instead of paying sandbox-exec latency
+    // only to surface an upstream "Missing required option -m" error (#5658).
+    if (extraArgs.length === 0 || hasAgentPassthroughHelpToken(extraArgs)) {
       printAgentPassthroughHelp();
       return;
     }

@@ -25,7 +25,7 @@ describe("final onboard flow runtime boundary", () => {
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const compatibilityRecorder = vi.fn(
-      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
@@ -67,7 +67,7 @@ describe("final onboard flow runtime boundary", () => {
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const compatibilityRecorder = vi.fn(
-      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
@@ -113,7 +113,7 @@ describe("final onboard flow runtime boundary", () => {
       recordPostVerifyStarted: recorders.recordPostVerifyStarted,
     });
     const compatibilityRecorder = vi.fn(
-      harness.boundary.recordStateResultWithStepCompatibility.bind(harness.boundary),
+      harness.boundary.recordCompatibleStateResult.bind(harness.boundary),
     );
 
     await runFinalOnboardFlowSlice({
