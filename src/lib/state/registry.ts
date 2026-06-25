@@ -376,6 +376,11 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return { ...entry, messaging };
 }
 
+/**
+ * Prepare a sandbox entry for persistence: normalize messaging state and drop
+ * transient #5714 display-only markers (`recoveredFromGateway`, `livePhase`)
+ * that must never reach sandboxes.json.
+ */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
   // #5714: defensively drop transient, display-only recovery markers so they
   // can never reach sandboxes.json even if a caller force-passed one through

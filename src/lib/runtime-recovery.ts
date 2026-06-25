@@ -29,15 +29,18 @@ const LIVE_SANDBOX_DISPLAY_PHASES = new Set([
   "Unknown",
 ]);
 
+/** Strip ANSI color escape sequences from CLI output. */
 function stripAnsi(text: string | null | undefined): string {
   return String(text || "").replace(ANSI_RE, "");
 }
 
+/** Detect an OpenShell protobuf/wire schema-mismatch error in command output. */
 export function isOpenShellProtobufSchemaMismatch(output = ""): boolean {
   const clean = stripAnsi(output);
   return /invalid wire type/i.test(clean) || /proto(?:buf)?(?: decode| schema| wire)/i.test(clean);
 }
 
+/** Whether a `sandbox list` line is a header/empty/error row rather than a sandbox. */
 function isNonSandboxRow(line: string, firstCol: string): boolean {
   if (firstCol === "NAME") return true;
   if (line === "No sandboxes found" || line === "No sandboxes found.") return true;
@@ -46,6 +49,7 @@ function isNonSandboxRow(line: string, firstCol: string): boolean {
   return false;
 }
 
+/** Extract the phase token from a `sandbox list` row's columns (compact or trailing). */
 function parseSandboxListPhase(cols: string[]): string | null {
   const compactPhase = cols[1];
   if (cols.length <= 3 && SANDBOX_PHASES.has(compactPhase)) return compactPhase;
@@ -53,6 +57,7 @@ function parseSandboxListPhase(cols: string[]): string | null {
   return trailingPhase && SANDBOX_PHASES.has(trailingPhase) ? trailingPhase : null;
 }
 
+/** Parse the set of all live sandbox names from `openshell sandbox list` output. */
 export function parseLiveSandboxNames(listOutput = ""): Set<string> {
   const clean = stripAnsi(listOutput);
   const names = new Set<string>();
@@ -98,6 +103,7 @@ export function parseLiveSandboxEntries(listOutput = ""): LiveSandboxEntry[] {
   return entries;
 }
 
+/** Parse the set of sandbox names in a Ready/Running phase from `sandbox list` output. */
 export function parseReadySandboxNames(listOutput = ""): Set<string> {
   const clean = stripAnsi(listOutput);
   const names = new Set<string>();
