@@ -13,9 +13,82 @@ export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
 export OPENAI_BASE_URL="${OPENAI_BASE_URL:-https://inference.local/v1}"
 
+DEEPAGENTS_ENV_FILE="${DEEPAGENTS_ENV_FILE:-/sandbox/.deepagents/.env}"
+
 run_dcode() {
   exec python3 -m deepagents_code "$@"
 }
+
+is_managed_secret_name() {
+  case "$1" in
+    SLACK_BOT_TOKEN | SLACK_APP_TOKEN) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_secret_shaped_value() {
+  local value="$1"
+  local len=${#value}
+  case "$value" in
+    sk-proj-* | sk-ant-*)
+      [ "$len" -ge 18 ] && return 0
+      ;;
+    sk-* | nvapi-* | nvcf-* | ghp_* | github_pat_* | hf_* | glpat-* | gsk_* | pypi-*)
+      [ "$len" -ge 20 ] && return 0
+      ;;
+    xoxb-* | xoxp-* | xoxa-* | xoxs-* | xapp-*)
+      [ "$len" -ge 15 ] && return 0
+      ;;
+    AKIA* | ASIA*)
+      [ "$len" -ge 20 ] && return 0
+      ;;
+  esac
+  return 1
+}
+
+refuse_secret_env() {
+  local source="$1"
+  local name="$2"
+  printf 'dcode: refusing to start — %s contains a secret-shaped value in %s.\n' "$source" "$name" >&2
+  printf '  Remove it from the environment, or use `nemoclaw credentials` to register provider keys.\n' >&2
+  exit 2
+}
+
+assert_no_secret_runtime_env() {
+  local name value
+  for name in $(compgen -e); do
+    is_managed_secret_name "$name" && continue
+    value="${!name}"
+    if is_secret_shaped_value "$value"; then
+      refuse_secret_env "runtime environment variable" "$name"
+    fi
+  done
+}
+
+assert_no_secret_env_file() {
+  local env_file="$DEEPAGENTS_ENV_FILE"
+  [ -r "$env_file" ] || return 0
+  local line key value
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    key="${line%%=*}"
+    [ "$key" != "$line" ] || continue
+    value="${line#*=}"
+    case "$value" in
+      \"*\") value="${value#\"}"; value="${value%\"}" ;;
+      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+    is_managed_secret_name "$key" && continue
+    if is_secret_shaped_value "$value"; then
+      refuse_secret_env "$env_file" "$key"
+    fi
+  done <"$env_file"
+}
+
+assert_no_secret_runtime_env
+assert_no_secret_env_file
 
 case "${1:-}" in
   --version | -v | -V | --help | -h)
