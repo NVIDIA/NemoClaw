@@ -142,7 +142,7 @@ has_credential_name_context() {
 is_dynamic_dotenv_value() {
   local value="$1"
   case "$value" in
-    *\$[A-Za-z_]* | *\${* | *\$\(* | *\`*)
+    *\$[A-Za-z_]* | *\$\{* | *\$\(* | *\`*)
       return 0
       ;;
   esac
