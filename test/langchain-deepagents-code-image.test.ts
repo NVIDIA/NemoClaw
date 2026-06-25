@@ -286,6 +286,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(headlessCheck).toContain("inference.local");
     expect(headlessCheck).toContain("nvapi-");
     expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
+    expect(headlessCheck).toContain('cat /sandbox/.deepagents/config.toml 2>/dev/null" || true');
+    expect(headlessCheck).toContain(
+      'cat /sandbox/.deepagents/config.toml /sandbox/.deepagents/.env /sandbox/.deepagents/.mcp.json /tmp/nemoclaw-proxy-env.sh 2>/dev/null" || true',
+    );
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
