@@ -13,8 +13,8 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
-const FORK_STORM_NPROC_LIMIT = 128;
-const FORK_STORM_SAFETY_CAP = FORK_STORM_NPROC_LIMIT * 2;
+const FORK_STORM_NPROC_LIMIT = 32;
+const FORK_STORM_SAFETY_CAP = FORK_STORM_NPROC_LIMIT * 3;
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -92,6 +92,10 @@ function parseProbeOutput(stdout: string): ProbeValues {
   ) as ProbeValues;
 }
 
+function occurrenceCount(haystack: string, needle: string): number {
+  return haystack.split(needle).length - 1;
+}
+
 function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   const probe = [
     "set -euo pipefail",
@@ -136,15 +140,18 @@ function expectHookDeniesBoundedForkStorm(hookPath: string): void {
     "cleanup() {",
     "  set +e",
     '  for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done',
+    '  wait "${pids[@]:-}" 2>/dev/null || true',
     "}",
     "trap cleanup EXIT",
-    "for i in $(seq 1 5000); do",
-    "  sleep 60 &",
+    'i="1"',
+    'while [ "$i" -le 5000 ]; do',
+    "  sleep 2 &",
     '  fork_status="$?"',
     '  [ "$fork_status" -eq 0 ] || break',
     '  pids+=("$!")',
     '  spawned="$i"',
     `  [ "$i" -lt ${FORK_STORM_SAFETY_CAP} ] || break`,
+    '  i="$((i + 1))"',
     "done",
     'printf "spawned=%s\\n" "$spawned"',
     'printf "fork_status=%s\\n" "$fork_status"',
@@ -247,11 +254,21 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
+    const expectedProxyShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    const expectedRlimitShim = rlimitShim(rlimitLib);
 
     try {
       fs.mkdirSync(path.dirname(profileHook), { recursive: true });
       copyRlimitFixture(rlimitLib);
-      fs.writeFileSync(bashrc, "# stale base bashrc\n");
+      fs.writeFileSync(
+        bashrc,
+        [
+          "# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)",
+          "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh",
+          "# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)",
+          "[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits",
+        ].join("\n"),
+      );
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide shell hooks",
@@ -264,6 +281,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
 
       const result = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);
+      const bashrcBody = fs.readFileSync(bashrc, "utf-8");
+      expect(occurrenceCount(bashrcBody, expectedProxyShim)).toBe(1);
+      expect(occurrenceCount(bashrcBody, expectedRlimitShim)).toBe(1);
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
     } finally {
