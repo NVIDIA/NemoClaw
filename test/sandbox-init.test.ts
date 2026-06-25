@@ -19,7 +19,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SANDBOX_INIT = join(import.meta.dirname, "../scripts/lib/sandbox-init.sh");
-const SANDBOX_RLIMITS = join(import.meta.dirname, "../scripts/lib/sandbox-rlimits.sh");
 
 /** Cross-platform octal permission string (macOS uses -f, Linux uses -c). */
 function getOctalPerms(filePath: string): string {
@@ -677,20 +676,29 @@ EOF
 
   describe("harden_resource_limits", () => {
     it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
-      const source = readFileSync(SANDBOX_RLIMITS, "utf-8");
-      const softNproc = source.indexOf('builtin ulimit "-S${_nemoclaw_limit_flag}"');
-      const hardNproc = source.indexOf('builtin ulimit "-H${_nemoclaw_limit_flag}"');
-      const verify = source.indexOf(
-        'builtin ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}"',
+      const nprocLimit = process.platform === "darwin" ? 4096 : 512;
+      const { stdout } = runWithLib(
+        [
+          `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
+          "ulimit() {",
+          '  case "$1:$#" in',
+          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
+          "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
+          "  esac",
+          "  return 0",
+          "}",
+          "harden_resource_limits --quiet",
+          "verify_resource_limits",
+          'printf "shadow=%s\\n" "$(type -t ulimit)"',
+          'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
+          'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
+        ].join("\n"),
       );
-
-      expect(softNproc).toBeGreaterThanOrEqual(0);
-      expect(hardNproc).toBeGreaterThan(softNproc);
-      expect(verify).toBeGreaterThan(hardNproc);
-      const plainUlimitCalls = source
-        .split("\n")
-        .filter((line) => /\bulimit "-/.test(line) && !/\bbuiltin ulimit\b/.test(line));
-      expect(plainUlimitCalls).toEqual([]);
+      expect(stdout).toContain("shadow=function");
+      expect(stdout).toContain(`nproc=${nprocLimit}`);
+      const nofile = Number(stdout.match(/nofile=(\d+)/)?.[1] ?? "NaN");
+      expect(nofile).toBeGreaterThan(0);
+      expect(nofile).toBeLessThanOrEqual(65536);
     });
 
     it("is best-effort: exits 0 and warns when ulimit fails", () => {
