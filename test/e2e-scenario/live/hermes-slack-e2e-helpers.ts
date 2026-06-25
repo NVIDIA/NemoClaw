@@ -40,11 +40,11 @@ function hermesSlackEnv(apiKey?: string): NodeJS.ProcessEnv {
     apiKey,
     extra: {
       ...(apiKey ? { COMPATIBLE_API_KEY: apiKey } : {}),
-      NEMOCLAW_COMPAT_MODEL: process.env.NEMOCLAW_COMPAT_MODEL ?? "nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: process.env.NEMOCLAW_COMPAT_MODEL ?? "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_ENDPOINT_URL:
         process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
-      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-ultra",
+      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_POLICY_TIER: process.env.NEMOCLAW_POLICY_TIER ?? "open",
       NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
       NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "custom",

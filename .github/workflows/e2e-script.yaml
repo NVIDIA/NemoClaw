@@ -229,8 +229,8 @@ jobs:
             printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
             printf 'NEMOCLAW_PROVIDER=custom\n'
             printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
-            printf 'NEMOCLAW_MODEL=nvidia/nemotron-3-ultra\n'
-            printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nemotron-3-ultra\n'
+            printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
+            printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
             printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
             printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
           } >> "$GITHUB_ENV"

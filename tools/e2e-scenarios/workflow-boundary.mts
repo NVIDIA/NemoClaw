@@ -1771,10 +1771,10 @@ function validateRebuildHermesVitestJob(
   if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
     errors.push(`${jobName} job must target hosted CI inference endpoint`);
   }
-  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nemotron-3-ultra") {
+  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
     errors.push(`${jobName} job must pin the CI-safe Hermes rebuild model`);
   }
-  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nemotron-3-ultra") {
+  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
     errors.push(`${jobName} job must pin the CI-safe compatible model`);
   }
   if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {

@@ -7,7 +7,7 @@
 # at inference-api.nvidia.com. Keep this helper in test/e2e so the
 # product-facing provider/default endpoint remain unchanged.
 
-NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT="nvidia/nemotron-3-ultra"
+NEMOCLAW_E2E_COMPATIBLE_INFERENCE_MODEL_DEFAULT="nvidia/nvidia/nemotron-3-ultra"
 NEMOCLAW_E2E_HOSTED_INFERENCE_PROVIDER_DEFAULT="compatible-endpoint"
 NEMOCLAW_E2E_NVIDIA_INFERENCE_MODEL_DEFAULT="nvidia/nemotron-3-super-120b-a12b"
 

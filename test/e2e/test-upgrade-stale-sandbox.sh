@@ -170,7 +170,7 @@ model = (
     sess.get('model')
     or os.environ.get('NEMOCLAW_MODEL')
     or os.environ.get('NEMOCLAW_COMPAT_MODEL')
-    or 'nvidia/nemotron-3-ultra'
+    or 'nvidia/nvidia/nemotron-3-ultra'
 )
 reg = {'sandboxes': {'${SANDBOX_NAME}': {
     'name': '${SANDBOX_NAME}',

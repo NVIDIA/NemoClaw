@@ -54,7 +54,9 @@ const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
 const HOSTED_ENDPOINT_URL =
   process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1";
 const HOSTED_MODEL =
-  process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? "nvidia/nemotron-3-ultra";
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  "nvidia/nvidia/nemotron-3-ultra";
 const OLD_BASE_TAG = `nemoclaw-hermes-old-base:${SANDBOX_NAME.toLowerCase().replace(/[^a-z0-9_.-]+/g, "-")}`;
 const CURRENT_BASE_TAG = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest";
 
