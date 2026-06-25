@@ -2719,7 +2719,22 @@ main() {
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."
   fi
 
+  finalize_install
+}
+
+# Print the completion summary, then propagate a fatal/non-zero result when the
+# post-onboard auto-upgrade of a pre-existing sandbox failed (#5735, PRA-5). The
+# new sandbox may have onboarded fine, but a failed auto-upgrade can have left an
+# *existing* sandbox destroyed or backup-only, so the install must not be
+# reported as success. print_done() has already shown the affected sandbox and
+# recovery guidance (and the "completed with warnings" banner); exiting non-zero
+# here is what keeps automation and operators from treating it as a clean
+# install. Extracted from main() so it is unit-testable.
+finalize_install() {
   print_done
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then

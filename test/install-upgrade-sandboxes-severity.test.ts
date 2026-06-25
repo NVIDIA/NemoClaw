@@ -42,6 +42,39 @@ function runPrintDone(upgradeFailed: boolean): string {
   return result.stdout;
 }
 
+// Exercise finalize_install() — print_done() plus the fatal-exit propagation —
+// so a failed post-onboard auto-upgrade surfaces a non-zero installer result,
+// not a warning-styled success (#5735 PRA-5/PRA-T1).
+function runFinalizeInstall(upgradeFailed: boolean): {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+} {
+  const snippet = `
+    set -e
+    source "${INSTALLER_PAYLOAD}" >/dev/null 2>&1 || true
+    info() { printf 'INFO:%s\\n' "$*"; }
+    warn() { printf 'WARN:%s\\n' "$*"; }
+    needs_shell_reload() { return 1; }
+    resolve_onboarded_agent() { printf 'openclaw'; }
+    warn_default_agent_fallback() { :; }
+    print_cli_path_refresh_actions() { :; }
+    _INSTALL_START=0
+    SECONDS=0
+    _CLI_DISPLAY="NemoClaw"
+    _CLI_BIN="nemoclaw"
+    ONBOARD_RAN=true
+    NEMOCLAW_READY_NOW=true
+    _UPGRADE_SANDBOXES_FAILED=${upgradeFailed ? "true" : "false"}
+    finalize_install
+  `;
+  const result = spawnSync("bash", ["-c", snippet], {
+    encoding: "utf-8",
+    env: { ...process.env, BASH_ENV: "", ENV: "" },
+  });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
 describe("install.sh print_done — auto-upgrade severity (#5735)", () => {
   it("prints a clean completion banner when no sandbox upgrade failed", () => {
     const out = runPrintDone(false);
@@ -59,5 +92,24 @@ describe("install.sh print_done — auto-upgrade severity (#5735)", () => {
     expect(out).toContain("Existing sandbox upgrade did not finish");
     expect(out).toContain("onboard --resume");
     expect(out).toContain("rebuild");
+  });
+});
+
+describe("install.sh finalize_install — fatal exit on failed auto-upgrade (#5735 PRA-5)", () => {
+  it("exits zero and prints the clean banner when no upgrade failed", () => {
+    const result = runFinalizeInstall(false);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("=== Installation complete ===");
+  });
+
+  it("exits non-zero while still printing the recovery guidance when an upgrade failed", () => {
+    const result = runFinalizeInstall(true);
+    // Fatal: automation/operators must not treat this as a successful install.
+    expect(result.status).not.toBe(0);
+    // Recovery guidance from print_done is still shown before the fatal exit.
+    expect(result.stdout).toContain("Installation completed with warnings");
+    expect(result.stdout).toContain("Existing sandbox upgrade did not finish");
+    // The fatal error line is surfaced (error() writes to stderr).
+    expect(result.stderr).toContain("Installation incomplete");
   });
 });

@@ -7,7 +7,32 @@ import {
   AMBIENT_RECREATE_ENV_VARS,
   assessAmbientRecreateEnv,
   isolateAmbientRecreateEnv,
+  sanitizeEnvValueForDisplay,
 } from "../../../../dist/lib/actions/sandbox/rebuild-env-isolation.js";
+
+describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
+  it("collapses a multi-line / ANSI value into a single safe line", () => {
+    // Untrusted NEMOCLAW_AGENT with a newline + CR + ANSI escape that tries to
+    // paint a fake "Installation complete" status line.
+    const malicious = "deepagents\n\u001b[2K\rInstallation complete \u001b[32mOK\u001b[0m";
+    const out = sanitizeEnvValueForDisplay(malicious);
+    expect(out).not.toContain("\n");
+    expect(out).not.toContain("\r");
+    expect(out).not.toContain("\u001b"); // ESC stripped — no ANSI sequence survives
+    expect(out).toContain("deepagents"); // visible text preserved on one line
+  });
+
+  it("strips control characters and trims/collapses whitespace", () => {
+    expect(sanitizeEnvValueForDisplay("a\tb\u0000c   d")).toBe("a b c d");
+    expect(sanitizeEnvValueForDisplay("  spaced  ")).toBe("spaced");
+  });
+
+  it("caps overly long values with an ellipsis", () => {
+    const out = sanitizeEnvValueForDisplay("x".repeat(200), 80);
+    expect(out.length).toBeLessThanOrEqual(81);
+    expect(out.endsWith("…")).toBe(true);
+  });
+});
 
 describe("assessAmbientRecreateEnv", () => {
   it("reports no contamination when no ambient onboard env is set", () => {

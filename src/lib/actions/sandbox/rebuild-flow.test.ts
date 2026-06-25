@@ -663,5 +663,15 @@ describe("rebuildSandbox flow", () => {
     });
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
+
+    // #5735 (PRA-T2): preconditions (credential/endpoint) passed, so the
+    // delete proceeded; when onboard() then fails for a residual runtime reason,
+    // the operator must get a clear fatal recovery path with the preserved
+    // backup — not a silent loss. Precondition-class failures are caught before
+    // delete by prepareRebuildResumeConfig (covered by the abort tests above).
+    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(errors).toContain("Recreate failed after sandbox was destroyed");
+    expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
+    expect(errors).toContain("onboard --resume");
   });
 });

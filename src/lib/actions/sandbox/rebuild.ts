@@ -77,7 +77,12 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
-import { assessAmbientRecreateEnv, isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
+import {
+  type AmbientRecreateEnvAssessment,
+  assessAmbientRecreateEnv,
+  isolateAmbientRecreateEnv,
+  sanitizeEnvValueForDisplay,
+} from "./rebuild-env-isolation";
 import {
   backupSandboxStateForRebuild,
   ensureRebuildAgentBaseImage,
@@ -192,6 +197,113 @@ function getRebuildEndpointFromRegistry(
   // inference, NIM, or any provider without a custom session-only URL) there is
   // no static URL to pin; the resume path derives it, so leave it unpinned.
   return { known: true, endpointUrl: remoteConfig?.endpointUrl || null };
+}
+
+/**
+ * The exact agent/provider/model/credential/endpoint a rebuild will re-apply to
+ * the onboard session so `onboard --resume` recreates the *recorded* sandbox
+ * (#5735). Resolved entirely from the registry entry + onboard session — never
+ * from ambient selection env.
+ */
+export interface RebuildResumeConfig {
+  readonly agent: string | null;
+  readonly provider: string | null;
+  readonly model: string | null;
+  readonly nimContainer: string | null;
+  readonly credentialEnv: string | null;
+  /** Overwrite the session endpoint with `endpointUrl`; false keeps a matching session's own custom URL. */
+  readonly pinEndpoint: boolean;
+  readonly endpointUrl: string | null;
+  readonly ambient: AmbientRecreateEnvAssessment;
+}
+
+/**
+ * Resolve and validate the recreate config BEFORE any destructive backup/delete
+ * (#5735 — PRA-6/PRA-9). This is the single pre-delete trust boundary for the
+ * recreate: it assesses ambient onboard-selection env, fails closed for a custom
+ * endpoint whose base URL is only in another sandbox's session, and derives the
+ * exact provider/model/credential/endpoint that the post-delete session rewrite
+ * + `onboard --resume` will apply. Returns null (after `bail`) on a failed
+ * precondition so the live sandbox is left intact.
+ *
+ * Why this satisfies the auto-upgrade atomicity requirement without a literal
+ * health-before-delete: OpenShell recreates with the SAME sandbox name, so the
+ * old and new sandbox cannot run side by side — a replacement cannot be brought
+ * up and verified while the original still exists. Instead the full set of
+ * recreate preconditions is validated before delete: credential availability
+ * (`preflightRebuildCredentials`), config resolution + custom-endpoint
+ * determinability (here), and the agent base image build
+ * (`ensureRebuildAgentBaseImage`). The only residual failure window is a
+ * transient runtime fault inside `onboard`, which is covered by the preserved
+ * state backup and the printed recovery steps.
+ */
+export function prepareRebuildResumeConfig(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  rebuildAgent: string | null,
+  log: (msg: string) => void,
+  bail: (msg: string, code?: number) => never,
+): RebuildResumeConfig | null {
+  const ambient = assessAmbientRecreateEnv(rebuildAgent);
+  if (ambient.presentVars.length > 0) {
+    log(
+      `Ambient onboard-selection env present (${ambient.presentVars.join(", ")}); will be isolated during recreate so '${sandboxName}' rebuilds from its registry config`,
+    );
+    if (ambient.agentMismatch) {
+      console.log(
+        `  ${D}Ignoring ambient NEMOCLAW_AGENT='${sanitizeEnvValueForDisplay(ambient.agentMismatch.envAgent)}' — ` +
+          `rebuilding '${sandboxName}' as its recorded agent '${ambient.agentMismatch.registryAgent}'.${R}`,
+      );
+    }
+  }
+
+  const session = onboardSession.loadSession();
+  const sessionMatchesSandbox = session?.sandboxName === sandboxName;
+  const rebuildEndpoint = getRebuildEndpointFromRegistry(sb.provider);
+
+  // When the loaded session belongs to a *different* sandbox (e.g. an
+  // installer's just-completed onboard before `upgrade-sandboxes --auto`), the
+  // target's inference endpoint can only be re-derived for providers with a
+  // canonical endpoint (NVIDIA Endpoints, Anthropic, etc.), local inference, or
+  // routed inference. For a custom OpenAI-compatible provider the base URL lives
+  // only in the target's own session — which we don't have — so recreating would
+  // either fail or silently reconfigure against the unrelated session's
+  // endpoint. Fail closed before any destructive work so the sandbox stays live.
+  if (
+    !sessionMatchesSandbox &&
+    sb.provider &&
+    !isLocalInferenceProvider(sb.provider) &&
+    sb.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
+    !rebuildEndpoint.known
+  ) {
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${sb.provider}'.`,
+    );
+    console.error(
+      `  The custom endpoint for '${sandboxName}' is recorded only in its own onboard session,`,
+    );
+    console.error(`  but the current session belongs to '${session?.sandboxName ?? "(none)"}'.`);
+    console.error(`  Rebuild '${sandboxName}' directly so its session is loaded:`);
+    console.error(`    ${CLI_NAME} ${sandboxName} rebuild`);
+    console.error("");
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail(
+      `Cannot determine recreate endpoint for provider '${sb.provider}' without a matching session`,
+    );
+    return null;
+  }
+
+  return {
+    agent: rebuildAgent,
+    provider: sb.provider ?? null,
+    model: sb.model ?? null,
+    nimContainer: sb.nimContainer ?? null,
+    credentialEnv: getRebuildCredentialEnvFromRegistry(sb.provider),
+    pinEndpoint: !sessionMatchesSandbox && rebuildEndpoint.known,
+    endpointUrl: rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : null,
+    ambient,
+  };
 }
 
 function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
@@ -680,61 +792,13 @@ export async function rebuildSandbox(
   // the sandbox still intact. See #2273.
   if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
 
-  // #5735: make the recreate config match registry reality *before* any
-  // destructive backup/delete. A rebuild always recreates the target from its
-  // recorded agent/provider/model, so surface (and, at recreate time, ignore)
-  // any ambient onboard-selection env that would otherwise steer the resume
-  // toward a different agent/provider — e.g. an installer's just-completed
-  // Deep Agents onboard env bleeding into `upgrade-sandboxes --auto`.
-  const ambientRecreateEnv = assessAmbientRecreateEnv(rebuildAgent);
-  if (ambientRecreateEnv.presentVars.length > 0) {
-    log(
-      `Ambient onboard-selection env present (${ambientRecreateEnv.presentVars.join(", ")}); will be isolated during recreate so '${sandboxName}' rebuilds from its registry config`,
-    );
-    if (ambientRecreateEnv.agentMismatch) {
-      console.log(
-        `  ${D}Ignoring ambient NEMOCLAW_AGENT='${ambientRecreateEnv.agentMismatch.envAgent}' — ` +
-          `rebuilding '${sandboxName}' as its recorded agent '${ambientRecreateEnv.agentMismatch.registryAgent}'.${R}`,
-      );
-    }
-  }
-
-  // #5735: when the loaded onboard session belongs to a *different* sandbox
-  // (e.g. an installer's just-completed onboard before `upgrade-sandboxes
-  // --auto`), the target's inference endpoint can only be re-derived for
-  // providers with a canonical endpoint (NVIDIA Endpoints, Anthropic, etc.) or
-  // local inference. For a custom OpenAI-compatible / router provider the base
-  // URL lives only in the target's own onboard session — which we don't have —
-  // so recreating would either fail or silently reconfigure the provider
-  // against the unrelated session's endpoint. Fail closed *before* any
-  // destructive backup/delete so the live sandbox stays intact.
-  const endpointPreflightSession = onboardSession.loadSession();
-  if (
-    endpointPreflightSession?.sandboxName !== sandboxName &&
-    sb.provider &&
-    !isLocalInferenceProvider(sb.provider) &&
-    sb.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
-    !getRebuildEndpointFromRegistry(sb.provider).known
-  ) {
-    console.error("");
-    console.error(
-      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${sb.provider}'.`,
-    );
-    console.error(
-      `  The custom endpoint for '${sandboxName}' is recorded only in its own onboard session,`,
-    );
-    console.error(
-      `  but the current session belongs to '${endpointPreflightSession?.sandboxName ?? "(none)"}'.`,
-    );
-    console.error(`  Rebuild '${sandboxName}' directly so its session is loaded:`);
-    console.error(`    ${CLI_NAME} ${sandboxName} rebuild`);
-    console.error("");
-    console.error("  Sandbox is untouched — no data was lost.");
-    bail(
-      `Cannot determine recreate endpoint for provider '${sb.provider}' without a matching session`,
-    );
-    return;
-  }
+  // #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
+  // provider, model, credential, endpoint — from the registry/session BEFORE any
+  // destructive backup/delete, and surface/neutralize ambient onboard-selection
+  // env that would otherwise steer the resume away from the recorded sandbox.
+  // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
+  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
+  if (!resumeConfig) return;
 
   const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
     sandboxName,
@@ -868,25 +932,20 @@ export async function rebuildSandbox(
       // setupNim runs, leaving no recovery source. Assign explicitly (with a
       // null fallback) so a missing registry value doesn't silently leave a
       // stale session entry from an earlier sandbox in place.
-      s.provider = sb.provider ?? null;
-      s.model = sb.model ?? null;
-      s.nimContainer = sb.nimContainer ?? null;
-      // #5735: pin the credential env name from the target registry provider so
-      // onboard --resume cannot recreate this sandbox with an unrelated onboard's
-      // provider credential.
-      s.credentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider);
-      // When the loaded session belongs to a *different* sandbox (e.g. the
-      // installer's just-completed onboard), repin the endpoint from the target
-      // provider's canonical config so a stale endpoint cannot bleed in. Only do
-      // this for providers with a canonical/registry-derivable endpoint; for a
-      // custom OpenAI-compatible provider the base URL exists only in its own
-      // matching session, so clearing it here would strand the recreate after
-      // the delete — preserve whatever the session holds instead.
-      if (!sessionMatchesSandbox) {
-        const rebuildEndpoint = getRebuildEndpointFromRegistry(sb.provider);
-        if (rebuildEndpoint.known) {
-          s.endpointUrl = rebuildEndpoint.endpointUrl;
-        }
+      // #5735: apply the recreate config resolved + validated BEFORE delete by
+      // prepareRebuildResumeConfig (provider/model/credential/endpoint derived
+      // from the about-to-be-removed registry entry, never from ambient env), so
+      // onboard --resume recreates the recorded sandbox in non-interactive mode.
+      // Assign explicitly so a missing value doesn't leave a stale entry from an
+      // earlier sandbox in place. `pinEndpoint` is false for a matching session
+      // (keep its own custom endpoint) and true for a non-matching session with a
+      // canonical/registry-derivable endpoint.
+      s.provider = resumeConfig.provider;
+      s.model = resumeConfig.model;
+      s.nimContainer = resumeConfig.nimContainer;
+      s.credentialEnv = resumeConfig.credentialEnv;
+      if (resumeConfig.pinEndpoint) {
+        s.endpointUrl = resumeConfig.endpointUrl;
       }
       return s;
     });

@@ -17,6 +17,24 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_MODEL",
 ] as const;
 
+/**
+ * Render an untrusted env value safe to print on a single terminal line (#5735,
+ * PRA-7). `NEMOCLAW_AGENT` is process-environment input and may contain
+ * newlines, ANSI escape sequences, or other control characters that could
+ * inject fake status lines into a destructive rebuild/recovery path. Strip
+ * control + C1 characters (including ESC, which neuters any ANSI sequence),
+ * collapse whitespace runs, and cap the length so the displayed value is a
+ * single bounded token.
+ */
+export function sanitizeEnvValueForDisplay(value: string, maxLength = 80): string {
+  const stripped = value
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: deliberately stripping control chars from untrusted env input before display.
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripped.length > maxLength ? `${stripped.slice(0, maxLength)}…` : stripped;
+}
+
 export interface AmbientRecreateEnvAssessment {
   /** Ambient onboard-selection env vars currently set (non-empty). */
   readonly presentVars: string[];
