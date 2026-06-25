@@ -71,6 +71,7 @@ nemoclaw <sandbox-name> snapshot create --name before-change
 ```
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
+If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
 There is no dashboard port or long-running gateway process for this harness.
 
 ## Next Steps

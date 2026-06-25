@@ -27,6 +27,7 @@ import {
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
 import { collectSandboxStatusSnapshot, resolveSandboxStatusAgent } from "./status-snapshot";
+import { probeTerminalRuntimeCgroupOom } from "./terminal-runtime-health";
 
 export {
   type ClassifySandboxStatusPreflightFailureDeps,
@@ -211,6 +212,19 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (interactiveCommand) console.log(`    Interactive: ${interactiveCommand}`);
       if (headlessCommand) console.log(`    Headless: ${headlessCommand} "<prompt>"`);
       console.log("    Updates: managed by NemoClaw image rebuilds");
+      if (lookup.state === "present") {
+        const terminalHealth = probeTerminalRuntimeCgroupOom(sandboxName);
+        if (terminalHealth.kind === "degraded") {
+          process.exitCode = process.exitCode && process.exitCode !== 0 ? process.exitCode : 1;
+          const countLabel =
+            terminalHealth.oomKillCount === 1
+              ? "1 OOM kill"
+              : `${terminalHealth.oomKillCount} OOM kills`;
+          console.log(`    Runtime health: ${YW}degraded${R} (${countLabel} recorded)`);
+          console.log("      Sandbox may be degraded after an OOM kill.");
+          console.log(`      Run \`${CLI_NAME} ${sandboxName} rebuild\` to restore.`);
+        }
+      }
     }
 
     // Active session indicator
