@@ -9,17 +9,21 @@ import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
+  assertKimiUpstreamTraffic,
   assertTrajectory,
   CLI,
   cleanupKimi,
   env,
   KIMI_MODEL,
+  kimiBoundary,
+  kimiOnboardEnv,
+  maybeRegisterKimiMockCleanup,
   parseConfig,
   REPO_ROOT,
   requirePublicNvidiaApiKey,
   resolveKimiInferenceMode,
   SANDBOX_NAME,
-  startKimiMock,
+  startKimiUpstream,
 } from "./kimi-inference-compat-helpers.ts";
 
 const TIMEOUT_MS = 40 * 60_000;
@@ -33,17 +37,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       mode === "public-nvidia"
         ? requirePublicNvidiaApiKey(secrets.required("NVIDIA_API_KEY"))
         : undefined;
-    const fake = mode === "mock" ? await startKimiMock() : undefined;
-    if (fake) cleanup.add("close fake Kimi endpoint", () => fake.close());
+    const fake = await startKimiUpstream(mode);
+    maybeRegisterKimiMockCleanup(cleanup, fake);
     cleanup.add("destroy Kimi sandbox", () => cleanupKimi(host, sandbox));
 
     await artifacts.writeJson("scenario.json", {
       id: "kimi-inference-compat",
       legacySource: "test/e2e/test-kimi-inference-compat.sh",
-      boundary:
-        mode === "public-nvidia"
-          ? "source CLI onboard + public NVIDIA Kimi endpoint + OpenClaw config/plugin/inference route"
-          : "source CLI onboard + fake OpenAI-compatible Kimi endpoint + OpenClaw config/plugin/inference route",
+      boundary: kimiBoundary(mode),
       inferenceClassification: "public-nvidia required with mock/hermetic fallback",
       inferenceMode: mode,
       sandboxName: SANDBOX_NAME,
@@ -65,7 +66,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       {
         artifactName: "onboard-kimi-compatible",
         cwd: REPO_ROOT,
-        env: env(fake ? { NEMOCLAW_ENDPOINT_URL: fake.baseUrl } : {}, { mode, apiKey }),
+        env: kimiOnboardEnv(fake, mode, apiKey),
         redactionValues: ["test-kimi-key", apiKey ?? ""],
         timeoutMs: 20 * 60_000,
       },
@@ -133,27 +134,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     );
     expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
     await assertTrajectory(sandbox);
-    if (fake) {
-      expect(
-        fake.requests.some(
-          (request) =>
-            request.authOk &&
-            request.path.includes("/chat/completions") &&
-            request.model === KIMI_MODEL &&
-            request.hasTools,
-        ),
-      ).toBe(true);
-      expect(fake.requests.some((request) => request.authOk && request.hasToolResult)).toBe(true);
-    } else {
-      const route = await host.command("openshell", ["inference", "get", "-g", "nemoclaw"], {
-        artifactName: "public-nvidia-kimi-route",
-        env: env({}, { mode, apiKey }),
-        redactionValues: [apiKey ?? ""],
-        timeoutMs: 60_000,
-      });
-      expect(route.exitCode, resultText(route)).toBe(0);
-      expect(resultText(route)).toContain("nvidia-prod");
-      expect(resultText(route)).toContain(KIMI_MODEL);
-    }
+    await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
   },
 );

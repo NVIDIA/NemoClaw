@@ -116,6 +116,64 @@ export async function startKimiMock(): Promise<KimiMock> {
   };
 }
 
+export function kimiBoundary(mode: KimiInferenceMode): string {
+  return mode === "public-nvidia"
+    ? "source CLI onboard + public NVIDIA Kimi endpoint + OpenClaw config/plugin/inference route"
+    : "source CLI onboard + fake OpenAI-compatible Kimi endpoint + OpenClaw config/plugin/inference route";
+}
+
+export async function startKimiUpstream(mode: KimiInferenceMode): Promise<KimiMock | undefined> {
+  return mode === "mock" ? startKimiMock() : undefined;
+}
+
+export function maybeRegisterKimiMockCleanup(
+  cleanup: { add(name: string, fn: () => Promise<void>): void },
+  fake: KimiMock | undefined,
+): void {
+  if (fake) cleanup.add("close fake Kimi endpoint", () => fake.close());
+}
+
+export function kimiOnboardEnv(
+  fake: KimiMock | undefined,
+  mode: KimiInferenceMode,
+  apiKey: string | undefined,
+): NodeJS.ProcessEnv {
+  return env(fake ? { NEMOCLAW_ENDPOINT_URL: fake.baseUrl } : {}, { mode, apiKey });
+}
+
+export async function assertKimiUpstreamTraffic(options: {
+  fake: KimiMock | undefined;
+  host: HostCliClient;
+  mode: KimiInferenceMode;
+  apiKey: string | undefined;
+}): Promise<void> {
+  if (options.fake) {
+    expect(
+      options.fake.requests.some(
+        (request) =>
+          request.authOk &&
+          request.path.includes("/chat/completions") &&
+          request.model === KIMI_MODEL &&
+          request.hasTools,
+      ),
+    ).toBe(true);
+    expect(options.fake.requests.some((request) => request.authOk && request.hasToolResult)).toBe(
+      true,
+    );
+    return;
+  }
+
+  const route = await options.host.command("openshell", ["inference", "get", "-g", "nemoclaw"], {
+    artifactName: "public-nvidia-kimi-route",
+    env: env({}, { mode: options.mode, apiKey: options.apiKey }),
+    redactionValues: [options.apiKey ?? ""],
+    timeoutMs: 60_000,
+  });
+  expect(route.exitCode, resultText(route)).toBe(0);
+  expect(resultText(route)).toContain("nvidia-prod");
+  expect(resultText(route)).toContain(KIMI_MODEL);
+}
+
 function handleKimiRequest(
   req: http.IncomingMessage,
   res: http.ServerResponse,
