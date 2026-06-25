@@ -513,7 +513,8 @@ if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
         ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 if cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
-if grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1; then true; else echo ABSENT; fi`;
+match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
+if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
   return sandboxOutput(sandbox, probe, artifactName, redactionValues);
 }
 
