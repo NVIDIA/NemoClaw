@@ -116,9 +116,7 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(true);
     expect(warnLines.some((line: string) => line.includes(".env, .mcp.json"))).toBe(true);
-    expect(
-      warnLines.some((line: string) => line.includes("Re-add them after rebuild")),
-    ).toBe(true);
+    expect(warnLines.some((line: string) => line.includes("Re-add them after rebuild"))).toBe(true);
   });
 
   it("emits no warning when probe returns no existing user-managed files", () => {

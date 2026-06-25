@@ -224,10 +224,7 @@ export function backupSandboxStateForRebuild(
   return backupManifest;
 }
 
-function warnUnpreservedUserManagedFiles(
-  sandboxName: string,
-  log: (msg: string) => void,
-): void {
+function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string) => void): void {
   let probe: sandboxState.UserManagedFilesProbe;
   try {
     probe = sandboxState.probeUserManagedFiles(sandboxName);
@@ -238,9 +235,7 @@ function warnUnpreservedUserManagedFiles(
   }
   if (probe.existing.length === 0) {
     if (probe.declared.length > 0) {
-      log(
-        `User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`,
-      );
+      log(`User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`);
     }
     return;
   }
