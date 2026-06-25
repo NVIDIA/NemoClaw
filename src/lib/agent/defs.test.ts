@@ -97,7 +97,7 @@ describe("agent definitions", () => {
       "whatsapp",
       "teams",
     ]);
-    expect(hermes.userManagedFiles).toEqual([]);
+    expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
   });
 
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {

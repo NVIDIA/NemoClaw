@@ -145,6 +145,21 @@ describe("probeUserManagedFiles", () => {
     expect(probeCmd).not.toContain("/sandbox/.fake/");
   });
 
+  it("supports nested declared files relative to the sandbox root", () => {
+    const defs = loadDefs();
+    vi.spyOn(defs, "loadAgent").mockImplementation(() => makeFakeAgent([".hermes/.env"]));
+    stubSpawnSync(".hermes/.env\n", 0);
+    const { probeUserManagedFiles } = loadProbe();
+
+    const result = probeUserManagedFiles("alpha");
+
+    expect(result.declared).toEqual([".hermes/.env"]);
+    expect(result.existing).toEqual([".hermes/.env"]);
+    const lastArgs = recordedArgs[0] ?? [];
+    const probeCmd = lastArgs[lastArgs.length - 1] ?? "";
+    expect(probeCmd).toContain("if [ -f '/sandbox/.hermes/.env' ]");
+  });
+
   it("returns empty existing when ssh exits 0 with no stdout (no declared files present)", () => {
     stubSpawnSync("", 0);
     const { probeUserManagedFiles } = loadProbe();
