@@ -73,6 +73,10 @@ process.stdout.write(JSON.stringify(result));
 process.stdout.write("\\n");
 `.trim();
 
+const GATEWAY_ADMIN_RPC_SHELL =
+  `. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || true; ` +
+  `exec node --input-type=module --eval "$1" "$2" "$3"`;
+
 function captureGatewayCall(opts: GatewayCallOptions) {
   const params = JSON.stringify(opts.params);
   return captureOpenshell(
@@ -82,14 +86,15 @@ function captureGatewayCall(opts: GatewayCallOptions) {
       "--name",
       opts.sandboxName,
       "--",
-      "node",
-      "--input-type=module",
-      "--eval",
+      "bash",
+      "-lc",
+      GATEWAY_ADMIN_RPC_SHELL,
+      "nemoclaw-sessions-admin-rpc",
       GATEWAY_ADMIN_RPC_SCRIPT,
       opts.method,
       params,
     ],
-    { ignoreError: true },
+    { ignoreError: true, includeStderr: true },
   );
 }
 

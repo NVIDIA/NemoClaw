@@ -59,17 +59,23 @@ describe("callOpenclawGateway", () => {
       "--name",
       "alpha",
       "--",
-      "node",
-      "--input-type=module",
-      "--eval",
+      "bash",
+      "-lc",
+      expect.stringContaining("/tmp/nemoclaw-proxy-env.sh"),
+      "nemoclaw-sessions-admin-rpc",
       expect.stringContaining("callGatewayFromCli"),
       "sessions.reset",
       '{"key":"agent:main:main","reason":"reset"}',
     ]);
-    expect(command?.[8]).toContain("url: `ws://127.0.0.1:${port}`");
-    expect(command?.[8]).toContain('clientName: "gateway-client"');
-    expect(command?.[8]).toContain('mode: "backend"');
-    expect(command?.[8]).toContain('scopes: ["operator.admin"]');
+    expect(command?.[7]).toContain("node --input-type=module");
+    expect(command?.[9]).toContain("url: `ws://127.0.0.1:${port}`");
+    expect(command?.[9]).toContain('clientName: "gateway-client"');
+    expect(command?.[9]).toContain('mode: "backend"');
+    expect(command?.[9]).toContain('scopes: ["operator.admin"]');
+    expect(captureMock.mock.calls[0]?.[1]).toMatchObject({
+      ignoreError: true,
+      includeStderr: true,
+    });
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
