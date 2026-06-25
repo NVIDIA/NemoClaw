@@ -40,7 +40,8 @@ const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device
 //   or broadening pairing approval behavior.
 // - Runtime validation anchor: `sessions-agents-cli-e2e` exercises reset/delete
 //   in a real sandbox; `gateway-rpc-call.test.ts` pins the host-side allowlist,
-//   backend scope, proxy-env sourcing, retry, parser, and redaction contracts.
+//   backend scope, proxy-env validation/sourcing, retry, parser, and redaction
+//   contracts.
 // - Removal condition: replace this wrapper when OpenClaw exposes a stable
 //   documented host-admin sessions RPC/CLI that does not register a new CLI
 //   device and preserves separate stdout/stderr diagnostics.
@@ -103,11 +104,31 @@ const GATEWAY_ADMIN_RPC_LOADER = `await import("data:text/javascript;base64," + 
 const GATEWAY_ADMIN_RPC_SCRIPT_B64 = Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString(
   "base64",
 );
-const GATEWAY_ADMIN_RPC_SHELL =
-  `. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || true; ` +
-  `export NEMOCLAW_GATEWAY_RPC_METHOD="$3"; ` +
-  `export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"; ` +
-  `exec node --input-type=module --eval "$1" "$2"`;
+const GATEWAY_ADMIN_RPC_SHELL = `
+set -e
+proxy_env=/tmp/nemoclaw-proxy-env.sh
+if [ -e "$proxy_env" ] || [ -L "$proxy_env" ]; then
+  if [ -L "$proxy_env" ] || [ ! -f "$proxy_env" ]; then
+    echo "[SECURITY] $proxy_env is unsafe (expected regular root-owned mode 444 file)" >&2
+    exit 126
+  fi
+  perms="$(stat -c '%a' "$proxy_env" 2>/dev/null || stat -f '%Lp' "$proxy_env" 2>/dev/null || echo unknown)"
+  owner="$(stat -c '%U' "$proxy_env" 2>/dev/null || stat -f '%Su' "$proxy_env" 2>/dev/null || echo unknown)"
+  if [ "$(id -u)" -eq 0 ]; then
+    if [ "$owner" != "root" ] || [ "$perms" != "444" ]; then
+      echo "[SECURITY] $proxy_env has unsafe permissions: owner=$owner mode=$perms (expected root:444)" >&2
+      exit 126
+    fi
+  elif [ "$perms" != "444" ]; then
+    echo "[SECURITY] $proxy_env has unsafe permissions: mode=$perms (expected 444)" >&2
+    exit 126
+  fi
+  . "$proxy_env" >/dev/null 2>&1
+fi
+export NEMOCLAW_GATEWAY_RPC_METHOD="$3"
+export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"
+exec node --input-type=module --eval "$1" "$2"
+`.trim();
 
 function isSupportedGatewayAdminMethod(method: string): method is GatewayAdminMethod {
   return SUPPORTED_GATEWAY_ADMIN_METHODS.has(method);

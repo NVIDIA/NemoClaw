@@ -75,6 +75,10 @@ describe("callOpenclawGateway", () => {
     expect(command?.[7]).toContain("node --input-type=module");
     expect(command?.[7]).toContain("NEMOCLAW_GATEWAY_RPC_METHOD");
     expect(command?.[7]).toContain("NEMOCLAW_GATEWAY_RPC_PARAMS_B64");
+    expect(command?.[7]).toContain("proxy_env=/tmp/nemoclaw-proxy-env.sh");
+    expect(command?.[7]).toContain('[ -L "$proxy_env" ]');
+    expect(command?.[7]).toContain("expected root:444");
+    expect(command?.[7]).toContain('. "$proxy_env"');
     const script = Buffer.from(String(command?.[10] ?? ""), "base64").toString("utf8");
     expect(script).toContain("callGatewayFromCli");
     expect(script).toContain("url: `ws://127.0.0.1:${port}`");
@@ -108,6 +112,26 @@ describe("callOpenclawGateway", () => {
     expect(autoPairMock).toHaveBeenCalledTimes(2);
     expect(captureMock).toHaveBeenCalledTimes(2);
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
+  });
+
+  it("validates the sourced proxy env file before invoking sessions admin RPC", () => {
+    captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
+
+    callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.reset",
+      params: { key: "agent:main:main", reason: "reset" },
+    });
+
+    const command = captureMock.mock.calls[0]?.[0];
+    const shell = String(command?.[7] ?? "");
+    const sourceIndex = shell.indexOf('. "$proxy_env"');
+    const execIndex = shell.indexOf("exec node --input-type=module");
+    expect(sourceIndex).toBeGreaterThan(-1);
+    expect(execIndex).toBeGreaterThan(sourceIndex);
+    expect(shell).toContain('[ -L "$proxy_env" ] || [ ! -f "$proxy_env" ]');
+    expect(shell).toContain("exit 126");
+    expect(shell).toContain("mode=$perms (expected root:444)");
   });
 
   it("rejects unsupported gateway admin RPC methods before touching OpenShell", () => {
