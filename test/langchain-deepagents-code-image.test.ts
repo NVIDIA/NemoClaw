@@ -5,6 +5,7 @@ import { execFileSync, type SpawnSyncReturns, spawnSync } from "node:child_proce
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -621,16 +622,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(true);
   });
 
-  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", () => {
-    const canonicalSrc = fs.readFileSync(
-      path.join(process.cwd(), "src", "lib", "security", "secret-patterns.ts"),
-      "utf8",
-    );
-    const tokenSectionEnd = canonicalSrc.indexOf("CONTEXT_PATTERNS");
-    expect(tokenSectionEnd).toBeGreaterThan(0);
-    const tokenSection = canonicalSrc.substring(0, tokenSectionEnd);
-    const tokenRegexCount = (tokenSection.match(/^\s*\/.+\/g,?\s*$/gm) ?? []).length;
-    expect(tokenRegexCount).toBe(16);
+  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", async () => {
+    const distPath = path.join(process.cwd(), "dist", "lib", "security", "secret-patterns.js");
+    const { TOKEN_PREFIX_PATTERNS } = (await import(pathToFileURL(distPath).href)) as {
+      TOKEN_PREFIX_PATTERNS: RegExp[];
+    };
+    expect(Array.isArray(TOKEN_PREFIX_PATTERNS)).toBe(true);
+    expect(TOKEN_PREFIX_PATTERNS.length).toBe(16);
   });
 
   it("rejects every canonical token shape declared by the secret-pattern contract", () => {
