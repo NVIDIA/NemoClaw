@@ -15,6 +15,7 @@ import {
   cleanupKimi,
   env,
   KIMI_MODEL,
+  kimiAgentEnv,
   kimiBoundary,
   kimiOnboardEnv,
   maybeRegisterKimiMockCleanup,
@@ -112,7 +113,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       ),
       {
         artifactName: "kimi-agent-tool-splitting",
-        env: env({}, { mode, apiKey, includeSecret: true }),
+        env: kimiAgentEnv(mode),
         redactionValues: ["test-kimi-key", apiKey ?? ""],
         timeoutMs: 420_000,
       },

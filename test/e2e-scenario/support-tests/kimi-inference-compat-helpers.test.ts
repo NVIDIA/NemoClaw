@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   env,
+  kimiAgentEnv,
   kimiOnboardEnv,
   requirePublicNvidiaApiKey,
   resolveKimiInferenceMode,
@@ -28,7 +29,7 @@ describe("Kimi inference compatibility mode selection", () => {
     expect(cfg.COMPATIBLE_API_KEY).toBeUndefined();
   });
 
-  it("limits the public NVIDIA source secret to onboard and agent envs", () => {
+  it("limits the public NVIDIA source secret to onboard envs only", () => {
     const cfg = env(
       {},
       {
@@ -42,6 +43,9 @@ describe("Kimi inference compatibility mode selection", () => {
     expect(kimiOnboardEnv(undefined, "public-nvidia", "nvapi-public-test-key").NVIDIA_API_KEY).toBe(
       "nvapi-public-test-key",
     );
+    const agentCfg = kimiAgentEnv("public-nvidia");
+    expect(agentCfg.NVIDIA_API_KEY).toBeUndefined();
+    expect(agentCfg.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
   it("rejects non-public NVIDIA keys for public Kimi validation", () => {
@@ -49,16 +53,25 @@ describe("Kimi inference compatibility mode selection", () => {
     expect(requirePublicNvidiaApiKey("nvapi-public-test-key")).toBe("nvapi-public-test-key");
   });
 
-  it("maps legacy and explicit env selectors to the expected mode", () => {
+  it("maps canonical explicit env selectors to the expected mode", () => {
     expect(resolveKimiInferenceMode({ NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia" })).toBe(
       "public-nvidia",
     );
-    expect(resolveKimiInferenceMode({ NEMOCLAW_KIMI_USE_MOCK: "0" })).toBe("public-nvidia");
     expect(
       resolveKimiInferenceMode({
         NEMOCLAW_E2E_INFERENCE_MODE: "mock",
         NEMOCLAW_KIMI_USE_MOCK: "0",
       }),
     ).toBe("mock");
+  });
+
+  it("rejects unknown explicit modes instead of silently falling back to mock", () => {
+    expect(() => resolveKimiInferenceMode({ NEMOCLAW_E2E_INFERENCE_MODE: "public-nvida" })).toThrow(
+      /must be one of: mock, public-nvidia/,
+    );
+  });
+
+  it("keeps legacy NEMOCLAW_KIMI_USE_MOCK=0 as temporary public-nvidia alias", () => {
+    expect(resolveKimiInferenceMode({ NEMOCLAW_KIMI_USE_MOCK: "0" })).toBe("public-nvidia");
   });
 });

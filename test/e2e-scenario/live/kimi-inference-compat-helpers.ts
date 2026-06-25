@@ -29,9 +29,21 @@ export interface KimiEnvOptions {
   includeSecret?: boolean;
 }
 
+// Source-of-truth boundary for the Kimi public/mock split: trusted CI sets the
+// canonical NEMOCLAW_E2E_INFERENCE_MODE selector, local runs default to mock only
+// when the selector is absent, and unknown explicit values fail closed so a typo
+// cannot downgrade public-NVIDIA validation into hermetic mock coverage.
 export function resolveKimiInferenceMode(env: NodeJS.ProcessEnv = process.env): KimiInferenceMode {
-  const explicitMode = env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase();
-  if (explicitMode === "public-nvidia" || explicitMode === "mock") return explicitMode;
+  if (env.NEMOCLAW_E2E_INFERENCE_MODE !== undefined) {
+    const explicitMode = env.NEMOCLAW_E2E_INFERENCE_MODE.trim().toLowerCase();
+    if (explicitMode === "public-nvidia" || explicitMode === "mock") return explicitMode;
+    throw new Error(
+      `NEMOCLAW_E2E_INFERENCE_MODE must be one of: mock, public-nvidia; got ${env.NEMOCLAW_E2E_INFERENCE_MODE}`,
+    );
+  }
+  // Temporary compatibility alias for legacy shell-lane invocations copied from
+  // test/e2e/test-kimi-inference-compat.sh. NEMOCLAW_E2E_INFERENCE_MODE is the
+  // canonical selector; remove this alias when the legacy shell lane retires.
   if (env.NEMOCLAW_KIMI_USE_MOCK === "0") return "public-nvidia";
   return "mock";
 }
@@ -144,6 +156,13 @@ export function kimiOnboardEnv(
     apiKey,
     includeSecret: true,
   });
+}
+
+export function kimiAgentEnv(mode: KimiInferenceMode): NodeJS.ProcessEnv {
+  // Onboard owns the only raw public NVIDIA key handoff. After that, the sandbox
+  // agent must use the configured nvidia-prod route rather than inheriting the
+  // repository secret in its process environment.
+  return env({}, { mode });
 }
 
 export async function assertKimiUpstreamTraffic(options: {
