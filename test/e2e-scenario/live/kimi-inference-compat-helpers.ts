@@ -21,6 +21,26 @@ export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-kimi-compa
 validateSandboxName(SANDBOX_NAME);
 export const KIMI_MODEL = process.env.NEMOCLAW_KIMI_MODEL ?? "moonshotai/kimi-k2.6";
 
+export type KimiInferenceMode = "mock" | "public-nvidia";
+
+export interface KimiEnvOptions {
+  mode?: KimiInferenceMode;
+  apiKey?: string;
+}
+
+export function resolveKimiInferenceMode(env: NodeJS.ProcessEnv = process.env): KimiInferenceMode {
+  if (env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase() === "public-nvidia")
+    return "public-nvidia";
+  if (env.NEMOCLAW_KIMI_USE_MOCK === "0") return "public-nvidia";
+  return "mock";
+}
+
+export function requirePublicNvidiaApiKey(value: string): string {
+  if (!value.startsWith("nvapi-"))
+    throw new Error("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+  return value;
+}
+
 export interface KimiRequest {
   path: string;
   model?: string;
@@ -35,10 +55,13 @@ export interface KimiMock {
   close(): Promise<void>;
 }
 
-export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
+export function env(
+  extra: NodeJS.ProcessEnv = {},
+  options: KimiEnvOptions = {},
+): NodeJS.ProcessEnv {
+  const mode = options.mode ?? resolveKimiInferenceMode();
+  const common: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
-    COMPATIBLE_API_KEY: "test-kimi-key",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_MODEL: KIMI_MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -47,11 +70,27 @@ export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_POLICY_TIER: "restricted",
     NEMOCLAW_PREFERRED_API: "openai-completions",
-    NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_YES: "1",
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+  };
+  if (mode === "public-nvidia") {
+    return {
+      ...common,
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_PROVIDER: "cloud",
+      ...(options.apiKey
+        ? { NVIDIA_API_KEY: options.apiKey, NVIDIA_INFERENCE_API_KEY: options.apiKey }
+        : {}),
+      ...extra,
+    };
+  }
+  return {
+    ...common,
+    COMPATIBLE_API_KEY: "test-kimi-key",
+    NEMOCLAW_E2E_INFERENCE_MODE: "mock",
+    NEMOCLAW_PROVIDER: "custom",
     ...extra,
   };
 }

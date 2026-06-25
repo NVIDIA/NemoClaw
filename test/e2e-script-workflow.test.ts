@@ -584,6 +584,22 @@ describe("E2E reusable workflow contract", () => {
     );
   });
 
+  it("uses NVIDIA_API_KEY for the live Kimi Vitest lane", () => {
+    const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const job = vitestWorkflow.jobs["kimi-inference-compat-vitest"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi compatibility live Vitest test",
+    );
+
+    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe(
+      `\${{ (${TRUSTED_REF_GUARD}) && 'public-nvidia' || 'mock' }}`,
+    );
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe(GUARDED_PUBLIC_NVIDIA_SECRET);
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
       "openclaw-tui-chat-correlation-e2e",
