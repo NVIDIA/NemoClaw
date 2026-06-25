@@ -148,6 +148,51 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/EACCES/);
   });
 
+  it("fails closed when a registered agent cannot be resolved before OpenShell exec", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "missing-agent" });
+    loadAgentMock.mockImplementationOnce(() => {
+      throw new Error("Agent manifest not found: agents/missing-agent/manifest.yaml");
+    });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough("alpha", { extraArgs: ["-m", "hi"] }, { process: proc }),
+    ).rejects.toThrow("__exit:2");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(2);
+    const all = writes.join("");
+    expect(all).toMatch(/registered agent 'missing-agent'/);
+    expect(all).toMatch(/Agent manifest not found/);
+    expect(all).toMatch(/Refusing to dispatch/);
+  });
+
+  it("fails closed for quoted terminal manifest commands instead of splitting them incorrectly", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "custom-terminal" });
+    loadAgentMock.mockReturnValueOnce({
+      name: "custom-terminal",
+      runtime: {
+        kind: "terminal",
+        interactive_command: 'tool --profile "Deep Agents"',
+        headless_command: "tool -n",
+      },
+    });
+    const { writes, exit, proc } = makeProcMock();
+    await expect(
+      runAgentPassthrough("quoted-terminal", { extraArgs: ["--help"] }, { process: proc }),
+    ).rejects.toThrow("__exit:2");
+    expect(execMock).not.toHaveBeenCalled();
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(2);
+    const all = writes.join("");
+    expect(all).toMatch(/registered agent 'custom-terminal'/);
+    expect(all).toMatch(/simple whitespace-delimited argv tokens/);
+    expect(all).toMatch(/quoted or escaped shell syntax is not supported/);
+  });
+
   it("prints wrapper help when no extraArgs are passed to an OpenClaw fallback", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();

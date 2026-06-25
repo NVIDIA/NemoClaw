@@ -562,7 +562,8 @@ $$nemoclaw dcode-sandbox agent --help
 $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 ```
 
-The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it.
+Streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
 
 Common OpenClaw flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`.
 For OpenClaw sandboxes and registry fallbacks, `$$nemoclaw <name> agent` and `$$nemoclaw <name> agent --help` print the wrapper-level summary locally; invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.

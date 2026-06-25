@@ -10,10 +10,11 @@
 //   silently bypass the host-side guard intended to redirect Hermes callers to
 //   the OpenAI-compatible API on port 8642.
 //
-// - Source boundary: this wrapper owns the host-side guard only; the in-sandbox
-//   agent invocation, its argv contract, and its streaming behaviour are owned
-//   by upstream OpenClaw. NemoClaw does not rewrite OpenClaw flags here; it
-//   forwards them verbatim.
+// - Source boundary: this wrapper owns the host-side guard only. The in-sandbox
+//   agent invocation, OpenClaw argv contract, and streaming behaviour are owned
+//   by upstream OpenClaw. Terminal-runtime dispatch uses the manifest command
+//   only when it can be represented as simple whitespace-delimited argv tokens;
+//   shell quoting/escaping fails closed until the manifest exposes argv natively.
 //
 // - Source-fix constraint: NemoClaw cannot prove agent type from anywhere
 //   except the registry, because the OpenShell exec transport has no
@@ -23,13 +24,14 @@
 //   wrong binary on transient I/O errors.
 //
 // - Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
-//   forwarded argv, the registry-miss fallback to OpenClaw, the registry-error
-//   fail-closed path, and the enforced `--no-tty` argv shape.
+//   forwarded argv, the registry-miss fallback to OpenClaw, registry and
+//   manifest-resolution fail-closed paths, quoted manifest command rejection,
+//   and the enforced `--no-tty` argv shape.
 //
 // - Removal condition: when OpenShell exposes a metadata endpoint that returns
 //   the sandbox's configured agent, drop the registry read and consult that
-//   endpoint directly. The fail-closed branch can then be retired in favour of
-//   the live source.
+//   endpoint directly. When terminal runtime manifests expose argv arrays, drop
+//   the simple-token parser and unsupported-shell-syntax rejection.
 
 import { isTerminalAgent, loadAgent, type AgentDefinition } from "../../../agent/defs";
 import * as registry from "../../../state/registry";
@@ -61,6 +63,9 @@ type RegistryReadResult =
   | { kind: "agent"; agent: string | null }
   | { kind: "error"; message: string };
 type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
+type TerminalCommandResult =
+  | { kind: "command"; argv: string[] }
+  | { kind: "unsupported"; message: string };
 
 function readSandboxAgentFromRegistry(
   sandboxName: string,
@@ -91,14 +96,36 @@ function rejectNonOpenclawAgent(
   return proc.exit(2);
 }
 
-function splitManifestCommand(command: string): string[] {
-  return command.trim().split(/\s+/).filter(Boolean);
+function rejectAgentResolutionError(
+  sandboxName: string,
+  agent: string,
+  message: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): never {
+  proc.stderr.write(
+    `  Could not resolve a passthrough command for registered agent '${agent}' in sandbox '${sandboxName}'.\n`,
+  );
+  proc.stderr.write(`  Agent resolution error: ${message}\n`);
+  proc.stderr.write("  Refusing to dispatch because the sandbox agent guard cannot fail closed.\n");
+  return proc.exit(2);
 }
 
-function getTerminalInteractiveCommand(agent: AgentDefinition): string[] | null {
+function splitManifestCommand(command: string): TerminalCommandResult {
+  const trimmed = command.trim();
+  if (!trimmed) return { kind: "command", argv: [] };
+  if (/["'\\]/.test(trimmed)) {
+    return {
+      kind: "unsupported",
+      message:
+        "terminal runtime commands must be simple whitespace-delimited argv tokens; quoted or escaped shell syntax is not supported",
+    };
+  }
+  return { kind: "command", argv: trimmed.split(/\s+/).filter(Boolean) };
+}
+
+function getTerminalInteractiveCommand(agent: AgentDefinition): TerminalCommandResult {
   const command = agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? "";
-  const argv = splitManifestCommand(command);
-  return argv.length > 0 ? argv : null;
+  return splitManifestCommand(command);
 }
 
 function getPassthroughCommand(
@@ -124,16 +151,24 @@ function getPassthroughCommand(
     return ["openclaw", "agent", ...extraArgs];
   }
 
-  const agent = loadAgent(agentName);
+  let agent: AgentDefinition;
+  try {
+    agent = loadAgent(agentName);
+  } catch (error) {
+    rejectAgentResolutionError(sandboxName, agentName, (error as Error).message, proc);
+  }
   if (!isTerminalAgent(agent)) {
     rejectNonOpenclawAgent(sandboxName, agentName, proc);
   }
 
   const terminalCommand = getTerminalInteractiveCommand(agent);
-  if (!terminalCommand) {
+  if (terminalCommand.kind === "unsupported") {
+    rejectAgentResolutionError(sandboxName, agentName, terminalCommand.message, proc);
+  }
+  if (terminalCommand.argv.length === 0) {
     rejectNonOpenclawAgent(sandboxName, agentName, proc);
   }
-  return [...terminalCommand, ...extraArgs];
+  return [...terminalCommand.argv, ...extraArgs];
 }
 
 function rejectRegistryReadError(
