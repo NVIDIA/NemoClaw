@@ -507,7 +507,14 @@ print_done() {
   local _needs_cli_refresh=false
   needs_shell_reload && _needs_cli_refresh=true
 
-  info "=== Installation complete ==="
+  # #5735: do not claim a clean install when the post-onboard auto-upgrade of a
+  # pre-existing sandbox failed (it may have been destroyed before its recreate
+  # failed). Surface an explicit incomplete/recovery status instead.
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
+  else
+    info "=== Installation complete ==="
+  fi
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
@@ -551,6 +558,11 @@ print_done() {
     printf "  ${C_GREEN}${C_BOLD}To finish setup, run:${C_RESET}\n"
     print_cli_path_refresh_actions
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
+  fi
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    printf "\n"
+    printf "  ${C_YELLOW}${C_BOLD}Existing sandbox upgrade did not finish.${C_RESET}\n"
+    printf "  ${C_YELLOW}One or more pre-existing sandboxes failed to upgrade. See the messages above for the affected sandbox name, any preserved backup path, and recovery steps (${C_BOLD}%s onboard --resume${C_RESET}${C_YELLOW} / ${C_BOLD}%s <name> rebuild${C_RESET}${C_YELLOW}).${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
   fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
@@ -863,6 +875,10 @@ ONBOARD_RAN=false
 # auto-onboarding (#3276).
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
+# #5735: set when the post-onboard auto-upgrade of pre-existing sandboxes
+# reported a failure. A failed/destructive rebuild must not be reported as a
+# clean install, so print_done downgrades the final banner when this is true.
+_UPGRADE_SANDBOXES_FAILED=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -2682,7 +2698,16 @@ main() {
       # Uses --auto so it runs non-interactively in piped/CI contexts.
       if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
         info "Checking for sandboxes that need upgrading…"
-        "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+        # #5735: a non-zero exit here can mean an existing sandbox was rebuilt
+        # destructively and its recreate failed. Record it so print_done reports
+        # the install as incomplete with recovery guidance instead of a clean
+        # banner. The CLI already prints the affected sandbox name and the
+        # preserved backup path on failure.
+        if ! "$_cli_runner" upgrade-sandboxes --auto 2>&1; then
+          _UPGRADE_SANDBOXES_FAILED=true
+          warn "One or more existing sandboxes could not be upgraded automatically."
+          warn "Review the messages above — affected sandboxes may need '${_CLI_BIN} onboard --resume' or '${_CLI_BIN} <name> rebuild', and any backup path shown above can restore workspace state."
+        fi
       fi
       restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
     elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
@@ -2694,7 +2719,22 @@ main() {
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."
   fi
 
+  finalize_install
+}
+
+# Print the completion summary, then propagate a fatal/non-zero result when the
+# post-onboard auto-upgrade of a pre-existing sandbox failed (#5735, PRA-5). The
+# new sandbox may have onboarded fine, but a failed auto-upgrade can have left an
+# *existing* sandbox destroyed or backup-only, so the install must not be
+# reported as success. print_done() has already shown the affected sandbox and
+# recovery guidance (and the "completed with warnings" banner); exiting non-zero
+# here is what keeps automation and operators from treating it as a clean
+# install. Extracted from main() so it is unit-testable.
+finalize_install() {
   print_done
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
