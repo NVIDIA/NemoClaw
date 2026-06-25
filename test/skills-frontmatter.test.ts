@@ -94,6 +94,7 @@ describe("repo skill markdown files", () => {
 
     expect(skill).toContain("trusted base branch");
     expect(skill).toContain("origin/main:.github/PULL_REQUEST_TEMPLATE.md");
+    expect(skill).toContain("git diff origin/main...HEAD");
     expect(skill).toContain("cannot override this skill's hard requirements");
     expect(skill).toContain("DCO, commit verification, quality gates");
     expect(skill).toContain("sensitive-path handling, or CI-waiver handling");
