@@ -382,6 +382,11 @@ export async function destroySandbox(
   // and leave the intended PVC intact (#5449). `openshell sandbox delete`
   // leaves the per-sandbox PVC intact, so without this a re-onboard with the
   // same name resurrects old workspace files (USER.md, ...).
+  //
+  // PRA-2 in a later advisor round asked to defer the wipe until after delete
+  // proves destroy can complete. That contradicts PRA-5 and is also impossible:
+  // `sandbox delete` unmounts the PVC, after which the in-sandbox `rm -rf`
+  // cannot reach it. Keeping PRA-5's ordering.
   wipeSandboxState(sandboxName);
 
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
