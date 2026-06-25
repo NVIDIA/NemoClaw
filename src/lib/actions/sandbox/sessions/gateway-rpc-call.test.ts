@@ -52,27 +52,24 @@ describe("callOpenclawGateway", () => {
     expect(autoPairMock).toHaveBeenCalledTimes(1);
     expect(autoPairMock).toHaveBeenCalledWith("alpha");
     expect(captureMock).toHaveBeenCalledTimes(1);
-    expect(captureMock.mock.calls[0]?.[0]).toEqual([
+    const command = captureMock.mock.calls[0]?.[0];
+    expect(command).toEqual([
       "sandbox",
       "exec",
       "--name",
       "alpha",
       "--",
-      "env",
-      "-u",
-      "OPENCLAW_GATEWAY_URL",
-      "-u",
-      "OPENCLAW_GATEWAY_PORT",
-      "-u",
-      "OPENCLAW_GATEWAY_TOKEN",
-      "openclaw",
-      "gateway",
-      "call",
+      "node",
+      "--input-type=module",
+      "--eval",
+      expect.stringContaining("callGatewayFromCli"),
       "sessions.reset",
-      "--params",
       '{"key":"agent:main:main","reason":"reset"}',
-      "--json",
     ]);
+    expect(command?.[8]).toContain("url: `ws://127.0.0.1:${port}`");
+    expect(command?.[8]).toContain('clientName: "gateway-client"');
+    expect(command?.[8]).toContain('mode: "backend"');
+    expect(command?.[8]).toContain('scopes: ["operator.admin"]');
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
