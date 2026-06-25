@@ -53,6 +53,9 @@ state_files:
 
 device_pairing: false
 
+# Artifact-only messaging render exists for build validation, but DeepAgents
+# does not run a channel bridge today. Keep public channel support disabled
+# until inbound Telegram/Discord/Slack messages can reach dcode.
 messaging_platforms:
   supported: []
 

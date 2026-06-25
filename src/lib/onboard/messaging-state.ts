@@ -24,7 +24,9 @@ export function filterEnabledChannelsByAgent<T extends string[] | null | undefin
   agent: AgentDefinition | null,
 ): T {
   if (!Array.isArray(enabledChannels)) return enabledChannels;
-  const supported = agent?.messagingPlatforms ?? [];
-  if (supported.length === 0) return enabledChannels;
+  if (!agent) return enabledChannels;
+  const supported = agent.messagingPlatforms;
+  if (!Array.isArray(supported)) return enabledChannels;
+  if (supported.length === 0) return [] as unknown as T;
   return enabledChannels.filter((n) => supported.includes(n)) as T;
 }

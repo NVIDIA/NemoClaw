@@ -23,7 +23,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack Bot Token",
         help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
-        placeholder: "xoxb-...",
       },
     },
     {
@@ -37,7 +36,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
-        placeholder: "xapp-...",
       },
     },
     {
@@ -141,6 +139,30 @@ export const slackManifest = {
       target: "~/.hermes/config.yaml",
       fragment: {
         path: "platforms.slack",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+    {
+      id: "slack-deepagents-env",
+      kind: "env-lines",
+      agent: "langchain-deepagents-code",
+      target: "~/.deepagents/.env",
+      lines: [
+        "SLACK_BOT_TOKEN={{credential.slackBotToken.placeholder}}",
+        "SLACK_APP_TOKEN={{credential.slackAppToken.placeholder}}",
+        "SLACK_ALLOWED_USERS={{allowedIds.slack.csv}}",
+        "SLACK_ALLOWED_CHANNELS={{slackConfig.allowedChannels.csv}}",
+      ],
+    },
+    {
+      id: "slack-deepagents-channel",
+      kind: "json-fragment",
+      agent: "langchain-deepagents-code",
+      target: "~/.deepagents/messaging.json",
+      fragment: {
+        path: "channels.slack",
         value: {
           enabled: true,
         },
