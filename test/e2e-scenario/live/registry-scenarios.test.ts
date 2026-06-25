@@ -35,7 +35,7 @@ async function runE2eCloudExperimentalChecks(
   checkScripts: readonly string[],
   context: Pick<E2EScenarioFixtures, "artifacts" | "host" | "secrets">,
 ): Promise<void> {
-  const apiKey = context.secrets.required("NVIDIA_INFERENCE_API_KEY");
+  const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
   await context.artifacts.writeJson("e2e-cloud-experimental-checks.json", {
     scenarioId,
     sandboxName,
@@ -139,21 +139,22 @@ for (const scenario of listScenarios()) {
 
       const validation = await stateValidation.from(scenario.expectedStateId, instance);
 
-      if (scenario.environment.onboarding === "cloud-langchain-deepagents-code") {
-        const checkScripts = [
-          "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
-          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-        ];
-        for (const scriptPath of checkScripts) {
-          expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
-        }
-        expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
-        await runE2eCloudExperimentalChecks(scenario.id, instance.sandboxName, checkScripts, {
-          artifacts,
-          host,
-          secrets,
-        });
+      const checkScripts =
+        scenario.environment.onboarding === "cloud-langchain-deepagents-code"
+          ? [
+              "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+              "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+            ]
+          : [];
+      for (const scriptPath of checkScripts) {
+        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
       }
+      expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
+      await runE2eCloudExperimentalChecks(scenario.id, instance.sandboxName, checkScripts, {
+        artifacts,
+        host,
+        secrets,
+      });
 
       await artifacts.writeJson("scenario-result.json", {
         id: scenario.id,

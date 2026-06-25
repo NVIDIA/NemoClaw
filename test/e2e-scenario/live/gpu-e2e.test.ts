@@ -52,16 +52,15 @@ function assertSmallContextCompactionPolicy(configText: string): void {
 
   expect(typeof model?.contextWindow).toBe("number");
   expect(typeof model?.maxTokens).toBe("number");
-  const contextWindow = model?.contextWindow;
-  const maxTokens = model?.maxTokens;
-  if (typeof contextWindow !== "number" || typeof maxTokens !== "number") return;
-  if (contextWindow > 28_000) return;
-
+  const contextWindow = model?.contextWindow as number;
+  const maxTokens = model?.maxTokens as number;
   const expectedReserve = Math.min(maxTokens, Math.max(0, contextWindow - 8_000));
-  expect(compaction).toMatchObject({
-    reserveTokens: expectedReserve,
-    reserveTokensFloor: expectedReserve,
-  });
+  const expectedCompaction =
+    contextWindow <= 28_000
+      ? { reserveTokens: expectedReserve, reserveTokensFloor: expectedReserve }
+      : undefined;
+
+  expect(compaction).toEqual(expectedCompaction);
 }
 
 test.skipIf(!shouldRunLiveE2EScenarios())(

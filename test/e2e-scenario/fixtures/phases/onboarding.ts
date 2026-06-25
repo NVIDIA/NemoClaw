@@ -238,7 +238,21 @@ export class OnboardingPhaseFixture {
       artifactName: "onboard-cloud-langchain-deepagents-code",
       env: commandEnv(sandboxName, {
         NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
+        NEMOCLAW_ENDPOINT_URL:
+          process.env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL,
+        NEMOCLAW_MODEL:
+          process.env.NEMOCLAW_MODEL ||
+          process.env.NEMOCLAW_COMPAT_MODEL ||
+          DEFAULT_HOSTED_INFERENCE_MODEL,
+        NEMOCLAW_COMPAT_MODEL:
+          process.env.NEMOCLAW_MODEL ||
+          process.env.NEMOCLAW_COMPAT_MODEL ||
+          DEFAULT_HOSTED_INFERENCE_MODEL,
+        NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
         NVIDIA_INFERENCE_API_KEY: apiKey,
+        [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
       }),
       redactionValues: [apiKey],
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
