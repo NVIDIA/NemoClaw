@@ -21,6 +21,7 @@ type RunnerOptions = {
   stdio?: StdioOptions;
   input?: string;
   ignoreError?: boolean;
+  includeStderr?: boolean;
   timeout?: number;
 };
 
@@ -55,6 +56,7 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     cwd: ROOT,
     env: opts.env,
     ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
     timeout: opts.timeout,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),

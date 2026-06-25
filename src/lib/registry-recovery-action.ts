@@ -1,15 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { recoverNamedGatewayRuntime } from "./gateway-runtime-action";
-import * as onboardSession from "./state/onboard-session";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
-import { captureOpenshell } from "./adapters/openshell/runtime";
-import * as registry from "./state/registry";
-import type { SandboxEntry } from "./state/registry";
 import { resolveOpenshell } from "./adapters/openshell/resolve";
-import { parseLiveSandboxNames } from "./runtime-recovery";
+import { captureOpenshell } from "./adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import {
+  getNamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime,
+} from "./gateway-runtime-action";
+import { resolveGatewayPortFromName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
+import { parseLiveSandboxNames } from "./runtime-recovery";
+import * as onboardSession from "./state/onboard-session";
+import type { SandboxEntry } from "./state/registry";
+import * as registry from "./state/registry";
 
 type Session = ReturnType<typeof onboardSession.loadSession>;
 
@@ -79,9 +83,15 @@ function shouldRecoverRegistryEntries(
     current.sandboxes.length > 0 || hasSessionSandbox || Boolean(requestedSandboxName);
   return {
     missingRequestedSandbox,
+    // #5714: an empty local registry must always attempt recovery, even with
+    // no session/requested-name seed. The reporter's `nemoclaw list` printed
+    // "No sandboxes registered" while the live gateway/container were healthy
+    // and `nemoclaw <name> status` reported Ready. Probing the live gateway
+    // (bounded, read-only when unseeded — see recoverRegistryEntries) lets the
+    // documented discovery command rediscover a sandbox the local registry lost.
     shouldRecover:
-      hasRecoverySeed &&
-      (current.sandboxes.length === 0 || missingRequestedSandbox || missingSessionSandbox),
+      current.sandboxes.length === 0 ||
+      (hasRecoverySeed && (missingRequestedSandbox || missingSessionSandbox)),
   };
 }
 
@@ -136,34 +146,100 @@ function seedRecoveryMetadata(
   return { metadataByName, recoveredFromSession };
 }
 
-async function recoverRegistryFromLiveGateway(
-  metadataByName: Map<string, RecoveredSandboxMetadata>,
-) {
-  if (!resolveOpenshell()) {
-    return 0;
+function canInspectLiveGatewayReadOnly(): boolean {
+  // #5714: unseeded `nemoclaw list` recovery must never mutate gateway state
+  // (no select/start). Probes are non-fatal so a hung gateway falls back to the
+  // empty registry instead of exiting the process.
+  const lifecycle = getNamedGatewayLifecycleState(undefined, { ignoreProbeErrors: true });
+  // The target NemoClaw gateway is healthy — trust its sandbox list.
+  if (lifecycle.state === "healthy_named") {
+    return true;
   }
+  // A different gateway is active. `openshell sandbox list` is scoped to the
+  // active gateway, so only trust it when that gateway is still NemoClaw-managed
+  // (the bare `nemoclaw` or a per-port `nemoclaw-<port>` from a non-default
+  // NEMOCLAW_GATEWAY_PORT). Never list a foreign OpenShell gateway's sandboxes
+  // as recovered NemoClaw entries.
+  if (lifecycle.state === "connected_other") {
+    return resolveGatewayPortFromName(lifecycle.activeGateway ?? "") !== null;
+  }
+  return false;
+}
+
+async function canInspectLiveGatewayViaRecovery(): Promise<boolean> {
   const recovery = await recoverNamedGatewayRuntime();
-  const canInspectLiveGateway =
+  return (
     recovery.recovered ||
     recovery.before?.state === "healthy_named" ||
-    recovery.after?.state === "healthy_named";
+    recovery.after?.state === "healthy_named"
+  );
+}
+
+interface LiveGatewayRecovery {
+  recoveredFromGateway: number;
+  /**
+   * #5714: live sandboxes surfaced for display only (unseeded `list` recovery)
+   * that were NOT persisted to the on-disk registry. Empty for the seeded path.
+   */
+  ephemeralSandboxes: SandboxEntry[];
+}
+
+async function recoverRegistryFromLiveGateway(
+  metadataByName: Map<string, RecoveredSandboxMetadata>,
+  { readOnly = false }: { readOnly?: boolean } = {},
+): Promise<LiveGatewayRecovery> {
+  if (!resolveOpenshell()) {
+    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
+  }
+  const canInspectLiveGateway = readOnly
+    ? canInspectLiveGatewayReadOnly()
+    : await canInspectLiveGatewayViaRecovery();
   if (!canInspectLiveGateway) {
-    return 0;
+    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
   }
 
   let recoveredFromGateway = 0;
+  const ephemeralSandboxes: SandboxEntry[] = [];
   const liveList = captureOpenshell(["sandbox", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
+  // Only trust the output of a clean `sandbox list`. On a non-zero/failed probe
+  // (timeout, transport error) OpenShell may print free-form text whose first
+  // token parseLiveSandboxNames would otherwise mistake for a sandbox name.
+  if (liveList.status !== 0) {
+    return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
+  }
   const liveNames = Array.from<string>(parseLiveSandboxNames(liveList.output));
   for (const name of liveNames) {
     const metadata = metadataByName.get(name) || undefined;
+    if (readOnly) {
+      // Unseeded recovery: surface the live sandbox for THIS `list` only and do
+      // not persist it. `openshell sandbox list` exposes only NAME/CREATED/PHASE
+      // — not the agent or gateway binding — so a persisted entry would default
+      // `agent` to "openclaw" everywhere downstream (state dirs, connect,
+      // rebuild, doctor), permanently misclassifying a Deep Agents/Hermes
+      // sandbox after registry loss. Display-only recovery fixes the
+      // discoverability mismatch without writing unsafe durable metadata;
+      // follow-up named commands reconcile the real agent via the gateway.
+      let validName: string;
+      try {
+        validName = validateName(name, "sandbox name");
+      } catch {
+        continue;
+      }
+      ephemeralSandboxes.push({
+        ...buildRecoveredSandboxEntry(validName, metadata),
+        recoveredFromGateway: true,
+      });
+      recoveredFromGateway += 1;
+      continue;
+    }
     if (upsertRecoveredSandbox(name, metadata)) {
       recoveredFromGateway += 1;
     }
   }
-  return recoveredFromGateway;
+  return { recoveredFromGateway, ephemeralSandboxes };
 }
 
 function applyRecoveredDefault(
@@ -196,15 +272,31 @@ export async function recoverRegistryEntries({
   }
 
   const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
-  const shouldProbeLiveGateway =
+  // A seed is any signal that the user expects a specific sandbox to exist:
+  // existing registry entries, a recorded onboard session, or an explicit
+  // requested name. With a seed we allow active gateway recovery (which may
+  // select/start the named gateway). Without one — the #5714 empty-registry
+  // `list` case — restrict recovery to a read-only inspection of any connected
+  // gateway so plain `nemoclaw list` never mutates gateway state as a side
+  // effect of listing.
+  const hasRecoverySeed =
     current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
-  const recoveredFromGateway = shouldProbeLiveGateway
-    ? await recoverRegistryFromLiveGateway(seeded.metadataByName)
-    : 0;
+  const gateway = await recoverRegistryFromLiveGateway(seeded.metadataByName, {
+    readOnly: !hasRecoverySeed,
+  });
   const recovered = applyRecoveredDefault(current.defaultSandbox, requestedSandboxName, session);
+  // Merge display-only (ephemeral) live-gateway sandboxes that were not
+  // persisted (#5714 unseeded recovery), skipping any that a concurrent path
+  // may already have registered.
+  const persistedNames = new Set(recovered.sandboxes.map((sandbox) => sandbox.name));
+  const sandboxes = [
+    ...recovered.sandboxes,
+    ...gateway.ephemeralSandboxes.filter((sandbox) => !persistedNames.has(sandbox.name)),
+  ];
   return {
     ...recovered,
+    sandboxes,
     recoveredFromSession: seeded.recoveredFromSession,
-    recoveredFromGateway,
+    recoveredFromGateway: gateway.recoveredFromGateway,
   };
 }

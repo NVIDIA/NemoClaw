@@ -107,6 +107,16 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
+  // Transient, display-only marker for a sandbox surfaced by #5714 unseeded
+  // `nemoclaw list` recovery directly from the live gateway. The recovery path
+  // that sets it only ever pushes such entries into the in-memory list result
+  // (ephemeralSandboxes) and never routes them through registerSandbox/
+  // updateSandbox, so it is never written to sandboxes.json. (registerSandbox
+  // also writes an explicit field allowlist that omits it; updateSandbox does
+  // not, so callers must not pass a flagged entry to updateSandbox.) It signals
+  // that fields like `agent` are genuinely unknown rather than defaults so the
+  // renderer does not present a recovered Deep Agents/Hermes sandbox as OpenClaw.
+  recoveredFromGateway?: boolean;
 }
 
 export interface SandboxRegistry {
