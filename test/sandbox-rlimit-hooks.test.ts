@@ -77,7 +77,7 @@ function rlimitShim(rlimitLib: string): string {
 }
 
 type ProbeKey = "nproc" | "nofile" | "raise_nproc" | "raise_nofile";
-type ProbeValues = Partial<Record<ProbeKey | "fork_status" | "spawned", string>>;
+type ProbeValues = Partial<Record<ProbeKey | "fork_error" | "fork_status" | "spawned", string>>;
 
 function parseProbeOutput(stdout: string): ProbeValues {
   return Object.fromEntries(
@@ -132,29 +132,44 @@ function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
 
 function expectHookDeniesBoundedForkStorm(hookPath: string): void {
   const probe = [
-    "set -u",
+    "set -euo pipefail",
     `source ${JSON.stringify(hookPath)}`,
-    'spawned="0"',
-    'fork_status="0"',
-    "pids=()",
-    "cleanup() {",
-    "  set +e",
-    '  for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done',
-    '  wait "${pids[@]:-}" 2>/dev/null || true',
-    "}",
-    "trap cleanup EXIT",
-    'i="1"',
-    'while [ "$i" -le 5000 ]; do',
-    "  sleep 2 &",
-    '  fork_status="$?"',
-    '  [ "$fork_status" -eq 0 ] || break',
-    '  pids+=("$!")',
-    '  spawned="$i"',
-    `  [ "$i" -lt ${FORK_STORM_SAFETY_CAP} ] || break`,
-    '  i="$((i + 1))"',
-    "done",
-    'printf "spawned=%s\\n" "$spawned"',
-    'printf "fork_status=%s\\n" "$fork_status"',
+    "exec python3 - <<'PY'",
+    "import errno",
+    "import subprocess",
+    "",
+    `safety_cap = ${FORK_STORM_SAFETY_CAP}`,
+    "spawned = 0",
+    "fork_status = 0",
+    "fork_error = ''",
+    "children = []",
+    "try:",
+    "    for attempt in range(1, 5001):",
+    "        try:",
+    "            child = subprocess.Popen(['sleep', '30'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
+    "        except OSError as exc:",
+    "            fork_status = exc.errno or errno.EAGAIN",
+    "            fork_error = str(exc)",
+    "            break",
+    "        children.append(child)",
+    "        spawned = attempt",
+    "        if attempt >= safety_cap:",
+    "            break",
+    "finally:",
+    "    for child in children:",
+    "        child.terminate()",
+    "    for child in children:",
+    "        try:",
+    "            child.wait(timeout=2)",
+    "        except subprocess.TimeoutExpired:",
+    "            child.kill()",
+    "            child.wait(timeout=2)",
+    "",
+    "print(f'spawned={spawned}')",
+    "print(f'fork_status={fork_status}')",
+    "if fork_error:",
+    "    print(f'fork_error={fork_error}')",
+    "PY",
   ].join("\n");
   const result: SpawnSyncReturns<string> = spawnSync(
     "bash",
@@ -169,7 +184,7 @@ function expectHookDeniesBoundedForkStorm(hookPath: string): void {
   const values = parseProbeOutput(result.stdout);
   const spawned = Number(values.spawned ?? "5000");
   const forkStatus = Number(values.fork_status ?? "0");
-  const forkStderr = result.stderr;
+  const forkStderr = `${values.fork_error ?? ""}\n${result.stderr}`;
   const deniedByRlimit =
     forkStatus !== 0 || /Resource temporarily unavailable|fork: retry|fork/i.test(forkStderr);
   expect(deniedByRlimit, `spawned=${spawned} stderr=${forkStderr}`).toBe(true);
