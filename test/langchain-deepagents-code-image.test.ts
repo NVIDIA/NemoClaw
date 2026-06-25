@@ -6,7 +6,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+
+function fingerprint(patterns: readonly RegExp[]): string[] {
+  return patterns.map((re) => `${re.source}::${re.flags}`);
+}
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 
@@ -652,6 +656,36 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("rejects export-prefixed env-file entries that carry opaque credential-name payloads", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-export-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueCredentialPayloadZ1234567890";
+    fs.writeFileSync(envFile, `export OPENAI_API_KEY=${opaque}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects export-prefixed env-file entries that carry token-prefix secrets", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-export-tok-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    fs.writeFileSync(envFile, `export OPENAI_API_KEY=${fakeSecret}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
   it("rejects exact canonical credential names KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL with opaque payloads", () => {
     const cases: string[] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY"];
     const opaque = "opaqueCredentialPayloadZ1234567890";
@@ -760,9 +794,32 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", () => {
-    expect(Array.isArray(TOKEN_PREFIX_PATTERNS)).toBe(true);
-    expect(TOKEN_PREFIX_PATTERNS.length).toBe(16);
+  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS fingerprint to surface drift", () => {
+    expect(fingerprint(TOKEN_PREFIX_PATTERNS)).toEqual([
+      "nvapi-[A-Za-z0-9_-]{10,}::g",
+      "nvcf-[A-Za-z0-9_-]{10,}::g",
+      "ghp_[A-Za-z0-9_-]{10,}::g",
+      "(?:github_pat_)[A-Za-z0-9_]{30,}::g",
+      "sk-proj-[A-Za-z0-9_-]{10,}::g",
+      "sk-ant-[A-Za-z0-9_-]{10,}::g",
+      "sk-[A-Za-z0-9_-]{20,}::g",
+      "(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}::g",
+      "A(?:K|S)IA[A-Z0-9]{16}::g",
+      "hf_[A-Za-z0-9]{10,}::g",
+      "glpat-[A-Za-z0-9_-]{10,}::g",
+      "gsk_[A-Za-z0-9]{10,}::g",
+      "pypi-[A-Za-z0-9_-]{10,}::g",
+      "\\bbot\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
+      "\\b\\d{8,10}:[A-Za-z0-9_-]{35}\\b::g",
+      "\\b[A-Za-z0-9]{24}\\.[A-Za-z0-9_-]{6}\\.[A-Za-z0-9_-]{27,}\\b::g",
+    ]);
+  });
+
+  it("pins the wrapper parity contract to the canonical CONTEXT_PATTERNS fingerprint to surface drift", () => {
+    expect(fingerprint(CONTEXT_PATTERNS)).toEqual([
+      "(?<=Bearer\\s+)[A-Za-z0-9_.+/=-]{10,}::gi",
+      "(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['\"]?)[A-Za-z0-9_.+/=-]{10,}::gi",
+    ]);
   });
 
   it("rejects every canonical token shape declared by the secret-pattern contract", () => {

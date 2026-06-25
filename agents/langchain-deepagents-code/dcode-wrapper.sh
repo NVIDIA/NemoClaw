@@ -196,6 +196,12 @@ assert_no_secret_env_file() {
     line="$(trim_whitespace "$line")"
     [ -n "$line" ] || continue
     case "$line" in \#*) continue ;; esac
+    case "$line" in
+      export[[:space:]]*)
+        line="${line#export}"
+        line="$(trim_whitespace "$line")"
+        ;;
+    esac
     key="${line%%=*}"
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
