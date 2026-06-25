@@ -160,22 +160,14 @@ describe("runSandboxSnapshot", () => {
 
   function mockDcodeProbe(status: number, output = "") {
     captureOpenshellMock.mockImplementation((args: string[]) => {
-      if (args[0] === "sandbox" && args[1] === "list") {
-        return {
+      const responses: Record<string, OpenshellCaptureResult> = {
+        "sandbox exec": { status, output },
+        "sandbox list": {
           status: 0,
           output: "alpha Ready\n",
-        };
-      }
-      if (args[0] === "sandbox" && args[1] === "exec") {
-        return {
-          status,
-          output,
-        };
-      }
-      return {
-        status: 0,
-        output: "",
+        },
       };
+      return responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? { status: 0, output: "" };
     });
   }
 
