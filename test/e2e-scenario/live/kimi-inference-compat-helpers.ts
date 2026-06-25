@@ -30,8 +30,8 @@ export interface KimiEnvOptions {
 }
 
 export function resolveKimiInferenceMode(env: NodeJS.ProcessEnv = process.env): KimiInferenceMode {
-  if (env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase() === "public-nvidia")
-    return "public-nvidia";
+  const explicitMode = env.NEMOCLAW_E2E_INFERENCE_MODE?.trim().toLowerCase();
+  if (explicitMode === "public-nvidia" || explicitMode === "mock") return explicitMode;
   if (env.NEMOCLAW_KIMI_USE_MOCK === "0") return "public-nvidia";
   return "mock";
 }

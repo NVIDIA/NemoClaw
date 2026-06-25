@@ -54,6 +54,11 @@ describe("Kimi inference compatibility mode selection", () => {
       "public-nvidia",
     );
     expect(resolveKimiInferenceMode({ NEMOCLAW_KIMI_USE_MOCK: "0" })).toBe("public-nvidia");
-    expect(resolveKimiInferenceMode({ NEMOCLAW_E2E_INFERENCE_MODE: "mock" })).toBe("mock");
+    expect(
+      resolveKimiInferenceMode({
+        NEMOCLAW_E2E_INFERENCE_MODE: "mock",
+        NEMOCLAW_KIMI_USE_MOCK: "0",
+      }),
+    ).toBe("mock");
   });
 });
