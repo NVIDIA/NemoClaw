@@ -48,14 +48,6 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
     // #5027: openclaw.json must be declared as a durable state file so
     // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
@@ -88,14 +80,6 @@ describe("agent definitions", () => {
       auth: "session",
     });
     expect(hermes.dashboardUi).toBeNull();
-    expect(hermes.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
   });
 
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {

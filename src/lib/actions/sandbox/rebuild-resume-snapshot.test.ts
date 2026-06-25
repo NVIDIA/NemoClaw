@@ -95,7 +95,9 @@ describe("rebuild resume snapshot repair", () => {
         result: { status: 0, output: "alpha Ready" },
       }),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
-      vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ messagingPlatforms: [] } as never),
+      vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
+        name: "langchain-deepagents-code",
+      } as never),
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
       vi.spyOn(onboardSession, "loadSession").mockImplementation(loadSession),

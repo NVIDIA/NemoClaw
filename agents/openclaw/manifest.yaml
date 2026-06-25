@@ -72,16 +72,6 @@ state_files:
 device_pairing: true
 web_auth_method: device_pairing
 
-# ── Messaging platforms ─────────────────────────────────────────
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-    - wechat
-    - whatsapp
-    - teams
-
 # ── Inference ───────────────────────────────────────────────────
 inference:
   provider_type: gateway_managed
