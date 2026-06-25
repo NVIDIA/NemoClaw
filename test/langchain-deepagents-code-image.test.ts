@@ -294,16 +294,26 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("^PYTHON=/opt/venv/bin/python3$");
     expect(pythonEgressCheck).toContain("^PIP=/opt/venv/bin/pip3$");
     expect(pythonEgressCheck).toContain("^USRLOCAL_COUNT=1$");
-    expect(pythonEgressCheck).toContain("python3 - ${url@Q} <<'PY'");
-    expect(pythonEgressCheck).toContain('expect_reached "GitHub" "https://api.github.com/"');
-    expect(pythonEgressCheck).toContain('expect_reached "PyPI" "https://pypi.org/"');
+    expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "arbitrary Python" "PyPI" "https://pypi.org/"',
+    );
+    expect(pythonEgressCheck).toContain('PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"');
+    expect(pythonEgressCheck).toContain("python3 -m venv --copies");
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "project venv Python under /sandbox" "PyPI" "https://pypi.org/" "$PROJECT_PYTHON"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_blocked "project venv Python under /sandbox" "Tavily" "https://api.tavily.com/" "$PROJECT_PYTHON"',
+    );
     expect(pythonEgressCheck).toContain("https://api.tavily.com/");
     expect(pythonEgressCheck).toContain("https://api.smith.langchain.com/");
     expect(pythonEgressCheck).toContain("https://modelcontextprotocol.io/");
     expect(pythonEgressCheck).toContain("https://example.com/");
-    expect(pythonEgressCheck).toContain(
-      "arbitrary Python cannot reach ${label} without explicit policy",
-    );
+    expect(pythonEgressCheck).toContain("${actor} cannot reach ${label} without explicit policy");
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
