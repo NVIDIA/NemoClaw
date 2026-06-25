@@ -328,7 +328,7 @@ check_openclaw_agent_turn() {
 
   reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
-  if [ "$rc" -eq 0 ] && grep -qi "PONG" <<<"$reply"; then
+  if [ "$rc" -eq 0 ] && openclaw_agent_text_has_token "PONG" <<<"${reply^^}"; then
     pass "OpenClaw agent answered through the switched inference route"
   elif [ "$rc" -eq 124 ]; then
     skip "OpenClaw agent turn timed out after switch; route/config checks already passed"
