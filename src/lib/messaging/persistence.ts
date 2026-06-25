@@ -7,6 +7,7 @@ import {
 } from "./channels";
 import { planCredentialBindings } from "./compiler/engines/credential-binding-engine";
 import { planHealthChecks } from "./compiler/engines/health-check-engine";
+import { planHostForward } from "./compiler/engines/host-forward-engine";
 import { planNetworkPolicy } from "./compiler/engines/policy-resolver";
 import { planRuntimeSetup } from "./compiler/engines/runtime-setup-engine";
 import { planStateUpdates } from "./compiler/engines/state-update-engine";
@@ -238,6 +239,9 @@ function normalizePersistedChannel(
     : normalizePersistedInputs(channel, manifest);
   const active =
     channel.active ?? (configured && !disabled && requiredInputsAvailable(manifest, inputs));
+  const hostForward = manifest
+    ? planHostForward(manifest, inputs, active && !disabled, createBuiltInRenderTemplateResolver())
+    : undefined;
 
   return {
     channelId: channel.channelId,
@@ -248,6 +252,7 @@ function normalizePersistedChannel(
     configured,
     disabled,
     inputs,
+    ...(hostForward ? { hostForward } : {}),
     hooks: Array.isArray(channel.hooks) ? [...channel.hooks] : [],
   };
 }
@@ -398,19 +403,25 @@ function hydrateChannelFromManifest(
   channel: SandboxMessagingChannelPlan,
   manifest: ChannelManifest | undefined,
 ): SandboxMessagingChannelPlan {
+  const { hostForward: _oldHostForward, ...channelWithoutHostForward } = channel;
   const disabled = channel.disabled || plan.disabledChannels.includes(channel.channelId);
   const inputs = hasFullChannelShape(channel)
     ? normalizeFullInputs(channel.channelId, channel.inputs)
     : normalizePersistedInputs(channel, manifest);
   const configured = channel.configured;
+  const active = channel.active && !disabled;
+  const hostForward = manifest
+    ? planHostForward(manifest, inputs, active, createBuiltInRenderTemplateResolver())
+    : undefined;
   return {
-    ...channel,
+    ...channelWithoutHostForward,
     displayName: channel.displayName ?? manifest?.displayName ?? channel.channelId,
     authMode: channel.authMode ?? manifest?.auth.mode ?? "none",
     configured,
     disabled,
     active: channel.active,
     inputs,
+    ...(hostForward ? { hostForward } : {}),
     hooks:
       channel.hooks.length > 0
         ? channel.hooks

@@ -17,6 +17,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 
@@ -45,16 +46,15 @@ function extractSemver(raw: string): string | undefined {
   return raw.match(/\d+\.\d+\.\d+/)?.[0];
 }
 
-function installEnv(apiKey: string): NodeJS.ProcessEnv {
+function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    NVIDIA_INFERENCE_API_KEY: apiKey,
+    ...hostedEnv,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_AGENT: "openclaw",
-    NEMOCLAW_PROVIDER: "cloud",
   };
 }
 
@@ -84,10 +84,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     skip,
     stateValidation,
   }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-survival",
@@ -185,7 +183,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-sh-sandbox-survival",
       cwd: REPO_ROOT,
-      env: installEnv(apiKey),
+      env: installEnv(hosted.env),
       redactionValues: [apiKey],
       timeoutMs: 20 * 60_000,
     });

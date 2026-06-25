@@ -15,6 +15,20 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.67
+
+NemoClaw v0.0.67 improves onboarding recovery, messaging reliability, OpenClaw agent workflows, and AI-agent documentation routing:
+
+- Onboarding and OpenClaw agent operations recover more reliably after interrupted or scripted runs.
+  NemoClaw keeps repair backstops active when `onboard --resume` continues from later nonterminal onboarding phases, and `agents apply` removes orphan OpenClaw agents without forwarding a delete flag that the OpenClaw CLI rejects.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Discord messaging now uses the managed proxy path that OpenClaw accepts.
+  NemoClaw no longer writes a non-loopback per-account Discord proxy, while Telegram keeps its per-account proxy behavior, and WhatsApp policy E2E checks avoid brittle shell-pipeline failures on large policy output.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- AI-agent documentation now uses one compact routing skill instead of generated page-copy skills.
+  The `nemoclaw-user-guide` skill points agents to the docs MCP server, `llms.txt`, and canonical Markdown routes so the docs site remains the source of truth.
+  For more information, refer to [Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent](../resources/agent-skills).
+
 ## v0.0.66
 
 NemoClaw v0.0.66 improves gateway serving, OpenClaw agent workflows, messaging defaults, local inference setup, and release validation:

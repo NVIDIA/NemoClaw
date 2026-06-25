@@ -14,10 +14,16 @@ function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
 }
 
-function makeStartScriptFixture(tempDir: string): { envFile: string; scriptPath: string } {
+function makeStartScriptFixture(tempDir: string): {
+  envFile: string;
+  messagingEnvFile: string;
+  scriptPath: string;
+} {
   const envFile = path.join(tempDir, "proxy-env.sh");
+  const messagingEnvFile = path.join(tempDir, "messaging.env");
   const scriptPath = path.join(tempDir, "start.sh");
   const fixture = readAgentFile("start.sh")
+    .replace('local env_file="/sandbox/.deepagents/.env"', `local env_file="${messagingEnvFile}"`)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
@@ -25,7 +31,7 @@ function makeStartScriptFixture(tempDir: string): { envFile: string; scriptPath:
     );
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
-  return { envFile, scriptPath };
+  return { envFile, messagingEnvFile, scriptPath };
 }
 
 describe("LangChain Deep Agents Code image contracts", () => {
@@ -40,6 +46,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(dockerfile).toContain("chmod -R 755 /sandbox/.nemoclaw/blueprints");
     expect(dockerfile.indexOf("cp -r /opt/nemoclaw-blueprint/*")).toBeLessThan(
       dockerfile.indexOf("chown -R root:root /sandbox/.nemoclaw/blueprints"),
+    );
+  });
+
+  it("declares the messaging plan build arg before the DeepAgents build applier runs", () => {
+    const dockerfile = readAgentFile("Dockerfile");
+
+    expect(dockerfile).toContain("ARG NEMOCLAW_MESSAGING_PLAN_B64=");
+    expect(dockerfile).toContain("NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64}");
+    expect(dockerfile.indexOf("ARG NEMOCLAW_MESSAGING_PLAN_B64=")).toBeLessThan(
+      dockerfile.indexOf("messaging-build-applier.mts --agent langchain-deepagents-code"),
     );
   });
 
@@ -72,6 +88,49 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const envFileText = fs.readFileSync(envFile, "utf8");
     expect(envFileText).toContain("export HTTP_PROXY=http://proxy.example:8080");
     expect(envFileText).toContain("export https_proxy=https://safe-proxy.example:8443");
+  });
+
+  it("loads generated messaging env values literally without command execution", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
+    const { envFile, messagingEnvFile, scriptPath } = makeStartScriptFixture(tempDir);
+    const marker = path.join(tempDir, "nemoclaw-pwned");
+    fs.writeFileSync(
+      messagingEnvFile,
+      [
+        `DISCORD_ALLOWED_USERS=$(touch ${marker})`,
+        `SLACK_ALLOWED_CHANNELS=C123;touch ${marker}`,
+        `UNTRUSTED_KEY=$(touch ${marker})`,
+      ].join("\n"),
+      "utf8",
+    );
+
+    const output = execFileSync(
+      "bash",
+      [
+        scriptPath,
+        "sh",
+        "-c",
+        [
+          'cat "$NEMOCLAW_TEST_PROXY_ENV"',
+          'printf "\\nENV_DISCORD_ALLOWED_USERS=%s\\n" "$DISCORD_ALLOWED_USERS"',
+          'printf "ENV_SLACK_ALLOWED_CHANNELS=%s\\n" "$SLACK_ALLOWED_CHANNELS"',
+          'test ! -e "$NEMOCLAW_PWNED"',
+        ].join("; "),
+      ],
+      {
+        env: {
+          NEMOCLAW_TEST_PROXY_ENV: envFile,
+          NEMOCLAW_PWNED: marker,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+        encoding: "utf8",
+      },
+    );
+
+    expect(output).toContain(`ENV_DISCORD_ALLOWED_USERS=$(touch ${marker})`);
+    expect(output).toContain(`ENV_SLACK_ALLOWED_CHANNELS=C123;touch ${marker}`);
+    expect(output).not.toContain("UNTRUSTED_KEY");
+    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("omits and unsets credential-bearing proxy URLs", () => {

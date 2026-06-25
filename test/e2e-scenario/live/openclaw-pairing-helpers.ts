@@ -256,7 +256,7 @@ import { pathToFileURL } from "node:url";
 
 function findOpenClawPackageRootFromBinary() {
   let binary = "";
-  try { binary = execFileSync("bash", ["-lc", "type -P openclaw || command -v openclaw"], { encoding: "utf8" }).trim(); } catch { return null; }
+  try { binary = execFileSync("bash", ["-c", "type -P openclaw || command -v openclaw"], { encoding: "utf8" }).trim(); } catch { return null; }
   if (!binary) return null;
   let current = "";
   try { current = fs.realpathSync(binary); } catch { return null; }
