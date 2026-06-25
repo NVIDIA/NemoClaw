@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SANDBOX_INIT = join(import.meta.dirname, "../scripts/lib/sandbox-init.sh");
+const SANDBOX_RLIMITS = join(import.meta.dirname, "../scripts/lib/sandbox-rlimits.sh");
 
 /** Cross-platform octal permission string (macOS uses -f, Linux uses -c). */
 function getOctalPerms(filePath: string): string {
@@ -675,31 +676,31 @@ EOF
   });
 
   describe("harden_resource_limits", () => {
-    // Shim `ulimit` (a bash builtin) by overriding it with a function inside the
-    // sourced body. The function records each invocation so we can assert both
-    // the nproc (#809) and nofile (#4527) caps are applied, soft-before-hard.
-    it("applies nproc and nofile soft+hard limits in order", () => {
-      const { stdout } = runWithLib(
-        [
-          // Override the ulimit builtin to record args and succeed.
-          "ulimit() { printf 'ulimit %s\\n' \"$*\"; return 0; }",
-          "harden_resource_limits",
-        ].join("\n"),
+    it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
+      const source = readFileSync(SANDBOX_RLIMITS, "utf-8");
+      const softNproc = source.indexOf('builtin ulimit "-S${_nemoclaw_limit_flag}"');
+      const hardNproc = source.indexOf('builtin ulimit "-H${_nemoclaw_limit_flag}"');
+      const verify = source.indexOf(
+        'builtin ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}"',
       );
-      const calls = stdout.split("\n").filter((line) => line.startsWith("ulimit "));
-      expect(calls).toEqual([
-        "ulimit -Su 512",
-        "ulimit -Hu 512",
-        "ulimit -Sn 65536",
-        "ulimit -Hn 65536",
-      ]);
+
+      expect(softNproc).toBeGreaterThanOrEqual(0);
+      expect(hardNproc).toBeGreaterThan(softNproc);
+      expect(verify).toBeGreaterThan(hardNproc);
+      const plainUlimitCalls = source
+        .split("\n")
+        .filter((line) => /\bulimit "-/.test(line) && !/\bbuiltin ulimit\b/.test(line));
+      expect(plainUlimitCalls).toEqual([]);
     });
 
     it("is best-effort: exits 0 and warns when ulimit fails", () => {
-      // Shim ulimit to always fail. The function must not abort (best-effort)
-      // and must emit a [SECURITY] warning for each of the four limits.
       const { stdout } = runWithLib(
-        ["ulimit() { return 1; }", "harden_resource_limits 2>&1", 'echo "HARDEN_OK"'].join("\n"),
+        [
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=not-a-limit",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=not-a-limit",
+          "harden_resource_limits 2>&1",
+          'echo "HARDEN_OK"',
+        ].join("\n"),
       );
       expect(stdout).toContain("HARDEN_OK");
       expect(stdout).toContain("Could not set soft nproc limit");
@@ -711,23 +712,16 @@ EOF
     it("verifies effective limits and emits diagnostics when a runtime leaves them unbounded", () => {
       const { stdout } = runWithLib(
         [
-          "ulimit() {",
-          '  case "$1:$#" in',
-          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 1 ;;",
-          "    -Su:1 | -Hu:1) printf '%s\\n' unlimited; return 0 ;;",
-          "    -Sn:1 | -Hn:1) printf '%s\\n' 1048576; return 0 ;;",
-          "  esac",
-          "  return 1",
-          "}",
-          "harden_resource_limits --quiet 2>&1",
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=1",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=1",
           "verify_resource_limits 2>&1 || echo VERIFY_FAILED",
         ].join("\n"),
       );
       expect(stdout).not.toContain("Could not set");
-      expect(stdout).toContain("Effective soft nproc limit is unlimited");
-      expect(stdout).toContain("Effective hard nproc limit is unlimited");
-      expect(stdout).toContain("Effective soft nofile limit is 1048576");
-      expect(stdout).toContain("Effective hard nofile limit is 1048576");
+      expect(stdout).toContain("Effective soft nproc limit is");
+      expect(stdout).toContain("Effective hard nproc limit is");
+      expect(stdout).toContain("Effective soft nofile limit is");
+      expect(stdout).toContain("Effective hard nofile limit is");
       expect(stdout).toContain("VERIFY_FAILED");
     });
   });

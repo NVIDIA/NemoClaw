@@ -13,12 +13,12 @@ _nemoclaw_set_resource_limit() {
   _nemoclaw_limit_label="$3"
   _nemoclaw_limit_quiet="${4:-}"
 
-  if ! ulimit "-S${_nemoclaw_limit_flag}" "$_nemoclaw_limit_value" 2>/dev/null; then
+  if ! builtin ulimit "-S${_nemoclaw_limit_flag}" "$_nemoclaw_limit_value" 2>/dev/null; then
     if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
       echo "[SECURITY] Could not set soft ${_nemoclaw_limit_label} limit (container runtime may restrict ulimit)" >&2
     fi
   fi
-  if ! ulimit "-H${_nemoclaw_limit_flag}" "$_nemoclaw_limit_value" 2>/dev/null; then
+  if ! builtin ulimit "-H${_nemoclaw_limit_flag}" "$_nemoclaw_limit_value" 2>/dev/null; then
     if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
       echo "[SECURITY] Could not set hard ${_nemoclaw_limit_label} limit (container runtime may restrict ulimit)" >&2
     fi
@@ -54,7 +54,7 @@ _nemoclaw_verify_resource_limit() {
         _nemoclaw_limit_mode="H"
         ;;
     esac
-    _nemoclaw_effective_limit="$(ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
+    _nemoclaw_effective_limit="$(builtin ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
 
     if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit" \
       || [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then

@@ -13,8 +13,8 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
-const FORK_STORM_NPROC_LIMIT = 32;
-const FORK_STORM_SAFETY_CAP = FORK_STORM_NPROC_LIMIT * 3;
+const FORK_STORM_LIMIT_HEADROOM = 64;
+const FORK_STORM_SAFETY_HEADROOM = 128;
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -76,7 +76,7 @@ function rlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 }
 
-type ProbeKey = "nproc" | "nofile" | "raise_nproc" | "raise_nofile";
+type ProbeKey = "nproc" | "nofile" | "raise_nproc" | "raise_nofile" | "shadow";
 type ProbeValues = Partial<Record<ProbeKey | "fork_error" | "fork_status" | "spawned", string>>;
 
 function parseProbeOutput(stdout: string): ProbeValues {
@@ -96,16 +96,27 @@ function occurrenceCount(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
+function currentUserProcessCount(): number {
+  const result = spawnSync("bash", ["-lc", 'ps -u "$(id -u)" -o pid= | wc -l'], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+  expect(result.status, result.stderr).toBe(0);
+  const count = Number(result.stdout.trim());
+  expect(Number.isInteger(count), result.stdout).toBe(true);
+  return count;
+}
+
 function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   const probe = [
     "set -euo pipefail",
     `source ${JSON.stringify(hookPath)}`,
-    'nproc_limit="$(ulimit -u)"',
-    'nofile_limit="$(ulimit -n)"',
+    'nproc_limit="$(builtin ulimit -u)"',
+    'nofile_limit="$(builtin ulimit -n)"',
     "set +e",
-    "(ulimit -Su 5000) >/dev/null 2>&1",
+    "(builtin ulimit -Su 5000) >/dev/null 2>&1",
     'raise_nproc="$?"',
-    "(ulimit -Sn 1048576) >/dev/null 2>&1",
+    "(builtin ulimit -Sn 1048576) >/dev/null 2>&1",
     'raise_nofile="$?"',
     "set -e",
     'printf "nproc=%s\\n" "$nproc_limit"',
@@ -130,7 +141,34 @@ function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   expect(Number(values.raise_nofile)).not.toBe(0);
 }
 
-function expectHookDeniesBoundedForkStorm(hookPath: string): void {
+function expectSystemRlimitHookUsesBuiltinUlimit(hookPath: string): void {
+  const probe = [
+    "set -euo pipefail",
+    "ulimit() {",
+    '  case "$1:$#" in',
+    "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
+    "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
+    "  esac",
+    "  return 0",
+    "}",
+    `source ${JSON.stringify(hookPath)}`,
+    'printf "shadow=%s\\n" "$(type -t ulimit)"',
+    'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
+    'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
+  ].join("\n");
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  const values = parseProbeOutput(result.stdout);
+  expect(values.shadow).toBe("function");
+  expect(Number(values.nproc)).toBeLessThanOrEqual(4096);
+  expect(Number(values.nofile)).toBeLessThanOrEqual(65536);
+}
+
+function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): void {
   const probe = [
     "set -euo pipefail",
     `source ${JSON.stringify(hookPath)}`,
@@ -138,7 +176,7 @@ function expectHookDeniesBoundedForkStorm(hookPath: string): void {
     "import errno",
     "import subprocess",
     "",
-    `safety_cap = ${FORK_STORM_SAFETY_CAP}`,
+    `safety_cap = ${safetyCap}`,
     "spawned = 0",
     "fork_status = 0",
     "fork_error = ''",
@@ -223,6 +261,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
+      expectSystemRlimitHookUsesBuiltinUlimit(rlimitHook);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -231,17 +270,19 @@ describe("sandbox rlimit system hooks (#2173)", () => {
   forkStormIt(
     "connect shell hook denies a bounded 5000-process fork storm with Resource temporarily unavailable",
     () => {
-      expect(FORK_STORM_SAFETY_CAP).toBeGreaterThan(FORK_STORM_NPROC_LIMIT);
       const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fork-storm-rlimit-"));
       const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
       const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
       const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
       const bashrc = path.join(tmp, "bash.bashrc");
+      const nprocLimit = currentUserProcessCount() + FORK_STORM_LIMIT_HEADROOM;
+      const safetyCap = nprocLimit + FORK_STORM_SAFETY_HEADROOM;
+      expect(safetyCap).toBeGreaterThan(nprocLimit);
 
       try {
         fs.mkdirSync(path.dirname(profileHook), { recursive: true });
-        copyRlimitFixtureWithNprocLimit(rlimitLib, FORK_STORM_NPROC_LIMIT);
+        copyRlimitFixtureWithNprocLimit(rlimitLib, nprocLimit);
         fs.writeFileSync(bashrc, "# existing bashrc\n");
         const command = dockerRunCommandBetween(
           dockerfile,
@@ -255,7 +296,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
 
         const result = runLoggedDockerShell(command, tmp);
         expect(result.status, result.stderr).toBe(0);
-        expectHookDeniesBoundedForkStorm(rlimitHook);
+        expectHookDeniesBoundedForkStorm(rlimitHook, safetyCap);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
