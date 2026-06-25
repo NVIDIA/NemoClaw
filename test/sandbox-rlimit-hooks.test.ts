@@ -283,9 +283,12 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
       const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
       const bashrc = path.join(tmp, "bash.bashrc");
+      const nprocLimit = currentUserProcessCount() + FORK_STORM_LIMIT_HEADROOM;
+      const safetyCap = nprocLimit + FORK_STORM_SAFETY_HEADROOM;
+      expect(safetyCap).toBeGreaterThan(nprocLimit);
       try {
         fs.mkdirSync(path.dirname(profileHook), { recursive: true });
-        copyRlimitFixture(rlimitLib);
+        copyRlimitFixtureWithNprocLimit(rlimitLib, nprocLimit);
         fs.writeFileSync(bashrc, "# existing bashrc\n");
         const command = dockerRunCommandBetween(
           dockerfile,
@@ -299,10 +302,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
 
         const result = runLoggedDockerShell(command, tmp);
         expect(result.status, result.stderr).toBe(0);
-        const nprocLimit = currentUserProcessCount() + FORK_STORM_LIMIT_HEADROOM;
-        const safetyCap = nprocLimit + FORK_STORM_SAFETY_HEADROOM;
-        expect(safetyCap).toBeGreaterThan(nprocLimit);
-        copyRlimitFixtureWithNprocLimit(rlimitLib, nprocLimit);
         expectHookDeniesBoundedForkStorm(rlimitHook, safetyCap);
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
