@@ -31,9 +31,11 @@
 //   endpoint directly. The fail-closed branch can then be retired in favour of
 //   the live source.
 
+import { isTerminalAgent, loadAgent, type AgentDefinition } from "../../../agent/defs";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -58,6 +60,7 @@ type RegistryReadResult =
   | { kind: "missing" }
   | { kind: "agent"; agent: string | null }
   | { kind: "error"; message: string };
+type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
 
 function readSandboxAgentFromRegistry(
   sandboxName: string,
@@ -78,7 +81,7 @@ function rejectNonOpenclawAgent(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
 ): never {
   proc.stderr.write(
-    `  Only OpenClaw sandboxes support the \`sandbox agent\` wrapper today (sandbox '${sandboxName}' runs '${agent}').\n`,
+    `  The \`sandbox agent\` wrapper cannot dispatch to sandbox '${sandboxName}' because it runs '${agent}'.\n`,
   );
   proc.stderr.write("  Hermes exposes an OpenAI-compatible API on port 8642 inside the sandbox;\n");
   proc.stderr.write(
@@ -86,6 +89,51 @@ function rejectNonOpenclawAgent(
   );
   proc.stderr.write("  and POST to http://127.0.0.1:8642/v1/chat/completions instead.\n");
   return proc.exit(2);
+}
+
+function splitManifestCommand(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean);
+}
+
+function getTerminalInteractiveCommand(agent: AgentDefinition): string[] | null {
+  const command = agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? "";
+  const argv = splitManifestCommand(command);
+  return argv.length > 0 ? argv : null;
+}
+
+function getPassthroughCommand(
+  sandboxName: string,
+  lookup: ResolvedRegistryReadResult,
+  extraArgs: readonly string[],
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): string[] | null {
+  if (lookup.kind === "missing") {
+    if (extraArgs.length === 0 || hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
+    return ["openclaw", "agent", ...extraArgs];
+  }
+
+  const agentName = lookup.agent;
+  if (agentName === null || agentName === "openclaw") {
+    if (extraArgs.length === 0 || hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
+    return ["openclaw", "agent", ...extraArgs];
+  }
+
+  const agent = loadAgent(agentName);
+  if (!isTerminalAgent(agent)) {
+    rejectNonOpenclawAgent(sandboxName, agentName, proc);
+  }
+
+  const terminalCommand = getTerminalInteractiveCommand(agent);
+  if (!terminalCommand) {
+    rejectNonOpenclawAgent(sandboxName, agentName, proc);
+  }
+  return [...terminalCommand, ...extraArgs];
 }
 
 function rejectRegistryReadError(
@@ -113,12 +161,10 @@ export async function runAgentPassthrough(
   if (lookup.kind === "error") {
     rejectRegistryReadError(sandboxName, lookup.message, proc);
   }
-  if (lookup.kind === "agent" && lookup.agent && lookup.agent !== "openclaw") {
-    rejectNonOpenclawAgent(sandboxName, lookup.agent, proc);
-  }
+  const command = getPassthroughCommand(sandboxName, lookup, extraArgs, proc);
+  if (!command) return;
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   await ensureLive(sandboxName, { allowNonReadyPhase: true });
-  const command = ["openclaw", "agent", ...extraArgs];
   const exec = deps.exec ?? execSandbox;
   await exec(sandboxName, command, { tty: false });
 }

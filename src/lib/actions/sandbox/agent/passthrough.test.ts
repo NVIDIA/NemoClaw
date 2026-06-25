@@ -5,11 +5,27 @@ import { describe, expect, it, vi } from "vitest";
 
 const execMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureLiveMock = vi.hoisted(() => vi.fn(async () => ({})));
-const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string } | null));
+const getSandboxMock = vi.hoisted(() => vi.fn(() => null as { agent?: string | null } | null));
+const loadAgentMock = vi.hoisted(() =>
+  vi.fn((name: string) => ({
+    name,
+    runtime:
+      name === "langchain-deepagents-code"
+        ? { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" }
+        : undefined,
+  })),
+);
+const isTerminalAgentMock = vi.hoisted(() =>
+  vi.fn((agent: { runtime?: { kind?: string } }) => agent.runtime?.kind === "terminal"),
+);
 
 vi.mock("../exec", () => ({ execSandbox: execMock }));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
+vi.mock("../../../agent/defs", () => ({
+  isTerminalAgent: isTerminalAgentMock,
+  loadAgent: loadAgentMock,
+}));
 
 import { runAgentPassthrough } from "./passthrough";
 
@@ -40,9 +56,7 @@ describe("runAgentPassthrough", () => {
     expect(execMock).not.toHaveBeenCalled();
     expect(ensureLiveMock).not.toHaveBeenCalled();
     expect(exit).toHaveBeenCalledWith(2);
-    expect(writes.join("")).toMatch(
-      /Only OpenClaw sandboxes support the `sandbox agent` wrapper today \(sandbox 'alpha' runs 'hermes'\)/,
-    );
+    expect(writes.join("")).toMatch(/cannot dispatch to sandbox 'alpha' because it runs 'hermes'/);
     expect(writes.join("")).toMatch(/port 8642/);
   });
 
@@ -59,6 +73,51 @@ describe("runAgentPassthrough", () => {
       ["openclaw", "agent", "--agent", "work", "--session-id", "s-1", "-m", "ping", "--json"],
       { tty: false },
     );
+  });
+
+  it("keeps OpenClaw --help local so wrapper help stays cheap (#5658)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("alpha", { extraArgs: ["--help"] });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps bare OpenClaw invocations local so they do not pay sandbox latency (#5658)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("alpha");
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("dispatches Deep Agents Code help to dcode instead of local wrapper help (#5790)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "langchain-deepagents-code" });
+    await runAgentPassthrough("dcode-help", { extraArgs: ["--help"] });
+    expect(ensureLiveMock).toHaveBeenCalledWith("dcode-help", { allowNonReadyPhase: true });
+    expect(execMock).toHaveBeenCalledWith("dcode-help", ["dcode", "--help"], { tty: false });
+  });
+
+  it("dispatches bare Deep Agents Code invocations to dcode so upstream owns exit code (#5790)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "langchain-deepagents-code" });
+    await runAgentPassthrough("dcode-help");
+    expect(execMock).toHaveBeenCalledWith("dcode-help", ["dcode"], { tty: false });
   });
 
   it("treats a clean registry miss as OpenClaw (preserves bootstrap and recovery paths)", async () => {
@@ -89,10 +148,49 @@ describe("runAgentPassthrough", () => {
     expect(all).toMatch(/EACCES/);
   });
 
-  it("works with no extraArgs and still enforces --no-tty", async () => {
+  it("prints wrapper help when no extraArgs are passed to an OpenClaw fallback", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: null });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("alpha");
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("treats unknown registry misses as OpenClaw help for bare invocations", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce(null);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("ghost");
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
+  it("works with explicit args for OpenClaw and still enforces --no-tty", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    await runAgentPassthrough("alpha");
-    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent"], { tty: false });
+    await runAgentPassthrough("alpha", { extraArgs: ["-m", "hi"] });
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "-m", "hi"], {
+      tty: false,
+    });
+  });
+
+  it("works with explicit args for OpenClaw fallbacks and still enforces --no-tty", async () => {
+    execMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: null });
+    await runAgentPassthrough("alpha", { extraArgs: ["-m", "hi"] });
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "-m", "hi"], {
+      tty: false,
+    });
   });
 });
