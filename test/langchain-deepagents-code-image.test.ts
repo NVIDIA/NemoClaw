@@ -259,7 +259,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("touch /tmp/deepagents-landlock-test");
     expect(landlockCheck).toContain("/usr is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
-    expect(pythonEgressCheck).toContain("python3 - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain("python3 -c");
+    expect(pythonEgressCheck).not.toContain("<<'PY'");
     expect(pythonEgressCheck).toContain('output="$(python_probe "$url" || true)"');
     expect(pythonEgressCheck).toContain('expect_reached "GitHub" "https://api.github.com/"');
     expect(pythonEgressCheck).toContain('expect_reached "PyPI" "https://pypi.org/"');

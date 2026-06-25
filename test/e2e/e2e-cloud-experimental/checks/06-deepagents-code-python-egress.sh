@@ -32,17 +32,7 @@ sandbox_exec() {
 
 python_probe() {
   local url="$1"
-  sandbox_exec "python3 - ${url@Q} <<'PY'
-import sys
-import urllib.request
-url = sys.argv[1]
-try:
-    with urllib.request.urlopen(url, timeout=8) as response:
-        print(f'REACHED:{response.status}')
-except Exception as exc:
-    print(f'BLOCKED:{type(exc).__name__}:{exc}')
-PY
-"
+  sandbox_exec "python3 -c \$'import sys\\nimport urllib.request\\nurl = sys.argv[1]\\ntry:\\n    with urllib.request.urlopen(url, timeout=8) as response:\\n        print(\"REACHED:%s\" % response.status)\\nexcept Exception as exc:\\n    print(\"BLOCKED:%s:%s\" % (type(exc).__name__, exc))' ${url@Q}"
 }
 
 expect_reached() {
