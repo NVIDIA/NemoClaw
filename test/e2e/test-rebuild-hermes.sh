@@ -261,7 +261,7 @@ model = (
     sess.get('model')
     or os.environ.get('NEMOCLAW_MODEL')
     or os.environ.get('NEMOCLAW_COMPAT_MODEL')
-    or 'nvidia/nvidia/nemotron-3-super-v3'
+    or 'nvidia/nvidia/nemotron-3-ultra'
 )
 credential_hash = hashlib.sha256('${DISCORD_FAKE_TOKEN}'.encode()).hexdigest()
 plan = {
@@ -397,7 +397,7 @@ fi
 
 # Inference works after rebuild (proves credential chain is intact)
 info "Verifying inference after rebuild..."
-POST_REBUILD_INFERENCE_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_COMPAT_MODEL:-nvidia/nvidia/nemotron-3-super-v3}}"
+POST_REBUILD_INFERENCE_MODEL="${NEMOCLAW_MODEL:-${NEMOCLAW_COMPAT_MODEL:-nvidia/nvidia/nemotron-3-ultra}}"
 INFERENCE_RESPONSE=$(openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   curl -s --max-time 60 https://inference.local/v1/chat/completions \
   -H 'Content-Type: application/json' \

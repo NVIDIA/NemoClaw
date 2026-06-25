@@ -32,6 +32,10 @@ import {
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
+import {
+  ensureMessagingHostForwardForSandbox,
+  resolveMessagingHostForwardForSandbox,
+} from "./messaging-host-forward";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -239,6 +243,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
+    const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
+    if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
     const stopForwardForSandbox = createSandboxForwardStopper({
       runOpenshell: deps.runOpenshell,
@@ -338,6 +344,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
       }
     }
+    if (fwdOk && rollbackSandboxOnFailure) {
+      ensureMessagingHostForwardForSandbox({
+        sandboxName,
+        ensureForward: ensureAgentFixedForward,
+        note: deps.note,
+        rollbackOnFailure: {
+          runOpenshell: deps.runOpenshell,
+          buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
+          cliName: deps.cliName,
+          forwardPortsToStop: [actualPort],
+        },
+      });
+    }
     return actualPort;
   }
 
@@ -345,7 +364,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
+    return ensureAgentDashboardForwardForAgent({
+      sandboxName,
+      agent,
+      ensureDashboardForward,
+    });
   }
 
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
