@@ -827,6 +827,39 @@ describe("shields — unit logic", () => {
       expect(exitSpy).toHaveBeenCalledWith(2);
     });
 
+    it("prints baseline-acceptance recovery when the verifier only reports missing seals", async () => {
+      const sandboxName = "openclaw";
+      writeSealedLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/.config-hash content drifted (no seal recorded; expected SHA-256)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain("no seal recorded");
+      expect(allErrors).toContain("Recovery: rebuild the sandbox for a known-good baseline");
+      expect(allErrors).toContain("NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1");
+      expect(allErrors).not.toContain("restore the original file content from a trusted source");
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
     it("treats a resolveConfig throw as drift so the locked status cannot mask a setup gap", async () => {
       const sandboxName = "openclaw";
       writeLockedState(sandboxName);

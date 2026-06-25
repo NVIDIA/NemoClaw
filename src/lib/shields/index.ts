@@ -1488,13 +1488,22 @@ function shieldsStatus(
         // would just seal the tampered or unverifiable content. Perm
         // drift (mode/owner/chattr/legacy-layout) is launderable by
         // re-up. Surface the right recovery for the failure mode.
-        const hasHashTrouble = driftIssues.some(isHashVerificationIssue);
-        if (hasHashTrouble) {
-          console.error(
-            `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
-          );
-        } else {
-          console.error(`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`);
+        const hashIssues = driftIssues.filter(isHashVerificationIssue);
+        const realHashDrift = hashIssues.filter((entry) => !entry.includes("no seal recorded"));
+        const hasMissingSeals = hashIssues.length > realHashDrift.length;
+        const recoveryLines =
+          realHashDrift.length > 0
+            ? [
+                `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
+              ]
+            : hasMissingSeals
+              ? [
+                  "  Recovery: rebuild the sandbox for a known-good baseline,",
+                  `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+                ]
+              : [`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`];
+        for (const line of recoveryLines) {
+          console.error(line);
         }
         process.exit(2);
       }
