@@ -858,10 +858,15 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/agent-turn-latency
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_PROVIDER: custom
+      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_PREFERRED_API: openai-completions
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -880,6 +885,7 @@ jobs:
       - name: Run agent turn latency live Vitest test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -3682,10 +3688,14 @@ jobs:
       FREE_STANDING_VITEST_JOB: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/launchable-smoke
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
-      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
       NEMOCLAW_RECREATE_SANDBOX: "1"
-      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_PROVIDER: custom
+      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_PREFERRED_API: openai-completions
       SKIP_DOCKER_PULL: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -3730,6 +3740,7 @@ jobs:
       - name: Run launchable smoke live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -4134,6 +4145,12 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-tui-chat-correlation
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_PROVIDER: custom
+      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_PREFERRED_API: openai-completions
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -4180,6 +4197,7 @@ jobs:
       - name: Run OpenClaw TUI chat correlation live test
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
