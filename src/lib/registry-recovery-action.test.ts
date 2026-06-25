@@ -258,6 +258,42 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     expect(recovered?.model).toBeNull();
     expect(recovered?.provider).toBeNull();
     expect(recovered?.agent).toBeUndefined();
+    // Marked recovered-from-gateway so the inventory renderer shows unknown
+    // agent/GPU instead of OpenClaw/CPU defaults (consumed by buildSandboxInventoryRow).
+    expect(recovered?.recoveredFromGateway).toBe(true);
+  });
+
+  it("treats an incomplete (phantom) session as unseeded — stays in read-only/display-only path", async () => {
+    // PRA-2: a session that recorded sandboxName but whose sandbox step never
+    // completed is a phantom (#2753). It must NOT count as a recovery seed,
+    // otherwise an empty registry + phantom session would take the mutating,
+    // persisting seeded path. Recovery must stay read-only/display-only.
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "phantom",
+      provider: "nvidia",
+      model: "nemotron",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+
+    const result = await recoverRegistryEntries();
+
+    // Read-only path: never invokes the mutating gateway recovery, inspects
+    // lifecycle directly, and surfaces the live sandbox display-only.
+    expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
+      ignoreProbeErrors: true,
+    });
+    const recovered = result.sandboxes.find((s) => s.name === "dcode-station");
+    expect(recovered?.recoveredFromGateway).toBe(true);
+    // Nothing persisted — neither the phantom session sandbox nor the recovered one.
+    expect(mockRegistryState.sandboxes["dcode-station"]).toBeUndefined();
+    expect(mockRegistryState.sandboxes["phantom"]).toBeUndefined();
   });
 
   it("does NOT persist unseeded gateway recoveries to the on-disk registry (#5714 agent safety)", async () => {
@@ -273,9 +309,12 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     expect(mockRegistryState.sandboxes["dcode-station"]).toBeUndefined();
   });
 
-  it("recovers via a NemoClaw per-port gateway when it is the active gateway", async () => {
-    // A non-default NEMOCLAW_GATEWAY_PORT runs `nemoclaw-<port>`; that is still
-    // a NemoClaw-managed gateway, so connected_other against it is trustworthy.
+  it("does NOT recover when a different NemoClaw gateway is active (connected_other)", async () => {
+    // The active gateway differs from the one this process resolves (e.g. active
+    // `nemoclaw-8092` while `list` targets the default `nemoclaw`). `sandbox
+    // list` may be scoped to the active gateway and a follow-up `<name> status`
+    // resolves the target gateway, so advertising the other gateway's sandboxes
+    // would be unactionable — read-only recovery requires healthy_named only.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({
       state: "connected_other",
       activeGateway: "nemoclaw-8092",
@@ -284,8 +323,8 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
 
     const result = await recoverRegistryEntries();
 
-    expect(result.recoveredFromGateway).toBe(1);
-    expect(result.sandboxes.find((s) => s.name === "dcode-station")).toBeDefined();
+    expect(result.recoveredFromGateway).toBe(0);
+    expect(result.sandboxes).toEqual([]);
   });
 
   it("ignores a failed `sandbox list` probe instead of parsing error text as names", async () => {

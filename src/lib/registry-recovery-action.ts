@@ -8,7 +8,6 @@ import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action";
-import { resolveGatewayPortFromName } from "./onboard/gateway-binding";
 import { validateName } from "./runner";
 import { parseLiveSandboxNames } from "./runtime-recovery";
 import * as onboardSession from "./state/onboard-session";
@@ -175,22 +174,18 @@ function seedRecoveryMetadata(
  */
 function canInspectLiveGatewayReadOnly(): boolean {
   // #5714: unseeded `nemoclaw list` recovery must never mutate gateway state
-  // (no select/start). Probes are non-fatal so a hung gateway falls back to the
-  // empty registry instead of exiting the process.
+  // (no select/start). Require `healthy_named` — the active gateway IS the
+  // NemoClaw gateway this process resolves/targets. We deliberately do NOT
+  // recover from a `connected_other` gateway (a different active gateway,
+  // whether a NemoClaw per-port gateway or a foreign one): `openshell sandbox
+  // list` may be scoped to the active gateway, and a follow-up `nemoclaw <name>
+  // status` resolves the same target gateway as this `list` — so recovering
+  // only from `healthy_named` keeps `list` and follow-up commands consistent
+  // and never advertises a sandbox the next command cannot act on. Probes are
+  // non-fatal so a hung gateway falls back to the empty registry instead of
+  // exiting the process.
   const lifecycle = getNamedGatewayLifecycleState(undefined, { ignoreProbeErrors: true });
-  // The target NemoClaw gateway is healthy — trust its sandbox list.
-  if (lifecycle.state === "healthy_named") {
-    return true;
-  }
-  // A different gateway is active. `openshell sandbox list` is scoped to the
-  // active gateway, so only trust it when that gateway is still NemoClaw-managed
-  // (the bare `nemoclaw` or a per-port `nemoclaw-<port>` from a non-default
-  // NEMOCLAW_GATEWAY_PORT). Never list a foreign OpenShell gateway's sandboxes
-  // as recovered NemoClaw entries.
-  if (lifecycle.state === "connected_other") {
-    return resolveGatewayPortFromName(lifecycle.activeGateway ?? "") !== null;
-  }
-  return false;
+  return lifecycle.state === "healthy_named";
 }
 
 /**
@@ -325,14 +320,20 @@ export async function recoverRegistryEntries({
 
   const seeded = seedRecoveryMetadata(current, session, requestedSandboxName);
   // A seed is any signal that the user expects a specific sandbox to exist:
-  // existing registry entries, a recorded onboard session, or an explicit
+  // existing registry entries, a *confirmed* onboard session, or an explicit
   // requested name. With a seed we allow active gateway recovery (which may
-  // select/start the named gateway). Without one — the #5714 empty-registry
-  // `list` case — restrict recovery to a read-only inspection of any connected
-  // gateway so plain `nemoclaw list` never mutates gateway state as a side
-  // effect of listing.
+  // select/start the named gateway) and persist recovered entries. Without one
+  // — the #5714 empty-registry `list` case — restrict recovery to a read-only
+  // inspection of any connected gateway so plain `nemoclaw list` never mutates
+  // gateway state or persists entries as a side effect of listing.
+  //
+  // An *incomplete* session (sandboxName recorded but the sandbox step never
+  // completed) is a phantom from an interrupted onboard (#2753); it must NOT
+  // count as a seed, otherwise an empty registry + phantom session would take
+  // the mutating/persisting seeded path instead of the safe display-only one.
+  const hasConfirmedSession = isSessionSandboxConfirmed(session) && Boolean(session?.sandboxName);
   const hasRecoverySeed =
-    current.sandboxes.length > 0 || Boolean(session?.sandboxName) || Boolean(requestedSandboxName);
+    current.sandboxes.length > 0 || hasConfirmedSession || Boolean(requestedSandboxName);
   const gateway = await recoverRegistryFromLiveGateway(seeded.metadataByName, {
     readOnly: !hasRecoverySeed,
   });
