@@ -21,20 +21,18 @@ function dockerRunCommandBetween(
 ): string {
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error(`Expected Dockerfile block between ${startMarker} and ${endMarker}`);
-  }
+  expect(start, `Expected Dockerfile block start marker ${startMarker}`).not.toBe(-1);
+  expect(end, `Expected Dockerfile block end marker ${endMarker}`).toBeGreaterThan(start);
   const runIndex = dockerfile.indexOf("RUN ", start);
-  if (runIndex === -1 || runIndex > end) {
-    throw new Error(`Expected RUN instruction after ${startMarker}`);
-  }
-  const runLines: string[] = [];
-  for (const line of dockerfile.slice(runIndex, end).split("\n")) {
-    runLines.push(line);
-    if (!line.trimEnd().endsWith("\\")) {
-      break;
-    }
-  }
+  expect(runIndex, `Expected RUN instruction after ${startMarker}`).not.toBe(-1);
+  expect(runIndex, `Expected RUN instruction before ${endMarker}`).toBeLessThanOrEqual(end);
+  const sourceLines = dockerfile.slice(runIndex, end).split("\n");
+  const finalLineIndex = sourceLines.findIndex((line) => !line.trimEnd().endsWith("\\"));
+  expect(
+    finalLineIndex,
+    `Expected complete RUN instruction before ${endMarker}`,
+  ).toBeGreaterThanOrEqual(0);
+  const runLines = sourceLines.slice(0, finalLineIndex + 1);
   return runLines
     .join("\n")
     .trim()
