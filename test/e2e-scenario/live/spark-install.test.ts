@@ -112,7 +112,7 @@ liveTest(
 
     assertRequiredInstallerEnv(process.env);
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     const redactionValues = [apiKey];
     cleanup.add(`remove ${SANDBOX_NAME} after Spark install smoke`, () => bestEffortCleanup(host));
     await bestEffortCleanup(host);
@@ -141,7 +141,7 @@ liveTest(
       artifactName: `phase-1-${installer.mode}-install`,
       cwd: REPO_ROOT,
       env: env({
-        NVIDIA_API_KEY: apiKey,
+        NVIDIA_INFERENCE_API_KEY: apiKey,
       }),
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,

@@ -8,6 +8,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
 // Migrated from test/e2e/test-issue-4434-tui-unreachable-inference.sh.
@@ -138,10 +139,8 @@ runIssue4434LiveTest(
       skip("Linux host required for DOCKER-USER iptables repro");
     }
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "issue-4434-tui-unreachable-inference",

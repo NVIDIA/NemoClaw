@@ -45,7 +45,7 @@ describe("cloud inference pre-contract provider skip classifier", () => {
   it("does not skip credential or auth endpoint-validation failures", () => {
     expect(
       classifyPreContractExternalProviderFailure(
-        probeOutput("endpoint validation failed: invalid NVIDIA_API_KEY credential"),
+        probeOutput("endpoint validation failed: invalid NVIDIA_INFERENCE_API_KEY credential"),
       ),
     ).toBeNull();
     expect(

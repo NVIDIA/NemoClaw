@@ -18,6 +18,7 @@ import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -153,22 +154,16 @@ interface CronPreflightProbeJson {
   };
 }
 
-function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
+function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
     ...buildAvailabilityProbeEnv(),
+    ...hostedEnv,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "build",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  if (apiKey) {
-    env.NVIDIA_INFERENCE_API_KEY = apiKey;
-    env.NVIDIA_API_KEY = apiKey;
-  }
-  return env;
 }
 
 async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -213,7 +208,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "cron preflight reaches managed inference.local provider without EAI_AGAIN",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets, process.env, { model: MODEL });
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "cron-preflight-inference-local",
@@ -274,7 +270,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
               ? "phase-1-install-cron-preflight"
               : `phase-1-install-cron-preflight-attempt-${attempt}`,
           cwd: REPO_ROOT,
-          env: commandEnv(apiKey),
+          env: commandEnv(hosted.env),
           redactionValues: [apiKey],
           timeoutMs: 20 * 60_000,
         },
@@ -291,7 +287,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const probe = await host.nemoclaw([SANDBOX_NAME, "exec", "--", "sh", "-c", probeShell()], {
       artifactName: "phase-2-cron-preflight-probe",
-      env: commandEnv(apiKey),
+      env: commandEnv(hosted.env),
       redactionValues: [apiKey],
       timeoutMs: 120_000,
     });

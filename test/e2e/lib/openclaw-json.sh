@@ -8,6 +8,12 @@
 # exact envelope shape. This also tolerates wrapper output before the JSON blob
 # but intentionally ignores metadata fields so IDs, durations, session names,
 # and model/provider details cannot satisfy reply assertions.
+e2e_text_contains_integer_42() {
+  local compact
+  compact="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
+  grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
+}
+
 parse_openclaw_agent_text() {
   python3 -c '
 import json
