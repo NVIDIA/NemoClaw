@@ -346,6 +346,66 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
   }
 }
 
+function runHermesSandboxInitPreludeWithFakePath() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const fakeInit = path.join(tmpDir, "sandbox-init.sh");
+  const marker = path.join(tmpDir, "dirname-called");
+  const sourcePathLog = path.join(tmpDir, "source-path.log");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeBin, "dirname"),
+    ["#!/usr/bin/env bash", `printf called > ${shellQuote(marker)}`, "exit 99"].join("\n"),
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    fakeInit,
+    [
+      `printf "%s\\n" "$PATH" > ${shellQuote(sourcePathLog)}`,
+      "harden_resource_limits() { :; }",
+    ].join("\n"),
+  );
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const start = src.indexOf(
+    "# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.",
+  );
+  const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
+  const prelude = src
+    .slice(start, end)
+    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit);
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `export PATH=${shellQuote(`${fakeBin}:${process.env.PATH ?? ""}`)}`,
+      prelude,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      dirnameCalled: fs.existsSync(marker),
+      sourcePath: fs.existsSync(sourcePathLog)
+        ? fs.readFileSync(sourcePathLog, "utf-8").trim()
+        : "",
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 const LOCKED_HERMES_CONFIG_STAT_MOCK = [
   "stat() {",
   '  if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U:%G" ] && [ "${3:-}" = "$HERMES_DIR" ]; then printf "root:root\\n"; return 0; fi',
@@ -614,6 +674,16 @@ function runRuntimeShellEnvBootstrap() {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+describe("agents/hermes/start.sh sandbox init bootstrap", () => {
+  it("locks the trusted PATH before sourcing shared sandbox init", () => {
+    const { result, dirnameCalled, sourcePath } = runHermesSandboxInitPreludeWithFakePath();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(dirnameCalled).toBe(false);
+    expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  });
+});
 
 describe("agents/hermes/start.sh runtime shell env", () => {
   it("puts the Hermes configure guard in the sourced proxy env file", () => {

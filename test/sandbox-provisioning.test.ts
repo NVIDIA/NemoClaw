@@ -153,7 +153,7 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   const permissionBlock = dockerRunCommandBetween(
     dockerfile,
     "# Keep the image readable to the root entrypoint",
-    "# System-wide proxy hooks",
+    "# System-wide shell hooks",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
   const sandboxRoot = path.join(tmp, "sandbox");
@@ -898,28 +898,81 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-system-proxy-"));
     const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 
     try {
       fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+      fs.writeFileSync(rlimitLib, "# rlimit fixture\n");
       fs.writeFileSync(bashrc, "# existing bashrc\n");
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide proxy hooks",
         "# Install OpenClaw CLI + PyYAML",
       )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
       const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8").split(rlimitShim).length - 1).toBe(1);
+      expect((fs.statSync(rlimitHook).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(rlimitLib).mode & 0o777).toString(8)).toBe("444");
       expect(fs.readFileSync(profileHook, "utf-8").split(runtimeEnvShim).length - 1).toBe(1);
       expect((fs.statSync(profileHook).mode & 0o777).toString(8)).toBe("444");
 
       const bashrcContent = fs.readFileSync(bashrc, "utf-8");
+      expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
       expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
       expect(bashrcContent).toContain("# existing bashrc");
+      expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs stale OpenClaw base images with system-wide rlimit hooks", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-thin-rlimits-"));
+    const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
+
+    try {
+      fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+      fs.writeFileSync(rlimitLib, "# rlimit fixture\n");
+      fs.writeFileSync(bashrc, "# stale base bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide shell hooks",
+        "# Pin config hash at build time",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8").split(rlimitShim).length - 1).toBe(1);
+      expect(fs.readFileSync(profileHook, "utf-8").split(runtimeEnvShim).length - 1).toBe(1);
+
+      const bashrcContent = fs.readFileSync(bashrc, "utf-8");
+      expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
+      expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
+      expect(bashrcContent).toContain("# stale base bashrc");
       expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1113,6 +1166,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "sandbox-rlimits.sh"),
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
       generatorPath,

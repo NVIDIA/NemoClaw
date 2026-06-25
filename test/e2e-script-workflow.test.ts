@@ -981,8 +981,6 @@ describe("E2E reusable workflow contract", () => {
         "credential-migration-e2e:Run credential migration Vitest test",
         "onboard-repair-e2e:Install NemoClaw",
         "onboard-repair-e2e:Run onboard repair E2E test",
-        "onboard-resume-e2e:Install NemoClaw",
-        "onboard-resume-e2e:Run onboard resume E2E test",
         "onboard-negative-paths-e2e:Install NemoClaw",
         "onboard-negative-paths-e2e:Run onboard negative-path E2E test",
         "runtime-overrides-e2e:Install NemoClaw",
@@ -993,7 +991,7 @@ describe("E2E reusable workflow contract", () => {
       ]),
     );
 
-    expect(directSecretSteps.length).toBeGreaterThanOrEqual(17);
+    expect(directSecretSteps.length).toBeGreaterThanOrEqual(15);
     for (const { jobName, step } of directSecretSteps) {
       const stepKey = `${jobName}:${step.name ?? "<unnamed>"}`;
       expect(step.env?.NVIDIA_INFERENCE_API_KEY, stepKey).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
@@ -1018,6 +1016,50 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(script).toContain("lib/ci-compatible-inference.sh");
     expect(script).toContain("nemoclaw_e2e_configure_compatible_inference");
+  });
+
+  it("keeps onboard-resume hermetic and off hosted inference secrets", () => {
+    const job = nightlyWorkflow.jobs["onboard-resume-e2e"];
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const installDepsStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const buildStep = job.steps?.find((step) => step.name === "Build CLI");
+    const installOpenShellStep = job.steps?.find((step) => step.name === "Install OpenShell CLI");
+    const runStep = job.steps?.find((step) => step.name === "Run onboard resume E2E test");
+
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installDepsStep?.run).toBe("npm ci --ignore-scripts");
+    expect(buildStep?.run).toBe("npm run build:cli");
+    expect(installOpenShellStep?.run).toContain("scripts/install-openshell.sh");
+    expect(installOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
+    expect(installOpenShellStep?.run).toContain("-u GITHUB_TOKEN");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBeUndefined();
+
+    const script = readFileSync(new URL("./e2e/test-onboard-resume.sh", import.meta.url), "utf8");
+    const helper = readFileSync(
+      new URL("./e2e/lib/hermetic-compatible-inference.sh", import.meta.url),
+      "utf8",
+    );
+    expect(script).toContain("lib/hermetic-compatible-inference.sh");
+    expect(script).toContain("nemoclaw_e2e_start_hermetic_compatible_inference");
+    expect(script).toContain("nemoclaw_e2e_assert_hermetic_compatible_inference_used");
+    expect(script).not.toContain("lib/ci-compatible-inference.sh");
+    expect(helper).toContain("openai-compatible-api-proof.sh");
+    expect(helper).toContain("NEMOCLAW_PROVIDER=custom");
+    expect(helper).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
+    expect(helper).toContain("unset NVIDIA_INFERENCE_API_KEY NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
+    expect(helper).toContain("FAKE_OPENAI_REQUIRE_AUTH=1");
+    expect(helper).not.toContain('FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {
