@@ -97,4 +97,39 @@ describe("runAgentJsonPassthrough", () => {
     expect(stderr.join("")).toContain("spawnSync openshell ENOENT");
     expect(exit).toHaveBeenCalledWith(1);
   });
+
+  it("does not treat stderr JSON diagnostics as agent provenance", () => {
+    const stdoutPayload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
+    const stderrPayload = JSON.stringify({
+      messages: [
+        {
+          role: "toolResult",
+          type: "toolResult",
+          toolName: "stderr-diagnostic",
+          toolCallId: "call_stderr",
+          isError: true,
+          text: "this was not part of stdout JSON",
+        },
+      ],
+    });
+    const spawnSync = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: stdoutPayload,
+      stderr: stderrPayload,
+      pid: 123,
+      output: [null, stdoutPayload, stderrPayload],
+    }));
+    const { proc, stderr } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getOpenshellBinary: () => "/usr/local/bin/openshell",
+        spawnSync,
+      }),
+    ).toThrow("__exit:0");
+
+    expect(stderr.join("")).toContain("stderr-diagnostic");
+    expect(stderr.join("")).not.toContain("[openclaw provenance]");
+  });
 });

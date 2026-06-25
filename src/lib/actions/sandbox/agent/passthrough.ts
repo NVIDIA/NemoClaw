@@ -48,6 +48,7 @@ const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
   "--message",
   "--model",
   "--provider",
+  "--reply-channel",
   "--session-id",
   "--thinking",
   "--timeout",
@@ -119,6 +120,14 @@ function rejectRegistryReadError(
 }
 
 function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
+  // Invalid state: the host wrapper must pick captured JSON transport only for
+  // the top-level OpenClaw output flag, not for a literal "--json" consumed as
+  // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
+  // the complete argv grammar; NemoClaw mirrors documented value-taking flags
+  // only to choose the host transport path. Regression tests cover each
+  // documented value flag and the `--` terminator. Removal condition: OpenClaw
+  // exposes a machine-readable argv schema or NemoClaw stops special-casing the
+  // JSON transport path.
   let skipNextValue = false;
   for (const arg of extraArgs) {
     if (skipNextValue) {

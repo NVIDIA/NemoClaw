@@ -11,7 +11,7 @@ vi.mock("../exec", () => ({ execSandbox: execMock }));
 vi.mock("../gateway-state", () => ({ ensureLiveSandboxOrExit: ensureLiveMock }));
 vi.mock("../../../state/registry", () => ({ getSandbox: getSandboxMock }));
 
-import { runAgentPassthrough } from "./passthrough";
+import { runAgentPassthrough, type AgentPassthroughDeps } from "./passthrough";
 
 describe("runAgentPassthrough", () => {
   function makeProcMock() {
@@ -92,7 +92,9 @@ describe("runAgentPassthrough", () => {
   it("keeps --json as a message value on the normal passthrough path", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
-    const execJson = vi.fn();
+    const execJson = vi.fn(((): never => {
+      throw new Error("__unexpected-json");
+    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
     await runAgentPassthrough("alpha", { extraArgs: ["-m", "--json"] }, { execJson });
@@ -106,13 +108,42 @@ describe("runAgentPassthrough", () => {
   it("keeps --json after the argv terminator on the normal passthrough path", async () => {
     execMock.mockClear();
     ensureLiveMock.mockClear();
-    const execJson = vi.fn();
+    const execJson = vi.fn(((): never => {
+      throw new Error("__unexpected-json");
+    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
     await runAgentPassthrough("alpha", { extraArgs: ["--", "--json"] }, { execJson });
 
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", "--", "--json"], {
+      tty: false,
+    });
+  });
+
+  it.each([
+    ["-a", "--json"],
+    ["--agent", "--json"],
+    ["-m", "--json"],
+    ["--message", "--json"],
+    ["--model", "--json"],
+    ["--provider", "--json"],
+    ["--reply-channel", "--json"],
+    ["--session-id", "--json"],
+    ["--thinking", "--json"],
+    ["--timeout", "--json"],
+  ])("keeps --json consumed by %s on the normal passthrough path", async (flag, value) => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    const execJson = vi.fn(((): never => {
+      throw new Error("__unexpected-json");
+    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+
+    await runAgentPassthrough("alpha", { extraArgs: [flag, value] }, { execJson });
+
+    expect(execJson).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("alpha", ["openclaw", "agent", flag, value], {
       tty: false,
     });
   });

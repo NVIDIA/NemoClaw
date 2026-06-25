@@ -13,7 +13,7 @@ export default class SandboxAgentCommand extends NemoClawCommand {
   static strict = false;
   static summary = "Run one OpenClaw agent turn non-interactively in a sandbox";
   static description =
-    "Pass through to `openclaw agent` inside the sandbox via `openshell sandbox exec`. Stream the agent's response back to stdout without owning a TTY; useful for driving the sandbox from another process (CI job, multi-agent platform, evaluation harness). All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, including `-m <text>`, `--session-id <id>`, `--agent <id>`, `--json`, `--thinking <level>`, `--deliver`, and `--reply-channel`. Currently supported on OpenClaw sandboxes only; Hermes sandboxes exit non-zero with a redirect to the OpenAI-compatible API on port 8642 inside the sandbox.";
+    "Pass through to `openclaw agent` inside the sandbox via `openshell sandbox exec`. Normal turns inherit stdio without owning a TTY; top-level `--json` uses a captured path that preserves JSON stdout and appends provenance to stderr. Useful for driving the sandbox from another process (CI job, multi-agent platform, evaluation harness). All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, including `-m <text>`, `--session-id <id>`, `--agent <id>`, `--json`, `--thinking <level>`, `--deliver`, and `--reply-channel`. Currently supported on OpenClaw sandboxes only; Hermes sandboxes exit non-zero with a redirect to the OpenAI-compatible API on port 8642 inside the sandbox.";
   static usage = ["<name> [openclaw-agent-flags...]"];
   static examples = [
     '<%= config.bin %> sandbox agent alpha -m "Summarise README.md"',

@@ -59,7 +59,7 @@ export function runAgentJsonPassthrough(
   if (stdout) proc.stdout.write(stdout);
   if (stderr) proc.stderr.write(stderr);
 
-  const provenance = openClawAgentJsonProvenanceLines([stdout, stderr].join("\n"));
+  const provenance = openClawAgentJsonProvenanceLines(stdout);
   if (provenance.length > 0) {
     proc.stderr.write(`${stderr && !stderr.endsWith("\n") ? "\n" : ""}${provenance.join("\n")}\n`);
   }
