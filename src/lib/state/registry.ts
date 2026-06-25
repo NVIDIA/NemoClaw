@@ -107,16 +107,6 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
-  // Transient, display-only marker for a sandbox surfaced by #5714 unseeded
-  // `nemoclaw list` recovery directly from the live gateway. The recovery path
-  // that sets it only ever pushes such entries into the in-memory list result
-  // (ephemeralSandboxes) and never routes them through registerSandbox/
-  // updateSandbox, so it is never written to sandboxes.json. (registerSandbox
-  // also writes an explicit field allowlist that omits it; updateSandbox does
-  // not, so callers must not pass a flagged entry to updateSandbox.) It signals
-  // that fields like `agent` are genuinely unknown rather than defaults so the
-  // renderer does not present a recovered Deep Agents/Hermes sandbox as OpenClaw.
-  recoveredFromGateway?: boolean;
 }
 
 export interface SandboxRegistry {
@@ -387,12 +377,24 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
 }
 
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  const messaging = serializeSandboxMessagingStateForDisk(entry.messaging);
+  // #5714: defensively drop transient, display-only recovery markers so they
+  // can never reach sandboxes.json even if a caller force-passed one through
+  // updateSandbox(). These are not part of the durable SandboxEntry type; they
+  // live only on the ephemeral list-recovery rows.
+  const {
+    recoveredFromGateway: _recovered,
+    livePhase: _phase,
+    ...durable
+  } = entry as SandboxEntry & {
+    recoveredFromGateway?: boolean;
+    livePhase?: string | null;
+  };
+  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   if (!messaging) {
-    const { messaging: _messaging, ...rest } = entry;
+    const { messaging: _messaging, ...rest } = durable;
     return rest;
   }
-  return { ...entry, messaging };
+  return { ...durable, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {

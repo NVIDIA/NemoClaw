@@ -23,10 +23,14 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
-  // #5714: display-only marker for a sandbox recovered directly from the live
-  // gateway whose agent is genuinely unknown (the gateway sandbox list does not
-  // expose it). Lets the renderer show "unknown" instead of the OpenClaw default.
+  // #5714: display-only markers for a sandbox recovered directly from the live
+  // gateway. `recoveredFromGateway` flags that agent/GPU are genuinely unknown
+  // (the gateway sandbox list does not expose them) so the renderer shows
+  // "unknown" instead of the OpenClaw/CPU default; `livePhase` carries the
+  // trusted PHASE column (e.g. Ready) from `openshell sandbox list`. Neither is
+  // part of the durable registry type — they ride only on ephemeral list rows.
   recoveredFromGateway?: boolean;
+  livePhase?: string | null;
 }
 
 export interface MessagingBridgeHealth {
@@ -78,7 +82,9 @@ export interface SandboxInventoryRow {
   // #5714: row recovered display-only from the live gateway. Its agent/GPU/
   // inference state is unknown (the gateway sandbox list does not expose it),
   // so the renderer shows "unknown" rather than asserting OpenClaw/CPU defaults.
+  // `livePhase` is the trusted PHASE (e.g. Ready) carried from the sandbox list.
   recoveredFromGateway?: boolean;
+  livePhase?: string | null;
 }
 
 export interface SandboxInventoryResult {
@@ -215,6 +221,7 @@ function buildSandboxInventoryRow(
     activeSessionCount,
     connected: activeSessionCount !== null && activeSessionCount > 0,
     ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
+    ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
   };
 }
 
@@ -318,9 +325,13 @@ export function renderSandboxInventoryText(
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const connected = sandbox.connected ? " ●" : "";
     const agent = sandbox.agent || "openclaw";
+    // #5714: for a gateway-recovered row, surface the trusted live PHASE
+    // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
+    // `nemoclaw <name> status`; normal registry rows have no live phase.
+    const phase = sandbox.recoveredFromGateway ? `  phase: ${sandbox.livePhase || "unknown"}` : "";
     log(`    ${sandbox.name}${def}${connected}`);
     log(
-      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`,
+      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}${phase}  policies: ${presets}`,
     );
     if (modelDrifted || providerDrifted) {
       const parts: string[] = [];

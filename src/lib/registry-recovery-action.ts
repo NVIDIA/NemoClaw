@@ -9,10 +9,23 @@ import {
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action";
 import { validateName } from "./runner";
-import { parseLiveSandboxNames } from "./runtime-recovery";
+import { parseLiveSandboxEntries } from "./runtime-recovery";
 import * as onboardSession from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import * as registry from "./state/registry";
+
+/**
+ * #5714: a sandbox surfaced display-only by unseeded `nemoclaw list` recovery.
+ * These transient markers (`recoveredFromGateway`, `livePhase`) are deliberately
+ * NOT part of the durable {@link SandboxEntry} persistence contract — they live
+ * only on the in-memory list result so they can never be written to
+ * sandboxes.json — and let the renderer show the live phase while marking
+ * agent/GPU unknown (the gateway list is not a trusted source for those).
+ */
+export type RecoveredSandboxEntry = SandboxEntry & {
+  recoveredFromGateway: true;
+  livePhase: string | null;
+};
 
 type Session = ReturnType<typeof onboardSession.loadSession>;
 
@@ -88,7 +101,13 @@ function shouldRecoverRegistryEntries(
   requestedSandboxName: string | null,
 ) {
   const sessionSandboxName = session?.sandboxName ?? null;
-  const hasSessionSandbox = Boolean(sessionSandboxName);
+  // #5714/PRA-5: only a *confirmed* session sandbox counts here. An incomplete
+  // (phantom) onboard session must not make `missingSessionSandbox` true, or it
+  // would flip `shouldRecover` on and drive the mutating seeded gateway recovery
+  // (select/start) during a plain `nemoclaw list` even when the registry already
+  // has entries. Applied consistently with the `hasRecoverySeed` check in
+  // recoverRegistryEntries.
+  const hasSessionSandbox = isSessionSandboxConfirmed(session) && Boolean(sessionSandboxName);
   const missingSessionSandbox =
     hasSessionSandbox && !current.sandboxes.some((sandbox) => sandbox.name === sessionSandboxName);
   const missingRequestedSandbox =
@@ -209,7 +228,7 @@ interface LiveGatewayRecovery {
    * #5714: live sandboxes surfaced for display only (unseeded `list` recovery)
    * that were NOT persisted to the on-disk registry. Empty for the seeded path.
    */
-  ephemeralSandboxes: SandboxEntry[];
+  ephemeralSandboxes: RecoveredSandboxEntry[];
 }
 
 /**
@@ -233,19 +252,19 @@ async function recoverRegistryFromLiveGateway(
   }
 
   let recoveredFromGateway = 0;
-  const ephemeralSandboxes: SandboxEntry[] = [];
+  const ephemeralSandboxes: RecoveredSandboxEntry[] = [];
   const liveList = captureOpenshell(["sandbox", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   // Only trust the output of a clean `sandbox list`. On a non-zero/failed probe
   // (timeout, transport error) OpenShell may print free-form text whose first
-  // token parseLiveSandboxNames would otherwise mistake for a sandbox name.
+  // token parseLiveSandboxEntries would otherwise mistake for a sandbox name.
   if (liveList.status !== 0) {
     return { recoveredFromGateway: 0, ephemeralSandboxes: [] };
   }
-  const liveNames = Array.from<string>(parseLiveSandboxNames(liveList.output));
-  for (const name of liveNames) {
+  const liveEntries = parseLiveSandboxEntries(liveList.output);
+  for (const { name, phase } of liveEntries) {
     const metadata = metadataByName.get(name) || undefined;
     if (readOnly) {
       // Unseeded recovery: surface the live sandbox for THIS `list` only and do
@@ -253,9 +272,10 @@ async function recoverRegistryFromLiveGateway(
       // — not the agent or gateway binding — so a persisted entry would default
       // `agent` to "openclaw" everywhere downstream (state dirs, connect,
       // rebuild, doctor), permanently misclassifying a Deep Agents/Hermes
-      // sandbox after registry loss. Display-only recovery fixes the
-      // discoverability mismatch without writing unsafe durable metadata;
-      // follow-up named commands reconcile the real agent via the gateway.
+      // sandbox after registry loss. We DO carry the trusted live PHASE so the
+      // row can show e.g. Ready (#5714 acceptance), but agent stays unknown
+      // because the gateway list is not an authoritative agent source; the
+      // real agent is reconciled by a follow-up `nemoclaw <name> status`.
       let validName: string;
       try {
         validName = validateName(name, "sandbox name");
@@ -265,6 +285,7 @@ async function recoverRegistryFromLiveGateway(
       ephemeralSandboxes.push({
         ...buildRecoveredSandboxEntry(validName, metadata),
         recoveredFromGateway: true,
+        livePhase: phase,
       });
       recoveredFromGateway += 1;
       continue;

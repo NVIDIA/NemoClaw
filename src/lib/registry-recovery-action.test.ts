@@ -51,7 +51,7 @@ vi.mock("./state/onboard-session.js", () => ({
 }));
 
 vi.mock("./runtime-recovery.js", () => ({
-  parseLiveSandboxNames: vi.fn(() => new Set<string>()),
+  parseLiveSandboxEntries: vi.fn(() => [] as Array<{ name: string; phase: string | null }>),
 }));
 
 vi.mock("./runner.js", () => ({
@@ -70,7 +70,7 @@ import {
   recoverNamedGatewayRuntime,
 } from "./gateway-runtime-action.js";
 import { recoverRegistryEntries } from "./registry-recovery-action.js";
-import { parseLiveSandboxNames } from "./runtime-recovery.js";
+import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
 describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
@@ -234,7 +234,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     vi.mocked(loadSession).mockReturnValue(null);
     vi.mocked(resolveOpenshell).mockReturnValue("/usr/bin/openshell");
     vi.mocked(captureOpenshell).mockReturnValue({ output: "", status: 0 } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set<string>());
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([]);
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "missing_named" } as never);
   });
 
@@ -242,17 +242,26 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     vi.restoreAllMocks();
   });
 
-  it("recovers live gateway sandboxes for display when the registry is empty and unseeded", async () => {
-    // Reporter case: `nemoclaw list` ran with an empty/lost local registry and
-    // no onboard session, while the gateway was connected and the live sandbox
-    // existed (`status` reported Ready). list must rediscover it for display.
+  it("list displays recovered sandbox Ready phase and authoritative agent when available, otherwise documents unknown fallback", async () => {
+    // Reporter case (#5714): `nemoclaw list` ran with an empty/lost local
+    // registry and no onboard session while the gateway was connected and the
+    // live sandbox existed (`status` reported Ready). list must rediscover it
+    // for display, carrying the TRUSTED live PHASE (Ready) from the gateway
+    // sandbox list, but leaving agent/model/provider unknown — the gateway list
+    // is not an authoritative agent source; the real agent is reconciled by a
+    // follow-up `nemoclaw <name> status`.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
 
     const result = await recoverRegistryEntries();
 
     expect(result.recoveredFromGateway).toBe(1);
-    const recovered = result.sandboxes.find((s) => s.name === "dcode-station");
+    const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
+      | ((typeof result.sandboxes)[number] & {
+          recoveredFromGateway?: boolean;
+          livePhase?: string | null;
+        })
+      | undefined;
     expect(recovered).toBeDefined();
     // Minimal safe entry: no invented agent/model/provider metadata.
     expect(recovered?.model).toBeNull();
@@ -261,6 +270,8 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     // Marked recovered-from-gateway so the inventory renderer shows unknown
     // agent/GPU instead of OpenClaw/CPU defaults (consumed by buildSandboxInventoryRow).
     expect(recovered?.recoveredFromGateway).toBe(true);
+    // Trusted live PHASE is carried for display so list agrees with status.
+    expect(recovered?.livePhase).toBe("Ready");
   });
 
   it("treats an incomplete (phantom) session as unseeded — stays in read-only/display-only path", async () => {
@@ -279,7 +290,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
       },
     } as never);
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
 
     const result = await recoverRegistryEntries();
 
@@ -289,11 +300,51 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     expect(getNamedGatewayLifecycleState).toHaveBeenCalledWith(undefined, {
       ignoreProbeErrors: true,
     });
-    const recovered = result.sandboxes.find((s) => s.name === "dcode-station");
+    const recovered = result.sandboxes.find((s) => s.name === "dcode-station") as
+      | { recoveredFromGateway?: boolean }
+      | undefined;
     expect(recovered?.recoveredFromGateway).toBe(true);
     // Nothing persisted — neither the phantom session sandbox nor the recovered one.
     expect(mockRegistryState.sandboxes["dcode-station"]).toBeUndefined();
     expect(mockRegistryState.sandboxes["phantom"]).toBeUndefined();
+  });
+
+  it("incomplete session with existing registry entries does not trigger mutating gateway recovery solely because the phantom session name is missing", async () => {
+    // PRA-5: with an existing registry entry plus an incomplete (phantom)
+    // session naming a DIFFERENT, missing sandbox, recovery must not flip on and
+    // call the mutating gateway recovery (select/start). `shouldRecoverRegistryEntries`
+    // must treat the phantom session as not-a-seed (isSessionSandboxConfirmed),
+    // so `missingSessionSandbox` stays false and no recovery runs.
+    mockRegistryState.sandboxes["beta"] = {
+      name: "beta",
+      provider: "nvidia",
+      model: "nemotron",
+      gpuEnabled: false,
+      policies: [],
+      nimContainer: null,
+      agent: "openclaw",
+    };
+    vi.mocked(loadSession).mockReturnValue({
+      sandboxName: "phantom",
+      provider: "nvidia",
+      model: "nemotron",
+      policyPresets: [],
+      nimContainer: null,
+      steps: {
+        sandbox: { status: "pending", startedAt: null, completedAt: null, error: null },
+      },
+    } as never);
+    vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "live-x", phase: "Ready" }]);
+
+    const result = await recoverRegistryEntries();
+
+    // No mutating recovery, no read-only gateway inspection — recovery never ran.
+    expect(recoverNamedGatewayRuntime).not.toHaveBeenCalled();
+    expect(getNamedGatewayLifecycleState).not.toHaveBeenCalled();
+    // Existing entry preserved; nothing new surfaced or persisted.
+    expect(result.sandboxes.map((s) => s.name)).toEqual(["beta"]);
+    expect(result.recoveredFromGateway).toBe(0);
   });
 
   it("does NOT persist unseeded gateway recoveries to the on-disk registry (#5714 agent safety)", async () => {
@@ -302,7 +353,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     // and permanently misclassify a Deep Agents/Hermes sandbox. Recovery is
     // display-only: the on-disk registry must stay empty.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
 
     await recoverRegistryEntries();
 
@@ -319,7 +370,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
       state: "connected_other",
       activeGateway: "nemoclaw-8092",
     } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
 
     const result = await recoverRegistryEntries();
 
@@ -335,7 +386,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
       output: "transport error: connection reset",
       status: 1,
     } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["transport"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "transport", phase: null }]);
 
     const result = await recoverRegistryEntries();
 
@@ -351,7 +402,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
       state: "connected_other",
       activeGateway: "some-other-project",
     } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["foreign-sbox"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "foreign-sbox", phase: "Ready" }]);
 
     const result = await recoverRegistryEntries();
 
@@ -364,7 +415,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     // effect of listing: it inspects the lifecycle directly and never calls
     // the mutating recoverNamedGatewayRuntime path.
     vi.mocked(getNamedGatewayLifecycleState).mockReturnValue({ state: "healthy_named" } as never);
-    vi.mocked(parseLiveSandboxNames).mockReturnValue(new Set(["dcode-station"]));
+    vi.mocked(parseLiveSandboxEntries).mockReturnValue([{ name: "dcode-station", phase: "Ready" }]);
 
     await recoverRegistryEntries();
 

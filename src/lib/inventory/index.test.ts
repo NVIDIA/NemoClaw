@@ -156,11 +156,17 @@ describe("inventory commands", () => {
     });
   });
 
-  it("renders a gateway-recovered row with unknown agent/GPU instead of OpenClaw/CPU defaults (#5714)", async () => {
+  it("renders a gateway-recovered row with the trusted live phase but unknown agent/GPU (#5714)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
         sandboxes: [
-          { name: "dcode-station", model: null, provider: null, recoveredFromGateway: true },
+          {
+            name: "dcode-station",
+            model: null,
+            provider: null,
+            recoveredFromGateway: true,
+            livePhase: "Ready",
+          },
         ],
         defaultSandbox: null,
         recoveredFromSession: false,
@@ -170,12 +176,20 @@ describe("inventory commands", () => {
       loadLastSession: () => null,
     });
 
+    expect(inventory.sandboxes[0]).toMatchObject({
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
     const lines: string[] = [];
     renderSandboxInventoryText(inventory, (m = "") => lines.push(m), null);
     const body = lines.join("\n");
     expect(body).toContain("Recovered 1 sandbox");
     expect(body).toContain("agent: unknown");
     expect(body).toContain("GPU: unknown");
+    // Trusted PHASE from `openshell sandbox list` is surfaced so list agrees
+    // with `nemoclaw <name> status` (the reporter's Ready expectation).
+    expect(body).toContain("phase: Ready");
     expect(body).not.toContain("CPU sandbox");
     expect(body).not.toContain("agent: openclaw");
   });

@@ -4,9 +4,59 @@
 import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
-import { parseLiveSandboxNames, parseReadySandboxNames } from "../../dist/lib/runtime-recovery";
+import {
+  parseLiveSandboxEntries,
+  parseLiveSandboxNames,
+  parseReadySandboxNames,
+} from "../../dist/lib/runtime-recovery";
 
 describe("runtime recovery helpers", () => {
+  it("parses name + live PHASE pairs regardless of column layout (#5714)", () => {
+    // Trailing-phase (real `NAME CREATED PHASE`), header skipped, and a compact
+    // age-suffixed layout (`NAME PHASE 2m ago`) must all yield the phase.
+    expect(
+      parseLiveSandboxEntries(
+        [
+          "NAME              CREATED              PHASE",
+          "dcode-station     2026-06-25 09:40:49  Ready",
+          "beta              2026-06-25 10:01:00  Provisioning",
+          "gamma             Error                2m ago",
+          "compact           Running",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { name: "dcode-station", phase: "Ready" },
+      { name: "beta", phase: "Provisioning" },
+      { name: "gamma", phase: "Error" },
+      { name: "compact", phase: "Running" },
+    ]);
+  });
+
+  it("preserves terminal/transient phases, not just ready/running (#5714)", () => {
+    expect(
+      parseLiveSandboxEntries(
+        [
+          "alpha   2026-06-25 09:40:49  Failed",
+          "beta    2026-06-25 09:41:00  CrashLoopBackOff",
+          "gamma   2026-06-25 09:42:00  Creating",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      { name: "alpha", phase: "Failed" },
+      { name: "beta", phase: "CrashLoopBackOff" },
+      { name: "gamma", phase: "Creating" },
+    ]);
+  });
+
+  it("returns a null phase when no known phase token is present", () => {
+    expect(parseLiveSandboxEntries("solo")).toEqual([{ name: "solo", phase: null }]);
+  });
+
+  it("skips headers and error lines when parsing live entries", () => {
+    expect(parseLiveSandboxEntries("No sandboxes found.")).toEqual([]);
+    expect(parseLiveSandboxEntries("Error: boom")).toEqual([]);
+  });
+
   it("parses live sandbox names from openshell sandbox list output", () => {
     expect(
       Array.from(
