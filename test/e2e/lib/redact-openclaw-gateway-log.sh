@@ -38,9 +38,13 @@ nemoclaw_redact_openclaw_gateway_log() {
 
   perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_INFERENCE_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$tmp_file"
   perl -0pi -e 's/((?:Authorization|Proxy-Authorization)\s*[:=]\s*)(?:Bearer\s+)?[A-Za-z0-9._~+\/=:-]+/${1}[REDACTED_AUTHORIZATION]/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:Authorization|Proxy-Authorization)"\s*:\s*")(?:(?:Bearer)\s+)?[^"]+(")/${1}[REDACTED_AUTHORIZATION]${2}/gi' "$tmp_file"
   perl -0pi -e 's/((?:x-)?api[-_]?key\s*[:=]\s*)[A-Za-z0-9._-]+/${1}[REDACTED_API_KEY]/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:x-)?api[-_]?key"\s*:\s*")[^"]+(")/${1}[REDACTED_API_KEY]${2}/gi' "$tmp_file"
   perl -0pi -e 's/([?&](?:token|auth_token|gateway_token|gatewayAuthToken|access_token)=)[^ \t\r\n&"'"'"'<>]+/${1}[REDACTED_TOKEN]/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:token|auth_token|gateway_token|gatewayAuthToken|access_token)"\s*:\s*")[^"]+(")/${1}[REDACTED_TOKEN]${2}/gi' "$tmp_file"
   perl -0pi -e 's/((?:prompt|content|message)\s*[:=]\s*)("[^"]*"|'"'"'[^'"'"']*'"'"'|[^\r\n]+)/${1}[REDACTED_TEXT]/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:prompt|content|message)"\s*:\s*")[^"]+(")/${1}[REDACTED_TEXT]${2}/gi' "$tmp_file"
 
   mv "$tmp_file" "$output_file"
 }

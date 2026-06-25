@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REDACT_GATEWAY_LOG = path.join(process.cwd(), "test/e2e/lib/redact-openclaw-gateway-log.sh");
+const EXPORT_REDACTED_GATEWAY_LOG = path.join(
+  process.cwd(),
+  "test/e2e/lib/export-redacted-openclaw-gateway-log.sh",
+);
 
 describe("OpenClaw gateway log redaction", () => {
   it("redacts live-job secrets, auth headers, token URL fragments, and prompt text", () => {
@@ -66,5 +70,74 @@ describe("OpenClaw gateway log redaction", () => {
     ]) {
       expect(redacted).not.toContain(leaked);
     }
+  });
+
+  it("redacts structured JSON authorization, api-key, token, and message fields", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-json-redact-"));
+    const source = path.join(tmp, "gateway.jsonl");
+    const output = path.join(tmp, "gateway.redacted.jsonl");
+    fs.writeFileSync(
+      source,
+      JSON.stringify({
+        Authorization: "Bearer bearer-secret-token",
+        "api-key": "raw-api-key-token",
+        gateway_token: "url-token-secret",
+        message: "sensitive prompt text",
+        content: "assistant reply text",
+      }),
+      "utf8",
+    );
+
+    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
+
+    const redacted = fs.readFileSync(output, "utf8");
+    expect(redacted).toContain('"Authorization":"[REDACTED_AUTHORIZATION]"');
+    expect(redacted).toContain('"api-key":"[REDACTED_API_KEY]"');
+    expect(redacted).toContain('"gateway_token":"[REDACTED_TOKEN]"');
+    expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
+    expect(redacted).toContain('"content":"[REDACTED_TEXT]"');
+
+    for (const leaked of [
+      "bearer-secret-token",
+      "raw-api-key-token",
+      "url-token-secret",
+      "sensitive prompt text",
+      "assistant reply text",
+    ]) {
+      expect(redacted).not.toContain(leaked);
+    }
+  });
+
+  it("removes stale output and raw logs when redaction fails", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-fail-closed-"));
+    const output = path.join(tmp, "gateway.redacted.log");
+    const redactor = path.join(tmp, "failing-redactor.sh");
+    fs.writeFileSync(output, "stale secret artifact", "utf8");
+    fs.writeFileSync(
+      redactor,
+      "#!/usr/bin/env bash\ncat >\"$2\" <<'EOF'\nraw leaked diagnostic\nEOF\nexit 1\n",
+      "utf8",
+    );
+    fs.chmodSync(redactor, 0o755);
+
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      "#!/usr/bin/env bash\nprintf 'Authorization: Bearer raw-token-from-sandbox\\n'\n",
+      "utf8",
+    );
+    fs.chmodSync(path.join(fakeBin, "openshell"), 0o755);
+
+    const result = spawnSync("bash", [EXPORT_REDACTED_GATEWAY_LOG, "sandbox", output, redactor], {
+      env: { ...process.env, PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}` },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(1);
+    expect(fs.existsSync(output)).toBe(false);
+    expect(
+      fs.readdirSync(tmp).filter((entry) => entry.includes("gateway.redacted.log.raw")),
+    ).toEqual([]);
   });
 });

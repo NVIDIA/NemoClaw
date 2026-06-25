@@ -70,19 +70,18 @@ NEMOCLAW_ISSUE_2603_LIVE=1 \
 # sandbox: it records why the gateway aborted or delayed chat.send runs, which
 # the websocket capture alone cannot explain (#4881).
 if [ "$vitest_status" -ne 0 ]; then
-  GATEWAY_LOG_RAW="$(mktemp "${GATEWAY_LOG_EXPORT}.raw.XXXXXX")"
   echo "Vitest failed (exit ${vitest_status}); exporting redacted sandbox gateway log to ${GATEWAY_LOG_EXPORT}"
-  openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
-    'tail -n 400 /tmp/openclaw-issue2603-gateway.log 2>/dev/null || echo "gateway log missing"' \
-    >"$GATEWAY_LOG_RAW" 2>&1 || true
   # Redact before printing or artifact upload: this live gateway can hold
   # hosted-inference keys, gateway auth tokens, headers, and prompt content.
-  # The raw gateway log is deleted after sanitization.
-  bash "${SCRIPT_DIR}/lib/redact-openclaw-gateway-log.sh" "$GATEWAY_LOG_RAW" "$GATEWAY_LOG_EXPORT" || true
-  rm -f "$GATEWAY_LOG_RAW"
-  echo "==== redacted openclaw gateway log (tail) ===="
-  cat "$GATEWAY_LOG_EXPORT" || true
-  echo "==== end redacted openclaw gateway log ===="
+  # Fail closed: if redaction fails, the helper removes the upload path and
+  # this wrapper skips printing diagnostics.
+  if bash "${SCRIPT_DIR}/lib/export-redacted-openclaw-gateway-log.sh" "$SANDBOX_NAME" "$GATEWAY_LOG_EXPORT"; then
+    echo "==== redacted openclaw gateway log (tail) ===="
+    cat "$GATEWAY_LOG_EXPORT" || true
+    echo "==== end redacted openclaw gateway log ===="
+  else
+    echo "Gateway log redaction failed; removed raw and redacted gateway log artifacts" >&2
+  fi
 fi
 
 exit "$vitest_status"
