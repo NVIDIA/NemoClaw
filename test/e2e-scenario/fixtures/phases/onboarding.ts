@@ -9,6 +9,12 @@ import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_BASE_URL,
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_PROVIDER,
+} from "../hosted-inference.ts";
 import { redactString } from "../redaction.ts";
 import type { ShellProbeResult } from "../shell-probe.ts";
 import type { EnvironmentReady } from "./environment.ts";
@@ -22,8 +28,6 @@ const ONBOARD_ARGS = [
 const DEFAULT_TIMEOUT_MS = 15 * 60_000;
 const OPENCLAW_GATEWAY_URL = "http://127.0.0.1:18789";
 const NEGATIVE_PREFLIGHT_LOG = "negative-preflight.log";
-const HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
-const HOSTED_INFERENCE_ENDPOINT_URL = "https://inference-api.nvidia.com/v1";
 const DOCKER_MISSING_PATTERNS = [
   /Cannot connect to the Docker daemon/i,
   /Is the docker daemon running\??/i,
@@ -88,16 +92,19 @@ function sandboxNameFromOptions(onboarding: string, options: OnboardingOptions):
 function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const useHostedCompatible = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
   const model =
-    process.env.NEMOCLAW_MODEL || process.env.NEMOCLAW_COMPAT_MODEL || HOSTED_INFERENCE_MODEL;
+    process.env.NEMOCLAW_MODEL ||
+    process.env.NEMOCLAW_COMPAT_MODEL ||
+    DEFAULT_HOSTED_INFERENCE_MODEL;
   const compatibleEnv: NodeJS.ProcessEnv = useHostedCompatible
     ? {
         NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-        NEMOCLAW_PROVIDER: "custom",
-        NEMOCLAW_ENDPOINT_URL: process.env.NEMOCLAW_ENDPOINT_URL || HOSTED_INFERENCE_ENDPOINT_URL,
+        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
+        NEMOCLAW_ENDPOINT_URL:
+          process.env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL,
         NEMOCLAW_MODEL: model,
         NEMOCLAW_COMPAT_MODEL: model,
         NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
-        COMPATIBLE_API_KEY: extra.NVIDIA_INFERENCE_API_KEY,
+        [HOSTED_INFERENCE_CREDENTIAL_ENV]: extra.NVIDIA_INFERENCE_API_KEY,
       }
     : {};
   return {

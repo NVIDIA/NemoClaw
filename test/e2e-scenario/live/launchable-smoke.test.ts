@@ -12,6 +12,13 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_BASE_URL,
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_PROVIDER,
+  HOSTED_INFERENCE_PROVIDER_NAME,
+} from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -30,10 +37,11 @@ const USE_HOSTED_COMPATIBLE = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === 
 const MODEL =
   process.env.NEMOCLAW_MODEL ??
   process.env.NEMOCLAW_COMPAT_MODEL ??
-  (USE_HOSTED_COMPATIBLE ? "nvidia/nvidia/nemotron-3-ultra" : "nvidia/nemotron-3-super-120b-a12b");
-const EXPECTED_ROUTE_PROVIDER = USE_HOSTED_COMPATIBLE ? "compatible-endpoint" : "nvidia-prod";
-const HOSTED_ENDPOINT_URL =
-  process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1";
+  (USE_HOSTED_COMPATIBLE ? DEFAULT_HOSTED_INFERENCE_MODEL : "nvidia/nemotron-3-super-120b-a12b");
+const EXPECTED_ROUTE_PROVIDER = USE_HOSTED_COMPATIBLE
+  ? HOSTED_INFERENCE_PROVIDER_NAME
+  : "nvidia-prod";
+const HOSTED_ENDPOINT_URL = process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
 const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
@@ -65,9 +73,9 @@ function runEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function hostedCompatibleOnboardEnv(apiKey: string): NodeJS.ProcessEnv {
   return USE_HOSTED_COMPATIBLE
     ? {
-        COMPATIBLE_API_KEY: apiKey,
+        [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
         NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
         NEMOCLAW_ENDPOINT_URL: HOSTED_ENDPOINT_URL,
         NEMOCLAW_COMPAT_MODEL: MODEL,
         NEMOCLAW_PREFERRED_API: "openai-completions",
