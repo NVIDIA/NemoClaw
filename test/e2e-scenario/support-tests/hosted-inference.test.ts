@@ -85,9 +85,12 @@ function parseKeyValueLines(stdout: string): Record<string, string> {
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const index = line.indexOf("=");
-        if (index < 0) throw new Error(`Expected key=value line, got: ${line}`);
-        return [line.slice(0, index), line.slice(index + 1)];
+        const match = line.match(/^([^=]*)=(.*)$/s);
+        return match
+          ? [match[1], match[2]]
+          : (() => {
+              throw new Error(`Expected key=value line, got: ${line}`);
+            })();
       }),
   );
 }
