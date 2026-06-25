@@ -9,12 +9,20 @@
 # emits a structured, already-sanitized failure reason for aborted/delayed
 # chat.send runs.
 
-nemoclaw_redact_openclaw_gateway_log() {
+nemoclaw_redact_openclaw_gateway_log() (
+  set -euo pipefail
+
   local source_file="$1"
   local output_file="$2"
   local tmp_file
 
   tmp_file="$(mktemp "${output_file}.tmp.XXXXXX")"
+  cleanup_failed_redaction() {
+    rm -f "$tmp_file" "$output_file"
+  }
+  trap cleanup_failed_redaction ERR INT TERM
+
+  rm -f "$output_file"
   if [ -f "$source_file" ]; then
     cp "$source_file" "$tmp_file"
   else
@@ -38,16 +46,17 @@ nemoclaw_redact_openclaw_gateway_log() {
 
   perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_INFERENCE_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$tmp_file"
   perl -0pi -e 's/((?:Authorization|Proxy-Authorization)\s*[:=]\s*)(?:Bearer\s+)?[A-Za-z0-9._~+\/=:-]+/${1}[REDACTED_AUTHORIZATION]/gi' "$tmp_file"
-  perl -0pi -e 's/("(?:Authorization|Proxy-Authorization)"\s*:\s*")(?:(?:Bearer)\s+)?[^"]+(")/${1}[REDACTED_AUTHORIZATION]${2}/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:Authorization|Proxy-Authorization)"\s*:\s*")(?:(?:Bearer)\s+)?(?:\\.|[^"\\])*(")/${1}[REDACTED_AUTHORIZATION]${2}/gi' "$tmp_file"
   perl -0pi -e 's/((?:x-)?api[-_]?key\s*[:=]\s*)[A-Za-z0-9._-]+/${1}[REDACTED_API_KEY]/gi' "$tmp_file"
-  perl -0pi -e 's/("(?:x-)?api[-_]?key"\s*:\s*")[^"]+(")/${1}[REDACTED_API_KEY]${2}/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:x-)?api[-_]?key"\s*:\s*")(?:\\.|[^"\\])*(")/${1}[REDACTED_API_KEY]${2}/gi' "$tmp_file"
   perl -0pi -e 's/([?&](?:token|auth_token|gateway_token|gatewayAuthToken|access_token)=)[^ \t\r\n&"'"'"'<>]+/${1}[REDACTED_TOKEN]/gi' "$tmp_file"
-  perl -0pi -e 's/("(?:token|auth_token|gateway_token|gatewayAuthToken|access_token)"\s*:\s*")[^"]+(")/${1}[REDACTED_TOKEN]${2}/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:token|auth_token|gateway_token|gatewayAuthToken|access_token)"\s*:\s*")(?:\\.|[^"\\])*(")/${1}[REDACTED_TOKEN]${2}/gi' "$tmp_file"
   perl -0pi -e 's/((?:prompt|content|message|text)\s*[:=]\s*)("[^"]*"|'"'"'[^'"'"']*'"'"'|[^\r\n]+)/${1}[REDACTED_TEXT]/gi' "$tmp_file"
-  perl -0pi -e 's/("(?:prompt|content|message|text)"\s*:\s*")[^"]+(")/${1}[REDACTED_TEXT]${2}/gi' "$tmp_file"
+  perl -0pi -e 's/("(?:prompt|content|message|text)"\s*:\s*")(?:\\.|[^"\\])*(")/${1}[REDACTED_TEXT]${2}/gi' "$tmp_file"
 
   mv "$tmp_file" "$output_file"
-}
+  trap - ERR INT TERM
+)
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   if [ "$#" -ne 2 ]; then

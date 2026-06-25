@@ -108,6 +108,35 @@ describe("OpenClaw gateway log redaction", () => {
     }
   });
 
+  it("redacts JSON message/content/text strings containing escaped quotes and trailing sensitive text", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-escaped-redact-"));
+    const source = path.join(tmp, "gateway.jsonl");
+    const output = path.join(tmp, "gateway.redacted.jsonl");
+    fs.writeFileSync(
+      source,
+      JSON.stringify({
+        message: 'secret before "quoted" secret after',
+        text: 'nested text before "quoted" nested text after',
+      }),
+      "utf8",
+    );
+
+    execFileSync("bash", [REDACT_GATEWAY_LOG, source, output], { stdio: "pipe" });
+
+    const redacted = fs.readFileSync(output, "utf8");
+    expect(redacted).toContain('"message":"[REDACTED_TEXT]"');
+    expect(redacted).toContain('"text":"[REDACTED_TEXT]"');
+    for (const leaked of [
+      "secret before",
+      "quoted",
+      "secret after",
+      "nested text before",
+      "nested text after",
+    ]) {
+      expect(redacted).not.toContain(leaked);
+    }
+  });
+
   it("redacts nested OpenClaw message.content text before gateway log upload", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-nested-redact-"));
     const source = path.join(tmp, "gateway.jsonl");
@@ -129,6 +158,19 @@ describe("OpenClaw gateway log redaction", () => {
     const redacted = fs.readFileSync(output, "utf8");
     expect(redacted).toContain('"text":"[REDACTED_TEXT]"');
     expect(redacted).not.toContain("nested sensitive prompt text");
+  });
+
+  it("real redactor exits non-zero and removes destination artifact on internal failures", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-real-fail-"));
+    const source = path.join(tmp, "gateway.log");
+    const outputDir = path.join(tmp, "missing-output-dir");
+    const output = path.join(outputDir, "gateway.redacted.log");
+    fs.writeFileSync(source, "Authorization: Bearer raw-token\n", "utf8");
+
+    const result = spawnSync("bash", [REDACT_GATEWAY_LOG, source, output], { encoding: "utf8" });
+
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(output)).toBe(false);
   });
 
   it("removes stale output and raw logs when redaction fails", () => {

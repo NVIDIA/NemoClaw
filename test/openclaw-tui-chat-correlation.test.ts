@@ -79,6 +79,7 @@ type DuplicateUserTurn = {
 type Issue2603Analysis = {
   chatEvents: CompactChatEvent[];
   foreignSessionChatEvents: CompactChatEvent[];
+  conflictingSessionRunEvents: CompactChatEvent[];
   emptyFinalsForSubmittedRuns: CompactChatEvent[];
   missingReplies: string[];
   duplicateReplies: { replyToken: string; count: number }[];
@@ -163,6 +164,9 @@ function analyzeIssue2603Trace({
   const foreignSessionChatEvents = compactChatEvents(
     events.filter((event) => event.event === "chat" && !isOwnSessionChatEvent(event, sessionKey)),
   );
+  const conflictingSessionRunEvents = foreignSessionChatEvents.filter(
+    (event) => typeof event.runId === "string" && submittedRunIds.has(event.runId),
+  );
 
   const emptyFinalsForSubmittedRuns = chatEvents.filter(
     (event) =>
@@ -218,6 +222,7 @@ function analyzeIssue2603Trace({
   return {
     chatEvents,
     foreignSessionChatEvents,
+    conflictingSessionRunEvents,
     emptyFinalsForSubmittedRuns,
     missingReplies,
     duplicateReplies,
@@ -254,6 +259,7 @@ function summarizeLiveAttempt(attempt: LiveIssue2603Trace, index: number) {
     eventCount: attempt.events.length,
     chatEventCount: analysis.chatEvents.length,
     foreignSessionChatEvents: analysis.foreignSessionChatEvents,
+    conflictingSessionRunEvents: analysis.conflictingSessionRunEvents,
     missingReplies: analysis.missingReplies,
     emptyFinalsForSubmittedRuns: analysis.emptyFinalsForSubmittedRuns,
     missingUserTurns: analysis.missingUserTurns,
@@ -281,6 +287,7 @@ function buildFailureSummary(
       duplicateUserTurns: analysis.duplicateUserTurns,
       chatEvents: analysis.chatEvents,
       foreignSessionChatEvents: analysis.foreignSessionChatEvents,
+      conflictingSessionRunEvents: analysis.conflictingSessionRunEvents,
     },
     null,
     2,
@@ -599,7 +606,12 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
       containsReplyTokenAllowingWhitespace(event.text, entry.replyToken),
     ),
   );
-  return repro.sentRuns.length === 3 && !hasSubmittedRunEvent && !hasReplyTokenEvent;
+  return (
+    repro.sentRuns.length === 3 &&
+    analysis.conflictingSessionRunEvents.length === 0 &&
+    !hasSubmittedRunEvent &&
+    !hasReplyTokenEvent
+  );
 }
 
 // The no-chat-events failure happens when slow inference keeps the submitted
@@ -865,6 +877,38 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     // reply token must still classify as a capture failure.
     expect(analyzeIssue2603Trace(repro).chatEvents).toHaveLength(3);
     expect(looksLikeEventCaptureFailure(repro)).toBe(true);
+  });
+
+  it("does not classify submitted-run events with a mismatched sessionKey as capture failure", () => {
+    const [runA] = capturedIssue2603Trace.sentRuns;
+    const repro = {
+      sessionKey: "issue2603-own-session",
+      sentRuns: capturedIssue2603Trace.sentRuns,
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: runA.runId,
+            state: "aborted",
+            sessionKey: "issue2603-conflicting-session",
+          },
+        },
+      ],
+      historyMessages: [],
+    };
+    const analysis = analyzeIssue2603Trace(repro);
+
+    expect(analysis.chatEvents).toHaveLength(0);
+    expect(analysis.conflictingSessionRunEvents).toEqual([
+      {
+        runId: runA.runId,
+        state: "aborted",
+        sessionKey: "issue2603-conflicting-session",
+        text: "",
+        errorMessage: undefined,
+      },
+    ]);
+    expect(looksLikeEventCaptureFailure(repro)).toBe(false);
   });
 
   it("does not classify a whitespace-split reply token under a non-submitted run as a capture failure", () => {
