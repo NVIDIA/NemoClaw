@@ -133,9 +133,9 @@ describe("callOpenclawGateway", () => {
     });
 
     const command = captureMock.mock.calls[0]?.[0] ?? [];
-    for (const arg of command) {
-      if (typeof arg === "string") expect(arg).not.toMatch(/[\n\r]/);
-    }
+    const stringArgs = command.filter((arg): arg is string => typeof arg === "string");
+    expect(stringArgs).toHaveLength(command.length);
+    expect(stringArgs.every((arg) => !/[\n\r]/.test(arg))).toBe(true);
   });
 
   it("validates the sourced proxy env file before invoking sessions admin RPC", () => {
