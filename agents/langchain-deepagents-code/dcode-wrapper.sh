@@ -19,14 +19,37 @@ run_dcode() {
   exec python3 -m deepagents_code "$@"
 }
 
+# SECURITY: dcode runtime/.env secret guard.
+# - Invalid state: a user-controlled runtime env var or /sandbox/.deepagents/.env
+#   entry can inject a provider secret into Deep Agents Code, bypassing the
+#   managed inference plane and `nemoclaw credentials`.
+# - Source boundary: upstream `deepagents_code` is third-party Python; the
+#   canonical secret-pattern contract lives at src/lib/security/secret-patterns.ts.
+#   Neither is callable from the Bash wrapper before exec, so this matcher
+#   mirrors the canonical TOKEN_PREFIX_PATTERNS in shell.
+# - Regression: the parity test in
+#   test/langchain-deepagents-code-image.test.ts imports the canonical
+#   TOKEN_PREFIX_PATTERNS and pins its length; any new entry trips the test and
+#   forces this matcher (and its sample list) to update.
+# - Removal condition: drop this guard when (a) upstream `deepagents_code` itself
+#   rejects secret-shaped runtime/.env values, or (b) all dcode invocations
+#   route through a Node entrypoint that imports the canonical patterns directly.
+
 is_managed_token_value_for_name() {
   local name="$1"
   local value="$2"
   local len=${#value}
   case "$name" in
-    SLACK_BOT_TOKEN | SLACK_APP_TOKEN)
+    SLACK_BOT_TOKEN)
       case "$value" in
-        xoxb-* | xoxp-* | xoxa-* | xoxs-* | xapp-*)
+        xoxb-*)
+          [ "$len" -ge 15 ] && return 0
+          ;;
+      esac
+      ;;
+    SLACK_APP_TOKEN)
+      case "$value" in
+        xapp-*)
           [ "$len" -ge 15 ] && return 0
           ;;
       esac
@@ -57,28 +80,34 @@ trim_whitespace() {
 
 is_secret_shaped_value() {
   local value="$1"
-  local len=${#value}
-  case "$value" in
-    sk-proj-* | sk-ant-*)
-      [ "$len" -ge 18 ] && return 0
-      ;;
-    sk-* | nvapi-* | nvcf-* | ghp_* | github_pat_* | hf_* | glpat-* | gsk_* | pypi-*)
-      [ "$len" -ge 20 ] && return 0
-      ;;
-    xoxb-* | xoxp-* | xoxa-* | xoxs-* | xapp-*)
-      [ "$len" -ge 15 ] && return 0
-      ;;
-    AKIA* | ASIA*)
-      [ "$len" -ge 20 ] && return 0
-      ;;
-  esac
-  if [[ "$value" =~ ^bot[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+  if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ ^[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+  if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
     return 0
   fi
-  if [[ "$value" =~ ^[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}$ ]]; then
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ xox[bpas]-[A-Za-z0-9_-]{10,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ xapp-[A-Za-z0-9_-]{10,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ A(K|S)IA[A-Z0-9]{16} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ bot[0-9]{8,10}:[A-Za-z0-9_-]{35} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ [0-9]{8,10}:[A-Za-z0-9_-]{35} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ [A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,} ]]; then
     return 0
   fi
   return 1
@@ -93,16 +122,18 @@ refuse_secret_env() {
 }
 
 assert_no_secret_runtime_env() {
-  local name value
-  for name in $(compgen -e); do
-    value="${!name}"
+  local pair name value
+  while IFS= read -r -d '' pair; do
+    name="${pair%%=*}"
+    [ "$name" != "$pair" ] || continue
+    value="${pair#*=}"
     if is_managed_token_value_for_name "$name" "$value"; then
       continue
     fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
-  done
+  done < <(env -0)
 }
 
 assert_no_secret_env_file() {

@@ -5,9 +5,8 @@ import { execFileSync, type SpawnSyncReturns, spawnSync } from "node:child_proce
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
-
 import { describe, expect, it } from "vitest";
+import { TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 
@@ -608,25 +607,62 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.stderr).not.toContain("pypi.org");
   });
 
-  it("passes through context-anchored canonical values to keep the guard a standalone-token-only boundary", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-scope-"));
+  it("rejects bearer-wrapped secret values carried in runtime env vars", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-bearer-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-abcdefghijklmnopqrstuvwx";
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      CUSTOM_HEADER: "Bearer sk-abcdefghijklmnopqrstuvwx",
-      EMBEDDED_HOST_HEADER: "prefix-sk-abcdefghijklmnopqrstuvwx",
+      CUSTOM_HEADER: `Bearer ${fakeSecret}`,
     });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("dcode-stub-ran");
-    expect(fs.existsSync(ranMarker)).toBe(true);
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("CUSTOM_HEADER");
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
-  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", async () => {
-    const distPath = path.join(process.cwd(), "dist", "lib", "security", "secret-patterns.js");
-    const { TOKEN_PREFIX_PATTERNS } = (await import(pathToFileURL(distPath).href)) as {
-      TOKEN_PREFIX_PATTERNS: RegExp[];
-    };
+  it("rejects embedded secret values carried in runtime env vars", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-embedded-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-abcdefghijklmnopqrstuvwx";
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      EMBEDDED_HOST_HEADER: `prefix-${fakeSecret}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("EMBEDDED_HOST_HEADER");
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects secret-shaped runtime env values whose names are not valid shell identifiers", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-rawenv-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+
+    const result = spawnSync(
+      "env",
+      [
+        "-i",
+        `PATH=${process.env.PATH ?? "/usr/bin:/bin"}`,
+        `OPENAI-API-KEY=${fakeSecret}`,
+        "bash",
+        wrapperPath,
+        "-n",
+        "hi",
+      ],
+      { encoding: "utf8" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI-API-KEY");
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", () => {
     expect(Array.isArray(TOKEN_PREFIX_PATTERNS)).toBe(true);
     expect(TOKEN_PREFIX_PATTERNS.length).toBe(16);
   });
