@@ -5813,6 +5813,7 @@ function validateChannelsAddRemoveVitestJob(
   }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
+    "COMPATIBLE_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
     "GITHUB_TOKEN",
@@ -5836,6 +5837,12 @@ function validateChannelsAddRemoveVitestJob(
         stepName,
         stepEnv,
         "NVIDIA_INFERENCE_API_KEY",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        stepName,
+        stepEnv,
+        "COMPATIBLE_API_KEY",
       );
     }
     if (step.name !== "Authenticate to Docker Hub") {
