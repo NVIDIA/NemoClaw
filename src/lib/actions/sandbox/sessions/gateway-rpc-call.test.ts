@@ -84,6 +84,7 @@ describe("callOpenclawGateway", () => {
     expect(captureMock.mock.calls[0]?.[1]).toMatchObject({
       ignoreError: true,
       includeStderr: true,
+      includeStreams: true,
     });
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });

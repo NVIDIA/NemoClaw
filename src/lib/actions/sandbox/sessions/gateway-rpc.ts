@@ -146,7 +146,7 @@ function captureGatewayCall(opts: GatewayCallOptions) {
       opts.method,
       params,
     ],
-    { ignoreError: true, includeStderr: true },
+    { ignoreError: true, includeStderr: true, includeStreams: true },
   );
 }
 
