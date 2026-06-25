@@ -256,11 +256,10 @@ runLaunchableSmokeTest(
     });
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    if (!USE_HOSTED_COMPATIBLE) {
-      expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-        true,
-      );
-    }
+    expect(
+      USE_HOSTED_COMPATIBLE || apiKey.startsWith("nvapi-"),
+      "NVIDIA_INFERENCE_API_KEY must start with nvapi- unless hosted-compatible mode is enabled",
+    ).toBe(true);
 
     expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
 
