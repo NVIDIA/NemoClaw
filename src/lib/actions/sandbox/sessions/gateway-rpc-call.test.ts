@@ -18,7 +18,11 @@ vi.mock("../auto-pair-approval", () => ({
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
-import { buildGatewayAdminRpcShell, callOpenclawGateway } from "./gateway-rpc";
+import {
+  buildGatewayAdminRpcShell,
+  callOpenclawGateway,
+  GATEWAY_ADMIN_RPC_SCRIPT,
+} from "./gateway-rpc";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const autoPairMock = runSandboxAutoPairApprovalPass as unknown as ReturnType<typeof vi.fn>;
@@ -90,6 +94,7 @@ describe("callOpenclawGateway", () => {
     expect(shell).toContain('. "$proxy_env"');
     const script = Buffer.from(String(command?.[10] ?? ""), "base64").toString("utf8");
     expect(script).toContain("callGatewayFromCli");
+    expect(script).toContain("requireCanonicalGatewayPort");
     expect(script).toContain("url: `ws://127.0.0.1:${port}`");
     expect(script).toContain('clientName: "gateway-client"');
     expect(script).toContain('mode: "backend"');
@@ -184,6 +189,31 @@ describe("callOpenclawGateway", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects malformed gateway ports before loading OpenClaw or using the gateway token", () => {
+    const script = [
+      "const Module = require('node:module');",
+      "const originalRequire = Module.prototype.require;",
+      "Module.prototype.require = function patchedRequire(id) {",
+      "  if (id === 'node:fs') {",
+      "    return { accessSync() { throw new Error('openclaw lookup should not run'); }, constants: { X_OK: 1 }, realpathSync() { throw new Error('realpath should not run'); } };",
+      "  }",
+      "  return originalRequire.apply(this, arguments);",
+      "};",
+      'process.env.NEMOCLAW_GATEWAY_RPC_METHOD = "sessions.reset";',
+      'process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64 = "e30=";',
+      'process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gateway-token";',
+      'process.env.OPENCLAW_GATEWAY_PORT = "18789@attacker.example";',
+      `import("data:text/javascript;base64,${Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString("base64")}");`,
+    ].join("\n");
+
+    const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENCLAW_GATEWAY_PORT must be a canonical TCP port");
+    expect(result.stderr).not.toContain("secret-gateway-token");
+    expect(result.stderr).not.toContain("openclaw lookup should not run");
   });
 
   it("rejects unsupported gateway admin RPC methods before touching OpenShell", () => {

@@ -45,7 +45,7 @@ const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device
 // - Removal condition: replace this wrapper when OpenClaw exposes a stable
 //   documented host-admin sessions RPC/CLI that does not register a new CLI
 //   device and preserves separate stdout/stderr diagnostics.
-const GATEWAY_ADMIN_RPC_SCRIPT = `
+export const GATEWAY_ADMIN_RPC_SCRIPT = `
 import { Buffer } from "node:buffer";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -64,20 +64,37 @@ function findOnPath(command) {
   throw new Error(\`Could not find \${command} on PATH\`);
 }
 
-const openclawBin = realpathSync(process.env.OPENCLAW_BIN || findOnPath("openclaw"));
-const requireFromOpenclaw = createRequire(openclawBin);
-const gatewayRuntimePath = requireFromOpenclaw.resolve("openclaw/plugin-sdk/gateway-runtime");
-const { callGatewayFromCli } = await import(pathToFileURL(gatewayRuntimePath).href);
+function requireCanonicalGatewayPort(value, label) {
+  if (!/^[1-9][0-9]{0,4}$/.test(value || "")) {
+    throw new Error(\`\${label} must be a canonical TCP port in 1..65535\`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 65535 || String(parsed) !== value) {
+    throw new Error(\`\${label} must be a canonical TCP port in 1..65535\`);
+  }
+  return String(parsed);
+}
 
 const method = process.env.NEMOCLAW_GATEWAY_RPC_METHOD;
 const paramsJson = process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64
   ? Buffer.from(process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64, "base64").toString("utf8")
   : "{}";
-const port = process.env.OPENCLAW_GATEWAY_PORT || process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
+const rawPort = process.env.OPENCLAW_GATEWAY_PORT || process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
+const portLabel = process.env.OPENCLAW_GATEWAY_PORT
+  ? "OPENCLAW_GATEWAY_PORT"
+  : process.env.NEMOCLAW_DASHBOARD_PORT
+    ? "NEMOCLAW_DASHBOARD_PORT"
+    : "default gateway port";
+const port = requireCanonicalGatewayPort(rawPort, portLabel);
 const token = process.env.OPENCLAW_GATEWAY_TOKEN;
 
 if (!method) throw new Error("gateway RPC method argument is required");
 if (!token) throw new Error("OPENCLAW_GATEWAY_TOKEN is required for NemoClaw sessions admin RPCs");
+
+const openclawBin = realpathSync(process.env.OPENCLAW_BIN || findOnPath("openclaw"));
+const requireFromOpenclaw = createRequire(openclawBin);
+const gatewayRuntimePath = requireFromOpenclaw.resolve("openclaw/plugin-sdk/gateway-runtime");
+const { callGatewayFromCli } = await import(pathToFileURL(gatewayRuntimePath).href);
 
 const result = await callGatewayFromCli(
   method,
