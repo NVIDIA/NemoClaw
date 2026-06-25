@@ -154,10 +154,13 @@ describe("hosted inference E2E config", () => {
     );
 
     expect(cfg.env).toMatchObject({
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_PROVIDER: "custom",
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
       NEMOCLAW_MODEL: "nvidia/custom-model",
       NEMOCLAW_COMPAT_MODEL: "nvidia/custom-model",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
       COMPATIBLE_API_KEY: "repo-hosted-key",
     });
   });

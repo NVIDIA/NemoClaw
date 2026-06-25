@@ -56,9 +56,7 @@ export function phase6Env(options: {
     NEMOCLAW_SANDBOX_NAME: options.sandboxName,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...(options.agent ? { NEMOCLAW_AGENT: options.agent } : {}),
-    ...(options.apiKey
-      ? { NVIDIA_INFERENCE_API_KEY: options.apiKey, NVIDIA_API_KEY: options.apiKey }
-      : {}),
+    ...(options.apiKey ? { NVIDIA_INFERENCE_API_KEY: options.apiKey } : {}),
     ...options.extra,
   };
 }
