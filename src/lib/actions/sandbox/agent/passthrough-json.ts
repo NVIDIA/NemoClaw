@@ -16,6 +16,7 @@ export type AgentJsonPassthroughProcess = {
 
 export type AgentJsonPassthroughDeps = {
   getOpenshellBinary?: () => string;
+  provenanceLines?: (raw: string) => string[];
   spawnSync?: (
     command: string,
     args: readonly string[],
@@ -37,6 +38,15 @@ function defaultGetOpenshellBinary(): string {
   return runtime.getOpenshellBinary();
 }
 
+function writeProvenanceBlock(
+  proc: AgentJsonPassthroughProcess,
+  stderr: string,
+  lines: readonly string[],
+): void {
+  if (lines.length === 0) return;
+  proc.stderr.write(`${stderr && !stderr.endsWith("\n") ? "\n" : ""}${lines.join("\n")}\n`);
+}
+
 export function runAgentJsonPassthrough(
   sandboxName: string,
   command: readonly string[],
@@ -51,7 +61,7 @@ export function runAgentJsonPassthrough(
     {
       encoding: "utf-8",
       maxBuffer: AGENT_JSON_MAX_BUFFER_BYTES,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["inherit", "pipe", "pipe"],
     },
   );
   const stdout = text(result.stdout);
@@ -59,9 +69,16 @@ export function runAgentJsonPassthrough(
   if (stdout) proc.stdout.write(stdout);
   if (stderr) proc.stderr.write(stderr);
 
-  const provenance = openClawAgentJsonProvenanceLines(stdout);
-  if (provenance.length > 0) {
-    proc.stderr.write(`${stderr && !stderr.endsWith("\n") ? "\n" : ""}${provenance.join("\n")}\n`);
+  try {
+    writeProvenanceBlock(
+      proc,
+      stderr,
+      (deps.provenanceLines ?? openClawAgentJsonProvenanceLines)(stdout),
+    );
+  } catch {
+    writeProvenanceBlock(proc, stderr, [
+      "[openclaw provenance] skipped provenance extraction after parser failure.",
+    ]);
   }
 
   const { code, errorMessage } = computeExitCode(result);

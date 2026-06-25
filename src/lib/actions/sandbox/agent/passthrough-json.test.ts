@@ -63,7 +63,7 @@ describe("runAgentJsonPassthrough", () => {
       expect.objectContaining({
         encoding: "utf-8",
         maxBuffer: 64 * 1024 * 1024,
-        stdio: ["ignore", "pipe", "pipe"],
+        stdio: ["inherit", "pipe", "pipe"],
       }),
     );
     expect(stdout.join("")).toBe(payload);
@@ -131,5 +131,35 @@ describe("runAgentJsonPassthrough", () => {
 
     expect(stderr.join("")).toContain("stderr-diagnostic");
     expect(stderr.join("")).not.toContain("[openclaw provenance]");
+  });
+
+  it("preserves forwarded output and remote exit code when provenance parsing fails", () => {
+    const stdoutPayload = JSON.stringify({ result: { payloads: [{ text: "OK" }] } });
+    const spawnSync = vi.fn(() => ({
+      status: 7,
+      signal: null,
+      stdout: stdoutPayload,
+      stderr: "openclaw warning",
+      pid: 123,
+      output: [null, stdoutPayload, "openclaw warning"],
+    }));
+    const { exit, proc, stderr, stdout } = makeProc();
+
+    expect(() =>
+      runAgentJsonPassthrough("alpha", ["openclaw", "agent", "--json"], proc, {
+        getOpenshellBinary: () => "/usr/local/bin/openshell",
+        provenanceLines: () => {
+          throw new RangeError("Maximum call stack size exceeded");
+        },
+        spawnSync,
+      }),
+    ).toThrow("__exit:7");
+
+    expect(stdout.join("")).toBe(stdoutPayload);
+    expect(stderr.join("")).toContain("openclaw warning");
+    expect(stderr.join("")).toContain(
+      "[openclaw provenance] skipped provenance extraction after parser failure.",
+    );
+    expect(exit).toHaveBeenCalledWith(7);
   });
 });

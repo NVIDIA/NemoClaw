@@ -115,4 +115,11 @@ describe("openClawAgentJsonProvenanceLines", () => {
       "[openclaw provenance] failed tool result (exec call_noisy): exec failed after noisy progress output",
     ]);
   });
+
+  it("bounds provenance traversal for deeply nested sandbox-controlled JSON", () => {
+    const nested = `${'{"child":'.repeat(2_000)}{"payloads":[{"text":"too deep"}]}${"}".repeat(2_000)}`;
+
+    expect(() => openClawAgentJsonProvenanceLines(nested)).not.toThrow();
+    expect(openClawAgentJsonProvenanceLines(nested)).toEqual([]);
+  });
 });

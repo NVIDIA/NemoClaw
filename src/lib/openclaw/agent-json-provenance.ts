@@ -9,6 +9,13 @@ const UNTRUSTED_CHILD_END = "END_UNTRUSTED_CHILD_RESULT";
 const ANSI_OSC_PATTERN = /\x1B\][\s\S]*?(?:\x07|\x1B\\|$)/gu;
 const ANSI_CSI_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]/gu;
 const CONTROL_PATTERN = /[\u0000-\u0007\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu;
+const MAX_PROVENANCE_WALK_NODES = 10_000;
+const MAX_PROVENANCE_WALK_DEPTH = 80;
+
+type WalkEntry = {
+  depth: number;
+  value: unknown;
+};
 
 function snippet(value: string, limit = 300): string {
   const squashed = value
@@ -22,10 +29,39 @@ function snippet(value: string, limit = 300): string {
 }
 
 function strings(value: unknown): string[] {
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) return value.flatMap(strings);
-  if (!isRecord(value)) return [];
-  return Object.values(value).flatMap(strings);
+  const result: string[] = [];
+  const seen = new WeakSet<object>();
+  const stack: WalkEntry[] = [{ value, depth: 0 }];
+  let visited = 0;
+
+  while (stack.length > 0 && visited < MAX_PROVENANCE_WALK_NODES) {
+    const entry = stack.pop();
+    if (!entry) break;
+    visited += 1;
+    if (entry.depth > MAX_PROVENANCE_WALK_DEPTH) continue;
+
+    if (typeof entry.value === "string") {
+      result.push(entry.value);
+      continue;
+    }
+
+    const children = Array.isArray(entry.value)
+      ? entry.value
+      : isRecord(entry.value)
+        ? Object.values(entry.value)
+        : [];
+    if (children.length === 0) continue;
+
+    const objectValue = entry.value as object;
+    if (seen.has(objectValue)) continue;
+    seen.add(objectValue);
+
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ value: children[index], depth: entry.depth + 1 });
+    }
+  }
+
+  return result;
 }
 
 function detailFromValue(value: unknown): string | null {
@@ -108,19 +144,36 @@ function toolFailureLine(record: Record<string, unknown>): string | null {
 
 function collectToolFailureProvenance(value: unknown): string[] {
   const lines: string[] = [];
+  const seen = new WeakSet<object>();
+  const stack: WalkEntry[] = [{ value, depth: 0 }];
+  let visited = 0;
 
-  const visit = (node: unknown): void => {
-    if (Array.isArray(node)) {
-      for (const child of node) visit(child);
-      return;
+  while (stack.length > 0 && visited < MAX_PROVENANCE_WALK_NODES) {
+    const entry = stack.pop();
+    if (!entry) break;
+    visited += 1;
+    if (entry.depth > MAX_PROVENANCE_WALK_DEPTH) continue;
+
+    const children = Array.isArray(entry.value)
+      ? entry.value
+      : isRecord(entry.value)
+        ? Object.values(entry.value)
+        : [];
+    if (!Array.isArray(entry.value) && !isRecord(entry.value)) continue;
+
+    const objectValue = entry.value as object;
+    if (seen.has(objectValue)) continue;
+    seen.add(objectValue);
+
+    if (isRecord(entry.value)) {
+      const line = toolFailureLine(entry.value);
+      if (line) lines.push(line);
     }
-    if (!isRecord(node)) return;
-    const line = toolFailureLine(node);
-    if (line) lines.push(line);
-    for (const child of Object.values(node)) visit(child);
-  };
 
-  visit(value);
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ value: children[index], depth: entry.depth + 1 });
+    }
+  }
   return lines;
 }
 

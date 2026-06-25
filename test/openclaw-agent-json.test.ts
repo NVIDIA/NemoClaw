@@ -1,15 +1,15 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
-import path from "node:path";
+import type { SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 const HELPER = path.join(import.meta.dirname, "e2e", "lib", "openclaw-agent-json.py");
 const SHELL_HELPER = path.join(import.meta.dirname, "e2e", "lib", "openclaw-json.sh");
 
-function runHelper(input: string) {
+function runHelper(input: string): SpawnSyncReturns<string> {
   return spawnSync("python3", [HELPER], {
     input,
     encoding: "utf-8",
@@ -17,7 +17,7 @@ function runHelper(input: string) {
   });
 }
 
-function runShellHelper(input: string) {
+function runShellHelper(input: string): SpawnSyncReturns<string> {
   return spawnSync("bash", ["-lc", 'source "$OPENCLAW_JSON_HELPER"; parse_openclaw_agent_text'], {
     input,
     encoding: "utf-8",
