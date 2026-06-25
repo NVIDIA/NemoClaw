@@ -12,6 +12,7 @@ const requireDist = createRequire(import.meta.url);
 const shieldsModulePath = "../../../dist/lib/shields/index.js";
 
 type ShieldsHarness = {
+  auditSpy: MockInstance;
   logSpy: MockInstance;
   shieldsDown: typeof import("../../../dist/lib/shields/index.js").shieldsDown;
   shieldsStatus: typeof import("../../../dist/lib/shields/index.js").shieldsStatus;
@@ -79,11 +80,13 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
           : "660 sandbox:sandbox\n"
         : "";
   });
-  vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
+  const auditSpy = vi.spyOn(audit, "appendAuditEntry").mockImplementation(() => undefined);
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
+  auditSpy.mockClear();
   return {
+    auditSpy,
     logSpy,
     shieldsDown: shields.shieldsDown,
     shieldsStatus: shields.shieldsStatus,
@@ -223,6 +226,14 @@ describe("shields command flow", () => {
       [hashPath]: hashHash,
     });
     expect(fs.existsSync(path.join(stateDir, "shields-timer-openclaw.json"))).toBe(false);
+    expect(harness.auditSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "shields_auto_restore",
+        policy_snapshot: snapshotPath,
+        restored_by: "auto_timer",
+        sandbox: "openclaw",
+      }),
+    );
     expect(execCalls.some((cmd) => cmd.includes(` chmod 444 ${hashPath}`))).toBe(true);
     expect(execCalls.some((cmd) => cmd.includes(` chown root:root ${hashPath}`))).toBe(true);
   });
