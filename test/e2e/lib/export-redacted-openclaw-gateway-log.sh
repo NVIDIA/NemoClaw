@@ -10,14 +10,25 @@ nemoclaw_export_redacted_openclaw_gateway_log() {
   local output_file="$2"
   local redactor_script="${3:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redact-openclaw-gateway-log.sh}"
   local raw_file
+  local sandbox_gateway_token
 
   raw_file="$(mktemp "${output_file}.raw.XXXXXX")"
   rm -f "$output_file"
+
+  sandbox_gateway_token="$(
+    openshell sandbox exec --name "$sandbox_name" -- sh -lc \
+      'node -e '\''const fs = require("fs"); const cfg = JSON.parse(fs.readFileSync("/sandbox/.openclaw/openclaw.json", "utf8")); process.stdout.write(cfg.gateway?.auth?.token || cfg.gateway?.authToken || "");'\'' 2>/dev/null' \
+      2>/dev/null || true
+  )"
+  sandbox_gateway_token="${sandbox_gateway_token//$'\r'/}"
+  sandbox_gateway_token="${sandbox_gateway_token%%$'\n'*}"
+
   openshell sandbox exec --name "$sandbox_name" -- sh -lc \
     'tail -n 400 /tmp/openclaw-issue2603-gateway.log 2>/dev/null || echo "gateway log missing"' \
     >"$raw_file" 2>&1 || true
 
-  if bash "$redactor_script" "$raw_file" "$output_file"; then
+  if OPENCLAW_GATEWAY_AUTH_TOKEN="${sandbox_gateway_token:-${OPENCLAW_GATEWAY_AUTH_TOKEN:-}}" \
+    bash "$redactor_script" "$raw_file" "$output_file"; then
     rm -f "$raw_file"
     return 0
   fi

@@ -173,6 +173,41 @@ describe("OpenClaw gateway log redaction", () => {
     expect(fs.existsSync(output)).toBe(false);
   });
 
+  it("passes the in-sandbox gateway auth token into the redactor before upload", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-sandbox-token-"));
+    const output = path.join(tmp, "gateway.redacted.log");
+    const sandboxToken = "sandbox-gateway-token-from-openclaw-json";
+
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [[ "$*" == *"openclaw.json"* ]]; then
+  printf '%s' '${sandboxToken}'
+else
+  printf 'free-form sandbox gateway token: ${sandboxToken}\\n'
+fi
+`,
+      "utf8",
+    );
+    fs.chmodSync(path.join(fakeBin, "openshell"), 0o755);
+
+    const result = spawnSync("bash", [EXPORT_REDACTED_GATEWAY_LOG, "sandbox", output], {
+      env: {
+        ...process.env,
+        OPENCLAW_GATEWAY_AUTH_TOKEN: "",
+        PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    const redacted = fs.readFileSync(output, "utf8");
+    expect(redacted).toContain("[REDACTED_OPENCLAW_GATEWAY_AUTH_TOKEN]");
+    expect(redacted).not.toContain(sandboxToken);
+  });
+
   it("removes stale output and raw logs when redaction fails", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-fail-closed-"));
     const output = path.join(tmp, "gateway.redacted.log");
