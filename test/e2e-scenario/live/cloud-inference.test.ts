@@ -51,7 +51,10 @@ const SANDBOX_SKILL_VALIDATOR = path.join(
 );
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-inference";
 const CLOUD_MODEL =
-  process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL ??
+  "nvidia/nemotron-3-super-120b-a12b";
 const INSTALL_TIMEOUT_MS = 25 * 60_000;
 const CHAT_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;
