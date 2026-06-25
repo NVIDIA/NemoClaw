@@ -280,9 +280,9 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
     const whatsappPolicyPostText = outputText(whatsappPolicyPost);
     check(
-      whatsappPolicyPostText.includes("web.whatsapp.com") &&
-        whatsappPolicyPostText.includes("whatsapp.net") &&
-        whatsappPolicyPostText.includes("raw.githubusercontent.com") &&
+      policyTextHasHost(whatsappPolicyPostText, "web.whatsapp.com") &&
+        policyTextHasHost(whatsappPolicyPostText, "whatsapp.net") &&
+        policyTextHasHost(whatsappPolicyPostText, "raw.githubusercontent.com") &&
         /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
       "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
     );
