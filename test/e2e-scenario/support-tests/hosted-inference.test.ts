@@ -86,6 +86,7 @@ function parseKeyValueLines(stdout: string): Record<string, string> {
       .filter(Boolean)
       .map((line) => {
         const index = line.indexOf("=");
+        if (index < 0) throw new Error(`Expected key=value line, got: ${line}`);
         return [line.slice(0, index), line.slice(index + 1)];
       }),
   );
@@ -330,7 +331,9 @@ describe("hosted inference E2E config", () => {
         method: "POST",
       });
       expect(responses.status).toBe(200);
-      expect(await responses.text()).toContain("event: response.output_text.delta");
+      const responsesText = await responses.text();
+      expect(responsesText).toContain("event: response.output_text.delta");
+      expect(responsesText).toContain('data: {"delta":"RESP_OK"}');
 
       expect(fake.requests()).toEqual(
         expect.arrayContaining([
