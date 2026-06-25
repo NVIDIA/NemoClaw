@@ -94,3 +94,27 @@ except Exception:
 print("\n".join(parts))
 '
 }
+
+openclaw_agent_text_has_integer_42() {
+  python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+compact = re.sub(r"\s+", "", text)
+sys.exit(0 if re.search(r"(^|[^0-9])42([^0-9]|$)", compact) else 1)
+'
+}
+
+openclaw_agent_text_has_token() {
+  local expected="$1"
+  EXPECTED="$expected" python3 -c '
+import os
+import re
+import sys
+
+expected = re.sub(r"\s+", "", os.environ.get("EXPECTED", ""))
+text = re.sub(r"\s+", "", sys.stdin.read())
+sys.exit(0 if expected and expected in text else 1)
+'
+}

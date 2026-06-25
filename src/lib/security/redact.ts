@@ -108,6 +108,10 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     /(NVIDIA_INFERENCE_API_KEY|NVIDIA_API_KEY|API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY)=\S+/gi,
     "$1=<REDACTED>",
   ],
+  [
+    /((?:"|')?(?:api[_-]?key|token|secret|password|credential)(?:"|')?\s*[:=]\s*(?:"|')?)[^"',}\s]+((?:"|')?)/gi,
+    "$1<REDACTED>$2",
+  ],
   ...TOKEN_PREFIX_PATTERNS.map((p): [RegExp, string] => [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
