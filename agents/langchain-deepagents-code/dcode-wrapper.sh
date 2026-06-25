@@ -50,7 +50,7 @@ refuse_secret_env() {
   local source="$1"
   local name="$2"
   printf 'dcode: refusing to start — %s contains a secret-shaped value in %s.\n' "$source" "$name" >&2
-  printf '  Remove it from the environment, or use `nemoclaw credentials` to register provider keys.\n' >&2
+  printf "  Remove it from the environment, or use 'nemoclaw credentials' to register provider keys.\n" >&2
   exit 2
 }
 
@@ -68,8 +68,12 @@ assert_no_secret_runtime_env() {
 assert_no_secret_env_file() {
   local env_file="$DEEPAGENTS_ENV_FILE"
   [ -r "$env_file" ] || return 0
+  local -a lines=()
   local line key value
   while IFS= read -r line || [ -n "$line" ]; do
+    lines+=("$line")
+  done <"$env_file"
+  for line in "${lines[@]}"; do
     line="${line%$'\r'}"
     [ -n "$line" ] || continue
     case "$line" in \#*) continue ;; esac
@@ -77,14 +81,20 @@ assert_no_secret_env_file() {
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
     case "$value" in
-      \"*\") value="${value#\"}"; value="${value%\"}" ;;
-      \'*\') value="${value#\'}"; value="${value%\'}" ;;
+      \"*\")
+        value="${value#\"}"
+        value="${value%\"}"
+        ;;
+      \'*\')
+        value="${value#\'}"
+        value="${value%\'}"
+        ;;
     esac
     is_managed_secret_name "$key" && continue
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
     fi
-  done <"$env_file"
+  done
 }
 
 assert_no_secret_runtime_env
