@@ -106,6 +106,22 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
   // (#5455 PRA-3).
   const resolvedDir = path.posix.resolve(dir);
   const validateManifestPath = (p: string): string | null => {
+    // Reject `..` segments and absolute paths up-front, BEFORE normalization
+    // resolves them away. `path.posix.resolve()` happily folds `../<dir>/foo`
+    // into a path under `dir` if the basenames align, but the raw `..` would
+    // still reach the destructive shell command and the manifest contract
+    // says state targets must be relative names under the agent config dir
+    // (#5455 PRA-1 / CodeRabbit security). Defense-in-depth.
+    if (path.posix.isAbsolute(p) || p.split("/").includes("..")) {
+      console.warn(
+        `  ${YW}⚠${R} Skipping state path '${p}' from agent '${agentName}' manifest: ` +
+          `must be relative and contain no '..' segments`,
+      );
+      return null;
+    }
+    // Second-line check: even relative paths without `..` must resolve under
+    // the config dir. Catches symbolic edge cases this validator does not
+    // model explicitly.
     const resolved = path.posix.resolve(resolvedDir, p);
     if (resolved !== resolvedDir && !resolved.startsWith(`${resolvedDir}/`)) {
       console.warn(

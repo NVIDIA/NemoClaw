@@ -519,6 +519,18 @@ describe("CLI dispatch", () => {
     expect(selectIndex).toBeGreaterThanOrEqual(0);
     expect(deleteIndex).toBeGreaterThan(selectIndex);
     expect(lines.slice(deleteIndex + 1)).toContain("sandbox list");
+
+    // #5455 PRA-2: the persistent-state wipe (`sandbox exec --name alpha ...`)
+    // MUST come after gateway select and before sandbox delete. Running the
+    // wipe before gateway selection would have it land on whichever gateway
+    // happened to be currently active (`other-gateway` in this fixture), so
+    // a same-named sandbox there could get its workspace wiped while the
+    // intended PVC on `nemoclaw-8081` is left intact. Lock the order in.
+    const wipeIndex = lines.findIndex((line) => line.startsWith("sandbox exec --name alpha"));
+    expect(wipeIndex, "destroy did not issue the persistent-state wipe exec").toBeGreaterThan(
+      selectIndex,
+    );
+    expect(wipeIndex).toBeLessThan(deleteIndex);
   });
 
   it("fails destroy when openshell sandbox delete returns a real error", () => {
