@@ -17,10 +17,12 @@ import {
 import { GATEWAY_PORT } from "./core/ports";
 import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
 
+/** Whether `gateway info` output names the given NemoClaw gateway. */
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
   return stripAnsi(output).includes(`Gateway: ${gatewayName}`);
 }
 
+/** Parse the active gateway name from `openshell status` output, or null. */
 function getActiveGatewayName(output = ""): string | null {
   const match = stripAnsi(output).match(/^\s*Gateway:\s+(.+?)\s*$/m);
   return match ? match[1].trim() : null;
