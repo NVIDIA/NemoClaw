@@ -10,15 +10,10 @@ import {
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 import { canonicalScenarios } from "../scenarios/scenarios/baseline.ts";
 
-function scenarioById(id: string) {
-  const scenario = canonicalScenarios().find((entry) => entry.id === id);
-  if (!scenario) throw new Error(`missing scenario ${id}`);
-  return scenario;
-}
-
 describe("P0-E platform parity workflow coverage", () => {
   it("keeps the WSL platform scenario on a Windows WSL runner boundary", () => {
-    const wsl = scenarioById("wsl-repo-cloud-openclaw");
+    const wsl = canonicalScenarios().find((entry) => entry.id === "wsl-repo-cloud-openclaw");
+    expect(wsl).toBeDefined();
 
     expect(wsl.environment).toMatchObject({
       platform: "wsl-local",

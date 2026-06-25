@@ -796,18 +796,18 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
   });
 
   it("keeps the DGX Spark DNS workaround diagnostic-only unless the host exposes an upstream resolver", () => {
+    const loopbackFiles: Record<string, string> = {
+      "/etc/resolv.conf": "nameserver 127.0.0.53\n",
+      "/run/systemd/resolve/resolv.conf": "nameserver 8.8.8.8\n",
+    };
+    const sparkFiles: Record<string, string> = {
+      "/etc/resolv.conf": "nameserver 10.18.1.96\n",
+    };
     const loopbackOnly = detectSandboxFallbackDns({
-      readFile: (p: string): string | null => {
-        if (p === "/etc/resolv.conf") return "nameserver 127.0.0.53\n";
-        if (p === "/run/systemd/resolve/resolv.conf") return "nameserver 8.8.8.8\n";
-        return null;
-      },
+      readFile: (p: string): string | null => loopbackFiles[p] ?? null,
     });
     const sparkManagedDns = detectSandboxFallbackDns({
-      readFile: (p: string): string | null => {
-        if (p === "/etc/resolv.conf") return "nameserver 10.18.1.96\n";
-        return null;
-      },
+      readFile: (p: string): string | null => sparkFiles[p] ?? null,
     });
 
     expect(loopbackOnly).toBe("8.8.8.8");
