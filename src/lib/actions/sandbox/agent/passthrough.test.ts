@@ -120,6 +120,18 @@ describe("runAgentPassthrough", () => {
     expect(execMock).toHaveBeenCalledWith("dcode-help", ["dcode"], { tty: false });
   });
 
+  it("propagates bare Deep Agents Code non-zero exits from the sandbox exec path (#5790)", async () => {
+    execMock.mockClear();
+    ensureLiveMock.mockClear();
+    getSandboxMock.mockReturnValueOnce({ agent: "langchain-deepagents-code" });
+    execMock.mockRejectedValueOnce(new Error("__exit:42"));
+
+    await expect(runAgentPassthrough("dcode-fail")).rejects.toThrow("__exit:42");
+
+    expect(ensureLiveMock).toHaveBeenCalledWith("dcode-fail", { allowNonReadyPhase: true });
+    expect(execMock).toHaveBeenCalledWith("dcode-fail", ["dcode"], { tty: false });
+  });
+
   it("treats a clean registry miss as OpenClaw (preserves bootstrap and recovery paths)", async () => {
     execMock.mockClear();
     getSandboxMock.mockReturnValueOnce(null);
