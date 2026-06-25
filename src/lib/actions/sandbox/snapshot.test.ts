@@ -417,9 +417,9 @@ describe("runSandboxSnapshot", () => {
     );
   });
 
-  it("allows non-dcode sandboxes when the live probe finds no dcode runtime", async () => {
+  it("keeps registered non-dcode snapshots on the existing path when the dcode probe fails", async () => {
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
-    mockDcodeProbe("no-runtime");
+    mockDcodeProbeResult({ status: 1, output: "exec unsupported" });
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
@@ -442,7 +442,10 @@ describe("runSandboxSnapshot", () => {
 
     expect(
       captureOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "exec"),
-    ).toBe(true);
+    ).toBe(false);
+    expect(backupSandboxStateMock).toHaveBeenCalledWith("alpha", {
+      name: null,
+    });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 

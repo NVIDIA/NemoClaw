@@ -36,6 +36,7 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
+const DCODE_AGENT_NAME = "langchain-deepagents-code";
 const DCODE_PROBE_PREFIX = "NEMOCLAW_DCODE_PROBE=";
 const DCODE_PROBE_STATE = {
   active: "active",
@@ -390,6 +391,13 @@ function parseDcodeProbeState(output: string): DcodeProbeState | null {
   return (match?.[1] as DcodeProbeState | undefined) ?? null;
 }
 
+function shouldCheckDcodeActivity(sandboxName: string): boolean {
+  const entry = registry.getSandbox(sandboxName);
+  // Preserve the existing snapshot path for registered non-dcode sandboxes while
+  // still probing missing-registry entries, where stale metadata is part of the risk.
+  return !entry || entry.agent === DCODE_AGENT_NAME;
+}
+
 function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean {
   // Invalid state: backing up .deepagents while dcode is actively mutating it can
   // produce a snapshot that later restores inconsistent agent state. The source
@@ -447,7 +455,10 @@ function runSnapshotCreate(
     console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
     snapshotExit(1);
   }
-  if (!isSnapshotCreationAllowedByDcodeActivity(sandboxName)) {
+  if (
+    shouldCheckDcodeActivity(sandboxName) &&
+    !isSnapshotCreationAllowedByDcodeActivity(sandboxName)
+  ) {
     snapshotExit(1);
   }
   const label = request.name ? ` (--name ${request.name})` : "";
