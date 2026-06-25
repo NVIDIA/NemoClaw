@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
+
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
@@ -23,6 +25,7 @@ const RETRYABLE_PAIRING_FAILURE =
   /scope upgrade pending|pairing required|device is not approved|GatewayClientRequestError/i;
 
 const GATEWAY_ADMIN_RPC_SCRIPT = `
+import { Buffer } from "node:buffer";
 import { accessSync, constants, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -45,7 +48,10 @@ const requireFromOpenclaw = createRequire(openclawBin);
 const gatewayRuntimePath = requireFromOpenclaw.resolve("openclaw/plugin-sdk/gateway-runtime");
 const { callGatewayFromCli } = await import(pathToFileURL(gatewayRuntimePath).href);
 
-const [method, paramsJson = "{}"] = process.argv.slice(1);
+const method = process.env.NEMOCLAW_GATEWAY_RPC_METHOD;
+const paramsJson = process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64
+  ? Buffer.from(process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64, "base64").toString("utf8")
+  : "{}";
 const port = process.env.OPENCLAW_GATEWAY_PORT || process.env.NEMOCLAW_DASHBOARD_PORT || "18789";
 const token = process.env.OPENCLAW_GATEWAY_TOKEN;
 
@@ -73,12 +79,18 @@ process.stdout.write(JSON.stringify(result));
 process.stdout.write("\\n");
 `.trim();
 
+const GATEWAY_ADMIN_RPC_LOADER = `await import("data:text/javascript;base64," + process.argv[1]);`;
+const GATEWAY_ADMIN_RPC_SCRIPT_B64 = Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString(
+  "base64",
+);
 const GATEWAY_ADMIN_RPC_SHELL =
   `. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || true; ` +
-  `exec node --input-type=module --eval "$1" "$2" "$3"`;
+  `export NEMOCLAW_GATEWAY_RPC_METHOD="$3"; ` +
+  `export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"; ` +
+  `exec node --input-type=module --eval "$1" "$2"`;
 
 function captureGatewayCall(opts: GatewayCallOptions) {
-  const params = JSON.stringify(opts.params);
+  const params = Buffer.from(JSON.stringify(opts.params), "utf8").toString("base64");
   return captureOpenshell(
     [
       "sandbox",
@@ -90,7 +102,8 @@ function captureGatewayCall(opts: GatewayCallOptions) {
       "-lc",
       GATEWAY_ADMIN_RPC_SHELL,
       "nemoclaw-sessions-admin-rpc",
-      GATEWAY_ADMIN_RPC_SCRIPT,
+      GATEWAY_ADMIN_RPC_LOADER,
+      GATEWAY_ADMIN_RPC_SCRIPT_B64,
       opts.method,
       params,
     ],
