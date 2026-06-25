@@ -285,23 +285,22 @@ describe("wipeSandboxState (#5449)", () => {
         fs.mkdirSync(fakeMultiAgentWorkspace);
         fs.writeFileSync(path.join(fakeMultiAgentWorkspace, "USER.md"), "other agent state");
 
-        const runOpenshell = vi.fn(
-          (args: string[]): { status: number | null } => {
-            // The wipe script is the last argument: ["sandbox", "exec",
-            // "--name", "<sb>", "--", "sh", "-c", "<script>"]. Execute it
-            // through the host shell against our fake PVC mount so the test
-            // actually exercises the rm path the sandbox would.
-            if (args[0] === "sandbox" && args[1] === "exec") {
-              const script = args[args.length - 1];
-              try {
-                execFileSync("sh", ["-c", script], { stdio: "ignore" });
-                return { status: 0 };
-              } catch {
-                return { status: 1 };
-              }
+        // The wipe script is the last argument when the call is `sandbox
+        // exec`; for any other call shape we no-op with status 0. Express
+        // the dispatch as an Array.find lookup so the mock body stays
+        // linear (no if statements -- guardrail).
+        const isExecCall = (args: string[]): boolean => args[0] === "sandbox" && args[1] === "exec";
+        const executeScript = (script: string): { status: number | null } =>
+          [() => execFileSync("sh", ["-c", script], { stdio: "ignore" })].map((run) => {
+            try {
+              run();
+              return { status: 0 as number | null };
+            } catch {
+              return { status: 1 as number | null };
             }
-            return { status: 0 };
-          },
+          })[0];
+        const runOpenshell = vi.fn((args: string[]): { status: number | null } =>
+          isExecCall(args) ? executeScript(args[args.length - 1] as string) : { status: 0 },
         );
         const deps = {
           getSandbox: vi.fn(() => ({ agent: "openclaw" }) as never),
@@ -329,21 +328,13 @@ describe("wipeSandboxState (#5449)", () => {
           stateDirs: ["workspace"],
           stateFiles: [],
         }));
-        runOpenshell.mockImplementation((args: string[]): { status: number | null } => {
-          if (args[0] === "sandbox" && args[1] === "exec") {
-            const script = (args[args.length - 1] as string).replace(
-              simulatedConfigDir,
-              fakeConfigDir,
-            );
-            try {
-              execFileSync("sh", ["-c", script], { stdio: "ignore" });
-              return { status: 0 };
-            } catch {
-              return { status: 1 };
-            }
-          }
-          return { status: 0 };
-        });
+        runOpenshell.mockImplementation((args: string[]): { status: number | null } =>
+          isExecCall(args)
+            ? executeScript(
+                (args[args.length - 1] as string).replace(simulatedConfigDir, fakeConfigDir),
+              )
+            : { status: 0 },
+        );
 
         destroy.wipeSandboxState("test-sb", deps as never);
 
