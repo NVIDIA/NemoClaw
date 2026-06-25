@@ -7,8 +7,18 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type OpenshellCaptureResult = { status: number; output: string };
+type OpenshellCaptureResult = {
+  status: number | null;
+  output: string;
+  error?: Error;
+  signal?: NodeJS.Signals | null;
+};
 type SandboxRecord = { name: string; agent?: string | null };
+type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
+
+function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
+  return `NEMOCLAW_DCODE_PROBE=${state}\n${extra}`;
+}
 
 function openshellResponses(
   args: string[],
@@ -19,7 +29,7 @@ function openshellResponses(
 
 function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
   return openshellResponses(args, {
-    "sandbox exec": { status: 3, output: "" },
+    "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
     "sandbox list": {
       status: 0,
       output: "alpha Ready\n",
@@ -173,10 +183,14 @@ describe("runSandboxSnapshot", () => {
     vi.restoreAllMocks();
   });
 
-  function mockDcodeProbe(status: number, output = "") {
+  function mockDcodeProbe(state: DcodeProbeState, output = "") {
+    mockDcodeProbeResult({ status: 0, output: dcodeProbeOutput(state, output) });
+  }
+
+  function mockDcodeProbeResult(result: OpenshellCaptureResult) {
     captureOpenshellMock.mockImplementation((args: string[]) => {
       return openshellResponses(args, {
-        "sandbox exec": { status, output },
+        "sandbox exec": result,
         "sandbox list": {
           status: 0,
           output: "alpha Ready\n",
@@ -193,7 +207,10 @@ describe("runSandboxSnapshot", () => {
     return String(execArgs.at(-1) ?? "");
   }
 
-  function runProbeScriptWithProcesses(script: string, processes: string): number {
+  function runProbeScriptWithProcesses(
+    script: string,
+    processes: string,
+  ): { status: number; output: string } {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
     const psPath = path.join(tempDir, "ps");
     const homeDir = path.join(tempDir, "home");
@@ -201,6 +218,7 @@ describe("runSandboxSnapshot", () => {
     fs.writeFileSync(psPath, `#!/bin/sh\ncat <<'EOF'\n${processes}\nEOF\n`);
     fs.chmodSync(psPath, 0o755);
     const result = spawnSync("sh", ["-lc", script], {
+      encoding: "utf-8",
       env: {
         ...process.env,
         HOME: homeDir,
@@ -208,7 +226,7 @@ describe("runSandboxSnapshot", () => {
       },
     });
     fs.rmSync(tempDir, { recursive: true, force: true });
-    return result.status ?? 255;
+    return { status: result.status ?? 255, output: result.stdout || "" };
   }
 
   it("refuses snapshot creation before backup when the shields gate helper is unavailable", async () => {
@@ -263,7 +281,7 @@ describe("runSandboxSnapshot", () => {
 
   it("refuses snapshot creation before backup when a dcode task is active", async () => {
     getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbe(0, "123 python3 -m deepagents_code -n write a script\n");
+    mockDcodeProbe("active", "123 python3 -m deepagents_code -n write a script\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -287,7 +305,7 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("refuses an active dcode task even when registry metadata is missing", async () => {
-    mockDcodeProbe(0, "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n");
+    mockDcodeProbe("active", "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -303,7 +321,7 @@ describe("runSandboxSnapshot", () => {
 
   it("allows dcode snapshot creation when the process probe finds no active task", async () => {
     getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbe(1);
+    mockDcodeProbe("idle");
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
@@ -331,9 +349,46 @@ describe("runSandboxSnapshot", () => {
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v8 name=idle created");
   });
 
+  it("refuses registered dcode snapshots when raw status 1 has no idle sentinel", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbeResult({ status: 1, output: "exec failed" });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
+    );
+  });
+
+  it("refuses registered dcode snapshots when the probe times out", async () => {
+    getSandboxMock.mockReturnValue(dcodeSandboxEntry);
+    mockDcodeProbeResult({
+      status: null,
+      output: "",
+      error: new Error("timed out"),
+      signal: "SIGTERM",
+    });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
+    );
+  });
+
   it("refuses dcode snapshot creation before backup when task state cannot be verified", async () => {
     getSandboxMock.mockReturnValue(dcodeSandboxEntry);
-    mockDcodeProbe(2, "ps: command failed\n");
+    mockDcodeProbe("unverifiable", "ps: command failed\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -348,7 +403,7 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("refuses missing-registry dcode runtime when task state cannot be verified", async () => {
-    mockDcodeProbe(2, "ps: command failed\n");
+    mockDcodeProbe("unverifiable", "ps: command failed\n");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const { runSandboxSnapshot } = await import("./snapshot");
 
@@ -364,7 +419,7 @@ describe("runSandboxSnapshot", () => {
 
   it("allows non-dcode sandboxes when the live probe finds no dcode runtime", async () => {
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
-    mockDcodeProbe(3);
+    mockDcodeProbe("no-runtime");
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
@@ -392,7 +447,7 @@ describe("runSandboxSnapshot", () => {
   });
 
   it("detects managed dcode process argv without matching the probe shell", async () => {
-    mockDcodeProbe(3);
+    mockDcodeProbe("no-runtime");
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
@@ -415,13 +470,23 @@ describe("runSandboxSnapshot", () => {
 
     const probeScript = capturedDcodeProbeScript();
     const shellCommandLine = probeScript.replace(/\s+/g, " ");
+    for (const processLine of [
+      "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
+      "124 /usr/local/bin/dcode task\n",
+      "125 /opt/bin/deepagents_code task\n",
+      "126 /opt/bin/deepagents-code task\n",
+    ]) {
+      expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
+        status: 0,
+        output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=active"),
+      });
+    }
     expect(
-      runProbeScriptWithProcesses(
-        probeScript,
-        "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
-      ),
-    ).toBe(0);
-    expect(runProbeScriptWithProcesses(probeScript, `999 sh -lc ${shellCommandLine}\n`)).toBe(3);
+      runProbeScriptWithProcesses(probeScript, `999 sh -lc ${shellCommandLine}\n`),
+    ).toMatchObject({
+      status: 0,
+      output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
+    });
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 
