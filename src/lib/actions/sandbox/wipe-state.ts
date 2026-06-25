@@ -98,17 +98,35 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
 
   // Reject unsafe agent config roots before constructing the wipe command
   // (#5455 PRA-2). The script issues `cd ${dir} && rm -rf -- ...` so a
-  // manifest that declared a top-level dir like `/`, `/etc`, or even
-  // `/sandbox` (no subdirectory) would let the rm phase delete outside the
-  // intended agent scope. Require `/sandbox/<subdir>` and reject everything
-  // else; every shipped agent manifest declares `/sandbox/.<agent>` so this
-  // is a precondition, not a behavior change.
+  // manifest that declared a top-level dir like `/`, `/etc`, even `/sandbox`
+  // (no subdirectory), or anything that uses `..` / `.` / extra slashes to
+  // escape after the prefix (e.g. `/sandbox/../etc`) would let the rm phase
+  // delete outside the intended agent scope.
+  //
+  // Normalize `dir` via path.posix.resolve() first so `..`/`.`/`//` are folded
+  // away, then enforce two invariants on the normalized form:
+  //   1. absolute and under `/sandbox/` with at least one more segment
+  //   2. the original (un-normalized) input must equal the normalized form,
+  //      so a manifest declaring `/sandbox/../etc` is rejected even though
+  //      it resolves to `/etc` which is not under `/sandbox/` anyway -- this
+  //      makes the rejection reason explicit instead of relying on the
+  //      startsWith check.
+  //
+  // Every shipped agent manifest declares `/sandbox/.<agent>` today
+  // (openclaw, hermes, langchain-deepagents-code), so this is a precondition
+  // for the existing fleet, not a behavior change.
   const SANDBOX_ROOT = "/sandbox/";
-  if (!path.posix.isAbsolute(dir) || !dir.startsWith(SANDBOX_ROOT) || dir === SANDBOX_ROOT) {
+  const normalizedDir = path.posix.resolve(dir);
+  const unsafeDir =
+    !path.posix.isAbsolute(dir) ||
+    normalizedDir !== dir ||
+    !normalizedDir.startsWith(SANDBOX_ROOT) ||
+    normalizedDir === SANDBOX_ROOT.replace(/\/$/, "");
+  if (unsafeDir) {
     console.warn(
       `  ${YW}⚠${R} Refusing to wipe workspace state for '${sandboxName}': ` +
-        `agent '${agentName}' declared config dir '${dir}' which is not an absolute ` +
-        `path under ${SANDBOX_ROOT}<agent-name>`,
+        `agent '${agentName}' declared config dir '${dir}' which is not a normalized ` +
+        `absolute path under ${SANDBOX_ROOT}<agent-name>`,
     );
     return;
   }

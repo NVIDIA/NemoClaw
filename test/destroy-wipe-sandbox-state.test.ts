@@ -169,6 +169,13 @@ describe("wipeSandboxState (#5449)", () => {
     { dir: "/sandbox/", label: "shared sandbox root trailing slash" },
     { dir: ".openclaw", label: "relative config dir" },
     { dir: "../escape", label: "relative escape" },
+    { dir: "/sandbox/../etc", label: "absolute path that escapes via `..`" },
+    { dir: "/sandbox/./.openclaw", label: "absolute path with `.` segment (not normalized)" },
+    { dir: "/sandbox//.openclaw", label: "absolute path with double slash (not normalized)" },
+    {
+      dir: "/sandbox/.openclaw/../../etc",
+      label: "absolute path escapes after agent subdir via `..`",
+    },
   ])("refuses to wipe when the agent config dir is unsafe ($label) (#5455 PRA-2)", ({ dir }) => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
