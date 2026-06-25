@@ -19,12 +19,33 @@ run_dcode() {
   exec python3 -m deepagents_code "$@"
 }
 
-is_managed_secret_name() {
-  case "$1" in
-    SLACK_BOT_TOKEN | SLACK_APP_TOKEN) return 0 ;;
-    TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN) return 0 ;;
-    *) return 1 ;;
+is_managed_token_value_for_name() {
+  local name="$1"
+  local value="$2"
+  local len=${#value}
+  case "$name" in
+    SLACK_BOT_TOKEN | SLACK_APP_TOKEN)
+      case "$value" in
+        xoxb-* | xoxp-* | xoxa-* | xoxs-* | xapp-*)
+          [ "$len" -ge 15 ] && return 0
+          ;;
+      esac
+      ;;
+    TELEGRAM_BOT_TOKEN)
+      if [[ "$value" =~ ^bot[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+        return 0
+      fi
+      if [[ "$value" =~ ^[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+        return 0
+      fi
+      ;;
+    DISCORD_BOT_TOKEN)
+      if [[ "$value" =~ ^[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}$ ]]; then
+        return 0
+      fi
+      ;;
   esac
+  return 1
 }
 
 trim_whitespace() {
@@ -74,8 +95,10 @@ refuse_secret_env() {
 assert_no_secret_runtime_env() {
   local name value
   for name in $(compgen -e); do
-    is_managed_secret_name "$name" && continue
     value="${!name}"
+    if is_managed_token_value_for_name "$name" "$value"; then
+      continue
+    fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "runtime environment variable" "$name"
     fi
@@ -111,7 +134,9 @@ assert_no_secret_env_file() {
         ;;
     esac
     value="$(trim_whitespace "$value")"
-    is_managed_secret_name "$key" && continue
+    if is_managed_token_value_for_name "$key" "$value"; then
+      continue
+    fi
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"
     fi

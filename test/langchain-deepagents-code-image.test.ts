@@ -36,6 +36,29 @@ function makeWrapperFixture(
   return { wrapperPath, ranMarker, envFile };
 }
 
+function makeNetworkSimulatingFixture(tempDir: string): {
+  wrapperPath: string;
+  networkLog: string;
+  envFile: string;
+} {
+  const wrapperPath = path.join(tempDir, "dcode-wrapper.sh");
+  const networkLog = path.join(tempDir, "network.log");
+  const envFile = path.join(tempDir, ".env");
+  const fixture = readAgentFile("dcode-wrapper.sh")
+    .replace(
+      'readonly DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"',
+      `readonly DEEPAGENTS_ENV_FILE="${envFile}"`,
+    )
+    .replace(
+      "exec python3 -m deepagents_code",
+      `printf 'NET:OPEN inference.local/v1/chat\\nNET:OPEN pypi.org/simple\\nNET:OPEN api.openai.com/v1\\n' > "${networkLog}"; exit 0; : python3 -m deepagents_code`,
+    );
+  fs.writeFileSync(envFile, "", "utf8");
+  fs.writeFileSync(wrapperPath, fixture, "utf8");
+  fs.chmodSync(wrapperPath, 0o755);
+  return { wrapperPath, networkLog, envFile };
+}
+
 function runWrapper(
   wrapperPath: string,
   args: readonly string[],
@@ -516,6 +539,98 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("rejects non-messaging secret shapes carried by managed runtime env names", () => {
+    const cases: Array<{ name: string; sample: string }> = [
+      { name: "SLACK_BOT_TOKEN", sample: "sk-abcdefghijklmnopqrstuvwx" },
+      { name: "SLACK_APP_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
+      { name: "TELEGRAM_BOT_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
+      { name: "DISCORD_BOT_TOKEN", sample: "AKIAABCDEFGHIJKLMNOP" },
+    ];
+    for (const { name, sample } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mgmix-"));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [name]: sample });
+      expect(result.status, `${name} carrying non-platform secret not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(name);
+      expect(result.stderr).not.toContain(sample);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
+  });
+
+  it("rejects non-messaging secret shapes carried by managed env-file names", () => {
+    const cases: Array<{ name: string; sample: string }> = [
+      { name: "SLACK_BOT_TOKEN", sample: "sk-abcdefghijklmnopqrstuvwx" },
+      { name: "TELEGRAM_BOT_TOKEN", sample: "nvapi-abcdefghijklmnop" },
+      { name: "DISCORD_BOT_TOKEN", sample: "hf_abcdefghijklmnopq" },
+    ];
+    for (const { name, sample } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mgfile-"));
+      const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+      fs.writeFileSync(envFile, `${name}=${sample}\n`, "utf8");
+      const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+      expect(result.status, `${name} carrying non-platform secret not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(name);
+      expect(result.stderr).toContain(envFile);
+      expect(result.stderr).not.toContain(sample);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
+  });
+
+  it("emits no NET:OPEN, inference.local, or pypi.org log entries when a runtime secret triggers rejection", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-netlog-"));
+    const { wrapperPath, networkLog } = makeNetworkSimulatingFixture(tempDir);
+
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { OPENAI_API_KEY: fakeSecret });
+
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(networkLog)).toBe(false);
+    expect(result.stderr).not.toContain("NET:OPEN");
+    expect(result.stderr).not.toContain("inference.local");
+    expect(result.stderr).not.toContain("pypi.org");
+  });
+
+  it("emits no NET:OPEN, inference.local, or pypi.org log entries when an env-file secret triggers rejection", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-netlog-env-"));
+    const { wrapperPath, networkLog, envFile } = makeNetworkSimulatingFixture(tempDir);
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    fs.writeFileSync(envFile, `OPENAI_API_KEY=${fakeSecret}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(fs.existsSync(networkLog)).toBe(false);
+    expect(result.stderr).not.toContain("NET:OPEN");
+    expect(result.stderr).not.toContain("inference.local");
+    expect(result.stderr).not.toContain("pypi.org");
+  });
+
+  it("passes through context-anchored canonical values to keep the guard a standalone-token-only boundary", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-scope-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      CUSTOM_HEADER: "Bearer sk-abcdefghijklmnopqrstuvwx",
+      EMBEDDED_HOST_HEADER: "prefix-sk-abcdefghijklmnopqrstuvwx",
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("pins the wrapper parity contract to the canonical TOKEN_PREFIX_PATTERNS count to surface drift", () => {
+    const canonicalSrc = fs.readFileSync(
+      path.join(process.cwd(), "src", "lib", "security", "secret-patterns.ts"),
+      "utf8",
+    );
+    const tokenSectionEnd = canonicalSrc.indexOf("CONTEXT_PATTERNS");
+    expect(tokenSectionEnd).toBeGreaterThan(0);
+    const tokenSection = canonicalSrc.substring(0, tokenSectionEnd);
+    const tokenRegexCount = (tokenSection.match(/^\s*\/.+\/g,?\s*$/gm) ?? []).length;
+    expect(tokenRegexCount).toBe(16);
   });
 
   it("rejects every canonical token shape declared by the secret-pattern contract", () => {
