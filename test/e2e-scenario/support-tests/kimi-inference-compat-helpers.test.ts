@@ -29,11 +29,14 @@ describe("Kimi inference compatibility mode selection", () => {
   });
 
   it("limits the public NVIDIA source secret to onboard and agent envs", () => {
-    const cfg = env({}, {
-      mode: "public-nvidia",
-      apiKey: "nvapi-public-test-key",
-      includeSecret: true,
-    });
+    const cfg = env(
+      {},
+      {
+        mode: "public-nvidia",
+        apiKey: "nvapi-public-test-key",
+        includeSecret: true,
+      },
+    );
     expect(cfg.NVIDIA_API_KEY).toBe("nvapi-public-test-key");
     expect(cfg.NVIDIA_INFERENCE_API_KEY).toBe("nvapi-public-test-key");
     expect(kimiOnboardEnv(undefined, "public-nvidia", "nvapi-public-test-key").NVIDIA_API_KEY).toBe(
