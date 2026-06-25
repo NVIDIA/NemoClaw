@@ -42,6 +42,40 @@ function inspectFixture(): DockerContainerInspect {
 }
 
 describe("docker-gpu-patch CDI-first mode selection (#4948)", () => {
+  it("keeps Docker Desktop WSL on the compatibility selector path instead of trusting host-visible CDI", () => {
+    // #5512: Docker Desktop WSL may expose CDI spec directories while the WSL
+    // distro cannot resolve a usable nvidia.com/gpu spec. The patch must stay
+    // enabled, the OpenShell create --gpu flag must stay suppressed, and mode
+    // probing must still fall back to Docker's --gpus compatibility path if a
+    // speculative CDI probe fails.
+    expect(buildDockerGpuModeCandidates("all", { cdiAvailable: true }).map((m) => m.kind)).toEqual([
+      "cdi",
+      "gpus",
+      "nvidia-runtime",
+    ]);
+
+    const dockerRun = vi.fn((args: readonly string[]) =>
+      args.includes("--device")
+        ? {
+            status: 1,
+            stderr: "CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+          }
+        : { status: 0, stdout: "probe-id" },
+    );
+    const selected = selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc" },
+      { ...cdiHostDeps(), dockerRun },
+    );
+
+    expect(selected.mode?.kind).toBe("gpus");
+    expect(selected.mode?.label).toBe("--gpus all");
+    expect(selected.attempts.map((attempt) => [attempt.mode.kind, attempt.ok])).toEqual([
+      ["cdi", false],
+      ["gpus", true],
+    ]);
+    expect(selected.attempts[0]?.error).toContain("unresolvable CDI devices");
+  });
+
   it("prefers CDI over --gpus when the host advertises an NVIDIA CDI spec", () => {
     // Repro for #4948: on a Docker-CDI GPU host (e.g. Ubuntu 24.04 with
     // /etc/cdi/nvidia.yaml), `docker create --gpus all` is *accepted* so the

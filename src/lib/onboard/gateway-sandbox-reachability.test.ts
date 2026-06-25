@@ -467,6 +467,26 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
     expect(msg).toContain("host-gateway");
     expect(msg).not.toContain("ufw allow");
   });
+
+  it("keeps Docker Desktop WSL host-gateway failures retryable instead of suggesting UFW", () => {
+    const msg = formatSandboxBridgeUnreachableMessage(
+      {
+        ok: false,
+        reason: "tcp_failed",
+        routeKind: "host_gateway",
+        networkName: "openshell-docker",
+        subnet: "172.19.0.0/16",
+        detail: "sandbox container could not reach host.openshell.internal:8080",
+      },
+      8080,
+      { isWsl: true },
+    );
+
+    expect(msg).toContain("host-gateway");
+    expect(msg).toContain("Restart Docker and the OpenShell gateway");
+    expect(msg).not.toContain("ufw allow");
+    expect(msg).not.toContain("127.0.0.1");
+  });
 });
 
 describe("tryAutoApplyUfwRule (#4265)", () => {

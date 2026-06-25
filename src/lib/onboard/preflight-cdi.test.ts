@@ -340,4 +340,22 @@ describe("planHostRemediation — CDI", () => {
       ),
     ).toBe(true);
   });
+
+  it("still blocks with install_nvidia_container_toolkit when nvidia-smi is unavailable but PCI GPU context exists", () => {
+    const actions = planHostRemediation(
+      baseAssessment({
+        cdiNvidiaGpuSpecMissing: true,
+        hasNvidiaGpu: true,
+        nvidiaContainerToolkitInstalled: false,
+      }),
+    );
+
+    const actionIds = actions.map((entry) => entry.id);
+    expect(actionIds.indexOf("install_nvidia_container_toolkit")).toBeGreaterThanOrEqual(0);
+    expect(actionIds).not.toContain("generate_nvidia_cdi_spec");
+    const toolkitAction = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(toolkitAction?.blocking).toBe(true);
+    expect(toolkitAction?.commands.join("\n")).toContain("nvidia-container-toolkit");
+    expect(toolkitAction?.commands.join("\n")).toContain("nvidia-ctk cdi generate");
+  });
 });

@@ -794,6 +794,37 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     expect(args).not.toEqual(expect.arrayContaining(["--network", "host"]));
     expect(args).toEqual(expect.arrayContaining(["--dns", "8.8.8.8"]));
   });
+
+  it("keeps the DGX Spark DNS workaround diagnostic-only unless the host exposes an upstream resolver", () => {
+    const loopbackOnly = detectSandboxFallbackDns({
+      readFile: (p: string): string | null => {
+        if (p === "/etc/resolv.conf") return "nameserver 127.0.0.53\n";
+        if (p === "/run/systemd/resolve/resolv.conf") return "nameserver 8.8.8.8\n";
+        return null;
+      },
+    });
+    const sparkManagedDns = detectSandboxFallbackDns({
+      readFile: (p: string): string | null => {
+        if (p === "/etc/resolv.conf") return "nameserver 10.18.1.96\n";
+        return null;
+      },
+    });
+
+    expect(loopbackOnly).toBe("8.8.8.8");
+    expect(sparkManagedDns).toBeNull();
+
+    const inspect = inspectFixture();
+    const preservedArgs = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), {
+      sandboxFallbackDns: sparkManagedDns,
+    });
+    expect(preservedArgs).not.toEqual(expect.arrayContaining(["--dns"]));
+    expect(preservedArgs).not.toEqual(expect.arrayContaining(["--network", "host"]));
+
+    const patchedArgs = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), {
+      sandboxFallbackDns: loopbackOnly,
+    });
+    expect(patchedArgs).toEqual(expect.arrayContaining(["--dns", "8.8.8.8"]));
+  });
 });
 
 // Jetson `/dev/nvmap` group-permission propagation (#4231). The reporter's
