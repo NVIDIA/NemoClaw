@@ -64,8 +64,8 @@ runLiveTest(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
-    if (!process.env.NVIDIA_API_KEY) {
-      skip("NVIDIA_API_KEY is required for live messaging-provider E2E");
+    if (!process.env.NVIDIA_INFERENCE_API_KEY) {
+      skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
       return;
     }
     if (!fs.existsSync(CLI_ENTRYPOINT)) {
@@ -266,6 +266,26 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       },
     );
     expectExitZero(whatsappRebuild, "M-WA4: rebuild completed after WhatsApp channel add");
+
+    const whatsappPolicyPost = await runHost(
+      host,
+      "openshell",
+      ["policy", "get", "--full", SANDBOX_NAME],
+      {
+        artifactName: "whatsapp-policy-post-rebuild-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    const whatsappPolicyPostText = outputText(whatsappPolicyPost);
+    check(
+      policyTextHasHost(whatsappPolicyPostText, "web.whatsapp.com") &&
+        policyTextHasHost(whatsappPolicyPostText, "whatsapp.net") &&
+        policyTextHasHost(whatsappPolicyPostText, "raw.githubusercontent.com") &&
+        /\/usr\/local\/bin\/node|\/usr\/bin\/node/.test(whatsappPolicyPostText),
+      "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
+    );
 
     const providerList = await runHost(host, "openshell", ["provider", "list"], {
       artifactName: "provider-list-messaging-providers",
@@ -882,10 +902,15 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       fakeGateway.captureFile,
       (row) => row.event === "identify",
     );
+    check(fs.existsSync(fakeGateway.captureFile), "M13f: fake Gateway capture file exists");
+    const gatewayCaptureText = fs.readFileSync(fakeGateway.captureFile, "utf8");
     check(
       gatewayIdentify?.tokenMatchesExpected === true &&
-        gatewayIdentify?.tokenLooksPlaceholder === false,
-      "M13f: fake Gateway received host-side Discord token after relay rewrite",
+        gatewayIdentify?.tokenLooksPlaceholder === false &&
+        !Object.prototype.hasOwnProperty.call(gatewayIdentify, "token") &&
+        !gatewayCaptureText.includes(state.tokens.discord) &&
+        !gatewayCaptureText.includes("openshell:resolve:env:"),
+      "M13f: fake Gateway proved placeholder-to-token rewrite without logging the raw token",
     );
 
     const gatewayPort = await sandboxOutput(

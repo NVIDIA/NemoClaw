@@ -552,16 +552,23 @@ Use this when driving the sandbox programmatically from another process (CI job,
 
 All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
 
+Every invocation must include at least one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour. Conflict resolution between multiple selectors is delegated to the in-sandbox `openclaw agent` argv contract; the host-side guard only checks presence.
+
 ```bash
-$$nemoclaw my-assistant agent -m "Summarise README.md"
+$$nemoclaw my-assistant agent --agent work -m "Summarise README.md"
 $$nemoclaw my-assistant agent --agent work -m "Status update?"
 $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
-$$nemoclaw my-assistant agent --json -m 'ping'
+$$nemoclaw my-assistant agent --session-key intake-42 --json -m 'ping'
 ```
 
 The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
 
 Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+
+Host-side validation runs before the sandbox dispatch:
+
+- At least one target selector flag — `--agent`, `--session-id`, `--session-key`, or `--to` (in either `--flag value` or `--flag=value` form) — must be present. Invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost.
+- If the sandbox is registered but not in a `Ready` or `Running` phase, the wrapper exits `1` and prints the documented recovery commands (`$$nemoclaw <name> recover`, `$$nemoclaw <name> rebuild --yes`, `$$nemoclaw onboard --resume`) rather than deferring the readiness rejection to `openshell sandbox exec`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -1407,12 +1414,25 @@ Hermes stores session history in a SQLite database, so the command refuses posit
 `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
 The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
+<AgentOnly variant="openclaw">
+
 ```bash
 $$nemoclaw my-assistant sessions export
 $$nemoclaw my-assistant sessions export main --agent main
 $$nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
 $$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+$$nemoclaw my-assistant sessions export
+$$nemoclaw my-assistant sessions export --agent hermes --out ./sessions-my-assistant.jsonl
+$$nemoclaw my-assistant sessions export --json
+```
+
+</AgentOnly>
 
 | Flag | Description |
 |------|-------------|

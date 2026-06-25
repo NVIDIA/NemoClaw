@@ -1118,9 +1118,8 @@ The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a d
 
 ```bash
 nemohermes my-assistant sessions export
-nemohermes my-assistant sessions export main --agent main
-nemohermes my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
-nemohermes my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
+nemohermes my-assistant sessions export --agent hermes --out ./sessions-my-assistant.jsonl
+nemohermes my-assistant sessions export --json
 ```
 
 | Flag | Description |

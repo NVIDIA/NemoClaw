@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { MessagingHookRegistry } from "../hooks";
-import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
-import { parseSandboxMessagingPlan } from "../plan-validation";
 import type {
   ChannelManifestRegistry,
   MessagingAgentId,
@@ -13,6 +11,8 @@ import type {
   SandboxMessagingPlan,
   SandboxMessagingRuntimeSetupPlan,
 } from "../manifest";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
+import { parseSandboxMessagingPlan } from "../plan-validation";
 import { planHostForward } from "./engines/host-forward-engine";
 import { planRuntimeSetup } from "./engines/runtime-setup-engine";
 import type { RenderTemplateReferenceResolver } from "./engines/template";
@@ -120,7 +120,7 @@ export class MessagingWorkflowPlanner {
     if (!existingPlan) return null;
 
     const filteredPlan = this.filterPlanChannelsToSupportedAllowlist(existingPlan, context);
-    if (!filteredPlan || filteredPlan.channels.length === 0) return null;
+    if (existingPlan.channels.length > 0 && filteredPlan.channels.length === 0) return null;
 
     return refreshDerivedPlanFields(
       setPlanDisabledChannels(
@@ -136,7 +136,7 @@ export class MessagingWorkflowPlanner {
   private filterPlanChannelsToSupportedAllowlist(
     plan: SandboxMessagingPlan,
     context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
-  ): SandboxMessagingPlan | null {
+  ): SandboxMessagingPlan {
     if (!Array.isArray(context.supportedChannelIds)) return plan;
     const allowlist = new Set(context.supportedChannelIds);
     let filtered = plan;

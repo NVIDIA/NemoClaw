@@ -10,7 +10,10 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { ROOT } from "../runner";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentWebAuth, readWebAuth } from "./web-auth";
+
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
@@ -90,6 +93,7 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe | null;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly webAuth: AgentWebAuth;
   readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
@@ -379,6 +383,7 @@ export function loadAgent(name: string): AgentDefinition {
   const runtime = readAgentRuntime(raw);
   const forwardPorts = readPortArray(raw, "forward_ports");
   const dashboard = readDashboard(raw);
+  const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
@@ -438,6 +443,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get dashboard(): AgentDashboard {
       return dashboard;
+    },
+
+    get webAuth(): AgentWebAuth {
+      return webAuth;
     },
 
     get dashboardUi(): AgentDashboardUi | null {

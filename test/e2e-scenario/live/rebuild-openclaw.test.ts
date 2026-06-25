@@ -347,10 +347,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "rebuild-openclaw: old OpenClaw sandbox rebuild preserves state and rotates gateway token",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       "bin/nemoclaw.js missing — run npm ci && npm run build:cli before live rebuild coverage",

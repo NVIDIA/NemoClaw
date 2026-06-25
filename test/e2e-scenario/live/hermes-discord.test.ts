@@ -702,7 +702,7 @@ done`,
 
     const rebuildEnv = commandEnv();
     delete rebuildEnv.NVIDIA_INFERENCE_API_KEY;
-    delete rebuildEnv.NVIDIA_API_KEY;
+    delete rebuildEnv.NVIDIA_INFERENCE_API_KEY;
     delete rebuildEnv.COMPATIBLE_API_KEY;
     const rebuild = await host.command("nemoclaw", [SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-8-rebuild-without-inference-env",

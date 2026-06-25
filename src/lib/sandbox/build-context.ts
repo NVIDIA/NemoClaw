@@ -147,6 +147,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
+    path.join(stagedScriptsDir, "lib", "sandbox-rlimits.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
     path.join(stagedScriptsDir, "lib", "openclaw_device_approval_policy.py"),
   );

@@ -36,7 +36,7 @@ const LIVE_TIMEOUT_MS = 30 * 60_000;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 const CREDENTIAL_TOKEN_VALUE_PATTERN = /(?:nvapi-|sk-|Bearer )/;
 const CREDENTIAL_ENV_ASSIGNMENT_PATTERN =
-  /(?:^|\n)\s*(?:export\s+)?(?:NVIDIA_API_KEY|NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*=/i;
+  /(?:^|\n)\s*(?:export\s+)?(?:NVIDIA_INFERENCE_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|COMPATIBLE_API_KEY|NGC_API_KEY|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY)\s*=/i;
 const STRUCTURED_CREDENTIAL_KEY_PATTERN =
   /["']?(?:apiKey|api_key|accessToken|access_token|secretKey|secret_key|bearerToken|bearer_token)["']?\s*[:=]\s*["'][^"']+["']/i;
 
@@ -53,7 +53,7 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  if (apiKey) env.NVIDIA_API_KEY = apiKey;
+  if (apiKey) env.NVIDIA_INFERENCE_API_KEY = apiKey;
   return env;
 }
 
@@ -158,9 +158,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "snapshot commands preserve create/list/latest restore/targeted restore/no-leak lifecycle",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
-
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await artifacts.writeJson("scenario.json", {
       id: "snapshot-commands",
       runner: "vitest",

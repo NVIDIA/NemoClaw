@@ -33,7 +33,9 @@ describe("network-policy transient provider validation classifier", () => {
     ).toBe(false);
     expect(
       isTransientProviderValidationFailure(
-        probeOutput("endpoint validation failed: invalid NVIDIA_API_KEY credential quota exceeded"),
+        probeOutput(
+          "endpoint validation failed: invalid NVIDIA_INFERENCE_API_KEY credential quota exceeded",
+        ),
       ),
     ).toBe(false);
     expect(

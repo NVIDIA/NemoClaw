@@ -126,6 +126,62 @@ describe("CLI sandbox status text output", () => {
     expect(r.out).not.toContain("OpenClaw: running");
   });
 
+  it("sandbox <name> status reports the Deep Agents Code terminal harness (#5718)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-dcode-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "dcode-station", {
+      agent: "langchain-deepagents-code",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.44",
+    });
+    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "dcode-station" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: dcode-station'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("dcode-station status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(r.out).toContain("Interactive: dcode");
+    expect(r.out).toContain('Headless: dcode -n "<prompt>"');
+    expect(r.out).toContain("LangChain Deep Agents Code runtime: terminal");
+    expect(r.out).not.toContain("Harness:  OpenClaw (gateway)");
+    expect(r.out).not.toContain("OpenClaw: running");
+  });
+
   it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
