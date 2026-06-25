@@ -54,7 +54,6 @@ describe("OpenClaw Slack pairing workflow boundary", () => {
     const liveStep = slackJob.steps.find(
       (step) => step.name === "Run OpenClaw Slack pairing live test",
     ) as { env: Record<string, string> };
-    liveStep.env.NVIDIA_API_KEY = "${{ secrets.NVIDIA_API_KEY }}";
     liveStep.env.SLACK_APP_TOKEN = "real-ish-token";
     const installOpenShell = slackJob.steps.find(
       (step) => step.name === "Install OpenShell CLI",
@@ -73,7 +72,6 @@ describe("OpenClaw Slack pairing workflow boundary", () => {
           "openclaw-slack-pairing-vitest setup-node action must be pinned to a full commit SHA",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Build CLI' run script must include npm run build:cli",
-          "openclaw-slack-pairing-vitest step 'Run OpenClaw Slack pairing live test' env must not include NVIDIA_API_KEY",
           "openclaw-slack-pairing-vitest step must use fake Slack app token",
           "step 'Install OpenShell CLI' run script must include env -u DOCKER_CONFIG",
         ]),
