@@ -9,10 +9,11 @@ export interface LiveScenarioRunPlan {
   expectedStateId: string | undefined;
   suiteIds: string[];
   phases: string[];
+  e2eCloudExperimentalChecks?: string[];
 }
 
 export function buildLiveScenarioRunPlan(scenario: ScenarioDefinition): LiveScenarioRunPlan {
-  return {
+  const plan: LiveScenarioRunPlan = {
     scenarioId: scenario.id,
     manifestPath: scenario.manifestPath ?? null,
     expectedStateId: scenario.expectedStateId,
@@ -24,4 +25,11 @@ export function buildLiveScenarioRunPlan(scenario: ScenarioDefinition): LiveScen
       "state-validation",
     ],
   };
+  if (scenario.environment?.onboarding === "cloud-langchain-deepagents-code") {
+    plan.e2eCloudExperimentalChecks = [
+      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+    ];
+  }
+  return plan;
 }

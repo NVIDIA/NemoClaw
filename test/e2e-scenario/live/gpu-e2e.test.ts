@@ -29,6 +29,41 @@ import {
 
 const TIMEOUT_MS = 75 * 60_000;
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function assertSmallContextCompactionPolicy(configText: string): void {
+  const config = asRecord(JSON.parse(configText));
+  const agents = asRecord(config?.agents);
+  const defaults = asRecord(agents?.defaults);
+  const compaction = asRecord(defaults?.compaction);
+  const modelsRoot = asRecord(config?.models);
+  const providers = asRecord(modelsRoot?.providers);
+  const model = Object.values(providers ?? {})
+    .flatMap((provider) => {
+      const models = asRecord(provider)?.models;
+      return Array.isArray(models) ? models : [];
+    })
+    .map(asRecord)
+    .find(Boolean);
+
+  expect(typeof model?.contextWindow).toBe("number");
+  expect(typeof model?.maxTokens).toBe("number");
+  const contextWindow = model?.contextWindow;
+  const maxTokens = model?.maxTokens;
+  if (typeof contextWindow !== "number" || typeof maxTokens !== "number") return;
+  if (contextWindow > 28_000) return;
+
+  const expectedReserve = Math.min(maxTokens, Math.max(0, contextWindow - 8_000));
+  expect(compaction).toMatchObject({
+    reserveTokens: expectedReserve,
+    reserveTokensFloor: expectedReserve,
+  });
+}
+
 test.skipIf(!shouldRunLiveE2EScenarios())(
   "GPU Ollama onboard enables CUDA, auth proxy, and sandbox inference",
   { timeout: TIMEOUT_MS },
@@ -43,7 +78,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       sandboxName: SANDBOX_NAME,
       delegatedLegacyContracts: [
         "Phase 11 shell retirement decides whether uninstall --delete-models remains a separate cleanup lane",
-        "The #5468 OpenClaw TUI compaction guard remains in the retained legacy shell until a TUI fixture exists",
+        "The #5468 interactive TUI first-turn smoke remains waived until a TUI fixture exists; this Vitest asserts the baked compaction budget directly",
       ],
     });
 
@@ -74,6 +109,15 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     });
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
+
+    const config = await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("cat /sandbox/.openclaw/openclaw.json"),
+      { artifactName: "sandbox-openclaw-config", env: env(), timeoutMs: 30_000 },
+    );
+    expect(config.exitCode, resultText(config)).toBe(0);
+    await artifacts.writeText("openclaw-config.json", config.stdout);
+    assertSmallContextCompactionPolicy(config.stdout);
 
     const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
       artifactName: "status-gpu-ollama",

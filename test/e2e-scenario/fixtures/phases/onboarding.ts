@@ -70,7 +70,7 @@ export interface OnboardingExpectedFailure {
 export interface NemoClawInstance {
   onboarding: string;
   sandboxName: string;
-  agent: "openclaw" | "hermes";
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
   provider: "nvidia" | "ollama";
   providerEnv: "cloud" | "local";
   platformOs?: "ubuntu" | "macos" | "windows";
@@ -180,6 +180,9 @@ export class OnboardingPhaseFixture {
         case "cloud-openclaw-no-docker":
           result = await this.cloudOpenClawNoDocker(environment, options);
           break;
+        case "cloud-langchain-deepagents-code":
+          result = await this.cloudLangchainDeepAgentsCode(environment, options);
+          break;
         default:
           throw new Error(`Unsupported onboarding profile '${environment.onboarding}'.`);
       }
@@ -212,6 +215,39 @@ export class OnboardingPhaseFixture {
       onboarding: environment.onboarding,
       sandboxName,
       agent: "openclaw",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      result,
+    };
+  }
+
+  async cloudLangchainDeepAgentsCode(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "cloud-langchain-deepagents-code onboarding requires an available Docker runtime.",
+      );
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
+    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+      artifactName: "onboard-cloud-langchain-deepagents-code",
+      env: commandEnv(sandboxName, {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NVIDIA_INFERENCE_API_KEY: apiKey,
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    assertExitZero(result, "cloud-langchain-deepagents-code onboarding");
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "langchain-deepagents-code",
       provider: "nvidia",
       providerEnv: "cloud",
       gatewayUrl: OPENCLAW_GATEWAY_URL,
