@@ -262,18 +262,17 @@ runLaunchableSmokeTest(
     expectExitZero(dockerInfo, "Docker is running");
 
     const network = await host.command(
-      "curl",
+      "bash",
       [
-        "-sf",
-        "--max-time",
-        "10",
-        "-H",
-        `Authorization: Bearer ${apiKey}`,
-        `${hosted.endpointUrl}/models`,
+        "-lc",
+        'cfg=$(mktemp); trap \'rm -f "$cfg"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; curl -sf --max-time 10 --config "$cfg" "$HOSTED_ENDPOINT_URL/models"',
       ],
       {
         artifactName: "prereq-inference-api-models",
-        env: runEnv(),
+        env: runEnv({
+          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+        }),
         redactionValues: [apiKey],
         timeoutMs: 30_000,
       },
