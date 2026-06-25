@@ -38,9 +38,7 @@ function execCommand(runOpenshell: ReturnType<typeof vi.fn>): { argv: string[]; 
   const call = runOpenshell.mock.calls.find(
     (args) => Array.isArray(args[0]) && args[0][0] === "sandbox" && args[0][1] === "exec",
   );
-  if (!call) {
-    throw new Error("no `openshell sandbox exec` call was issued");
-  }
+  expect(call, "no `openshell sandbox exec` call was issued").toBeDefined();
   const argv = call[0] as string[];
   // The remote command is the final argument after the `sh -c` marker.
   const script = argv[argv.length - 1];
