@@ -360,3 +360,125 @@ console.log(JSON.stringify({
     expect(payload.model).toBe("qwen2.5:14b");
   });
 });
+
+describe("setupNim provider recovery policy", () => {
+  it("ignores stale recorded providers when fresh setup disables provider recovery", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fresh-provider-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "fresh-provider-recovery-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    );
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"choices":[{"message":{"role":"assistant","content":"OK"}}]}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const fs = require("fs");
+const path = require("path");
+const Module = require("module");
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionPath});
+
+runner.runCapture = () => "";
+registry.getSandbox = () => null;
+registry.listSandboxes = () => ({ sandboxes: [], defaultSandbox: null });
+onboardSession.loadSession = () => ({
+  sandboxName: "dcode-station",
+  provider: "ollama-local",
+  model: "llama3.1",
+});
+
+const onboardFile = ${onboardPath};
+const source = fs.readFileSync(onboardFile, "utf-8");
+const injected = source + "\nmodule.exports.__setNonInteractive = (value) => { NON_INTERACTIVE = value; };";
+const onboardModule = new Module(onboardFile, module);
+onboardModule.filename = onboardFile;
+onboardModule.paths = Module._nodeModulePaths(path.dirname(onboardFile));
+onboardModule._compile(injected, onboardFile);
+
+const { setupNim, __setNonInteractive } = onboardModule.exports;
+
+(async () => {
+  for (const key of [
+    "NEMOCLAW_PROVIDER",
+    "NEMOCLAW_PROVIDER_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "GEMINI_API_KEY",
+    "COMPATIBLE_API_KEY",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+  ]) {
+    delete process.env[key];
+  }
+  process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test";
+  process.env.NEMOCLAW_MODEL = "nvidia/test-model";
+  __setNonInteractive(true);
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null, "dcode-station", null, {
+      allowRecordedProviderRecovery: false,
+    });
+    originalLog(JSON.stringify({ result, lines }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_TEST_NO_SLEEP: "1",
+      },
+    });
+
+    if (result.status !== 0) {
+      throw new Error(result.stderr || result.stdout);
+    }
+    const payload = JSON.parse(result.stdout.trim());
+    expect(payload.result.provider).toBe("nvidia-prod");
+    expect(payload.result.model).toBe("nvidia/test-model");
+    expect(payload.result.preferredInferenceApi).toBe("openai-completions");
+    expect(
+      payload.lines.some((line: string) => line.includes("[non-interactive] Provider: build")),
+    ).toBe(true);
+    expect(payload.lines.every((line: string) => !line.includes("recovered from sandbox"))).toBe(
+      true,
+    );
+  });
+});

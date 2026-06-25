@@ -3264,12 +3264,22 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
+type ProviderSelectionRecoveryReaders =
+  import("./onboard/provider-selection").ProviderSelectionRecoveryReaders;
+type SetupNimOptions = {
+  allowRecordedProviderRecovery?: boolean;
+};
 
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
     parseGatewayInference,
     runCaptureOpenshell,
   });
+const DISABLED_PROVIDER_RECOVERY_READERS: ProviderSelectionRecoveryReaders = {
+  readRecordedProvider: () => null,
+  readRecordedNimContainer: () => null,
+  readRecordedModel: () => null,
+};
 
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
@@ -3925,6 +3935,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
+  setupOptions: SetupNimOptions = {},
 ): Promise<{
   model: string | null;
   provider: string;
@@ -3977,6 +3988,10 @@ async function setupNim(
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
+  const providerRecoveryReaders =
+    setupOptions.allowRecordedProviderRecovery === false
+      ? DISABLED_PROVIDER_RECOVERY_READERS
+      : { readRecordedProvider, readRecordedNimContainer, readRecordedModel };
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
@@ -4033,9 +4048,7 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider,
-          readRecordedNimContainer,
-          readRecordedModel,
+          ...providerRecoveryReaders,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({

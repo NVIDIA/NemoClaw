@@ -21,8 +21,13 @@ export interface ProviderSelectionResult {
   skipHostInferenceSmoke?: boolean;
 }
 
+export interface ProviderSelectionSetupOptions {
+  allowRecordedProviderRecovery?: boolean;
+}
+
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   resume: boolean;
+  fresh: boolean;
   session: Session | null;
   gpu: Gpu;
   sandboxName: string | null;
@@ -48,7 +53,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   };
   deps: {
     normalizeHermesAuthMethod(value: string | null | undefined): string | null;
-    setupNim(gpu: Gpu, sandboxName: string | null, agent: Agent): Promise<ProviderSelectionResult>;
+    setupNim(
+      gpu: Gpu,
+      sandboxName: string | null,
+      agent: Agent,
+      options?: ProviderSelectionSetupOptions,
+    ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
       model: string,
@@ -167,6 +177,7 @@ function clearStagedCredentialEnv(
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   resume,
+  fresh,
   session,
   gpu,
   sandboxName,
@@ -246,7 +257,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () => deps.setupNim(gpu, sandboxName, agent),
+        () =>
+          deps.setupNim(gpu, sandboxName, agent, {
+            allowRecordedProviderRecovery: !fresh,
+          }),
       );
       model = selection.model;
       provider = selection.provider;
