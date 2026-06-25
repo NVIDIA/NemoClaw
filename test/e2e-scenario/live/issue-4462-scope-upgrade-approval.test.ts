@@ -120,7 +120,10 @@ PY
 }
 
 contains_integer_42() {
-  tr -d '[:space:]' | grep -Eq '(^|[^0-9])42([^0-9]|$)'
+  local raw compact
+  raw="$(cat)"
+  compact="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  grep -Eq '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
 }
 
 assert_agent_scopes_without_admin() {
