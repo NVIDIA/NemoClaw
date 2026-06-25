@@ -1399,16 +1399,7 @@ $$nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
 | `--json` | Print the delete result as JSON. |
 | `--verbose` | Print the gateway entry payload after a successful delete. |
 
-<AgentOnly variant="openclaw">
-
 ### `$$nemoclaw <name> sessions export [keys...]`
-
-</AgentOnly>
-<AgentOnly variant="hermes">
-
-### `$$nemoclaw <name> sessions export`
-
-</AgentOnly>
 
 Export the agent's session history from a running sandbox to the host.
 The command routes by the sandbox's agent kind recorded in the registry.
