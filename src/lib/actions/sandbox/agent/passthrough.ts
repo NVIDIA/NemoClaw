@@ -54,6 +54,8 @@ const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
   "--timeout",
 ]);
 
+const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
+
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
 }
@@ -123,11 +125,12 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
   // Invalid state: the host wrapper must pick captured JSON transport only for
   // the top-level OpenClaw output flag, not for a literal "--json" consumed as
   // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
-  // the complete argv grammar; NemoClaw mirrors documented value-taking flags
-  // only to choose the host transport path. Regression tests cover each
-  // documented value flag and the `--` terminator. Removal condition: OpenClaw
-  // exposes a machine-readable argv schema or NemoClaw stops special-casing the
-  // JSON transport path.
+  // the complete argv grammar; NemoClaw mirrors documented flags only to choose
+  // the host transport path. Unknown options fail conservative to normal
+  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
+  // documented value flag, documented boolean flags, unknown flag fallback, and
+  // the `--` terminator. Removal condition: OpenClaw exposes a machine-readable
+  // argv schema or NemoClaw stops special-casing the JSON transport path.
   let skipNextValue = false;
   for (const arg of extraArgs) {
     if (skipNextValue) {
@@ -141,7 +144,10 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
     }
     if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
       skipNextValue = true;
+      continue;
     }
+    if (OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) continue;
+    if (arg.startsWith("-")) return false;
   }
   return false;
 }

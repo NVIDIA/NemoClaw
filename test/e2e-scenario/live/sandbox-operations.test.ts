@@ -242,13 +242,7 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
   const sessionId = `e2e-sbx-02-${Date.now()}-${process.pid}`;
   const result = await host.nemoclaw(
     [
-      "sandbox",
-      "exec",
       sandboxName,
-      "--timeout",
-      "90",
-      "--",
-      "openclaw",
       "agent",
       "--agent",
       "main",
@@ -259,13 +253,13 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
       "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
     ],
     {
-      artifactName: "tc-sbx-02-openclaw-agent-json",
+      artifactName: "tc-sbx-02-nemoclaw-agent-json",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     },
   );
   const reply = parseOpenClawAgentText(result.stdout);
-  expectExitZero(result, "openclaw agent --json");
+  expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
   expect(reply, resultText(result)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
 }
 
@@ -537,7 +531,7 @@ liveTest(
       legacySource: "test/e2e/test-sandbox-operations.sh",
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
-        "TC-SBX-02 openclaw agent answers through sandbox inference.local",
+        "TC-SBX-02 nemoclaw <sandbox> agent --json answers through sandbox inference.local",
         "TC-SBX-03 status renders Sandbox/Model/Provider/GPU fields",
         "TC-SBX-04 logs and logs --follow behave as streaming commands",
         "TC-SBX-05 destroy removes NemoClaw and OpenShell entries",
