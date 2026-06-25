@@ -3,6 +3,7 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
 import { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
 export { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
@@ -18,11 +19,12 @@ export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPay
   rawOutput: string;
 }
 
-export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPayload>(
-  opts: GatewayCallOptions,
-): GatewayCallResult<T> {
+const RETRYABLE_PAIRING_FAILURE =
+  /scope upgrade pending|pairing required|device is not approved|GatewayClientRequestError/i;
+
+function captureGatewayCall(opts: GatewayCallOptions) {
   const params = JSON.stringify(opts.params);
-  const result = captureOpenshell(
+  return captureOpenshell(
     [
       "sandbox",
       "exec",
@@ -39,6 +41,22 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
     ],
     { ignoreError: true },
   );
+}
+
+export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPayload>(
+  opts: GatewayCallOptions,
+): GatewayCallResult<T> {
+  // Drain allowlisted CLI/webchat pairing or scope-upgrade requests before
+  // host-side gateway RPCs. This mirrors the connect/doctor recovery pass and
+  // keeps sessions reset/delete usable when OpenClaw 2026.5.x asks for a late
+  // operator.write upgrade on the sandbox-private gateway URL.
+  runSandboxAutoPairApprovalPass(opts.sandboxName);
+
+  let result = captureGatewayCall(opts);
+  if (result.status !== 0 && RETRYABLE_PAIRING_FAILURE.test(result.output)) {
+    runSandboxAutoPairApprovalPass(opts.sandboxName);
+    result = captureGatewayCall(opts);
+  }
 
   if (result.status !== 0) {
     console.error(
