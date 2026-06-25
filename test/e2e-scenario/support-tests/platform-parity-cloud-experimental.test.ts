@@ -17,6 +17,11 @@ function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeR
     timedOut: false,
     stdout,
     stderr,
+    artifacts: {
+      stdout: "stdout.txt",
+      stderr: "stderr.txt",
+      result: "result.json",
+    },
   };
 }
 

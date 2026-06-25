@@ -273,7 +273,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain(
       "arbitrary Python cannot reach ${label} without explicit policy",
     );
-    expect(pythonEgressCheck).toContain("grep -q \"BLOCKED:\"");
+    expect(pythonEgressCheck).toContain('grep -q "BLOCKED:"');
     expect(pythonEgressCheck).toContain("lacked denial evidence");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",

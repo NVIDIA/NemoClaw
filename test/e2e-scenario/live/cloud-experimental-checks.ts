@@ -37,10 +37,9 @@ export function assertRequiredCloudExperimentalResult(
 ): void {
   const output = resultText(result);
   expect(result.exitCode, `${scriptPath}: ${output}`).toBe(0);
-  expect(
-    output,
-    `${scriptPath}: required cloud-experimental check must not skip`,
-  ).not.toMatch(REQUIRED_CHECK_SKIP_PATTERN);
+  expect(output, `${scriptPath}: required cloud-experimental check must not skip`).not.toMatch(
+    REQUIRED_CHECK_SKIP_PATTERN,
+  );
 }
 
 async function assertDeepAgentsRuntimeObserved(
