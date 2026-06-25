@@ -652,6 +652,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("rejects exact canonical credential names KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL with opaque payloads", () => {
+    const cases: string[] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY"];
+    const opaque = "opaqueCredentialPayloadZ1234567890";
+    for (const name of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-dcode-exactctx-${name}-`));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [name]: opaque });
+      expect(result.status, `${name} with opaque value not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(name);
+      expect(result.stderr).not.toContain(opaque);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
+  });
+
   it("rejects dotenv variable expansion in env-file entries", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-dynamic-var-"));
     const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);

@@ -129,7 +129,10 @@ is_secret_shaped_value() {
 
 has_credential_name_context() {
   case "$1" in
-    *_API_KEY | API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
+    KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
+      return 0
+      ;;
+    *_API_KEY | *_KEY | *_TOKEN | *_SECRET | *_PASSWORD | *_PASS | *_CREDENTIAL)
       return 0
       ;;
   esac
@@ -139,7 +142,7 @@ has_credential_name_context() {
 is_dynamic_dotenv_value() {
   local value="$1"
   case "$value" in
-    *'$'[A-Za-z_]* | *'${'* | *'$('* | *'`'*)
+    *\$[A-Za-z_]* | *\${* | *\$\(* | *\`*)
       return 0
       ;;
   esac
