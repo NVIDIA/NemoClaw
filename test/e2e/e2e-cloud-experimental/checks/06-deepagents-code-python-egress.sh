@@ -39,11 +39,14 @@ python_probe() {
   local url="$2"
   sandbox_exec "${python_bin@Q} - ${url@Q} <<'PY'
 import sys
+import urllib.error
 import urllib.request
 url = sys.argv[1]
 try:
     with urllib.request.urlopen(url, timeout=8) as response:
         print(f'REACHED:{response.status}')
+except urllib.error.HTTPError as exc:
+    print(f'REACHED:{exc.code}')
 except Exception as exc:
     print(f'BLOCKED:{type(exc).__name__}:{exc}')
 PY
@@ -122,6 +125,7 @@ if echo "$PROJECT_OUT" | grep -Fxq "PROJECT_PYTHON=${PROJECT_PYTHON}" \
   && echo "$PROJECT_OUT" | grep -Fxq "PROJECT_PIP=${PROJECT_PIP}"; then
   pass "project venv under /sandbox exposes python3 and pip3 executables"
   expect_reached "project venv Python under /sandbox" "PyPI" "https://pypi.org/" "$PROJECT_PYTHON"
+  expect_reached "project venv Python under /sandbox" "files.pythonhosted.org" "https://files.pythonhosted.org/" "$PROJECT_PYTHON"
   expect_blocked "project venv Python under /sandbox" "Tavily" "https://api.tavily.com/" "$PROJECT_PYTHON"
   expect_blocked "project venv Python under /sandbox" "LangSmith" "https://api.smith.langchain.com/" "$PROJECT_PYTHON"
   expect_blocked "project venv Python under /sandbox" "MCP hosts" "https://modelcontextprotocol.io/" "$PROJECT_PYTHON"

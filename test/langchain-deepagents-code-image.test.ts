@@ -294,6 +294,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("^PYTHON=/opt/venv/bin/python3$");
     expect(pythonEgressCheck).toContain("^PIP=/opt/venv/bin/pip3$");
     expect(pythonEgressCheck).toContain("^USRLOCAL_COUNT=1$");
+    expect(pythonEgressCheck).toContain("import urllib.error");
+    expect(pythonEgressCheck).toContain("except urllib.error.HTTPError as exc:");
     expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
@@ -305,6 +307,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("python3 -m venv --copies");
     expect(pythonEgressCheck).toContain(
       'expect_reached "project venv Python under /sandbox" "PyPI" "https://pypi.org/" "$PROJECT_PYTHON"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "project venv Python under /sandbox" "files.pythonhosted.org" "https://files.pythonhosted.org/" "$PROJECT_PYTHON"',
     );
     expect(pythonEgressCheck).toContain(
       'expect_blocked "project venv Python under /sandbox" "Tavily" "https://api.tavily.com/" "$PROJECT_PYTHON"',
