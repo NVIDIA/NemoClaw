@@ -27,10 +27,14 @@ Start the OpenShell terminal UI to monitor sandbox activity:
 openshell term
 ```
 
-For a remote sandbox, pass the instance name:
+For a remote sandbox, connect to the remote host first.
+Use a host that resolves from your terminal, such as a Brev SSH alias or `user@host`.
+Then run the TUI from the NemoClaw directory on that host:
 
 ```bash
-ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
+cd ~/nemoclaw
+. .env
+openshell term
 ```
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.

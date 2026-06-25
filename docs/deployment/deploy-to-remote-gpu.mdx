@@ -31,25 +31,38 @@ For another cloud provider, replace the provisioning and SSH commands with that 
 ```bash
 # On your local machine
 brev create <instance-name> --gpu <gpu-type>
-brev ssh <instance-name>
 ```
 
 If `brev` is missing or unauthenticated, install or log in to the Brev CLI first, or provision the VM through your cloud console and connect with `ssh <user>@<host>`.
 
-Run the installer on the remote VM:
+For Brev, get the instance ID before you connect to the VM.
+Run this command on your local machine:
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+brev ls --json
+```
+
+In the output, find the object whose `name` matches `<instance-name>`, then set `BREV_INSTANCE_ID` to that object's `id` value.
+You can also find the same ID in the Brev web UI.
+The Brev dashboard origin uses the format `https://openclaw0-${BREV_INSTANCE_ID}.brevlab.com`.
+
+Connect to the remote VM:
+
+```bash
+brev ssh <instance-name>
 ```
 
 Set any remote-only environment variables on the VM before onboarding.
-For example, set the browser origin if you will open the dashboard through a Brev public URL, and raise the first-run readiness budget on cold cloud hosts:
+For example, set the browser origin if you will open the dashboard through a Brev public URL, raise the first-run readiness budget on cold cloud hosts, and then run the installer:
 
 ```bash
-export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+export BREV_INSTANCE_ID="<id-from-brev-ls>"
+export CHAT_UI_URL="https://openclaw0-${BREV_INSTANCE_ID}.brevlab.com"
 export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
-nemoclaw onboard
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
+
+If NemoClaw is already installed on the VM, run `nemoclaw onboard` instead of the installer after exporting the variables.
 
 After successful onboarding, you should see output that reports a ready sandbox and the next command to connect:
 
@@ -117,10 +130,12 @@ nemoclaw <name> exec -- openclaw agent --agent main -m "Hello from the remote sa
 
 The NemoClaw dashboard validates the browser origin against an allowlist baked into the sandbox image at build time.
 By default, the allowlist only contains `http://127.0.0.1:18789`.
-When you access the dashboard from a remote browser, for example through a Brev public URL or an SSH port-forward, set `CHAT_UI_URL` to the origin the browser uses before running `nemoclaw onboard` on the remote VM:
+When you access the dashboard from a remote browser, for example through a Brev public URL or an SSH port-forward, set `CHAT_UI_URL` to the origin the browser uses before running `nemoclaw onboard` on the remote VM.
+For Brev, use the `BREV_INSTANCE_ID` value from `brev ls --json` or the Brev web UI:
 
 ```bash
-export CHAT_UI_URL="https://openclaw0-<id>.brevlab.com"
+test -n "$BREV_INSTANCE_ID"
+export CHAT_UI_URL="https://openclaw0-${BREV_INSTANCE_ID}.brevlab.com"
 nemoclaw onboard
 ```
 

@@ -59,11 +59,22 @@ Paste the following command into your terminal for the default installation proc
 
 <llms-only>
 
-```shell
+```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 </llms-only>
+
+The default installer opens the interactive onboard wizard.
+If a previous onboarding session failed, the installer asks whether to resume the failed session or start fresh.
+For unattended runs, pass the non-interactive flags and choose the session behavior explicitly:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --non-interactive --yes-i-accept-third-party-software --fresh
+```
+
+Use `--fresh` only when you want to discard a failed or interrupted onboarding session.
+Use `nemoclaw onboard --resume` after installation when you want to retry the same saved session instead.
 
 By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
 
