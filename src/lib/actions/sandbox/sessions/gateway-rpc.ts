@@ -5,14 +5,17 @@ import { Buffer } from "node:buffer";
 
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import { redactFull } from "../../../security/redact";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
 import { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
 export { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
 
+export type GatewayAdminMethod = "sessions.reset" | "sessions.delete";
+
 export interface GatewayCallOptions {
   sandboxName: string;
-  method: string;
+  method: GatewayAdminMethod;
   params: unknown;
 }
 
@@ -21,8 +24,9 @@ export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPay
   rawOutput: string;
 }
 
-const RETRYABLE_PAIRING_FAILURE =
-  /scope upgrade pending|pairing required|device is not approved|GatewayClientRequestError/i;
+const SUPPORTED_GATEWAY_ADMIN_METHODS = new Set<string>(["sessions.reset", "sessions.delete"]);
+
+const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device is not approved/i;
 
 const GATEWAY_ADMIN_RPC_SCRIPT = `
 import { Buffer } from "node:buffer";
@@ -89,6 +93,14 @@ const GATEWAY_ADMIN_RPC_SHELL =
   `export NEMOCLAW_GATEWAY_RPC_PARAMS_B64="$4"; ` +
   `exec node --input-type=module --eval "$1" "$2"`;
 
+function isSupportedGatewayAdminMethod(method: string): method is GatewayAdminMethod {
+  return SUPPORTED_GATEWAY_ADMIN_METHODS.has(method);
+}
+
+function redactedGatewayOutput(output: string): string {
+  return redactFull(output);
+}
+
 function captureGatewayCall(opts: GatewayCallOptions) {
   const params = Buffer.from(JSON.stringify(opts.params), "utf8").toString("base64");
   return captureOpenshell(
@@ -114,6 +126,13 @@ function captureGatewayCall(opts: GatewayCallOptions) {
 export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPayload>(
   opts: GatewayCallOptions,
 ): GatewayCallResult<T> {
+  if (!isSupportedGatewayAdminMethod(opts.method)) {
+    console.error(
+      `  Refusing unsupported OpenClaw gateway admin RPC method '${opts.method}' for sandbox '${opts.sandboxName}'.`,
+    );
+    process.exit(1);
+  }
+
   // Drain allowlisted CLI/webchat pairing or scope-upgrade requests before
   // host-side gateway RPCs. The RPC itself uses OpenClaw's SDK in backend mode
   // with loopback + the shared gateway token, so sessions reset/delete do not
@@ -130,7 +149,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
     console.error(
       `  Failed to reach the OpenClaw gateway in sandbox '${opts.sandboxName}': exit ${result.status}`,
     );
-    if (result.output.trim()) console.error(`  ${result.output.trim()}`);
+    if (result.output.trim()) console.error(`  ${redactedGatewayOutput(result.output.trim())}`);
     console.error(`  Verify the gateway is reachable: \`${CLI_NAME} ${opts.sandboxName} status\`.`);
     process.exit(1);
   }
@@ -138,7 +157,7 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
   const payload = parseGatewayCallPayload<T>(result.output);
   if (!payload) {
     console.error(`  Could not parse gateway call response for '${opts.method}'.`);
-    if (result.output.trim()) console.error(`  ${result.output.trim()}`);
+    if (result.output.trim()) console.error(`  ${redactedGatewayOutput(result.output.trim())}`);
     process.exit(1);
   }
   return { payload, rawOutput: result.output };

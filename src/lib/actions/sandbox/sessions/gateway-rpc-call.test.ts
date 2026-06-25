@@ -105,6 +105,22 @@ describe("callOpenclawGateway", () => {
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
+  it("rejects unsupported gateway admin RPC methods before touching OpenShell", () => {
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "devices.approve",
+        params: { requestId: "r-1" },
+      } as never),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).not.toHaveBeenCalled();
+    expect(captureMock).not.toHaveBeenCalled();
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "  Refusing unsupported OpenClaw gateway admin RPC method 'devices.approve' for sandbox 'alpha'.",
+    );
+  });
+
   it("does not retry unrelated gateway failures", () => {
     captureMock.mockReturnValue(captureResult(1, "openclaw gateway crashed"));
 
@@ -118,5 +134,38 @@ describe("callOpenclawGateway", () => {
 
     expect(autoPairMock).toHaveBeenCalledTimes(1);
     expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry non-pairing GatewayClientRequestError failures", () => {
+    captureMock.mockReturnValue(captureResult(1, "GatewayClientRequestError: invalid params"));
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    expect(autoPairMock).toHaveBeenCalledTimes(1);
+    expect(captureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("redacts gateway token-shaped values from captured stderr before printing", () => {
+    captureMock.mockReturnValue(
+      captureResult(1, "Gateway failed: OPENCLAW_GATEWAY_TOKEN=secret-gateway-token"),
+    );
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    const printed = consoleErrorSpy.mock.calls.flat().join("\n");
+    expect(printed).not.toContain("secret-gateway-token");
+    expect(printed).toContain("OPENCLAW_GATEWAY_TOKEN=<REDACTED>");
   });
 });
