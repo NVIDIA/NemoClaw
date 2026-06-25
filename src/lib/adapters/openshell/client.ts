@@ -45,6 +45,8 @@ export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
 export interface CaptureOpenshellResult {
   status: number | null;
   output: string;
+  stdout?: string;
+  stderr?: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
 }
@@ -169,6 +171,8 @@ export function captureOpenshellCommand(
       return {
         status: result.status,
         output: captureOutput(result, opts),
+        stdout: result.stdout || "",
+        stderr: result.stderr || "",
         error: result.error,
         signal: result.signal,
       };
@@ -178,6 +182,8 @@ export function captureOpenshellCommand(
   return {
     status: result.status ?? 1,
     output: captureOutput(result, opts),
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
   };
 }
 
@@ -240,6 +246,8 @@ export function captureOpenshellCommandAsync(
       resolve({
         status: status ?? (timedOut ? null : 1),
         output: buildOutput(),
+        stdout,
+        stderr,
         ...(error ? { error } : {}),
         signal,
       });

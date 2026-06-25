@@ -18,8 +18,12 @@ import { callOpenclawGateway } from "./gateway-rpc";
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const autoPairMock = runSandboxAutoPairApprovalPass as unknown as ReturnType<typeof vi.fn>;
 
-function captureResult(status: number, output: string) {
-  return { status, output, error: undefined as Error | undefined };
+function captureResult(
+  status: number,
+  output: string,
+  streams: { stdout?: string; stderr?: string } = {},
+) {
+  return { status, output, ...streams, error: undefined as Error | undefined };
 }
 
 let processExitSpy: ReturnType<typeof vi.spyOn>;
@@ -151,6 +155,48 @@ describe("callOpenclawGateway", () => {
     expect(captureMock).toHaveBeenCalledTimes(1);
   });
 
+  it("parses stdout payload before trailing stderr JSON diagnostics", () => {
+    captureMock.mockReturnValue(
+      captureResult(
+        0,
+        '{"ok":true,"key":"agent:main:main"}\n{"error":{"message":"stderr warning"}}',
+        {
+          stdout: '{"ok":true,"key":"agent:main:main"}\n',
+          stderr: '{"error":{"message":"stderr warning"}}',
+        },
+      ),
+    );
+
+    const result = callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.reset",
+      params: { key: "agent:main:main", reason: "reset" },
+    });
+
+    expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
+    expect(result.rawOutput).toBe('{"ok":true,"key":"agent:main:main"}\n');
+  });
+
+  it("does not expose stderr tokens through rawOutput on unexpected successful payload", () => {
+    captureMock.mockReturnValue(
+      captureResult(0, '{"ok":true}\nOPENCLAW_GATEWAY_TOKEN=secret-gateway-token', {
+        stdout: '{"ok":true}\n',
+        stderr: "OPENCLAW_GATEWAY_TOKEN=secret-gateway-token",
+      }),
+    );
+
+    const result = callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.reset",
+      params: { key: "agent:main:main", reason: "reset" },
+    });
+
+    expect(result.rawOutput).toBe('{"ok":true}\n');
+    expect(result.rawOutput).not.toContain("secret-gateway-token");
+    expect(result.diagnosticOutput).not.toContain("secret-gateway-token");
+    expect(result.diagnosticOutput).toContain("OPENCLAW_GATEWAY_TOKEN=<REDACTED>");
+  });
+
   it("redacts gateway token-shaped values from captured stderr before printing", () => {
     captureMock.mockReturnValue(
       captureResult(1, "Gateway failed: OPENCLAW_GATEWAY_TOKEN=secret-gateway-token"),
@@ -167,5 +213,21 @@ describe("callOpenclawGateway", () => {
     const printed = consoleErrorSpy.mock.calls.flat().join("\n");
     expect(printed).not.toContain("secret-gateway-token");
     expect(printed).toContain("OPENCLAW_GATEWAY_TOKEN=<REDACTED>");
+  });
+
+  it("redacts JSON token fields from captured stderr before printing", () => {
+    captureMock.mockReturnValue(captureResult(1, '{"token":"secret-gateway-token"}'));
+
+    expect(() =>
+      callOpenclawGateway({
+        sandboxName: "alpha",
+        method: "sessions.reset",
+        params: { key: "agent:main:main", reason: "reset" },
+      }),
+    ).toThrow(/process\.exit:1/);
+
+    const printed = consoleErrorSpy.mock.calls.flat().join("\n");
+    expect(printed).not.toContain("secret-gateway-token");
+    expect(printed).toContain('"token":"<REDACTED>"');
   });
 });

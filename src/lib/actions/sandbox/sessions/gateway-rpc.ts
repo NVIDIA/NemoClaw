@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
-
-import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import { CLI_NAME } from "../../../cli/branding";
 import { redactFull } from "../../../security/redact";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
 import { type GatewayCallPayload, parseGatewayCallPayload } from "./gateway-rpc-envelope";
@@ -22,12 +21,29 @@ export interface GatewayCallOptions {
 export interface GatewayCallResult<T extends GatewayCallPayload = GatewayCallPayload> {
   payload: T;
   rawOutput: string;
+  diagnosticOutput: string;
 }
 
 const SUPPORTED_GATEWAY_ADMIN_METHODS = new Set<string>(["sessions.reset", "sessions.delete"]);
 
 const RETRYABLE_PAIRING_FAILURE = /scope upgrade pending|pairing required|device is not approved/i;
 
+// Source-boundary note for this SDK-backed admin RPC wrapper:
+// - Invalid state: `openclaw gateway call` currently acts like a sandbox-origin
+//   CLI client and can create/pending a new device pairing request while
+//   `nemoclaw <sandbox> sessions reset/delete` needs a host-admin operation.
+// - Source owner: OpenClaw owns the gateway SDK/runtime, pairing model,
+//   `sessions.reset/delete` handlers, package layout, and proxy-env contract.
+// - Source-fix constraint: this hotfix must stabilize NemoClaw main without
+//   merging all OpenShell/OpenClaw 0.0.67 work, so NemoClaw uses the shipped
+//   SDK backend client over loopback instead of mutating sandbox session files
+//   or broadening pairing approval behavior.
+// - Runtime validation anchor: `sessions-agents-cli-e2e` exercises reset/delete
+//   in a real sandbox; `gateway-rpc-call.test.ts` pins the host-side allowlist,
+//   backend scope, proxy-env sourcing, retry, parser, and redaction contracts.
+// - Removal condition: replace this wrapper when OpenClaw exposes a stable
+//   documented host-admin sessions RPC/CLI that does not register a new CLI
+//   device and preserves separate stdout/stderr diagnostics.
 const GATEWAY_ADMIN_RPC_SCRIPT = `
 import { Buffer } from "node:buffer";
 import { accessSync, constants, realpathSync } from "node:fs";
@@ -101,6 +117,17 @@ function redactedGatewayOutput(output: string): string {
   return redactFull(output);
 }
 
+function gatewayDiagnosticOutput(result: {
+  output: string;
+  stdout?: string;
+  stderr?: string;
+}): string {
+  if (typeof result.stdout === "string" || typeof result.stderr === "string") {
+    return `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  }
+  return result.output;
+}
+
 function captureGatewayCall(opts: GatewayCallOptions) {
   const params = Buffer.from(JSON.stringify(opts.params), "utf8").toString("base64");
   return captureOpenshell(
@@ -140,25 +167,30 @@ export function callOpenclawGateway<T extends GatewayCallPayload = GatewayCallPa
   runSandboxAutoPairApprovalPass(opts.sandboxName);
 
   let result = captureGatewayCall(opts);
-  if (result.status !== 0 && RETRYABLE_PAIRING_FAILURE.test(result.output)) {
+  let diagnosticOutput = gatewayDiagnosticOutput(result);
+  if (result.status !== 0 && RETRYABLE_PAIRING_FAILURE.test(diagnosticOutput)) {
     runSandboxAutoPairApprovalPass(opts.sandboxName);
     result = captureGatewayCall(opts);
+    diagnosticOutput = gatewayDiagnosticOutput(result);
   }
 
   if (result.status !== 0) {
     console.error(
       `  Failed to reach the OpenClaw gateway in sandbox '${opts.sandboxName}': exit ${result.status}`,
     );
-    if (result.output.trim()) console.error(`  ${redactedGatewayOutput(result.output.trim())}`);
+    if (diagnosticOutput.trim())
+      console.error(`  ${redactedGatewayOutput(diagnosticOutput.trim())}`);
     console.error(`  Verify the gateway is reachable: \`${CLI_NAME} ${opts.sandboxName} status\`.`);
     process.exit(1);
   }
 
-  const payload = parseGatewayCallPayload<T>(result.output);
+  const stdout = result.stdout ?? result.output;
+  const payload = parseGatewayCallPayload<T>(stdout);
   if (!payload) {
     console.error(`  Could not parse gateway call response for '${opts.method}'.`);
-    if (result.output.trim()) console.error(`  ${redactedGatewayOutput(result.output.trim())}`);
+    if (diagnosticOutput.trim())
+      console.error(`  ${redactedGatewayOutput(diagnosticOutput.trim())}`);
     process.exit(1);
   }
-  return { payload, rawOutput: result.output };
+  return { payload, rawOutput: stdout, diagnosticOutput: redactedGatewayOutput(diagnosticOutput) };
 }
