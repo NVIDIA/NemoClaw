@@ -55,7 +55,7 @@ runs:
       shell: bash
       run: npm run test-size:check
 
-    - name: Run skills YAML tests
+    - name: Run skill frontmatter tests
       shell: bash
       run: npx vitest run test/skills-frontmatter.test.ts
 

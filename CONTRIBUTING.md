@@ -134,7 +134,7 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, docs-to-skills dry-run validation, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, skill frontmatter validation, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
@@ -192,7 +192,7 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-During release prep, run that skill first, make any doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
 
 To build and preview docs locally:
 
@@ -206,9 +206,9 @@ Use these npm scripts when validating docs for a PR.
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
-### Doc-to-Skills Pipeline
+### Markdown Docs for AI Agents
 
-For user-skill definitions, docs-to-skills validation, release-prep regeneration, and script flags, see [Doc-to-Skills Pipeline](docs/CONTRIBUTING.md#doc-to-skills-pipeline).
+For Markdown docs routing, user-skill guidance, and release-prep documentation workflow, see [Markdown Docs for AI Agents](docs/CONTRIBUTING.md#markdown-docs-for-ai-agents).
 
 ## Pull Requests
 

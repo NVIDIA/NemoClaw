@@ -25,42 +25,20 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, regenerate user skills, then open the docs refresh PR.
+During release prep, run the skill first, make any doc version bumps, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
-## Doc-to-Skills Pipeline
+## Markdown Docs for AI Agents
 
-User skills are generated agent-skill packages, prefixed with `nemoclaw-user-*`, that help AI agents guide end users through NemoClaw workflows.
 The `docs/` directory is the source of truth for user-facing documentation.
-The script `scripts/docs-to-skills.py` converts doc pages into user skills under `.agents/skills/`.
-These generated skills identically cover the same tasks as the doc pages they were generated from, while reformatting the doc files to match the agent-skill specification in markdown and organizing sibling pages into progressive disclosure for reference files.
+NemoClaw publishes Markdown versions of Fern pages plus `llms.txt`, so AI agents can fetch canonical documentation directly.
 
-Always make doc updates in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
+The hand-written `nemoclaw-user-guide` skill only routes agents to the right Markdown docs.
+It must stay small and must not copy page content from `docs/`.
 
-### Generated NemoClaw User Skills
-
-The current generated skills and their source pages are:
-
-| Skill | Source docs |
-|---|---|
-| `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
-| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/brev-web-ui.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
-| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx`, `docs/inference/tool-calling-reliability.mdx` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/runtime-controls.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
-| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
-| `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
-| `nemoclaw-user-configure-security` | `docs/security/best-practices.mdx`, `docs/security/credential-storage.mdx`, `docs/security/openclaw-controls.mdx` |
-
-### Regenerating NemoClaw User Skills after Doc Changes
-
-Most contributor pull requests that change docs should include only the source pages under `docs/`.
-Do not regenerate or commit generated `nemoclaw-user-*` skill output in contributor doc PRs.
-NemoClaw maintainers refresh generated user skills during release prep.
+Always make user-facing doc updates in `docs/`.
+Update `docs/resources/agent-skills.mdx` and `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent routing guidance changes.
 
 ## Building Docs Locally
 
@@ -96,7 +74,8 @@ npm run docs:preview:watch
 
 The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
 
-Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
+Fern `.mdx` pages are the canonical docs source.
+Fern publishes Markdown routes for AI agents from the same source pages.
 
 ## Agent Variant Generation
 
@@ -145,7 +124,7 @@ Run targeted tests only when the change also touches code, generated behavior, o
 
 - Fern pages use MDX with YAML frontmatter. Use a flat `title`, `description`, optional `sidebar-title`, `description-agent`, `keywords`, and `position`.
 - Do not duplicate the page title as a body H1 in MDX pages because Fern renders the title from frontmatter.
-- The docs-to-skills pipeline treats Fern `description-agent` as the equivalent of legacy MyST `description.agent`.
+- Use `description-agent` as a concise routing summary for AI documentation clients and search indexes.
 - Include the SPDX license header in MDX frontmatter as comments:
 
   ```yaml
@@ -172,35 +151,6 @@ keywords: "primary keyword, secondary keyword phrase"
 position: 1
 ---
 ```
-
-### Legacy Skill Frontmatter Template
-
-Use this nested shape only for legacy `.md` pages when running the pipeline with `--doc-platform myst-md`.
-
-```yaml
----
-title:
-  page: "NemoClaw Page Title: Subtitle with Context"
-  nav: "Short Nav Title"
-description:
-  main: "One-sentence summary for readers, SEO, and doc search snippets."
-  agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
-keywords: ["primary keyword", "secondary keyword phrase"]
-topics: ["generative_ai", "ai_agents"]
-tags: ["openclaw", "openshell", "relevant", "tags"]
-content:
-  type: concept | how_to | get_started | tutorial | reference
-  difficulty: technical_beginner | technical_intermediate | technical_advanced
-  audience: ["developer", "engineer"]
-skill:
-  priority: 100
-status: published
----
-```
-
-Use `skill.priority` to choose the lead procedure page when multiple how-to pages generate the same skill.
-Lower numbers win.
-For example, set the OpenClaw quickstart to `10` and the Hermes quickstart to `20` so `nemoclaw-user-get-started/SKILL.md` leads with the OpenClaw procedure and folds Hermes into `references/`.
 
 ### Page Structure
 

@@ -15,6 +15,40 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.67
+
+NemoClaw v0.0.67 improves onboarding recovery, messaging reliability, OpenClaw agent workflows, and AI-agent documentation routing:
+
+- Onboarding and OpenClaw agent operations recover more reliably after interrupted or scripted runs.
+  NemoClaw keeps repair backstops active when `onboard --resume` continues from later nonterminal onboarding phases, and `agents apply` removes orphan OpenClaw agents without forwarding a delete flag that the OpenClaw CLI rejects.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Discord messaging now uses the managed proxy path that OpenClaw accepts.
+  NemoClaw no longer writes a non-loopback per-account Discord proxy, while Telegram keeps its per-account proxy behavior, and WhatsApp policy E2E checks avoid brittle shell-pipeline failures on large policy output.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- AI-agent documentation now uses one compact routing skill instead of generated page-copy skills.
+  The `nemoclaw-user-guide` skill points agents to the docs MCP server, `llms.txt`, and canonical Markdown routes so the docs site remains the source of truth.
+  For more information, refer to [Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent](../resources/agent-skills).
+
+## v0.0.66
+
+NemoClaw v0.0.66 improves gateway serving, OpenClaw agent workflows, messaging defaults, local inference setup, and release validation:
+
+- Gateway and recovery paths now fail more clearly while preserving sandbox boundaries.
+  NemoClaw pins OpenClaw gateway hot reload behavior, watches for sustained serving state, auto-detects resumable onboarding sessions, reuses gateway-held NVIDIA credentials during non-interactive recreate flows, enforces the Hermes environment-secret boundary during recovery probes, and hardens temporary-file creation in sandbox helper paths.
+  For more information, refer to [Troubleshooting](../reference/troubleshooting), [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), [Credential Storage](../security/credential-storage), and [Security Best Practices](../security/best-practices).
+- OpenClaw sandboxes gained new agent workflows.
+  The release adds the LangChain Deep Agents Code harness, `agents.yaml` declarative multi-agent manifests, live `agents apply` reconciliation, and the non-interactive `$$nemoclaw <name> agent` passthrough command for automation that needs direct OpenClaw agent access.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](../get-started/quickstart-langchain-deepagents-code), [Declarative Multi-Agent Manifest](../inference/declarative-agents-manifest), and [NemoClaw CLI Commands Reference](../reference/commands).
+- Messaging setup has clearer OpenClaw Telegram group defaults.
+  NemoClaw records explicit channel defaults during onboarding, defaults OpenClaw Telegram group access to `TELEGRAM_GROUP_POLICY=open`, and lets operators choose `allowlist` or `disabled` when they need stricter group behavior.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- Day-two CLI operations validate local and sandbox paths earlier.
+  `$$nemoclaw <name> exec --workdir <dir>` checks that the sandbox directory exists before running the inner command, and `download`, `upload`, and `sessions export` resolve relative host paths from the caller's current working directory.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands) and [Workspace Files](../manage-sandboxes/workspace-files).
+- Local inference setup avoids more misleading failures.
+  NemoClaw skips false-negative host verification for local providers when the sandbox-routed endpoint is the source of truth, keeps the first Local Ollama TUI turn under OpenClaw's compaction budget, and refreshes the DGX Spark Qwen3.6 managed-vLLM recipe to match current model-card guidance.
+  For more information, refer to [Use a Local Inference Server](../inference/use-local-inference) and [NemoClaw Inference Options](../inference/inference-options).
+
 ## v0.0.65
 
 NemoClaw v0.0.65 improves gateway recovery, sandbox state restore, local inference setup, and messaging activation:
@@ -241,7 +275,7 @@ NemoClaw v0.0.47 focused on release hardening and validation coverage:
 - Messaging provider scenarios now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
 - CLI command registration was refactored so public display defaults stay consistent across sandbox channel, host, log, policy, skill, and snapshot commands.
 - PR review advisor automation was added for maintainers, with deterministic GitHub context gathering and structured review comments.
-- The release refreshed v0.0.46 documentation, generated user skills, navigation, and version metadata.
+- The release refreshed v0.0.46 documentation, AI-agent docs guidance, navigation, and version metadata.
 
 ## v0.0.46
 

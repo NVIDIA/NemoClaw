@@ -433,6 +433,17 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
     check(discordToken.length > 0, "M8: Discord token present in openclaw.json");
     check(discordToken !== state.tokens.discord, "M9: Discord token is not the host token");
+    const expectedManagedProxyHost = nonEmpty(state.env.NEMOCLAW_PROXY_HOST) ?? "10.200.0.1";
+    const expectedManagedProxyPort = nonEmpty(state.env.NEMOCLAW_PROXY_PORT) ?? "3128";
+    const expectedManagedProxy = `http://${expectedManagedProxyHost}:${expectedManagedProxyPort}`;
+    const discordAccountProxy = accountString(discordAccount, "proxy");
+    const managedProxyUrl = typeof config.proxy?.proxyUrl === "string" ? config.proxy.proxyUrl : "";
+    check(
+      discordAccountProxy === "" &&
+        config.proxy?.enabled === true &&
+        managedProxyUrl === expectedManagedProxy,
+      `M9b: Discord relies on OpenClaw managed proxy config, with no per-account loopback proxy (account.proxy='${discordAccountProxy}', proxy.proxyUrl='${managedProxyUrl}')`,
+    );
     check(accountBool(telegramAccount, "enabled") === true, "M10: Telegram account is enabled");
     check(accountBool(discordAccount, "enabled") === true, "M11: Discord account is enabled");
     check(

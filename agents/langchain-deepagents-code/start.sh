@@ -51,6 +51,33 @@ write_proxy_export_pair() {
   write_export_if_set "$secondary"
 }
 
+is_messaging_env_key_allowed() {
+  case "$1" in
+    TELEGRAM_BOT_TOKEN | TELEGRAM_ALLOWED_USERS | DISCORD_BOT_TOKEN | NEMOCLAW_DISCORD_GUILD_IDS) return 0 ;;
+    DISCORD_ALLOWED_USERS | DISCORD_ALLOW_ALL_USERS | SLACK_BOT_TOKEN | SLACK_APP_TOKEN) return 0 ;;
+    SLACK_ALLOWED_USERS | SLACK_ALLOWED_CHANNELS) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+load_messaging_env() {
+  local env_file="/sandbox/.deepagents/.env"
+  local line key value
+  [ -r "$env_file" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [ -n "$line" ] || continue
+    case "$line" in \#*) continue ;; esac
+    key="${line%%=*}"
+    if [ "$key" = "$line" ] || ! is_messaging_env_key_allowed "$key"; then
+      printf 'Skipping invalid Deep Agents Code messaging env line for key %s.\n' "$key" >&2
+      continue
+    fi
+    value="${line#*=}"
+    export "$key=$value"
+  done <"$env_file"
+}
+
 prepare_runtime_env() {
   local target=/tmp/nemoclaw-proxy-env.sh
   local tmp
@@ -75,15 +102,34 @@ prepare_runtime_env() {
     write_export_if_set LANGSMITH_TRACING
     write_export_if_set LANGSMITH_PROJECT
     write_export_if_set DEEPAGENTS_CODE_LANGSMITH_PROJECT
+    write_export_if_set TELEGRAM_BOT_TOKEN
+    write_export_if_set TELEGRAM_ALLOWED_USERS
+    write_export_if_set DISCORD_BOT_TOKEN
+    write_export_if_set NEMOCLAW_DISCORD_GUILD_IDS
+    write_export_if_set DISCORD_ALLOWED_USERS
+    write_export_if_set DISCORD_ALLOW_ALL_USERS
+    write_export_if_set SLACK_BOT_TOKEN
+    write_export_if_set SLACK_APP_TOKEN
+    write_export_if_set SLACK_ALLOWED_USERS
+    write_export_if_set SLACK_ALLOWED_CHANNELS
   } >"$tmp"
   chmod 400 "$tmp"
   mv -f "$tmp" "$target"
 }
 
+load_messaging_env
 prepare_runtime_env
 
+# With no command, this invocation IS the sandbox's long-running entrypoint.
+# Deep Agents Code is a terminal-runtime agent invoked on demand via
+# `openshell sandbox exec`, so the entrypoint has no daemon to run and must
+# stay alive as a stable foreground process. A bare `/bin/bash` exits
+# immediately in a non-interactive sandbox (no TTY, EOF on stdin), leaving the
+# sandbox with no persistent process: OpenShell then flaps it into the Error
+# phase, which breaks the Docker GPU-patch supervisor reconnect and leaves GPU
+# posture unreliable (#5717). Idle forever instead so the sandbox stays Ready.
 if [ "$#" -eq 0 ]; then
-  set -- /bin/bash
+  exec sleep infinity
 fi
 
 exec "$@"
