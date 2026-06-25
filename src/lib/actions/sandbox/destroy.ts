@@ -8,7 +8,6 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { G, R, YW } from "../../cli/terminal-style";
-import { shellQuote } from "../../core/shell-quote";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
@@ -292,120 +291,12 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
-type AgentStateInfo = {
-  configPaths: { dir: string };
-  stateDirs: string[];
-  stateFiles: { path: string }[];
-};
+import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
 
-export type WipeSandboxStateDeps = {
-  getSandbox?: typeof registry.getSandbox;
-  loadAgent?: (name: string) => AgentStateInfo;
-  runOpenshell?: RunOpenshell;
-};
-
-/**
- * Wipe a sandbox's persistent state (the agent-manifest state dirs/files such
- * as `workspace/USER.md`) while the sandbox is still live, before
- * `openshell sandbox delete`.
- *
- * `openshell sandbox delete` tears down the pod but leaves the per-sandbox
- * persistent volume (a k3s local-path PVC keyed by sandbox name, living inside
- * the shared `openshell-cluster-nemoclaw` Docker volume) intact. Without this
- * wipe, re-onboarding with the same name rebinds that PVC and resurrects the
- * old workspace files (USER.md, SOUL.md, ...). This makes destroy the inverse
- * of `backupSandboxState`: it removes exactly the set the snapshot/backup path
- * treats as durable state, plus discovered multi-agent `workspace-*` dirs.
- *
- * Best-effort: a stopped sandbox (e.g. gateway down) makes the exec fail; we
- * warn and let destroy proceed rather than block teardown. Mirrors the
- * `removeShieldsState` pattern.
- *
- * See: https://github.com/NVIDIA/NemoClaw/issues/5449
- */
-export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps = {}): void {
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const loadAgentDef =
-    deps.loadAgent ??
-    ((name: string) =>
-      (require("../../agent/defs") as { loadAgent: (n: string) => AgentStateInfo }).loadAgent(
-        name,
-      ));
-  const runOpenshell =
-    deps.runOpenshell ??
-    ((args: string[], opts?: Record<string, unknown>) => {
-      const runtime = require("../../adapters/openshell/runtime") as { runOpenshell: RunOpenshell };
-      return runtime.runOpenshell(args, opts);
-    });
-
-  const agentName = getSandbox(sandboxName)?.agent || "openclaw";
-  let agent: AgentStateInfo;
-  try {
-    agent = loadAgentDef(agentName);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `  ${YW}⚠${R} Could not resolve agent '${agentName}' to wipe workspace state: ${message}`,
-    );
-    return;
-  }
-
-  const dir = agent.configPaths?.dir;
-  if (!dir) return;
-
-  // Validate every manifest-derived relative path resolves under `dir`. A
-  // manifest declaring `state_dirs: ["../etc"]` or an absolute path like
-  // `/etc/passwd` would otherwise be shell-quoted and fed straight into
-  // `rm -rf -- ...` inside `cd ${dir}`, where the relative form would
-  // traverse outside the agent config directory. Reuses the
-  // `path.resolve()` + `startsWith()` boundary check from
-  // `removeShieldsState` above (PRA-6 #5455).
-  const resolvedDir = path.resolve(dir);
-  const validateManifestPath = (p: string): string | null => {
-    const resolved = path.resolve(resolvedDir, p);
-    if (resolved !== resolvedDir && !resolved.startsWith(`${resolvedDir}${path.sep}`)) {
-      console.warn(
-        `  ${YW}⚠${R} Skipping state path '${p}' from agent '${agentName}' manifest: ` +
-          `resolves outside ${dir}`,
-      );
-      return null;
-    }
-    return p;
-  };
-  const validStateDirs = agent.stateDirs
-    .map(validateManifestPath)
-    .filter((p): p is string => p !== null);
-  const validStateFiles = agent.stateFiles
-    .map((file) => validateManifestPath(file.path))
-    .filter((p): p is string => p !== null);
-
-  const targets = [
-    ...validStateDirs.map(shellQuote),
-    ...validStateFiles.map(shellQuote),
-    // Left unquoted so the sandbox shell expands the multi-agent
-    // `workspace-<name>` glob (#1260). A no-match leaves the literal token,
-    // which `rm -rf` silently ignores.
-    "workspace-*",
-  ];
-
-  // cd into the config dir first so relative names and the glob resolve there;
-  // `exit 0` keeps a partially provisioned (dir-absent) sandbox a clean no-op.
-  const script = `cd ${shellQuote(dir)} 2>/dev/null || exit 0; rm -rf -- ${targets.join(" ")}`;
-
-  const result = runOpenshell(
-    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "ignore", "ignore"],
-    },
-  );
-  if (result.status !== 0) {
-    console.warn(
-      `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
-        "re-onboarding with the same name may resurface old files.",
-    );
-  }
-}
+// Re-export so existing callers (tests, downstream code) keep working after
+// the wipe was extracted out of the destroy monolith (#5455 PRA-2).
+export { wipeSandboxState };
+export type { WipeSandboxStateDeps };
 
 export async function destroySandbox(
   sandboxName: string,
