@@ -22,8 +22,16 @@ run_dcode() {
 is_managed_secret_name() {
   case "$1" in
     SLACK_BOT_TOKEN | SLACK_APP_TOKEN) return 0 ;;
+    TELEGRAM_BOT_TOKEN | DISCORD_BOT_TOKEN) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+trim_whitespace() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
 }
 
 is_secret_shaped_value() {
@@ -43,6 +51,15 @@ is_secret_shaped_value() {
       [ "$len" -ge 20 ] && return 0
       ;;
   esac
+  if [[ "$value" =~ ^bot[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ ^[0-9]{8,10}:[A-Za-z0-9_-]{35}$ ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ ^[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}$ ]]; then
+    return 0
+  fi
   return 1
 }
 
@@ -75,11 +92,14 @@ assert_no_secret_env_file() {
   done <"$env_file"
   for line in "${lines[@]}"; do
     line="${line%$'\r'}"
+    line="$(trim_whitespace "$line")"
     [ -n "$line" ] || continue
     case "$line" in \#*) continue ;; esac
     key="${line%%=*}"
     [ "$key" != "$line" ] || continue
     value="${line#*=}"
+    key="$(trim_whitespace "$key")"
+    value="$(trim_whitespace "$value")"
     case "$value" in
       \"*\")
         value="${value#\"}"
@@ -90,6 +110,7 @@ assert_no_secret_env_file() {
         value="${value%\'}"
         ;;
     esac
+    value="$(trim_whitespace "$value")"
     is_managed_secret_name "$key" && continue
     if is_secret_shaped_value "$value"; then
       refuse_secret_env "$env_file" "$key"

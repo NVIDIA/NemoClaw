@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { type SpawnSyncReturns, execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -370,11 +370,124 @@ describe("LangChain Deep Agents Code image contracts", () => {
       DEEPAGENTS_ENV_FILE: emptyEnvFile,
       SLACK_BOT_TOKEN: "xoxb-1234567890-abcdefghij",
       SLACK_APP_TOKEN: "xapp-1-A1B2C3-1234567890-abcdefghij",
+      TELEGRAM_BOT_TOKEN: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
+      DISCORD_BOT_TOKEN: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
     });
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("rejects unmanaged runtime env vars holding Telegram-shaped bot tokens", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const emptyEnvFile = path.join(tempDir, "empty.env");
+    fs.writeFileSync(emptyEnvFile, "", "utf8");
+
+    const fakeTelegram = "987654321:AbcDefGhiJklMnoPqrStuVwxYz012345678";
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      DEEPAGENTS_ENV_FILE: emptyEnvFile,
+      STRAY_TG_TOKEN: fakeTelegram,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("STRAY_TG_TOKEN");
+    expect(result.stderr).not.toContain(fakeTelegram);
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects unmanaged runtime env vars holding Discord-shaped bot tokens", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const emptyEnvFile = path.join(tempDir, "empty.env");
+    fs.writeFileSync(emptyEnvFile, "", "utf8");
+
+    const fakeDiscord = "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ";
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      DEEPAGENTS_ENV_FILE: emptyEnvFile,
+      STRAY_DISCORD: fakeDiscord,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("STRAY_DISCORD");
+    expect(result.stderr).not.toContain(fakeDiscord);
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects Telegram and Discord token shapes written to the deepagents env file", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const envFile = path.join(tempDir, ".env");
+    const fakeTelegram = "111222333:AbcDefGhiJklMnoPqrStuVwxYz012345678";
+    fs.writeFileSync(envFile, `OTHER_BOT=${fakeTelegram}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OTHER_BOT");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(fakeTelegram);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("does not bypass classification when env-file values have surrounding whitespace", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const envFile = path.join(tempDir, ".env");
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    fs.writeFileSync(envFile, `  OPENAI_API_KEY   =   ${fakeSecret}   \n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).not.toContain(fakeSecret);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("recovers after the secret-bearing line is removed from the same env file", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const envFile = path.join(tempDir, ".env");
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    const secretLine = `OPENAI_API_KEY=${fakeSecret}`;
+    const cleanLine = "DISCORD_ALLOWED_USERS=alice,bob";
+    fs.writeFileSync(envFile, [secretLine, cleanLine].join("\n") + "\n", "utf8");
+
+    const rejected = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    expect(rejected.status).not.toBe(0);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+
+    const remaining = fs
+      .readFileSync(envFile, "utf8")
+      .split("\n")
+      .filter((line) => !line.startsWith("OPENAI_API_KEY="))
+      .join("\n");
+    fs.writeFileSync(envFile, remaining, "utf8");
+
+    const recovered = runWrapper(wrapperPath, ["-n", "hi"], { DEEPAGENTS_ENV_FILE: envFile });
+    expect(recovered.status).toBe(0);
+    expect(recovered.stdout).toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("prevents the dcode entry path from running when a runtime secret is rejected", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const emptyEnvFile = path.join(tempDir, "empty.env");
+    fs.writeFileSync(emptyEnvFile, "", "utf8");
+
+    const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      DEEPAGENTS_ENV_FILE: emptyEnvFile,
+      OPENAI_API_KEY: fakeSecret,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+    expect(fs.readFileSync(emptyEnvFile, "utf8")).toBe("");
   });
 
   it("passes through when no secret-shaped value is present in env or file", () => {
