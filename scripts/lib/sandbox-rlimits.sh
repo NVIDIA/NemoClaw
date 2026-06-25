@@ -43,18 +43,32 @@ _nemoclaw_verify_resource_limit() {
   _nemoclaw_limit_value="$2"
   _nemoclaw_limit_label="$3"
   _nemoclaw_limit_quiet="${4:-}"
-  _nemoclaw_effective_limit="$(ulimit "-S${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
+  _nemoclaw_limit_status=0
 
-  if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit" \
-    || [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then
-    if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
-      echo "[SECURITY] Effective ${_nemoclaw_limit_label} limit is ${_nemoclaw_effective_limit}; expected <= ${_nemoclaw_limit_value} (container runtime may restrict ulimit)" >&2
+  for _nemoclaw_limit_bound in soft hard; do
+    case "$_nemoclaw_limit_bound" in
+      soft)
+        _nemoclaw_limit_mode="S"
+        ;;
+      hard)
+        _nemoclaw_limit_mode="H"
+        ;;
+    esac
+    _nemoclaw_effective_limit="$(ulimit "-${_nemoclaw_limit_mode}${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
+
+    if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit" \
+      || [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then
+      if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
+        echo "[SECURITY] Effective ${_nemoclaw_limit_bound} ${_nemoclaw_limit_label} limit is ${_nemoclaw_effective_limit}; expected <= ${_nemoclaw_limit_value} (container runtime may restrict ulimit)" >&2
+      fi
+      _nemoclaw_limit_status=1
     fi
-    unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet _nemoclaw_effective_limit
-    return 1
-  fi
+  done
 
-  unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet _nemoclaw_effective_limit
+  _nemoclaw_limit_return="$_nemoclaw_limit_status"
+  unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet
+  unset _nemoclaw_limit_status _nemoclaw_limit_bound _nemoclaw_limit_mode _nemoclaw_effective_limit
+  return "$_nemoclaw_limit_return"
 }
 
 # Harden RLIMITs at PID 1 (root) so caps are inherited by entrypoint descendants

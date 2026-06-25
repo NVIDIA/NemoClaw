@@ -1,7 +1,7 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -57,25 +57,40 @@ function runLoggedDockerShell(command: string, tmp: string) {
   return spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
 }
 
-function copyRlimitFixture(rlimitLib: string) {
-  fs.copyFileSync(SANDBOX_RLIMITS, rlimitLib);
+function copyRlimitFixture(rlimitLib: string): void {
+  copyRlimitFixtureWithNprocLimit(rlimitLib, process.platform === "darwin" ? 4096 : 512);
+}
+
+function copyRlimitFixtureWithNprocLimit(rlimitLib: string, limit: number): void {
+  fs.writeFileSync(
+    rlimitLib,
+    fs
+      .readFileSync(SANDBOX_RLIMITS, "utf-8")
+      .replace(/^NEMOCLAW_SANDBOX_NPROC_LIMIT=512$/m, `NEMOCLAW_SANDBOX_NPROC_LIMIT=${limit}`),
+  );
 }
 
 function rlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 }
 
-function parseProbeOutput(stdout: string): Record<string, string> {
+type ProbeKey = "nproc" | "nofile" | "raise_nproc" | "raise_nofile";
+type ProbeValues = Partial<Record<ProbeKey | "fork_status" | "spawned", string>>;
+
+function parseProbeOutput(stdout: string): ProbeValues {
   return Object.fromEntries(
     stdout
       .trim()
       .split("\n")
       .filter(Boolean)
-      .map((line) => line.split("=", 2) as [string, string]),
-  );
+      .map((line): [string, string] => {
+        const [key, value = ""] = line.split("=", 2);
+        return [key, value];
+      }),
+  ) as ProbeValues;
 }
 
-function expectSystemRlimitHookEnforcesLimits(hookPath: string) {
+function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   const probe = [
     "set -euo pipefail",
     `source ${JSON.stringify(hookPath)}`,
@@ -109,7 +124,52 @@ function expectSystemRlimitHookEnforcesLimits(hookPath: string) {
   expect(Number(values.raise_nofile)).not.toBe(0);
 }
 
+function expectHookDeniesBoundedForkStorm(hookPath: string): void {
+  const probe = [
+    "set -u",
+    `source ${JSON.stringify(hookPath)}`,
+    'spawned="0"',
+    'fork_status="0"',
+    "pids=()",
+    "cleanup() {",
+    "  set +e",
+    '  for pid in "${pids[@]:-}"; do kill "$pid" 2>/dev/null || true; done',
+    "}",
+    "trap cleanup EXIT",
+    "for i in $(seq 1 5000); do",
+    "  sleep 60 &",
+    '  fork_status="$?"',
+    '  [ "$fork_status" -eq 0 ] || break',
+    '  pids+=("$!")',
+    '  spawned="$i"',
+    '  [ "$i" -lt 96 ] || break',
+    "done",
+    'printf "spawned=%s\\n" "$spawned"',
+    'printf "fork_status=%s\\n" "$fork_status"',
+  ].join("\n");
+  const result: SpawnSyncReturns<string> = spawnSync(
+    "bash",
+    ["--noprofile", "--norc", "-c", probe],
+    {
+      encoding: "utf-8",
+      timeout: 10000,
+    },
+  );
+
+  expect(result.status, result.stderr).toBe(0);
+  const values = parseProbeOutput(result.stdout);
+  const spawned = Number(values.spawned ?? "5000");
+  const forkStatus = Number(values.fork_status ?? "0");
+  const forkStderr = result.stderr;
+  const deniedByRlimit =
+    forkStatus !== 0 || /Resource temporarily unavailable|fork: retry|fork/i.test(forkStderr);
+  expect(deniedByRlimit, `spawned=${spawned} stderr=${forkStderr}`).toBe(true);
+  expect(spawned).toBeLessThan(5000);
+}
+
 describe("sandbox rlimit system hooks (#2173)", () => {
+  const forkStormIt = process.platform === "linux" ? it : it.skip;
+
   it("connect shell reports numeric nproc <=4096 and nofile <=65536 and denies raising limits after system-wide rlimit hook startup", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-rlimit-hooks-"));
@@ -143,6 +203,39 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  forkStormIt(
+    "connect shell hook denies a bounded 5000-process fork storm with Resource temporarily unavailable",
+    () => {
+      const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fork-storm-rlimit-"));
+      const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+      const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+      const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+      const bashrc = path.join(tmp, "bash.bashrc");
+
+      try {
+        fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+        copyRlimitFixtureWithNprocLimit(rlimitLib, 128);
+        fs.writeFileSync(bashrc, "# existing bashrc\n");
+        const command = dockerRunCommandBetween(
+          dockerfile,
+          "# System-wide proxy hooks",
+          "# Install OpenClaw CLI + PyYAML",
+        )
+          .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+          .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+          .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
+          .replaceAll("/etc/bash.bashrc", bashrc);
+
+        const result = runLoggedDockerShell(command, tmp);
+        expect(result.status, result.stderr).toBe(0);
+        expectHookDeniesBoundedForkStorm(rlimitHook);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("stale OpenClaw base replay preserves effective connect-shell rlimit hooks", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");

@@ -96,23 +96,26 @@ COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
 COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+# Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
+# only repairs stale bases predating the v0.0.69 base layer, which may lack the
+# profile hook, bashrc hook, or root-owned helper mode. Remove it once the
+# minimum supported Hermes sandbox base tag guarantees those artifacts and
+# test/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && mkdir -p /etc/profile.d \
-    && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \
-        printf '%s\n' \
-            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
-            > /etc/profile.d/nemoclaw-rlimits.sh \
-        && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh; \
-    fi \
+    && printf '%s\n' \
+        '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+        > /etc/profile.d/nemoclaw-rlimits.sh \
+    && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
     && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
     && { printf '%s\n' \
           '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
           '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
           ''; \
         if [ -f /etc/bash.bashrc ]; then \
-          grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc; \
+          grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc || true; \
         fi; \
       } > /etc/bash.bashrc.new \
     && mv /etc/bash.bashrc.new /etc/bash.bashrc \
