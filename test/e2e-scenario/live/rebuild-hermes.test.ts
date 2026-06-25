@@ -6,15 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText, type HostCliClient } from "../fixtures/clients/index.ts";
+import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-hermes.sh.
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -304,6 +303,13 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     agentVersion: OLD_HERMES_REGISTRY_VERSION,
     messaging: { schemaVersion: 1, plan: messagingPlan },
   };
+  expect(
+    Object.prototype.hasOwnProperty.call(
+      registry.sandboxes[SANDBOX_NAME],
+      "providerCredentialHashes",
+    ),
+    "legacy providerCredentialHashes must stay out of the curated rebuild registry; credential fingerprints live on messaging plan bindings",
+  ).toBe(false);
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
 
