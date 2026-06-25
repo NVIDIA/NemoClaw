@@ -182,15 +182,25 @@ Use the exact template structure below. Fill in each section based on the diff (
 - [ ] Doc only (prose changes, no code sample modifications)
 - [ ] Doc only (includes code sample changes)
 
+## Quality Gates
+<!-- Check all that apply. For any "covered by existing tests", "not applicable", or waiver entry, add a brief justification on the same line or in the Changes section. -->
+- [ ] Tests added or updated for changed behavior
+- [ ] Existing tests cover changed behavior — justification:
+- [ ] Tests not applicable — justification:
+- [ ] Docs updated for user-facing behavior changes
+- [ ] Docs not applicable — justification:
+- [ ] Sensitive paths changed (security, policy, credentials, preflight, onboarding, inference, runner, sandbox, or messaging)
+- [ ] Sensitive-path review completed or maintainer-approved waiver recorded — reviewer/approval link/justification:
+- [ ] Non-success, skipped, or missing CI check accepted by maintainer — check name, approval link, and follow-up issue:
+
 ## Verification
 <!-- Check each item you ran and confirmed. Leave unchecked items you skipped. Doc-only changes do not require npm test unless you ran it. -->
 - [ ] PR description includes the DCO sign-off declaration and every commit appears as `Verified` in GitHub
 - [ ] Git hooks passed during commit and push, or `npx prek run --from-ref main --to-ref HEAD` passes
 - [ ] Targeted tests pass for changed behavior
 - [ ] Full `npm test` passes (broad runtime changes only)
-- [ ] Tests added or updated for new or changed behavior
+- [ ] Quality Gates section completed with required justifications or waivers
 - [ ] No secrets, API keys, or credentials committed
-- [ ] Docs updated for user-facing behavior changes
 - [ ] `npm run docs` builds without warnings (doc changes only)
 - [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
@@ -208,6 +218,7 @@ Follow these rules when filling in the template:
 - **Related Issue:** Include `Fixes #NNN` or `Closes #NNN` if an issue exists. Remove the section entirely if there is no related issue.
 - **Changes:** Bullet list of key changes. Be specific — reference file names, commands, or behaviors that changed.
 - **Type of Change:** Check exactly one box. Use `[x]` for checked, `[ ]` for unchecked.
+- **Quality Gates:** Check every line that applies to the diff. If tests/docs are not needed or existing coverage is sufficient, include the justification. If sensitive paths changed or a non-success CI check is accepted, record the authorized reviewer, maintainer-approved waiver, approval link, or follow-up issue.
 - **Verification:** Check only the boxes for steps you actually ran and confirmed passing, or for Git hooks that passed during normal commit and push. Do not check boxes for steps you skipped or did not verify. The DCO declaration and GitHub verification checkbox is mandatory before PR creation because Step 4 must pass first. For doc-only changes, `npm test` is not required; leave it unchecked unless you ran it.
 - **DCO Sign-Off:** Replace `{name}` and `{email}` with values from `git config user.name` and `git config user.email`.
 
