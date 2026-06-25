@@ -3,16 +3,20 @@
 
 import { Flags } from "@oclif/core";
 
-import { listAgents } from "../agent/defs";
 import { describeAgentFlag } from "./agent-flag-help";
 import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
 
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 // Resolve the installed agent runtimes for the `--agent` help, falling back to
-// the generic description if the agent registry can't be read (#5779).
+// the generic description if the agent registry can't be read (#5779). The
+// agent registry is loaded lazily via require (not a top-level import) so this
+// module — evaluated at command-class load via `static flags = ...` — does not
+// pull the agent/defs -> runner chain into the module-linking graph, matching
+// how other onboard modules consume agent/defs and avoiding a load cycle.
 function agentFlagDescription(): string {
   try {
+    const { listAgents } = require("../agent/defs") as typeof import("../agent/defs");
     return describeAgentFlag(listAgents());
   } catch {
     return describeAgentFlag([]);
