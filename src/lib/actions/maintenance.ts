@@ -73,7 +73,26 @@ export async function backupAll(): Promise<void> {
       continue;
     }
     console.log(`  Backing up '${sb.name}'...`);
-    const result = sandboxState.backupSandboxState(sb.name);
+    let result: sandboxState.BackupResult;
+    try {
+      result = sandboxState.backupSandboxState(sb.name);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only skip the orphan-manifest case (#5734): an agent name in the
+      // registry has no corresponding manifest on disk (e.g. orphan from a
+      // previous higher-version install). The upgrade itself re-introduces
+      // the missing manifest, so swallowing the error here is safe and lets
+      // the rest of the batch back up. Anything else (disk full, SSH
+      // timeout, permission denied, programming bugs) must propagate so the
+      // installer aborts instead of marching forward with a silently
+      // corrupt or absent backup.
+      if (!/^Agent '[^']*' not found/.test(msg)) {
+        throw err;
+      }
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
+      skipped++;
+      continue;
+    }
     if (result.success) {
       console.log(
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
