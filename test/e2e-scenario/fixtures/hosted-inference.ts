@@ -49,10 +49,13 @@ export function requireHostedInferenceConfig(
     endpointUrl,
     model,
     env: {
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
       NEMOCLAW_ENDPOINT_URL: endpointUrl,
       NEMOCLAW_MODEL: model,
       NEMOCLAW_COMPAT_MODEL: model,
+      NEMOCLAW_PREFERRED_API: env.NEMOCLAW_PREFERRED_API || "openai-completions",
+      [HOSTED_INFERENCE_SECRET]: apiKey,
       [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
     },
     contractLabel: "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",

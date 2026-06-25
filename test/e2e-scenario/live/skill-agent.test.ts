@@ -12,6 +12,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Focused Vitest live replacement coverage for test/e2e/test-skill-agent-e2e.sh.
@@ -220,10 +221,8 @@ runSkillAgentTest(
       skip("Docker is required for skill-agent E2E");
     }
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "skill-agent",
@@ -232,7 +231,7 @@ runSkillAgentTest(
       legacySource: "test/e2e/test-skill-agent-e2e.sh",
       contract: [
         "Docker is available before onboarding",
-        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "nemoclaw onboard creates/recreates a real OpenClaw sandbox",
         "skill-smoke-fixture is injected into sandbox and home skill roots",
         "openclaw agent reads SKILL.md and returns SKILL_SMOKE_VERIFY_K9X2",
@@ -298,9 +297,8 @@ runSkillAgentTest(
         artifactName: "onboard-skill-agent",
         env: {
           ...buildAvailabilityProbeEnv(),
-          NVIDIA_INFERENCE_API_KEY: apiKey,
+          ...hosted.env,
           NEMOCLAW_AGENT: "openclaw",
-          NEMOCLAW_PROVIDER: "cloud",
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
           // This migration targets skill injection + agent skill discovery, not
@@ -353,7 +351,7 @@ runSkillAgentTest(
         cwd: REPO_ROOT,
         env: {
           ...buildAvailabilityProbeEnv(),
-          NVIDIA_INFERENCE_API_KEY: apiKey,
+          ...hosted.env,
           SANDBOX_NAME,
           SKILL_ID,
           VERIFY_TOKEN: VERIFY_PHRASE,

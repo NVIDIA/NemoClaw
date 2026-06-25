@@ -13,11 +13,9 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import {
-  DEFAULT_HOSTED_INFERENCE_BASE_URL,
   DEFAULT_HOSTED_INFERENCE_MODEL,
-  HOSTED_INFERENCE_CREDENTIAL_ENV,
-  HOSTED_INFERENCE_PROVIDER,
   HOSTED_INFERENCE_PROVIDER_NAME,
+  requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
@@ -33,15 +31,9 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const SENTINEL = "/var/run/nemoclaw-launchable-ready";
-const USE_HOSTED_COMPATIBLE = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
 const MODEL =
-  process.env.NEMOCLAW_MODEL ??
-  process.env.NEMOCLAW_COMPAT_MODEL ??
-  (USE_HOSTED_COMPATIBLE ? DEFAULT_HOSTED_INFERENCE_MODEL : "nvidia/nemotron-3-super-120b-a12b");
-const EXPECTED_ROUTE_PROVIDER = USE_HOSTED_COMPATIBLE
-  ? HOSTED_INFERENCE_PROVIDER_NAME
-  : "nvidia-prod";
-const HOSTED_ENDPOINT_URL = process.env.NEMOCLAW_ENDPOINT_URL ?? DEFAULT_HOSTED_INFERENCE_BASE_URL;
+  process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
+const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
 const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
@@ -68,19 +60,6 @@ function runEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
   };
-}
-
-function hostedCompatibleOnboardEnv(apiKey: string): NodeJS.ProcessEnv {
-  return USE_HOSTED_COMPATIBLE
-    ? {
-        [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
-        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
-        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
-        NEMOCLAW_ENDPOINT_URL: HOSTED_ENDPOINT_URL,
-        NEMOCLAW_COMPAT_MODEL: MODEL,
-        NEMOCLAW_PREFERRED_API: "openai-completions",
-      }
-    : {};
 }
 
 async function runBash(
@@ -263,11 +242,8 @@ runLaunchableSmokeTest(
       workflowRetirement: "deferred to #5098 Phase 11",
     });
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(
-      USE_HOSTED_COMPATIBLE || apiKey.startsWith("nvapi-"),
-      "NVIDIA_INFERENCE_API_KEY must start with nvapi- unless hosted-compatible mode is enabled",
-    ).toBe(true);
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
 
@@ -293,7 +269,7 @@ runLaunchableSmokeTest(
         "10",
         "-H",
         `Authorization: Bearer ${apiKey}`,
-        "https://inference-api.nvidia.com/v1/models",
+        `${hosted.endpointUrl}/models`,
       ],
       {
         artifactName: "prereq-inference-api-models",
@@ -377,8 +353,7 @@ runLaunchableSmokeTest(
         cwd: cloneDir,
         env: runEnv({
           PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
-          NVIDIA_INFERENCE_API_KEY: apiKey,
-          ...hostedCompatibleOnboardEnv(apiKey),
+          ...hosted.env,
           NEMOCLAW_MODEL: MODEL,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -457,7 +432,7 @@ runLaunchableSmokeTest(
         "30",
         "-X",
         "POST",
-        "https://inference-api.nvidia.com/v1/chat/completions",
+        `${hosted.endpointUrl}/chat/completions`,
         "-H",
         "Content-Type: application/json",
         "-H",

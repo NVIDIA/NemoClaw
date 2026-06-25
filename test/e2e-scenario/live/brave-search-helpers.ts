@@ -185,7 +185,6 @@ export async function onboardBrave(
         env: commandEnv({
           BRAVE_API_KEY: braveKey,
           NVIDIA_INFERENCE_API_KEY: inferenceKey,
-          NVIDIA_API_KEY: inferenceKey,
         }),
         redactionValues,
         timeoutMs: 20 * 60_000,
