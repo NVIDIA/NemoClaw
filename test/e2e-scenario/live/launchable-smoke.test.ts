@@ -26,7 +26,14 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const SENTINEL = "/var/run/nemoclaw-launchable-ready";
-const MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+const USE_HOSTED_COMPATIBLE = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+const MODEL =
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  (USE_HOSTED_COMPATIBLE ? "nvidia/nvidia/nemotron-3-ultra" : "nvidia/nemotron-3-super-120b-a12b");
+const EXPECTED_ROUTE_PROVIDER = USE_HOSTED_COMPATIBLE ? "compatible-endpoint" : "nvidia-prod";
+const HOSTED_ENDPOINT_URL =
+  process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1";
 const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
@@ -53,6 +60,19 @@ function runEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
   };
+}
+
+function hostedCompatibleOnboardEnv(apiKey: string): NodeJS.ProcessEnv {
+  return USE_HOSTED_COMPATIBLE
+    ? {
+        COMPATIBLE_API_KEY: apiKey,
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PROVIDER: "custom",
+        NEMOCLAW_ENDPOINT_URL: HOSTED_ENDPOINT_URL,
+        NEMOCLAW_COMPAT_MODEL: MODEL,
+        NEMOCLAW_PREFERRED_API: "openai-completions",
+      }
+    : {};
 }
 
 async function runBash(
@@ -236,9 +256,11 @@ runLaunchableSmokeTest(
     });
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    if (!USE_HOSTED_COMPATIBLE) {
+      expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
+        true,
+      );
+    }
 
     expect(fs.existsSync(LAUNCHABLE_SCRIPT), `${LAUNCHABLE_SCRIPT} missing`).toBe(true);
 
@@ -337,6 +359,7 @@ runLaunchableSmokeTest(
         env: runEnv({
           PATH: `/usr/local/bin:${process.env.PATH ?? ""}`,
           NVIDIA_INFERENCE_API_KEY: apiKey,
+          ...hostedCompatibleOnboardEnv(apiKey),
           NEMOCLAW_MODEL: MODEL,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
@@ -388,7 +411,7 @@ runLaunchableSmokeTest(
       timeoutMs: 30_000,
     });
     expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(/nvidia-prod/i);
+    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
 
     const gatewayContainer = await runBash(
       host,

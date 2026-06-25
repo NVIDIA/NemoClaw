@@ -52,6 +52,7 @@ export function env(
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_FRESH: "1",
     NEMOCLAW_PROVIDER: PROVIDER,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
@@ -222,7 +223,7 @@ export async function installSandbox(
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
     install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
       {
         artifactName: `${agent}-install-attempt-${attempt}`,
         cwd: REPO_ROOT,
