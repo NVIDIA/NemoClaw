@@ -568,7 +568,8 @@ The wrapper inherits the remote command's exit code, so host-side pipelines can 
 Streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
 
 Common OpenClaw flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`.
-For OpenClaw sandboxes and registry fallbacks, invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+For OpenClaw sandboxes and registry fallbacks, `$$nemoclaw <name> agent --help` prints the wrapper-level summary locally.
+Invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
 For registered terminal-runtime sandboxes, bare invocations and `--help` are forwarded to the terminal command, so a LangChain Deep Agents Code sandbox receives `dcode` for `$$nemoclaw <name> agent` and `dcode --help` for `$$nemoclaw <name> agent --help`.
 
 Host-side validation runs before the sandbox dispatch:

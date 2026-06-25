@@ -91,6 +91,7 @@ import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -214,11 +215,19 @@ function getPassthroughCommand(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
 ): string[] | null {
   if (lookup.kind === "missing") {
+    if (hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
     return ["openclaw", "agent", ...extraArgs];
   }
 
   const agentName = lookup.agent;
   if (agentName === null || agentName === "openclaw") {
+    if (hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
     return ["openclaw", "agent", ...extraArgs];
   }
 

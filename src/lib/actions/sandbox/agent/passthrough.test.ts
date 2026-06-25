@@ -81,6 +81,18 @@ describe("runAgentPassthrough", () => {
     );
   });
 
+  it("keeps OpenClaw --help local so wrapper docs parity stays offline", async () => {
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("alpha", { extraArgs: ["--help"] });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
+  });
+
   it("dispatches Deep Agents Code help to dcode instead of local wrapper help (#5790)", async () => {
     getSandboxMock.mockReturnValueOnce({ agent: "langchain-deepagents-code" });
     await runAgentPassthrough("dcode-help", { extraArgs: ["--help"] });
@@ -112,6 +124,18 @@ describe("runAgentPassthrough", () => {
       ["openclaw", "agent", "--agent", "main", "-m", "hi"],
       { tty: false },
     );
+  });
+
+  it("keeps registry-miss --help local for offline docs parity", async () => {
+    getSandboxMock.mockReturnValueOnce(null);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runAgentPassthrough("placeholder-sandbox", { extraArgs: ["--help"] });
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(ensureLiveMock).not.toHaveBeenCalled();
+    expect(execMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the registry read throws and never spawns OpenShell exec", async () => {
