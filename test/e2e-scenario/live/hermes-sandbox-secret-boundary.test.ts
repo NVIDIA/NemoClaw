@@ -20,13 +20,17 @@ const RAW_REFRESH_TOKEN = "raw-refresh-token";
 const liveTest = process.env.NEMOCLAW_RUN_E2E_SCENARIOS === "1" ? test : test.skip;
 
 const IMAGE_INSPECTION_SCRIPT = String.raw`
+import os
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_raw_secret_keys = set()
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_remote_toolsets = {
     "web",
@@ -67,6 +71,8 @@ def env_violations(path: Path) -> list[str]:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
         if key in allowed_nonsecret_keys:
+            continue
+        if key in allowed_raw_secret_keys:
             continue
         if not secret_key_re.search(key):
             continue
@@ -120,6 +126,9 @@ if not env_path.is_file():
 if not config_path.is_file():
     print(f"{config_path} missing", file=sys.stderr)
     sys.exit(1)
+if "API_SERVER_KEY=" in env_path.read_text(encoding="utf-8"):
+    print("API_SERVER_KEY must be minted at sandbox startup, not baked into the image", file=sys.stderr)
+    sys.exit(1)
 
 violations = env_violations(env_path)
 if violations:
@@ -138,6 +147,31 @@ if missing:
 if "no_mcp" in api_server_toolsets:
     print("platform_toolsets.api_server unexpectedly disables default MCP servers with no_mcp", file=sys.stderr)
     sys.exit(1)
+
+multipart = subprocess.run(
+    ["/opt/hermes/.venv/bin/python", "-c", "import multipart; print(multipart.__version__)"],
+    text=True,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    timeout=15,
+)
+if multipart.returncode != 0:
+    print("python-multipart import failed: " + multipart.stderr[-300:], file=sys.stderr)
+    sys.exit(1)
+
+for tool in ("gcc", "g++", "make"):
+    if shutil.which(tool):
+        print(f"{tool} survived Hermes runtime image purge", file=sys.stderr)
+        sys.exit(1)
+
+master, slave = os.openpty()
+try:
+    if not os.ttyname(slave).startswith("/dev/pts/"):
+        print("openpty did not allocate from /dev/pts", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.close(master)
+    os.close(slave)
 `;
 
 const MANAGED_TOOL_INSPECTION_SCRIPT = String.raw`
@@ -148,6 +182,7 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_env_lines = {
     "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
@@ -186,6 +221,8 @@ def env_violations(path: Path) -> list[str]:
         key, value = stripped.split("=", 1)
         key = key.strip()
         if key in allowed_nonsecret_keys:
+            continue
+        if key in allowed_raw_secret_keys:
             continue
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
@@ -236,7 +273,57 @@ if missing_env:
 if missing_config:
     print("managed-tool config.yaml missing expected fragments: " + ", ".join(missing_config), file=sys.stderr)
     sys.exit(1)
-`;
+	`;
+
+const RUNTIME_API_KEY_PROBE_SCRIPT = String.raw`
+	set -euo pipefail
+	if ! /usr/local/bin/nemoclaw-start true >/tmp/nemoclaw-start-api-key-probe.log 2>&1; then
+	  cat /tmp/nemoclaw-start-api-key-probe.log >&2
+	  exit 1
+	fi
+	python3 - <<'PY'
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+env_path = Path("/sandbox/.hermes/.env")
+values = []
+for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if line.startswith("export "):
+        line = line[len("export ") :].lstrip()
+    if line.startswith("API_SERVER_KEY="):
+        value = line.split("=", 1)[1].strip().strip("\"'")
+        values.append(value)
+
+if len(values) != 1:
+    print(f"expected exactly one API_SERVER_KEY, found {len(values)}", file=sys.stderr)
+    sys.exit(1)
+
+token = values[0]
+strict_hash_ok = subprocess.call(
+    ["sha256sum", "-c", "/etc/nemoclaw/hermes.config-hash", "--status"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+) == 0
+compat_hash_ok = subprocess.call(
+    ["sha256sum", "-c", "/sandbox/.hermes/.config-hash", "--status"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+) == 0
+
+print(json.dumps({
+    "key_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+    "key_hex": bool(re.fullmatch(r"[0-9a-f]{64}", token)),
+    "key_len": len(token),
+    "strict_hash_ok": strict_hash_ok,
+    "compat_hash_ok": compat_hash_ok,
+}, sort_keys=True))
+PY
+	`;
 
 function safeTag(value: string): string {
   return value.replace(/[^A-Za-z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "local";
@@ -404,7 +491,7 @@ async function inspectImageBoundary(probe: DockerProbe, image: string): Promise<
 
   expect(
     result.exitCode,
-    `Hermes image should have no raw secret-shaped .env values and preserve remote toolsets\n${resultText(result)}`,
+    `Hermes image should have no raw external secret-shaped .env values and preserve remote toolsets\n${resultText(result)}`,
   ).toBe(0);
 }
 
@@ -520,6 +607,62 @@ async function expectStartupRejectsRuntimeEnvEntry(
   expect(output, `Hermes startup rejection must not print ${key}'s raw value`).not.toContain(value);
 }
 
+type RuntimeApiKeyProbe = {
+  readonly key_hash: string;
+  readonly key_hex: boolean;
+  readonly key_len: number;
+  readonly strict_hash_ok: boolean;
+  readonly compat_hash_ok: boolean;
+};
+
+async function probeRuntimeApiServerKey(
+  probe: DockerProbe,
+  image: string,
+  label: string,
+): Promise<RuntimeApiKeyProbe> {
+  const result = await probe.run(
+    ["run", "--rm", "--entrypoint", "/bin/bash", image, "-lc", RUNTIME_API_KEY_PROBE_SCRIPT],
+    {
+      artifactName: `runtime-api-server-key-${label}`,
+      returnRaw: true,
+      timeoutMs: RUN_TIMEOUT_MS,
+    },
+  );
+
+  expect(
+    result.exitCode,
+    `Hermes startup should mint API_SERVER_KEY at runtime and refresh hashes\n${resultText(result)}`,
+  ).toBe(0);
+  return JSON.parse(result.stdout.trim()) as RuntimeApiKeyProbe;
+}
+
+async function expectRuntimeApiServerKeyPerSandbox(
+  probe: DockerProbe,
+  image: string,
+): Promise<void> {
+  const first = await probeRuntimeApiServerKey(probe, image, "first");
+  const second = await probeRuntimeApiServerKey(probe, image, "second");
+
+  for (const [label, probeResult] of [
+    ["first", first],
+    ["second", second],
+  ] as const) {
+    expect(probeResult.key_hex, `${label} runtime API_SERVER_KEY should be 32-byte hex`).toBe(true);
+    expect(probeResult.key_len, `${label} runtime API_SERVER_KEY length`).toBe(64);
+    expect(probeResult.strict_hash_ok, `${label} strict Hermes config hash should validate`).toBe(
+      true,
+    );
+    expect(
+      probeResult.compat_hash_ok,
+      `${label} compatibility Hermes config hash should validate`,
+    ).toBe(true);
+  }
+  expect(
+    first.key_hash,
+    "two sandboxes from the same Hermes image must not share API_SERVER_KEY",
+  ).not.toBe(second.key_hash);
+}
+
 liveTest(
   "hermes sandbox secret boundary keeps raw secrets out of images and startup",
   async ({ artifacts, cleanup, secrets, skip }) => {
@@ -555,7 +698,10 @@ liveTest(
       prebuiltManagedImage: Boolean(process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE),
       contract: [
         "Docker is required and prebuilt image env vars must reference inspectable images",
-        "Hermes .env in the sandbox image is a real file and has no raw secret-shaped values",
+        "Hermes .env in the sandbox image is a real file with no baked API_SERVER_KEY or raw external secret-shaped values",
+        "Hermes final image imports python-multipart from /opt/hermes/.venv and has no gcc, g++, or make commands",
+        "Hermes final image can allocate a PTY through /dev/pts",
+        "Hermes startup mints a unique API_SERVER_KEY per sandbox and refreshes strict and compatibility config hashes",
         "Hermes config preserves api_server remote platform toolsets and does not use no_mcp",
         "managed-tool image keeps gateway auth tokens out of sandbox env/config while preserving gateway URLs/config",
         "nemoclaw-start rejects raw secret-shaped .env entries without echoing their values",
@@ -598,6 +744,7 @@ liveTest(
 
     await inspectImageBoundary(probe, image);
     await inspectManagedToolBoundary(probe, managedImage);
+    await expectRuntimeApiServerKeyPerSandbox(probe, image);
     await expectStartupRejectsEnvFileEntry(
       probe,
       image,
@@ -640,6 +787,7 @@ liveTest(
       managedImage,
       assertions: {
         imageEnvSecretBoundaryVerified: true,
+        runtimeApiServerKeyPerSandboxVerified: true,
         imageRemoteToolsetsVerified: true,
         managedToolGatewayAuthBoundaryVerified: true,
         envFileSecretRejectionsVerified: true,

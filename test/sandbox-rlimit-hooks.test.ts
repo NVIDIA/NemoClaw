@@ -361,6 +361,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const rlimitLib = path.join(localLib, "sandbox-rlimits.sh");
     const initLib = path.join(localLib, "sandbox-init.sh");
     const validator = path.join(localLib, "validate-hermes-env-secret-boundary.py");
+    const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
+    const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
     const startBin = path.join(tmp, "nemoclaw-start");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
@@ -371,6 +373,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       copyRlimitFixture(rlimitLib);
       fs.writeFileSync(initLib, "# init fixture\n");
       fs.writeFileSync(validator, "# validator fixture\n");
+      fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
+      fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const command = dockerRunCommandBetween(
@@ -381,6 +385,8 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
+        .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
+        .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", profileHook)
         .replaceAll("/etc/profile.d", path.dirname(profileHook))

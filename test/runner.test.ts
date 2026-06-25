@@ -926,6 +926,8 @@ describe("regression guards", () => {
       path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
       path.join("agents", "openclaw", "policy-permissive.yaml"),
+      path.join("agents", "hermes", "policy-additions.yaml"),
+      path.join("agents", "hermes", "policy-permissive.yaml"),
     ]) {
       it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
         const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));

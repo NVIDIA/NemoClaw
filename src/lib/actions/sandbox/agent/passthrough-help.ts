@@ -27,6 +27,13 @@ export function printAgentPassthroughHelp(): void {
     "  Common OpenClaw flags: -m <text>, --session-id <id>, --agent <id>, --json, --thinking <level>.",
   );
   console.log("");
+  console.log("  OpenClaw invocations must include at least one target selector — --agent,");
+  console.log("  --session-id, --session-key, or --to. On Ready/Running OpenClaw sandboxes,");
+  console.log("  invocations without a selector exit 2 with `No target session selected`; on a");
+  console.log(
+    "  non-Ready sandbox the phase guard fires first and exits 1 with recovery commands.",
+  );
+  console.log("");
   console.log(`  For terminal-runtime help, run \`${CLI_NAME} <name> agent --help\` to view the`);
   console.log("  upstream command help from inside the sandbox.");
   console.log("");

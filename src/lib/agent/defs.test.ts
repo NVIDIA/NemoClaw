@@ -57,6 +57,8 @@ describe("agent definitions", () => {
       "teams",
     ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
+    // OpenClaw uses device_pairing web auth — no fetchable bearer token.
+    expect(openclaw.webAuth).toEqual({ method: "none", env: null });
     // #5027: openclaw.json must be declared as a durable state file so
     // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
     expect(openclaw.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
@@ -88,6 +90,8 @@ describe("agent definitions", () => {
       auth: "session",
     });
     expect(hermes.dashboardUi).toBeNull();
+    // Hermes' OpenAI-compatible API uses a bearer token read from API_SERVER_KEY.
+    expect(hermes.webAuth).toEqual({ method: "bearer_token", env: "API_SERVER_KEY" });
     expect(hermes.messagingPlatforms).toEqual([
       "telegram",
       "discord",
@@ -124,7 +128,7 @@ describe("agent definitions", () => {
       format: "toml",
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
-    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills"]);
+    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
     expect(deepAgentsCode.stateFiles).toEqual([
       { path: "config.toml", strategy: "copy" },
       { path: "hooks.json", strategy: "copy" },

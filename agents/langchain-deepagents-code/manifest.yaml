@@ -36,12 +36,14 @@ config:
   format: toml
 
 # ── State directories ──────────────────────────────────────────
-# Upstream Deep Agents Code stores app state under ~/.deepagents/.state and
-# user-authored skills under ~/.deepagents/skills. The wrapper sets HOME=/sandbox
-# before launching dcode, so these paths resolve under /sandbox/.deepagents.
+# dcode runs with HOME=/sandbox, so its state dirs resolve under
+# /sandbox/.deepagents. The built-in skill-creator writes user skills to
+# agent/skills (per its init_skill.py), so it must be backed up alongside
+# .state and skills — otherwise skills are silently lost on rebuild.
 state_dirs:
   - .state
   - skills
+  - agent/skills
 
 # ── Top-level durable state files ───────────────────────────────
 # config.toml is non-secret NemoClaw-generated provider/model configuration.

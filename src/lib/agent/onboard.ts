@@ -26,6 +26,7 @@ import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
+import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
 
@@ -512,6 +513,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
@@ -523,6 +525,7 @@ export function printDashboardUi(
     for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printBearerTokenApiAccess(sandboxName, agent, cliName);
     printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     printAdditionalForwardPorts(agent, info.port, deps.buildControlUiUrls);
     return;
