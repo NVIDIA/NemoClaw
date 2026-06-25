@@ -37,13 +37,37 @@ const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const DEEPAGENTS_CODE_AGENT = "langchain-deepagents-code";
-const DCODE_BUSY_PROBE_SCRIPT = String.raw`processes="$(ps -eo pid=,args= 2>/dev/null)" || exit 2
+const DCODE_BUSY_PROBE_SCRIPT = String.raw`has_dcode_runtime=0
+dc_bin="$(printf 'd%s' code)"
+da_bin="$(printf 'deepagents-%s' code)"
+home_dir="$HOME"
+[ -n "$home_dir" ] || home_dir=/sandbox
+[ -d /sandbox/.deepagents ] && has_dcode_runtime=1
+[ -d "$home_dir/.deepagents" ] && has_dcode_runtime=1
+command -v "$dc_bin" >/dev/null 2>&1 && has_dcode_runtime=1
+command -v "$da_bin" >/dev/null 2>&1 && has_dcode_runtime=1
+processes="$(ps -eo pid=,args= 2>/dev/null)" || {
+  [ "$has_dcode_runtime" -eq 1 ] && exit 2
+  exit 3
+}
 printf '%s\n' "$processes" | awk '
 /python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code/ { found = 1 }
 /(^|[[:space:]])[d]code($|[[:space:]])/ { found = 1 }
 /(^|[[:space:]])deepagents[-]code($|[[:space:]])/ { found = 1 }
 END { exit found ? 0 : 1 }
-'`;
+'
+matched=$?
+[ "$matched" -eq 0 ] && exit 0
+[ "$has_dcode_runtime" -eq 1 ] && exit 1
+exit 3
+`;
+
+const DCODE_PROBE_STATUS = {
+  active: 0,
+  idleDcodeRuntime: 1,
+  unverifiableDcodeRuntime: 2,
+  noDcodeRuntime: 3,
+} as const;
 
 export type SnapshotRequest =
   | { kind: "help" }
@@ -349,13 +373,17 @@ function isSnapshotCreationAllowedByShields(sandboxName: string): boolean {
   return isShieldsDown(sandboxName);
 }
 
-function shouldProbeDcodeActivity(sandboxName: string): boolean {
+function isRegisteredDcodeSandbox(sandboxName: string): boolean {
   return registry.getSandbox(sandboxName)?.agent === DEEPAGENTS_CODE_AGENT;
 }
 
 function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean {
-  if (!shouldProbeDcodeActivity(sandboxName)) return true;
-
+  // Probe the live sandbox, not just registry metadata. Registry entries can be
+  // missing or stale after recovery, so status 2 is reserved for "dcode runtime
+  // was detected but process state could not be verified" and fails closed.
+  // A dcode-owned quiescence lock would be stronger; until the wrapper exposes
+  // one, the runtime process table is the pre-backup source boundary.
+  const registeredDcode = isRegisteredDcodeSandbox(sandboxName);
   const probe = captureOpenshell(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", DCODE_BUSY_PROBE_SCRIPT],
     {
@@ -364,12 +392,20 @@ function isSnapshotCreationAllowedByDcodeActivity(sandboxName: string): boolean 
       timeout: OPENSHELL_PROBE_TIMEOUT_MS,
     },
   );
-  if (probe.status === 1) return true;
-  if (probe.status === 0) {
+  if (
+    probe.status === DCODE_PROBE_STATUS.idleDcodeRuntime ||
+    probe.status === DCODE_PROBE_STATUS.noDcodeRuntime
+  ) {
+    return true;
+  }
+  if (probe.status === DCODE_PROBE_STATUS.active) {
     console.error(
       "  Sandbox is actively running a dcode task. Please retry after the task completes.",
     );
     return false;
+  }
+  if (probe.status !== DCODE_PROBE_STATUS.unverifiableDcodeRuntime && !registeredDcode) {
+    return true;
   }
 
   console.error(

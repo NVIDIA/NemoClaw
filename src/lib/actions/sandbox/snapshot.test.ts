@@ -1,10 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type OpenshellCaptureResult = { status: number; output: string };
 type SandboxRecord = { name: string; agent?: string | null };
+
+function openshellResponses(
+  args: string[],
+  responses: Record<string, OpenshellCaptureResult>,
+): OpenshellCaptureResult {
+  return responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? { status: 0, output: "" };
+}
+
+function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
+  return openshellResponses(args, {
+    "sandbox exec": { status: 3, output: "" },
+    "sandbox list": {
+      status: 0,
+      output: "alpha Ready\n",
+    },
+  });
+}
 
 const shieldsMock = vi.hoisted(() => {
   const isShieldsDownMock = vi.fn(() => true);
@@ -21,10 +39,7 @@ const shieldsMock = vi.hoisted(() => {
 const backupSandboxStateMock = vi.fn();
 const captureOpenshellMock = vi.fn<
   (args: string[], opts?: Record<string, unknown>) => OpenshellCaptureResult
->(() => ({
-  status: 0,
-  output: "alpha Ready\n",
-}));
+>((args) => defaultOpenshellResponses(args));
 const dockerInspectMock = vi.fn(() => ({ status: 0, stdout: "true\n" }));
 const findBackupMock = vi.fn();
 const getAppliedPresetsMock = vi.fn(() => [] as string[]);
@@ -128,10 +143,7 @@ describe("runSandboxSnapshot", () => {
     vi.clearAllMocks();
     shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
     shieldsMock.isShieldsDownMock.mockReturnValue(true);
-    captureOpenshellMock.mockReturnValue({
-      status: 0,
-      output: "alpha Ready\n",
-    });
+    captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
     dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
     findBackupMock.mockReturnValue({ match: null });
     getAppliedPresetsMock.mockReturnValue([]);
@@ -160,14 +172,13 @@ describe("runSandboxSnapshot", () => {
 
   function mockDcodeProbe(status: number, output = "") {
     captureOpenshellMock.mockImplementation((args: string[]) => {
-      const responses: Record<string, OpenshellCaptureResult> = {
+      return openshellResponses(args, {
         "sandbox exec": { status, output },
         "sandbox list": {
           status: 0,
           output: "alpha Ready\n",
         },
-      };
-      return responses[`${args[0] ?? ""} ${args[1] ?? ""}`] ?? { status: 0, output: "" };
+      });
     });
   }
 
@@ -246,6 +257,21 @@ describe("runSandboxSnapshot", () => {
     );
   });
 
+  it("refuses an active dcode task even when registry metadata is missing", async () => {
+    mockDcodeProbe(0, "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Sandbox is actively running a dcode task. Please retry after the task completes.",
+    );
+  });
+
   it("allows dcode snapshot creation when the process probe finds no active task", async () => {
     getSandboxMock.mockReturnValue(dcodeSandboxEntry);
     mockDcodeProbe(1);
@@ -292,8 +318,24 @@ describe("runSandboxSnapshot", () => {
     );
   });
 
-  it("does not run the dcode process probe for non-dcode sandboxes", async () => {
+  it("refuses missing-registry dcode runtime when task state cannot be verified", async () => {
+    mockDcodeProbe(2, "ps: command failed\n");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await expect(runSandboxSnapshot("alpha", { kind: "create" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+
+    expect(backupSandboxStateMock).not.toHaveBeenCalled();
+    expect(consoleError.mock.calls.flat().join("\n")).toContain(
+      "Cannot verify whether sandbox 'alpha' is actively running a dcode task. Refusing to create snapshot.",
+    );
+  });
+
+  it("allows non-dcode sandboxes when the live probe finds no dcode runtime", async () => {
     getSandboxMock.mockReturnValue({ name: "alpha", agent: "hermes" });
+    mockDcodeProbe(3);
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
       timestamp: "2026-06-15T00:00:00.000Z",
@@ -316,7 +358,42 @@ describe("runSandboxSnapshot", () => {
 
     expect(
       captureOpenshellMock.mock.calls.some(([args]) => args[0] === "sandbox" && args[1] === "exec"),
-    ).toBe(false);
+    ).toBe(true);
+    expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
+  });
+
+  it("keeps the probe aligned with the managed dcode wrapper process shape", async () => {
+    mockDcodeProbe(3);
+    const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+    const manifest = {
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    };
+    backupSandboxStateMock.mockReturnValue({
+      success: true,
+      backedUpDirs: ["workspace"],
+      backedUpFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+      manifest,
+    });
+    findBackupMock.mockReturnValue({
+      match: { ...manifest, snapshotVersion: 3 },
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "create" });
+
+    const wrapper = fs.readFileSync("agents/langchain-deepagents-code/dcode-wrapper.sh", "utf8");
+    const execArgs =
+      captureOpenshellMock.mock.calls
+        .map(([args]) => args)
+        .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
+    const probeScript = String(execArgs.at(-1) ?? "");
+    expect(wrapper).toContain("exec python3 -m deepagents_code");
+    expect(probeScript).toContain("python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code");
+    expect(probeScript).not.toContain("command -v dcode");
+    expect(probeScript).not.toContain("/usr/local/bin/dcode");
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 
