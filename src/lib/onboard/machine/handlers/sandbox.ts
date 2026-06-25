@@ -421,6 +421,38 @@ export async function handleSandboxState<
         deps.writePlanToEnv(filtered);
       }
     };
+    // Run messaging channel setup, then adopt the plan it stages in env:
+    // filter both the selected channels and the plan for the current agent,
+    // clearing env when no channel is supported and writing the filtered plan
+    // back when it changed. Shared by the registry-refresh branch (#5680) and
+    // the normal setup branch so plan adoption stays consistent across both.
+    const setupAndAdoptMessagingPlan = async (
+      existingChannels: string[] | null,
+      targetSandboxName: string,
+    ): Promise<void> => {
+      const existing = existingChannels
+        ? filterChannelNamesForCurrentAgent(existingChannels, agent)
+        : existingChannels;
+      let selected = filterChannelNamesForCurrentAgent(
+        await deps.setupMessagingChannels(agent, existing, targetSandboxName),
+        agent,
+      );
+      let plan = deps.readMessagingPlanFromEnv();
+      if (plan) {
+        const filtered = filterMessagingPlanForCurrentAgent(plan, agent);
+        if (!filtered) {
+          deps.clearPlanEnv();
+          plan = null;
+          selected = [];
+        } else if (filtered !== plan) {
+          plan = filtered;
+          selected = getActiveChannelsFromPlan(plan) ?? [];
+          deps.writePlanToEnv(filtered);
+        }
+      }
+      messagingPlan = plan;
+      selectedMessagingChannels = selected;
+    };
 
     if (recordedMessagingChannels) {
       selectedMessagingChannels = filterChannelNamesForCurrentAgent(
@@ -467,55 +499,15 @@ export async function handleSandboxState<
         // on a fresh non-interactive run). This preserves channels configured on
         // the sandbox whose inputs aren't re-derivable from env this run — e.g.
         // an in-sandbox-QR channel like WhatsApp that has no host-side token.
-        const existingChannels =
-          getChannelsFromPlan(registryMessagingPlan) ?? getChannelsFromPlan(session?.messagingPlan);
-        const existing = existingChannels
-          ? filterChannelNamesForCurrentAgent(existingChannels, agent)
-          : existingChannels;
-        selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
-        selectedMessagingChannels = filterChannelNamesForCurrentAgent(
-          selectedMessagingChannels,
-          agent,
+        await setupAndAdoptMessagingPlan(
+          getChannelsFromPlan(registryMessagingPlan) ?? getChannelsFromPlan(session?.messagingPlan),
+          sandboxName,
         );
-        messagingPlan = deps.readMessagingPlanFromEnv();
-        if (messagingPlan) {
-          const filtered = filterMessagingPlanForCurrentAgent(messagingPlan, agent);
-          if (!filtered) {
-            deps.clearPlanEnv();
-            messagingPlan = null;
-            selectedMessagingChannels = [];
-          } else if (filtered !== messagingPlan) {
-            messagingPlan = filtered;
-            selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
-            deps.writePlanToEnv(filtered);
-          }
-        }
       } else {
         reuseMessagingPlan(registryMessagingPlan, true);
       }
     } else {
-      const existingChannels = getChannelsFromPlan(session?.messagingPlan);
-      const existing = existingChannels
-        ? filterChannelNamesForCurrentAgent(existingChannels, agent)
-        : existingChannels;
-      selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
-      selectedMessagingChannels = filterChannelNamesForCurrentAgent(
-        selectedMessagingChannels,
-        agent,
-      );
-      messagingPlan = deps.readMessagingPlanFromEnv();
-      if (messagingPlan) {
-        const filtered = filterMessagingPlanForCurrentAgent(messagingPlan, agent);
-        if (!filtered) {
-          deps.clearPlanEnv();
-          messagingPlan = null;
-          selectedMessagingChannels = [];
-        } else if (filtered !== messagingPlan) {
-          messagingPlan = filtered;
-          selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
-          deps.writePlanToEnv(filtered);
-        }
-      }
+      await setupAndAdoptMessagingPlan(getChannelsFromPlan(session?.messagingPlan), sandboxName);
     }
     session = deps.updateSession((current) => {
       current.messagingPlan = messagingPlan;
