@@ -75,6 +75,11 @@ describe("openClawAgentJsonProvenanceLines", () => {
     const rawBearer = "secretbearertoken1234567890";
     const rawPassword = "hunter2-password-value";
     const rawPrivateKey = "private-key-material-that-must-not-leak";
+    const privateKeyEnvelope = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      rawPrivateKey,
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join(" ");
     const lines = openClawAgentJsonProvenanceLines(
       JSON.stringify({
         messages: [
@@ -87,7 +92,7 @@ describe("openClawAgentJsonProvenanceLines", () => {
               `NVIDIA_INFERENCE_API_KEY=${rawApiKey}`,
               `Authorization: Bearer ${rawBearer}`,
               `password: ${rawPassword}`,
-              `-----BEGIN PRIVATE KEY----- ${rawPrivateKey} -----END PRIVATE KEY-----`,
+              privateKeyEnvelope,
             ].join("\n"),
           },
         ],

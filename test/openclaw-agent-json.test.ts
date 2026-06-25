@@ -139,6 +139,11 @@ describe("openclaw-agent-json.py", () => {
     const rawBearer = "secretbearertoken1234567890";
     const rawPassword = "hunter2-password-value";
     const rawPrivateKey = "private-key-material-that-must-not-leak";
+    const privateKeyEnvelope = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      rawPrivateKey,
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join(" ");
     const result = runHelper(
       JSON.stringify({
         messages: [
@@ -151,7 +156,7 @@ describe("openclaw-agent-json.py", () => {
               `NVIDIA_INFERENCE_API_KEY=${rawApiKey}`,
               `Authorization: Bearer ${rawBearer}`,
               `password: ${rawPassword}`,
-              `-----BEGIN PRIVATE KEY----- ${rawPrivateKey} -----END PRIVATE KEY-----`,
+              privateKeyEnvelope,
             ].join("\n"),
           },
         ],
@@ -166,6 +171,19 @@ describe("openclaw-agent-json.py", () => {
     expect(result.stdout).not.toContain(rawBearer);
     expect(result.stdout).not.toContain(rawPassword);
     expect(result.stdout).not.toContain(rawPrivateKey);
+  });
+
+  it("bounds deep traversal of sandbox-controlled JSON", () => {
+    let envelope: unknown = { payloads: [{ text: "too deep to trust" }] };
+    for (let index = 0; index < 120; index += 1) {
+      envelope = { payload: envelope };
+    }
+
+    const result = runHelper(JSON.stringify(envelope));
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toBe("\n");
   });
 
   it("preserves legacy assistant response shapes from choices and nested containers", () => {

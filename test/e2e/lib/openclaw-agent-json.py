@@ -70,6 +70,26 @@ CONTAINER_KEYS = (
     "segments",
     "delta",
 )
+MAX_HELPER_WALK_NODES = 10_000
+MAX_HELPER_WALK_DEPTH = 80
+
+
+def _new_walk_budget() -> dict[str, Any]:
+    return {"nodes": 0, "seen": set()}
+
+
+def _can_visit(value: Any, depth: int, budget: dict[str, Any]) -> bool:
+    if depth > MAX_HELPER_WALK_DEPTH:
+        return False
+    if budget["nodes"] >= MAX_HELPER_WALK_NODES:
+        return False
+    budget["nodes"] += 1
+    if isinstance(value, (dict, list)):
+        marker = id(value)
+        if marker in budget["seen"]:
+            return False
+        budget["seen"].add(marker)
+    return True
 
 
 def _snippet(value: str, limit: int = 300) -> str:
@@ -93,18 +113,22 @@ def _redact_secret_text(value: str) -> str:
     return redacted
 
 
-def _strings(value: Any) -> list[str]:
+def _strings(value: Any, depth: int = 0, budget: dict[str, Any] | None = None) -> list[str]:
+    if budget is None:
+        budget = _new_walk_budget()
+    if not _can_visit(value, depth, budget):
+        return []
     if isinstance(value, str):
         return [value]
     if isinstance(value, list):
         parts: list[str] = []
         for item in value:
-            parts.extend(_strings(item))
+            parts.extend(_strings(item, depth + 1, budget))
         return parts
     if isinstance(value, dict):
         parts = []
         for item in value.values():
-            parts.extend(_strings(item))
+            parts.extend(_strings(item, depth + 1, budget))
         return parts
     return []
 
@@ -197,18 +221,20 @@ def _tool_failure_line(record: dict[str, Any]) -> str | None:
 def _collect_tool_failure_provenance(value: Any) -> list[str]:
     lines: list[str] = []
 
-    def visit(node: Any) -> None:
+    def visit(node: Any, depth: int, budget: dict[str, Any]) -> None:
+        if not _can_visit(node, depth, budget):
+            return
         if isinstance(node, dict):
             line = _tool_failure_line(node)
             if line:
                 lines.append(line)
             for child in node.values():
-                visit(child)
+                visit(child, depth + 1, budget)
         elif isinstance(node, list):
             for child in node:
-                visit(child)
+                visit(child, depth + 1, budget)
 
-    visit(value)
+    visit(value, 0, _new_walk_budget())
     return lines
 
 
@@ -226,8 +252,9 @@ def _untrusted_child_excerpt(value: str) -> str | None:
 
 def _collect_untrusted_child_provenance(raw: str, docs: list[Any]) -> list[str]:
     candidates: list[str] = []
+    budget = _new_walk_budget()
     for doc in docs:
-        candidates.extend(_strings(doc))
+        candidates.extend(_strings(doc, budget=budget))
     candidates.append(raw)
     if not any(UNTRUSTED_CHILD_BEGIN in candidate for candidate in candidates):
         return []
@@ -267,7 +294,17 @@ def _add_text(parts: list[str], value: Any) -> None:
         parts.append(value.strip())
 
 
-def _collect_assistant_text(value: Any, parts: list[str], visited: set[int]) -> None:
+def _collect_assistant_text(
+    value: Any,
+    parts: list[str],
+    visited: set[int],
+    depth: int = 0,
+    budget: dict[str, Any] | None = None,
+) -> None:
+    if budget is None:
+        budget = _new_walk_budget()
+    if not _can_visit(value, depth, budget):
+        return
     if isinstance(value, str):
         _add_text(parts, value)
         return
@@ -277,7 +314,7 @@ def _collect_assistant_text(value: Any, parts: list[str], visited: set[int]) -> 
             return
         visited.add(marker)
         for item in value:
-            _collect_assistant_text(item, parts, visited)
+            _collect_assistant_text(item, parts, visited, depth + 1, budget)
         return
     if not isinstance(value, dict):
         return
@@ -298,23 +335,24 @@ def _collect_assistant_text(value: Any, parts: list[str], visited: set[int]) -> 
         for choice in choices:
             if not isinstance(choice, dict):
                 continue
-            _collect_assistant_text(choice.get("message"), parts, visited)
-            _collect_assistant_text(choice.get("delta"), parts, visited)
+            _collect_assistant_text(choice.get("message"), parts, visited, depth + 1, budget)
+            _collect_assistant_text(choice.get("delta"), parts, visited, depth + 1, budget)
             _add_text(parts, choice.get("text"))
 
     for key in CONTAINER_KEYS:
         if key in value:
-            _collect_assistant_text(value[key], parts, visited)
+            _collect_assistant_text(value[key], parts, visited, depth + 1, budget)
 
 
 def _assistant_text_parts(docs: list[Any]) -> list[str]:
     parts: list[str] = []
     visited: set[int] = set()
+    budget = _new_walk_budget()
     for doc in docs:
         if isinstance(doc, dict) and "result" in doc:
-            _collect_assistant_text(doc["result"], parts, visited)
+            _collect_assistant_text(doc["result"], parts, visited, budget=budget)
         else:
-            _collect_assistant_text(doc, parts, visited)
+            _collect_assistant_text(doc, parts, visited, budget=budget)
     return parts
 
 
@@ -327,13 +365,15 @@ def _load_agent_json_docs(text: str) -> list[Any]:
         return doc if isinstance(doc, list) else [doc]
 
     # Invalid state: upstream OpenClaw has emitted log-prefixed/non-clean JSON
-    # framing for `openclaw agent --json`. Source boundary: OpenClaw owns the
-    # emitter/framing; this E2E helper consumes it so legacy smoke tests keep
-    # proving visible assistant text and provenance. Source-fix constraint: do
-    # not patch OpenClaw or narrow existing parser callers from this PR.
-    # Regression tests cover log-prefixed streams, later envelopes, OpenAI-style
-    # choices, and sanitized provenance. Removal condition: supported OpenClaw
-    # versions guarantee stable clean JSON framing on stdout.
+    # framing for `openclaw agent --json`, and sandbox-controlled JSON can be
+    # deeply nested. Source boundary: OpenClaw owns the emitter/framing; the host
+    # TypeScript parser owns CLI provenance extraction; this E2E helper only
+    # preserves legacy smoke-test text/provenance assertions. Source-fix
+    # constraint: do not patch OpenClaw or broaden production parser callers from
+    # this PR. Regression tests cover log-prefixed streams, later envelopes,
+    # OpenAI-style choices, sanitized provenance, and bounded deep traversal.
+    # Removal condition: supported OpenClaw versions guarantee stable clean JSON
+    # framing on stdout or these shell smoke tests use the host TS parser.
     decoder = json.JSONDecoder()
     docs: list[Any] = []
     index = 0
@@ -357,7 +397,7 @@ def main() -> int:
     raw = sys.stdin.read()
     try:
         docs = _load_agent_json_docs(raw)
-    except json.JSONDecodeError as err:
+    except (json.JSONDecodeError, RecursionError) as err:
         print(f"invalid JSON: {err}", file=sys.stderr)
         return 1
 
