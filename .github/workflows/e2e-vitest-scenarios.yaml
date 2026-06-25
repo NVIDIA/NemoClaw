@@ -1415,8 +1415,8 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-          NEMOCLAW_MODEL: nvidia/nemotron-3-ultra
-          NEMOCLAW_COMPAT_MODEL: nvidia/nemotron-3-ultra
+          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail
@@ -2135,8 +2135,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nemotron-3-ultra
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes
       OPENSHELL_GATEWAY: nemoclaw
@@ -2218,8 +2218,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nemotron-3-ultra
-      NEMOCLAW_COMPAT_MODEL: nvidia/nemotron-3-ultra
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
       OPENSHELL_GATEWAY: nemoclaw
@@ -2970,8 +2970,8 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-resume"
       NEMOCLAW_PROVIDER: "custom"
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1"
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-ultra"
-      NEMOCLAW_COMPAT_MODEL: "nvidia/nemotron-3-ultra"
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra"
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:

@@ -23,7 +23,7 @@ export const HERMES_SANDBOX =
 validateSandboxName(OPENCLAW_SANDBOX);
 validateSandboxName(HERMES_SANDBOX);
 const DEFAULT_NVIDIA_MODEL = "nvidia/nemotron-3-super-120b-a12b";
-const DEFAULT_COMPAT_MODEL = "nvidia/nemotron-3-ultra";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
 export const MODEL =
   process.env.NEMOCLAW_TURN_LATENCY_MODEL ??

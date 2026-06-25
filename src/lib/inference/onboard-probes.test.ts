@@ -293,8 +293,8 @@ describe("OpenAI-compatible inference probes", () => {
   });
 
   it("bounds the hosted compatible inference probe for the served Nemotron model", () => {
-    expect(getChatCompletionsProbePayload("nvidia/nemotron-3-ultra")).toEqual({
-      model: "nvidia/nemotron-3-ultra",
+    expect(getChatCompletionsProbePayload("nvidia/nvidia/nemotron-3-ultra")).toEqual({
+      model: "nvidia/nvidia/nemotron-3-ultra",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
       max_tokens: 8,
     });
