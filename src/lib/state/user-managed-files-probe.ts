@@ -49,7 +49,7 @@ export function probeUserManagedFiles(sandboxName: string): UserManagedFilesProb
       declared
         .map(
           (relPath) =>
-            `[ -f ${shellQuote(`${USER_MANAGED_FILES_BASE}/${relPath}`)} ] && printf '%s\\n' ${shellQuote(relPath)}`,
+            `if [ -f ${shellQuote(`${USER_MANAGED_FILES_BASE}/${relPath}`)} ]; then printf '%s\\n' ${shellQuote(relPath)}; fi`,
         )
         .join("; ") + " 2>/dev/null";
     const result = spawnSync("ssh", [...sshArgs(configFile, sandboxName), probeCmd], {

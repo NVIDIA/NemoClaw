@@ -140,12 +140,12 @@ describe("probeUserManagedFiles", () => {
     expect(spawnSpy).toHaveBeenCalledOnce();
     const lastArgs = recordedArgs[0] ?? [];
     const probeCmd = lastArgs[lastArgs.length - 1] ?? "";
-    expect(probeCmd).toContain("[ -f '/sandbox/.env' ]");
-    expect(probeCmd).toContain("[ -f '/sandbox/.mcp.json' ]");
+    expect(probeCmd).toContain("if [ -f '/sandbox/.env' ]");
+    expect(probeCmd).toContain("if [ -f '/sandbox/.mcp.json' ]");
     expect(probeCmd).not.toContain("/sandbox/.fake/");
   });
 
-  it("returns empty existing when ssh exits 0 with no stdout", () => {
+  it("returns empty existing when ssh exits 0 with no stdout (no declared files present)", () => {
     stubSpawnSync("", 0);
     const { probeUserManagedFiles } = loadProbe();
 
@@ -185,6 +185,19 @@ describe("probeUserManagedFiles", () => {
     expect(result.declared).toEqual([]);
     expect(result.existing).toEqual([]);
     expect(spawnSpy).not.toHaveBeenCalled();
+  });
+
+  it("creates its temp SSH config inside the OS tmpdir", () => {
+    stubSpawnSync("", 0);
+    const { probeUserManagedFiles } = loadProbe();
+
+    probeUserManagedFiles("alpha");
+    expect(tempSshFiles.size).toBeGreaterThan(0);
+    const tmpdir = path.resolve(os.tmpdir());
+    for (const dir of tempSshFiles) {
+      const resolved = path.resolve(dir);
+      expect(resolved.startsWith(tmpdir + path.sep) || resolved === tmpdir).toBe(true);
+    }
   });
 
   it("shell-quotes unusual but permitted filenames safely", () => {
@@ -229,14 +242,5 @@ describe("probeUserManagedFiles", () => {
     const result = probeUserManagedFiles("alpha");
     expect(result.declared).toEqual([]);
     expect(result.existing).toEqual([]);
-  });
-});
-
-describe("probeUserManagedFiles — temp SSH config base", () => {
-  it("uses the OS tmpdir for its temp SSH config so cleanup is bounded", () => {
-    const { USER_MANAGED_FILES_BASE } = loadProbe();
-    expect(USER_MANAGED_FILES_BASE).toBe("/sandbox");
-    expect(os.tmpdir()).toMatch(/[\\\/]/);
-    expect(path.isAbsolute(os.tmpdir())).toBe(true);
   });
 });

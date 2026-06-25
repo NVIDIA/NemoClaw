@@ -67,6 +67,9 @@ state_dirs:
 # credentials.
 state_files:
   - path: openclaw.json
+user_managed_files:
+  - .env
+  - .mcp.json
 
 # ── Authentication ──────────────────────────────────────────────
 device_pairing: true
