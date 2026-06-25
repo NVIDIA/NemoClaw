@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type OpenshellCaptureResult = { status: number; output: string };
@@ -180,6 +183,32 @@ describe("runSandboxSnapshot", () => {
         },
       });
     });
+  }
+
+  function capturedDcodeProbeScript(): string {
+    const execArgs =
+      captureOpenshellMock.mock.calls
+        .map(([args]) => args)
+        .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
+    return String(execArgs.at(-1) ?? "");
+  }
+
+  function runProbeScriptWithProcesses(script: string, processes: string): number {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-probe-"));
+    const psPath = path.join(tempDir, "ps");
+    const homeDir = path.join(tempDir, "home");
+    fs.mkdirSync(homeDir);
+    fs.writeFileSync(psPath, `#!/bin/sh\ncat <<'EOF'\n${processes}\nEOF\n`);
+    fs.chmodSync(psPath, 0o755);
+    const result = spawnSync("sh", ["-lc", script], {
+      env: {
+        ...process.env,
+        HOME: homeDir,
+        PATH: `${tempDir}:/usr/bin:/bin`,
+      },
+    });
+    fs.rmSync(tempDir, { recursive: true, force: true });
+    return result.status ?? 255;
   }
 
   it("refuses snapshot creation before backup when the shields gate helper is unavailable", async () => {
@@ -362,7 +391,7 @@ describe("runSandboxSnapshot", () => {
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 
-  it("keeps the probe aligned with the managed dcode wrapper process shape", async () => {
+  it("detects managed dcode process argv without matching the probe shell", async () => {
     mockDcodeProbe(3);
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
     const manifest = {
@@ -384,16 +413,15 @@ describe("runSandboxSnapshot", () => {
 
     await runSandboxSnapshot("alpha", { kind: "create" });
 
-    const wrapper = fs.readFileSync("agents/langchain-deepagents-code/dcode-wrapper.sh", "utf8");
-    const execArgs =
-      captureOpenshellMock.mock.calls
-        .map(([args]) => args)
-        .find((args) => args[0] === "sandbox" && args[1] === "exec") ?? [];
-    const probeScript = String(execArgs.at(-1) ?? "");
-    expect(wrapper).toContain("exec python3 -m deepagents_code");
-    expect(probeScript).toContain("python[0-9.]*[[:space:]]+-m[[:space:]]+deepagents[_]code");
-    expect(probeScript).not.toContain("command -v dcode");
-    expect(probeScript).not.toContain("/usr/local/bin/dcode");
+    const probeScript = capturedDcodeProbeScript();
+    const shellCommandLine = probeScript.replace(/\s+/g, " ");
+    expect(
+      runProbeScriptWithProcesses(
+        probeScript,
+        "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
+      ),
+    ).toBe(0);
+    expect(runProbeScriptWithProcesses(probeScript, `999 sh -lc ${shellCommandLine}\n`)).toBe(3);
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 
