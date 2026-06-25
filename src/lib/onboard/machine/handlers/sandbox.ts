@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SandboxMessagingPlan } from "../../../messaging/manifest";
+import { isMessagingSupportedAgent, tryGetMessagingAgentId } from "../../../messaging";
+import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
 import { hashCredential } from "../../../security/credential-hash";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { getActiveChannelsFromPlan, getChannelsFromPlan } from "../../messaging-plan-session";
@@ -84,6 +85,7 @@ export interface SandboxStateOptions<
     ): Promise<string[]>;
     readMessagingPlanFromEnv(): SandboxMessagingPlan | null;
     writePlanToEnv(plan: SandboxMessagingPlan): void;
+    clearPlanEnv(): void;
     getRegistrySandboxMessagingPlan(sandboxName: string): SandboxMessagingPlan | null;
     promptValidatedSandboxName(agent: Agent): Promise<string>;
     selectResourceProfileForSandbox(): Promise<ResourceProfile | null>;
@@ -152,6 +154,85 @@ function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
   });
 
   return changed ? { plan: { ...plan, credentialBindings }, changed } : { plan, changed };
+}
+
+type MessagingAgentLike = {
+  readonly name?: string;
+  readonly messagingPlatforms?: readonly string[] | null;
+};
+
+function resolveCurrentMessagingAgent(agent: unknown): {
+  readonly agentId: MessagingAgentId | null;
+  readonly supportedChannelIds: readonly string[] | null;
+} {
+  const descriptor = (agent ?? {}) as MessagingAgentLike;
+  const name = typeof descriptor.name === "string" ? descriptor.name.trim() : "";
+  if (!name) return { agentId: null, supportedChannelIds: null };
+  const agentId = tryGetMessagingAgentId(descriptor);
+  if (agentId === null || !isMessagingSupportedAgent(descriptor)) {
+    return { agentId: null, supportedChannelIds: [] };
+  }
+  return {
+    agentId,
+    supportedChannelIds: Array.isArray(descriptor.messagingPlatforms)
+      ? descriptor.messagingPlatforms
+      : null,
+  };
+}
+
+function filterChannelNamesForCurrentAgent(
+  channelIds: readonly string[],
+  agent: unknown,
+): string[] {
+  const availability = resolveCurrentMessagingAgent(agent);
+  if (availability.supportedChannelIds === null) return [...channelIds];
+  if (availability.agentId === null || availability.supportedChannelIds.length === 0) return [];
+  const supported = new Set(availability.supportedChannelIds);
+  return channelIds.filter((channelId) => supported.has(channelId));
+}
+
+function filterMessagingPlanForCurrentAgent(
+  plan: SandboxMessagingPlan,
+  agent: unknown,
+): SandboxMessagingPlan | null {
+  const availability = resolveCurrentMessagingAgent(agent);
+  if (availability.supportedChannelIds === null) return plan;
+  if (availability.agentId === null || plan.agent !== availability.agentId) return null;
+  const supported = new Set(availability.supportedChannelIds);
+  const channels = plan.channels.filter((channel) => supported.has(channel.channelId));
+  if (channels.length === 0) return null;
+  if (channels.length === plan.channels.length) return plan;
+
+  const remainingChannelIds = new Set(channels.map((channel) => channel.channelId));
+  const keepEntry = <T extends { readonly channelId: string }>(entry: T): boolean =>
+    remainingChannelIds.has(entry.channelId);
+  const networkEntries = plan.networkPolicy.entries.filter(keepEntry);
+  const filterRuntimeSetup = <T extends { readonly channelId: string }>(entries?: readonly T[]) =>
+    (entries ?? []).filter(keepEntry);
+
+  return {
+    ...plan,
+    channels,
+    disabledChannels: plan.disabledChannels.filter((channelId) =>
+      remainingChannelIds.has(channelId),
+    ),
+    credentialBindings: plan.credentialBindings.filter(keepEntry),
+    networkPolicy: {
+      presets: [...new Set(networkEntries.map((entry) => entry.presetName))].sort(),
+      entries: networkEntries,
+    },
+    agentRender: plan.agentRender.filter(keepEntry),
+    buildSteps: plan.buildSteps.filter(keepEntry),
+    runtimeSetup: plan.runtimeSetup
+      ? {
+          nodePreloads: filterRuntimeSetup(plan.runtimeSetup.nodePreloads),
+          envAliases: filterRuntimeSetup(plan.runtimeSetup.envAliases),
+          secretScans: filterRuntimeSetup(plan.runtimeSetup.secretScans),
+        }
+      : undefined,
+    stateUpdates: plan.stateUpdates.filter(keepEntry),
+    healthChecks: plan.healthChecks.filter(keepEntry),
+  };
 }
 
 export async function handleSandboxState<
@@ -239,7 +320,18 @@ export async function handleSandboxState<
   if (resumeSandbox) {
     if (webSearchConfig)
       deps.note("  [resume] Reusing Brave Search configuration already baked into the sandbox.");
-    selectedMessagingChannels = getActiveChannelsFromPlan(session?.messagingPlan) ?? [];
+    const currentMessagingPlan = session?.messagingPlan ?? null;
+    const filteredPlan = currentMessagingPlan
+      ? filterMessagingPlanForCurrentAgent(currentMessagingPlan, agent)
+      : null;
+    if (filteredPlan !== currentMessagingPlan) {
+      deps.clearPlanEnv();
+      session = deps.updateSession((current) => {
+        current.messagingPlan = filteredPlan;
+        return current;
+      });
+    }
+    selectedMessagingChannels = getActiveChannelsFromPlan(filteredPlan) ?? [];
     deps.skippedStepMessage("sandbox", sandboxName);
     await deps.recordStateSkipped("sandbox", { reason: "resume", sandboxName });
   } else {
@@ -313,18 +405,31 @@ export async function handleSandboxState<
     const registryMessagingPlan = sandboxName
       ? deps.getRegistrySandboxMessagingPlan(sandboxName)
       : null;
+    const reuseMessagingPlan = (plan: SandboxMessagingPlan, writeToEnv: boolean): void => {
+      const refreshed = refreshCredentialHashesFromEnv(plan);
+      const filtered = filterMessagingPlanForCurrentAgent(refreshed.plan, agent);
+      if (!filtered) {
+        deps.clearPlanEnv();
+        messagingPlan = null;
+        selectedMessagingChannels = [];
+        return;
+      }
+      messagingPlan = filtered;
+      selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+      if (writeToEnv || refreshed.changed || filtered !== refreshed.plan) {
+        deps.writePlanToEnv(filtered);
+      }
+    };
+
     if (recordedMessagingChannels) {
-      selectedMessagingChannels = recordedMessagingChannels;
+      selectedMessagingChannels = filterChannelNamesForCurrentAgent(
+        recordedMessagingChannels,
+        agent,
+      );
       if (envMessagingPlan) {
-        const refreshed = refreshCredentialHashesFromEnv(envMessagingPlan);
-        messagingPlan = refreshed.plan;
-        if (refreshed.changed) deps.writePlanToEnv(refreshed.plan);
-        selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+        reuseMessagingPlan(envMessagingPlan, false);
       } else if (registryMessagingPlan) {
-        const refreshed = refreshCredentialHashesFromEnv(registryMessagingPlan);
-        deps.writePlanToEnv(refreshed.plan);
-        messagingPlan = refreshed.plan;
-        selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+        reuseMessagingPlan(registryMessagingPlan, true);
       }
       if (selectedMessagingChannels.length > 0) {
         deps.note(
@@ -332,19 +437,32 @@ export async function handleSandboxState<
         );
       }
     } else if (envMessagingPlan) {
-      const refreshed = refreshCredentialHashesFromEnv(envMessagingPlan);
-      messagingPlan = refreshed.plan;
-      if (refreshed.changed) deps.writePlanToEnv(refreshed.plan);
-      selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+      reuseMessagingPlan(envMessagingPlan, false);
     } else if (registryMessagingPlan) {
-      const refreshed = refreshCredentialHashesFromEnv(registryMessagingPlan);
-      deps.writePlanToEnv(refreshed.plan);
-      messagingPlan = refreshed.plan;
-      selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+      reuseMessagingPlan(registryMessagingPlan, true);
     } else {
-      const existing = getChannelsFromPlan(session?.messagingPlan);
+      const existingChannels = getChannelsFromPlan(session?.messagingPlan);
+      const existing = existingChannels
+        ? filterChannelNamesForCurrentAgent(existingChannels, agent)
+        : existingChannels;
       selectedMessagingChannels = await deps.setupMessagingChannels(agent, existing, sandboxName);
+      selectedMessagingChannels = filterChannelNamesForCurrentAgent(
+        selectedMessagingChannels,
+        agent,
+      );
       messagingPlan = deps.readMessagingPlanFromEnv();
+      if (messagingPlan) {
+        const filtered = filterMessagingPlanForCurrentAgent(messagingPlan, agent);
+        if (!filtered) {
+          deps.clearPlanEnv();
+          messagingPlan = null;
+          selectedMessagingChannels = [];
+        } else if (filtered !== messagingPlan) {
+          messagingPlan = filtered;
+          selectedMessagingChannels = getActiveChannelsFromPlan(messagingPlan) ?? [];
+          deps.writePlanToEnv(filtered);
+        }
+      }
     }
     session = deps.updateSession((current) => {
       current.messagingPlan = messagingPlan;

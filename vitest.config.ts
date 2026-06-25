@@ -43,6 +43,7 @@ export default defineConfig({
             // and require Docker + a real onboard to pass. Excluding here keeps
             // the cli project (and pre-commit `Test (cli)`) green locally.
             "test/e2e-scenario/live/**",
+            "test/install-express-prompt.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
             "test/install-openshell-version-check.test.ts",
@@ -54,6 +55,7 @@ export default defineConfig({
           name: "installer-integration",
           include: runInstallerIntegration
             ? [
+                "test/install-express-prompt.test.ts",
                 "test/install-preflight.test.ts",
                 "test/install-preflight-docker-bootstrap.test.ts",
                 "test/install-openshell-version-check.test.ts",

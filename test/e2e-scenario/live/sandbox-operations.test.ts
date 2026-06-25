@@ -13,6 +13,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
@@ -266,7 +267,7 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
   );
   const reply = parseOpenClawAgentText(result.stdout);
   expectExitZero(result, "openclaw agent --json");
-  expect(reply, resultText(result)).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+  expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {

@@ -87,10 +87,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   }) => {
     assertTestOwnedSandboxName();
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     const dockerInfo = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info",
       env: buildAvailabilityProbeEnv(),

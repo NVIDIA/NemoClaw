@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs all jobs only when scenarios is also empty."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs such as jetson-nvmap-gpu-vitest are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -421,6 +421,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/skill-agent
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -525,6 +526,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-skill-cli
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-skill-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -572,7 +574,7 @@ jobs:
 
       - name: Run OpenClaw skill CLI live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -744,6 +746,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/cloud-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -769,7 +772,7 @@ jobs:
         # request through sandbox inference.local, and reuses the skill
         # filesystem validators from the retained bash helpers.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -855,6 +858,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/agent-turn-latency
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
@@ -959,6 +963,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-inference-switch
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
@@ -1114,6 +1119,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/cron-preflight-inference-local
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cron-preflight"
@@ -1178,6 +1184,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/issue-4434-tui-unreachable-inference
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ISSUE_4434_LIVE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
@@ -1415,8 +1422,8 @@ jobs:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           NEMOCLAW_PROVIDER: custom
           NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+          NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+          NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
           NEMOCLAW_PREFERRED_API: openai-completions
         run: |
           set -euo pipefail
@@ -1493,7 +1500,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
       - name: Run sessions/agents CLI live test
@@ -1502,7 +1509,7 @@ jobs:
         # OpenClaw gateway dispatch, pending pairing/scope approval, and JSON
         # envelope handling for sessions/agents commands.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1671,6 +1678,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1848,7 +1856,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run network-policy live test
         # Migrated from test/e2e/test-network-policy.sh. Free-standing anchor
@@ -1883,6 +1891,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/common-egress-agent
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
@@ -1911,14 +1920,14 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run common-egress agent live test
         # Migrated from test/e2e/test-common-egress-agent-e2e.sh. Preserves
         # OpenClaw balanced/open and Hermes open common-egress agent-turn
         # coverage against real sandbox policy and live hosted inference.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -1958,6 +1967,7 @@ jobs:
       FREE_STANDING_SCENARIO_ID: "shields-config"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/shields-config
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-shields
@@ -2087,7 +2097,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run OpenClaw rebuild live test
         env:
@@ -2135,8 +2145,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes
       OPENSHELL_GATEWAY: nemoclaw
@@ -2218,8 +2228,8 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_PROVIDER: custom
       NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
-      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-super-v3
-      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-super-v3
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
       NEMOCLAW_PREFERRED_API: openai-completions
       NEMOCLAW_SANDBOX_NAME: e2e-rebuild-hermes-base
       OPENSHELL_GATEWAY: nemoclaw
@@ -2347,7 +2357,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run sandbox rebuild live test
         env:
@@ -2530,11 +2540,11 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run state backup restore live test
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
@@ -2629,7 +2639,7 @@ jobs:
       - name: Install OpenShell CLI
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_INFERENCE_API_KEY -u NVIDIA_API_KEY -u GITHUB_TOKEN \
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN \
             bash scripts/install-openshell.sh
 
       - name: Run upgrade stale sandbox live Vitest test
@@ -2761,7 +2771,10 @@ jobs:
 
   jetson-nvmap-gpu-vitest:
     needs: generate-matrix
-    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
+    # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
+    # Required validation path: dispatch with jobs=jetson-nvmap-gpu-vitest or scenarios=jetson-nvmap-gpu.
+    # Re-enable default dispatch only after a stable Jetson runner exists, then remove this job from FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu-vitest,') || contains(format(',{0},', inputs.scenarios), ',jetson-nvmap-gpu,') }}
     runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
@@ -2967,8 +2980,8 @@ jobs:
       NEMOCLAW_SANDBOX_NAME: "e2e-resume"
       NEMOCLAW_PROVIDER: "custom"
       NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1"
-      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
-      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-super-v3"
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra"
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -3633,7 +3646,7 @@ jobs:
         # the legacy fake-token defaults, optional _REAL secret overrides,
         # provider placeholder redaction checks, and WhatsApp QR-only parity.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}
           DISCORD_BOT_TOKEN_REAL: ${{ secrets.DISCORD_BOT_TOKEN_REAL }}
           SLACK_BOT_TOKEN_REAL: ${{ secrets.SLACK_BOT_TOKEN_REAL }}
@@ -3669,6 +3682,7 @@ jobs:
       FREE_STANDING_VITEST_JOB: "1"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/launchable-smoke
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-launchable"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_MODEL: minimaxai/minimax-m2.7
@@ -3887,10 +3901,10 @@ jobs:
 
       - name: Run snapshot commands live test
         # Migrated from test/e2e/test-snapshot-commands.sh. Preserves the
-        # original ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY runner
+        # original ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY runner
         # contract by driving install.sh and the real snapshot CLI lifecycle.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -3925,6 +3939,7 @@ jobs:
       DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-sandbox-survival
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-survival
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-survival"
@@ -4038,11 +4053,11 @@ jobs:
 
       - name: Run diagnostics live test
         # Migrated from test/e2e/test-diagnostics.sh. This preserves the
-        # ubuntu-latest + Docker/OpenShell + NVIDIA_API_KEY lane by running
+        # ubuntu-latest + Docker/OpenShell + NVIDIA_INFERENCE_API_KEY lane by running
         # debug archives, install.sh/onboard, sandbox exec/status, and
         # gateway-backed credentials list/reset from Vitest.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live             test/e2e-scenario/live/diagnostics.test.ts             --silent=false --reporter=default
@@ -4288,6 +4303,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-inference-switch
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-inference-switch"
@@ -4341,7 +4357,7 @@ jobs:
         # Vitest owns the route, config, registry, inference.local, and agent
         # assertions.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -4690,7 +4706,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run channels add/remove live test
         # Migrated from test/e2e/test-channels-add-remove.sh. Preserves the
@@ -4698,7 +4714,7 @@ jobs:
         # channels add, rebuild, gateway credential reuse, policy-list, and
         # channels remove cleanup.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
           TELEGRAM_REQUIRE_MENTION: "0"
@@ -4907,7 +4923,7 @@ jobs:
           NEMOCLAW_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+          env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
 
       - name: Run channels stop/start live test
         # Migrated from test/e2e/test-channels-stop-start.sh. Preserves the
@@ -5420,7 +5436,7 @@ jobs:
         # install.sh/public curl|bash boundary, install-log retention, PATH
         # refresh, and post-install nemoclaw/openshell/--help checks.
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -5541,6 +5557,13 @@ jobs:
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedScenarios = selectorValidationPassed ? rawRequestedScenarios : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
+            const explicitOnlySkippedJobs = [
+              {
+                job: 'jetson-nvmap-gpu-vitest',
+                scenario: 'jetson-nvmap-gpu',
+                reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
+              },
+            ];
             const scenariosRejected = rawRequestedScenarios && !selectorValidationPassed;
             const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
@@ -5599,7 +5622,7 @@ jobs:
               ? '✅ All requested jobs passed'
               : selectiveDispatch
                 ? '✅ All selected jobs passed'
-                : '✅ All jobs passed';
+                : '✅ All default jobs passed';
             const status =
               failed.length > 0 || missingRequested.length > 0
                 ? '❌ Some jobs failed'
@@ -5625,13 +5648,22 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all free-standing when no scenarios are requested)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
               '|-----|--------|',
               ...rows,
             ];
+            if (!selectiveDispatch) {
+              const skippedJobHints = explicitOnlySkippedJobs
+                .map(
+                  ({ job, scenario, reason }) =>
+                    `\`${job}\` (${reason}; validate with \`jobs=${job}\` or \`scenarios=${scenario}\`)`,
+                )
+                .join(', ');
+              lines.push('', `> **Explicit-only jobs skipped:** ${skippedJobHints}.`);
+            }
             if (failed.length > 0) {
               const failedNames = failed.map(([name]) => name).join(', ');
               lines.push('', `> **Failed jobs:** ${failedNames}. Check [run artifacts](${runUrl}) for logs.`);

@@ -226,7 +226,7 @@ export function messagingEnv(): MessagingEnv {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+    NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,
     TELEGRAM_BOT_TOKEN: telegram,
     DISCORD_BOT_TOKEN: discord,
     SLACK_BOT_TOKEN: slackBot,

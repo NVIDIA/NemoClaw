@@ -81,9 +81,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx docs/reference/platform-support.mdx'
         language: system
-        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|docs/reference/platform-support\.mdx|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 

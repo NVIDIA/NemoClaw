@@ -202,6 +202,41 @@ describe("simple global oclif adapters", () => {
     }
   });
 
+  it("renders every line of a multi-line Hermes diagnostic to stderr without leaking an oclif stack trace", async () => {
+    // PRA-T3 on #5252: when the helper throws a multi-line
+    // GatewayTokenCommandError for a Hermes sandbox, the wrapper must
+    // (a) write every line via console.error, (b) signal failure via
+    // process.exitCode, and (c) leak no @oclif/core ExitError stack trace.
+    const hermesLines = [
+      "  gateway-token is not applicable for sandbox 'hermes': it uses the 'hermes' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.",
+      "  For Hermes dashboard access, run: nemohermes hermes dashboard-url",
+      "  Hermes dashboard auth is read from the in-sandbox config (~/.hermes/config.yaml), not a gateway token.",
+    ];
+    mocks.runGatewayTokenCommand.mockImplementationOnce(() => {
+      throw new mocks.GatewayTokenCommandError(hermesLines, 1);
+    });
+    setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
+      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandboxAgent: () => "hermes",
+    }));
+
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await expect(GatewayTokenCliCommand.run(["hermes"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+      for (const line of hermesLines) {
+        expect(errorSpy).toHaveBeenCalledWith(line);
+      }
+      const combined = errorSpy.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(combined).not.toMatch(/ExitError|@oclif\/core|at Object\.exit/);
+    } finally {
+      process.exitCode = previousExitCode;
+      errorSpy.mockRestore();
+    }
+  });
+
   it("clears a stale non-zero process.exitCode on a successful gateway-token run", async () => {
     // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later
     // successful invocation must still report success. Always overwrite.
