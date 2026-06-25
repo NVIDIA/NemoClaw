@@ -106,7 +106,6 @@ function handleGatewayMessage(socket, payload) {
     const token = message && message.d && message.d.token;
     record({
       event: "identify",
-      token,
       tokenMatchesExpected: token === expectedToken,
       tokenLooksPlaceholder: typeof token === "string" && token.includes("openshell:resolve:env:"),
     });

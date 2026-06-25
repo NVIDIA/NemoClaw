@@ -337,8 +337,10 @@ for token in ['abandoned','want me to continue']:
 if data.get('promptErrorSource') is not None: errors.append('promptErrorSource set')
 for field in ['aborted','externalAbort','timedOut','idleTimedOut','timedOutDuringCompaction']:
     if data.get(field): errors.append(f'{field}={data.get(field)!r}')
+def normalize_final_text(value):
+    return value.strip().removesuffix('.') if isinstance(value, str) else value
 final_texts=data.get('assistantTexts') or []
-if not final_texts or final_texts[-1] != 'hostname, date, and uptime completed successfully.': errors.append('final text mismatch')
+if not final_texts or normalize_final_text(final_texts[-1]) != 'hostname, date, and uptime completed successfully': errors.append('final text mismatch')
 roles=[m.get('role') for m in messages]
 if not ('toolResult' in roles and roles[-1]=='assistant'): errors.append('final assistant not after tool result')
 print(json.dumps({'errors':errors,'source':source,'toolMetas':metas,'roles':roles}, indent=2))

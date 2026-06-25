@@ -81,6 +81,7 @@ describe("prepareSandboxCreatePlan", () => {
             ? "slack"
             : null,
       getHermesToolGatewayProviderName: (sandboxName) => `${sandboxName}-hermes-tools`,
+      agentName: "langchain-deepagents-code",
       deps: {
         resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
           useDockerGpuPatch: false,
@@ -99,6 +100,7 @@ describe("prepareSandboxCreatePlan", () => {
         directGpu: true,
         dockerGpuPatch: false,
         additionalPresets: ["github"],
+        agentName: "langchain-deepagents-code",
       },
     );
     expect(result.createArgs).toEqual([
@@ -129,6 +131,64 @@ describe("prepareSandboxCreatePlan", () => {
     ]);
     expect(result.sandboxGpuLogMessage).toBe("gpu note");
     expect(events).toEqual(["resources", "cleanup", "upsert"]);
+  });
+
+  it("filters disabled channels from token, reusable, and provider sources", () => {
+    const upsertMessagingProviders = vi.fn(() => [
+      "sandbox-telegram-bridge",
+      "sandbox-slack-bridge",
+    ]);
+
+    const result = prepareSandboxCreatePlan({
+      basePolicyPath: "/repo/policy.yaml",
+      buildCtx: "/tmp/nemoclaw-build-1",
+      sandboxName: "sandbox",
+      channels,
+      enabledChannels: ["telegram", "slack", "whatsapp"],
+      disabledChannelNames: new Set(["slack"]),
+      messagingTokenDefs: [
+        { name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" },
+        { name: "sandbox-slack-bridge", envKey: "SLACK_BOT_TOKEN", token: "slack" },
+      ],
+      reusableMessagingChannels: ["slack", "whatsapp"],
+      reusableMessagingProviders: ["sandbox-slack-bridge", "sandbox-existing-whatsapp"],
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      dockerDriverGateway: true,
+      appendResourceFlags: vi.fn(),
+      runProviderPreDeleteCleanup: vi.fn(),
+      upsertMessagingProviders,
+      getMessagingChannelForEnvKey: (envKey) =>
+        envKey === "TELEGRAM_BOT_TOKEN"
+          ? "telegram"
+          : envKey === "SLACK_BOT_TOKEN"
+            ? "slack"
+            : null,
+      getHermesToolGatewayProviderName: vi.fn(),
+      deps: {
+        resolveDockerGpuSandboxCreatePlan: vi.fn(() => ({
+          useDockerGpuPatch: false,
+          logMessage: null,
+        })),
+        prepareInitialSandboxCreatePolicy: vi.fn(() => ({
+          policyPath: "/tmp/policy.yaml",
+          appliedPresets: [],
+        })),
+        buildSandboxGpuCreateArgs: vi.fn(() => []),
+      },
+    });
+
+    expect(upsertMessagingProviders).toHaveBeenCalledWith(
+      [{ name: "sandbox-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: "telegram" }],
+      { replaceExisting: true },
+    );
+    expect(result.activeMessagingChannels).toEqual(["telegram", "whatsapp"]);
+    expect(result.messagingProviders).toEqual([
+      "sandbox-telegram-bridge",
+      "sandbox-existing-whatsapp",
+    ]);
+    expect(result.createArgs).toContain("sandbox-telegram-bridge");
+    expect(result.createArgs).not.toContain("sandbox-slack-bridge");
   });
 
   it("does not activate slack from an app token alone and suppresses --gpu for Docker GPU patching", () => {

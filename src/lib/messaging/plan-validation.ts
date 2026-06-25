@@ -45,10 +45,9 @@ export function parseSandboxMessagingPlan(
   if (options.sandboxName && value.sandboxName !== options.sandboxName) return null;
   if (options.agent && value.agent !== options.agent) return null;
 
-  const supported =
-    options.supportedChannelIds && options.supportedChannelIds.length > 0
-      ? new Set(options.supportedChannelIds)
-      : null;
+  const supported = Array.isArray(options.supportedChannelIds)
+    ? new Set(options.supportedChannelIds)
+    : null;
   for (const [index, channel] of value.channels.entries()) {
     if (!isObject(channel) || typeof channel.channelId !== "string") return null;
     if (Object.hasOwn(channel, "configured") && typeof channel.configured !== "boolean") {
@@ -57,6 +56,7 @@ export function parseSandboxMessagingPlan(
     if (Object.hasOwn(channel, "active") && typeof channel.active !== "boolean") return null;
     if (Object.hasOwn(channel, "disabled") && typeof channel.disabled !== "boolean") return null;
     if (Object.hasOwn(channel, "inputs") && !Array.isArray(channel.inputs)) return null;
+    if (Object.hasOwn(channel, "hostForward") && !isHostForward(channel.hostForward)) return null;
     if (Object.hasOwn(channel, "hooks") && !Array.isArray(channel.hooks)) return null;
     if (
       Array.isArray(channel.inputs) &&
@@ -169,6 +169,18 @@ function isOptionalObjectArray(value: Record<string, unknown>, key: string): boo
   if (!Object.hasOwn(value, key)) return true;
   const entries = value[key];
   return Array.isArray(entries) && entries.every(isObject);
+}
+
+function isHostForward(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    typeof value.channelId === "string" &&
+    typeof value.port === "number" &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535 &&
+    typeof value.label === "string"
+  );
 }
 
 function isRuntimeSetup(value: unknown): boolean {

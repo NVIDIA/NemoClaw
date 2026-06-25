@@ -4,9 +4,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
-import { handleFinalizationState, type FinalizationStateOptions } from "./finalization";
+import { type FinalizationStateOptions, handleFinalizationState } from "./finalization";
 
-type Agent = { name: string } | null;
+type Agent = {
+  name: string;
+  displayName?: string;
+  forwardPort?: number | null;
+  forward_ports?: number[] | null;
+  runtime?: {
+    kind?: string;
+    interactive_command?: string;
+    headless_command?: string;
+  };
+} | null;
 type VerifyChain = { port: number };
 type VerificationResult = { ok: boolean };
 
@@ -121,6 +131,45 @@ describe("handleFinalizationState", () => {
       calls.dashboard.mock.invocationCallOrder[0],
     );
     expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, agent);
+  });
+
+  it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
+    const { deps, calls } = createDeps();
+    const agent = {
+      name: "langchain-deepagents-code",
+      displayName: "LangChain Deep Agents Code",
+      runtime: {
+        kind: "terminal",
+        interactive_command: "dcode",
+        headless_command: "dcode -n",
+      },
+    };
+
+    const result = await handleFinalizationState({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+    });
+
+    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.getChatUiUrl).not.toHaveBeenCalled();
+    expect(calls.buildChain).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.diagnostics).not.toHaveBeenCalled();
+    expect(calls.verifyWebSearch).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+    expect(calls.log).toHaveBeenCalledWith(
+      "  ✓ LangChain Deep Agents Code terminal runtime is ready",
+    );
+    expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
+    expect(calls.log).toHaveBeenCalledWith("  Interactive: dcode");
+    expect(calls.log).toHaveBeenCalledWith('  Headless: dcode -n "<task>"');
+    expect(calls.log.mock.calls.map(([line]) => line).join("\n")).not.toContain("Port 0");
+    expect(calls.postVerify).toHaveBeenCalledOnce();
+    expect(result.verificationDiagnostics).toEqual([]);
+    expect(result.stateResult.type).toBe("complete");
   });
 
   it("does not complete the session when deployment verification fails", async () => {

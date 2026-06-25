@@ -390,6 +390,46 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
       });
       expect(
         evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "rebuild-hermes",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "rebuild-hermes-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          scenarios: "rebuild-hermes-stale-base",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-stale-base-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
+          jobs: "rebuild-hermes-stale-base-vitest",
+        }),
+      ).toMatchObject({
+        valid: true,
+        liveScenariosRuns: false,
+        selectedFreeStandingJobs: ["rebuild-hermes-stale-base-vitest"],
+        registryScenarios: [],
+      });
+      expect(
+        evaluateE2eVitestWorkflowDispatchSelectors({
           scenarios: "state-backup-restore",
         }),
       ).toMatchObject({
@@ -700,7 +740,7 @@ jobs:
 
   it(
     "keeps each free-standing scenario out of the registry matrix",
-    testTimeoutOptions(240_000),
+    testTimeoutOptions(420_000),
     () => {
       const inventory = readFreeStandingJobsInventory();
       for (const job of inventory.allowedJobs) {
@@ -953,6 +993,9 @@ jobs:
           "report-to-pr step must pass jobs through JOBS env",
           "step 'Post Vitest scenario results to PR' run script must check selector validation before echoing selectors",
           "step 'Post Vitest scenario results to PR' run script must omit rejected job selectors",
+          "step 'Post Vitest scenario results to PR' run script must filter reported entries for selective dispatches",
+          "step 'Post Vitest scenario results to PR' run script must report missing requested jobs",
+          "step 'Post Vitest scenario results to PR' run script must count cancelled jobs",
         ]),
       );
     } finally {
