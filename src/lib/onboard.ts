@@ -3068,7 +3068,6 @@ async function createSandbox(
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: onboardTracing.addTraceEvent,
   });
-
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
