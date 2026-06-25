@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../../adapters/openshell/runtime", () => ({
@@ -13,7 +18,7 @@ vi.mock("../auto-pair-approval", () => ({
 
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { runSandboxAutoPairApprovalPass } from "../auto-pair-approval";
-import { callOpenclawGateway } from "./gateway-rpc";
+import { buildGatewayAdminRpcShell, callOpenclawGateway } from "./gateway-rpc";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const autoPairMock = runSandboxAutoPairApprovalPass as unknown as ReturnType<typeof vi.fn>;
@@ -65,20 +70,24 @@ describe("callOpenclawGateway", () => {
       "--",
       "bash",
       "-lc",
-      expect.stringContaining("/tmp/nemoclaw-proxy-env.sh"),
+      expect.stringContaining("base64 -d | bash -s"),
       "nemoclaw-sessions-admin-rpc",
       expect.stringContaining("data:text/javascript;base64"),
       expect.any(String),
       "sessions.reset",
       Buffer.from('{"key":"agent:main:main","reason":"reset"}', "utf8").toString("base64"),
     ]);
-    expect(command?.[7]).toContain("node --input-type=module");
-    expect(command?.[7]).toContain("NEMOCLAW_GATEWAY_RPC_METHOD");
-    expect(command?.[7]).toContain("NEMOCLAW_GATEWAY_RPC_PARAMS_B64");
-    expect(command?.[7]).toContain("proxy_env=/tmp/nemoclaw-proxy-env.sh");
-    expect(command?.[7]).toContain('[ -L "$proxy_env" ]');
-    expect(command?.[7]).toContain("expected root:444");
-    expect(command?.[7]).toContain('. "$proxy_env"');
+    const shellWrapper = String(command?.[7] ?? "");
+    const shellB64 = shellWrapper.match(/printf '%s' '([^']+)'/)?.[1] ?? "";
+    const shell = Buffer.from(shellB64, "base64").toString("utf8");
+    expect(shellWrapper).not.toMatch(/[\n\r]/);
+    expect(shell).toContain("node --input-type=module");
+    expect(shell).toContain("NEMOCLAW_GATEWAY_RPC_METHOD");
+    expect(shell).toContain("NEMOCLAW_GATEWAY_RPC_PARAMS_B64");
+    expect(shell).toContain("proxy_env='/tmp/nemoclaw-proxy-env.sh'");
+    expect(shell).toContain('[ -L "$proxy_env" ]');
+    expect(shell).toContain("expected root:444");
+    expect(shell).toContain('. "$proxy_env"');
     const script = Buffer.from(String(command?.[10] ?? ""), "base64").toString("utf8");
     expect(script).toContain("callGatewayFromCli");
     expect(script).toContain("url: `ws://127.0.0.1:${port}`");
@@ -114,6 +123,21 @@ describe("callOpenclawGateway", () => {
     expect(result.payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });
 
+  it("sends no multiline OpenShell exec arguments", () => {
+    captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
+
+    callOpenclawGateway({
+      sandboxName: "alpha",
+      method: "sessions.reset",
+      params: { key: "agent:main:main", reason: "reset" },
+    });
+
+    const command = captureMock.mock.calls[0]?.[0] ?? [];
+    for (const arg of command) {
+      if (typeof arg === "string") expect(arg).not.toMatch(/[\n\r]/);
+    }
+  });
+
   it("validates the sourced proxy env file before invoking sessions admin RPC", () => {
     captureMock.mockReturnValue(captureResult(0, '{"ok":true,"key":"agent:main:main"}'));
 
@@ -123,8 +147,7 @@ describe("callOpenclawGateway", () => {
       params: { key: "agent:main:main", reason: "reset" },
     });
 
-    const command = captureMock.mock.calls[0]?.[0];
-    const shell = String(command?.[7] ?? "");
+    const shell = buildGatewayAdminRpcShell();
     const sourceIndex = shell.indexOf('. "$proxy_env"');
     const execIndex = shell.indexOf("exec node --input-type=module");
     expect(sourceIndex).toBeGreaterThan(-1);
@@ -132,6 +155,36 @@ describe("callOpenclawGateway", () => {
     expect(shell).toContain('[ -L "$proxy_env" ] || [ ! -f "$proxy_env" ]');
     expect(shell).toContain("exit 126");
     expect(shell).toContain("mode=$perms (expected root:444)");
+  });
+
+  it("refuses unsafe proxy env before launching node", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nemoclaw-gateway-rpc-"));
+    const target = join(dir, "target-env.sh");
+    const proxyEnv = join(dir, "proxy-env.sh");
+    symlinkSync(target, proxyEnv);
+    try {
+      const shell = buildGatewayAdminRpcShell(proxyEnv);
+      const result = spawnSync(
+        "bash",
+        [
+          "-lc",
+          shell,
+          "test-shell",
+          "throw new Error('node should not run')",
+          "unused",
+          "sessions.reset",
+          "e30=",
+        ],
+        { encoding: "utf8" },
+      );
+
+      expect(result.status).toBe(126);
+      expect(result.stderr).toContain("[SECURITY]");
+      expect(result.stderr).toContain("expected regular root-owned mode 444 file");
+      expect(result.stderr).not.toContain("node should not run");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects unsupported gateway admin RPC methods before touching OpenShell", () => {
