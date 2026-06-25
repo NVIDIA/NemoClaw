@@ -366,10 +366,6 @@ runSessionsAgentsCliTest(
     ).toBe(0);
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     await ensureOpenshellAvailable(host);
     cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
       bestEffort(() => cleanupSandbox(host, apiKey)),

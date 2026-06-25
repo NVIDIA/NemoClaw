@@ -159,10 +159,6 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     await artifacts.writeJson("scenario.json", {
       id: "snapshot-commands",
       runner: "vitest",

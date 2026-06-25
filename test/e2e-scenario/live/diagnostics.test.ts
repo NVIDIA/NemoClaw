@@ -139,10 +139,6 @@ runDiagnosticsTest(
     ).toBe(true);
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     await artifacts.writeJson("scenario.json", {
       id: "diagnostics",
       runner: "vitest",

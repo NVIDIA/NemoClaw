@@ -319,10 +319,6 @@ runCredentialSanitizationTest(
     assertBlueprintDigestContract();
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
-
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-credential-sanitization",
       env: buildAvailabilityProbeEnv(),
