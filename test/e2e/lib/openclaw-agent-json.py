@@ -29,6 +29,32 @@ UNTRUSTED_CHILD_END = "END_UNTRUSTED_CHILD_RESULT"
 ANSI_OSC_RE = re.compile(r"\x1B\][\s\S]*?(?:\x07|\x1B\\|$)")
 ANSI_CSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 CONTROL_RE = re.compile(r"[\x00-\x07\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+PEM_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
+)
+SECRET_PREFIX_RES = (
+    re.compile(r"nvapi-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"nvcf-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"ghp_[A-Za-z0-9_-]{10,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{30,}"),
+    re.compile(r"sk-proj-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"sk-ant-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?:xox[bpas]|xapp)-[A-Za-z0-9-]{10,}"),
+    re.compile(r"A(?:K|S)IA[A-Z0-9]{16}"),
+    re.compile(r"hf_[A-Za-z0-9]{10,}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"gsk_[A-Za-z0-9]{10,}"),
+    re.compile(r"pypi-[A-Za-z0-9_-]{10,}"),
+    re.compile(r"\bbot\d{8,10}:[A-Za-z0-9_-]{35}\b"),
+    re.compile(r"\b\d{8,10}:[A-Za-z0-9_-]{35}\b"),
+    re.compile(r"\b[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}\b"),
+)
+BEARER_RE = re.compile(r"(Bearer\s+)\S+", re.IGNORECASE)
+SECRET_KV_RE = re.compile(
+    r"\b([A-Z0-9_.-]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|AUTHORIZATION)[A-Z0-9_.-]*\s*[:=]\s*[\"']?)[^\"'\s;,)]*",
+    re.IGNORECASE,
+)
 TEXT_KEYS = ("text", "content", "reasoning_content", "reasoning")
 CONTAINER_KEYS = (
     "result",
@@ -52,9 +78,19 @@ def _snippet(value: str, limit: int = 300) -> str:
     sanitized = sanitized.replace("\r", "").replace("\b", "")
     sanitized = CONTROL_RE.sub("", sanitized)
     squashed = re.sub(r"\s+", " ", sanitized).strip()
-    if len(squashed) <= limit:
-        return squashed
-    return f"{squashed[: limit - 3]}..."
+    redacted = _redact_secret_text(squashed)
+    if len(redacted) <= limit:
+        return redacted
+    return f"{redacted[: limit - 3]}..."
+
+
+def _redact_secret_text(value: str) -> str:
+    redacted = PEM_PRIVATE_KEY_RE.sub("<REDACTED_PRIVATE_KEY>", value)
+    redacted = BEARER_RE.sub(r"\1<REDACTED>", redacted)
+    redacted = SECRET_KV_RE.sub(r"\1<REDACTED>", redacted)
+    for pattern in SECRET_PREFIX_RES:
+        redacted = pattern.sub("<REDACTED>", redacted)
+    return redacted
 
 
 def _strings(value: Any) -> list[str]:

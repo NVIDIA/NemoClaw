@@ -134,6 +134,40 @@ describe("openclaw-agent-json.py", () => {
     expect(result.stdout).not.toContain("https://example.invalid");
   });
 
+  it("redacts secret-shaped values from provenance details", () => {
+    const rawApiKey = "nvapi-abcdefghijklmnopqrstuvwxyz123456";
+    const rawBearer = "secretbearertoken1234567890";
+    const rawPassword = "hunter2-password-value";
+    const rawPrivateKey = "private-key-material-that-must-not-leak";
+    const result = runHelper(
+      JSON.stringify({
+        messages: [
+          {
+            role: "toolResult",
+            toolCallId: "call_secret",
+            toolName: "exec",
+            isError: true,
+            stderr: [
+              `NVIDIA_INFERENCE_API_KEY=${rawApiKey}`,
+              `Authorization: Bearer ${rawBearer}`,
+              `password: ${rawPassword}`,
+              `-----BEGIN PRIVATE KEY----- ${rawPrivateKey} -----END PRIVATE KEY-----`,
+            ].join("\n"),
+          },
+        ],
+      }),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[openclaw provenance] failed tool result");
+    expect(result.stdout).toContain("<REDACTED>");
+    expect(result.stdout).toContain("<REDACTED_PRIVATE_KEY>");
+    expect(result.stdout).not.toContain(rawApiKey);
+    expect(result.stdout).not.toContain(rawBearer);
+    expect(result.stdout).not.toContain(rawPassword);
+    expect(result.stdout).not.toContain(rawPrivateKey);
+  });
+
   it("preserves legacy assistant response shapes from choices and nested containers", () => {
     const result = runHelper(
       JSON.stringify([
