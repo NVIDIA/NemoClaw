@@ -109,7 +109,7 @@ export async function backupAll(): Promise<void> {
       // abort the backup batch (disk full, SSH timeout, permission denied,
       // programming bugs all propagate).
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/^Agent '[^']+' not found: .+$/.test(msg)) {
+      if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
         throw err;
       }
       console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
