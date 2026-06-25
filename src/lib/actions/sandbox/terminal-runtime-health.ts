@@ -7,13 +7,26 @@ import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { buildOpenshellExecArgs } from "./exec";
 
 const CGROUP_OOM_PROBE_SCRIPT = [
-  "for f in /sys/fs/cgroup/memory.events.local /sys/fs/cgroup/memory.events; do",
-  '  if [ -r "$f" ]; then',
-  '    value="$(awk \'$1 == "oom_kill" { print $2; exit }\' "$f" 2>/dev/null || true)"',
-  '    case "$value" in ""|*[!0-9]*) value=0 ;; esac',
-  '    printf "oom_kill=%s\\nsource=%s\\n" "$value" "$f"',
-  "    exit 0",
+  "probe_cgroup_file() {",
+  '  file="$1"',
+  '  key="$2"',
+  '  if [ ! -r "$file" ]; then',
+  "    return 1",
   "  fi",
+  "  while IFS=' ' read -r current value _rest; do",
+  '    if [ "$current" = "$key" ]; then',
+  '      case "$value" in ""|*[!0-9]*) exit 3 ;; esac',
+  '      printf "oom_kill=%s\\nsource=%s\\n" "$value" "$file"',
+  "      exit 0",
+  "    fi",
+  '  done < "$file"',
+  "  exit 3",
+  "}",
+  "for f in /sys/fs/cgroup/memory.events.local /sys/fs/cgroup/memory.events; do",
+  '  probe_cgroup_file "$f" oom_kill',
+  "done",
+  "for f in /sys/fs/cgroup/memory.oom_control /sys/fs/cgroup/memory/memory.oom_control; do",
+  '  probe_cgroup_file "$f" oom_kill',
   "done",
   "exit 2",
 ].join("\n");
@@ -37,8 +50,11 @@ export function parseTerminalRuntimeOomProbeOutput(
   stdout: string | Buffer | undefined,
 ): TerminalRuntimeOomProbeResult {
   const text = Buffer.isBuffer(stdout) ? stdout.toString("utf8") : (stdout ?? "");
-  const countMatch = text.match(/^oom_kill=(\d+)$/m);
+  const countMatch = text.match(/^oom_kill=([^\n]+)$/m);
   if (!countMatch) return { kind: "unavailable", detail: "missing oom_kill counter" };
+  if (!/^\d+$/.test(countMatch[1])) {
+    return { kind: "unavailable", detail: "invalid oom_kill counter" };
+  }
   const oomKillCount = Number(countMatch[1]);
   const source = text.match(/^source=(.+)$/m)?.[1];
   if (!Number.isFinite(oomKillCount)) {

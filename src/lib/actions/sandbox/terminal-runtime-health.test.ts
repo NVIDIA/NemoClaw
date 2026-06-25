@@ -35,6 +35,13 @@ describe("parseTerminalRuntimeOomProbeOutput", () => {
       detail: "missing oom_kill counter",
     });
   });
+
+  it("returns unavailable when the probe output contains an invalid counter", () => {
+    expect(parseTerminalRuntimeOomProbeOutput("oom_kill=bogus\n")).toEqual({
+      kind: "unavailable",
+      detail: "invalid oom_kill counter",
+    });
+  });
 });
 
 describe("probeTerminalRuntimeCgroupOom", () => {
@@ -70,6 +77,8 @@ describe("probeTerminalRuntimeCgroupOom", () => {
     const separator = args.indexOf("--");
     expect(args.slice(separator + 1, separator + 3)).toEqual(["sh", "-lc"]);
     expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory.events");
+    expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory.oom_control");
+    expect(args[separator + 3]).toContain("/sys/fs/cgroup/memory/memory.oom_control");
     expect(args[separator + 3]).toContain("oom_kill");
   });
 
