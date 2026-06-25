@@ -39,7 +39,10 @@ function execCommand(runOpenshell: ReturnType<typeof vi.fn>): { argv: string[]; 
     (args) => Array.isArray(args[0]) && args[0][0] === "sandbox" && args[0][1] === "exec",
   );
   expect(call, "no `openshell sandbox exec` call was issued").toBeDefined();
-  const argv = call[0] as string[];
+  // `expect(call).toBeDefined()` is a runtime guard; tsc does not narrow the
+  // type through it, so assert non-null here so the assertion above is the
+  // single source of failure for a missing exec call.
+  const argv = (call as NonNullable<typeof call>)[0] as string[];
   // The remote command is the final argument after the `sh -c` marker.
   const script = argv[argv.length - 1];
   return { argv, script };
