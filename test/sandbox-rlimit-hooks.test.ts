@@ -13,6 +13,8 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
+const FORK_STORM_NPROC_LIMIT = 128;
+const FORK_STORM_SAFETY_CAP = FORK_STORM_NPROC_LIMIT * 2;
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -142,7 +144,7 @@ function expectHookDeniesBoundedForkStorm(hookPath: string): void {
     '  [ "$fork_status" -eq 0 ] || break',
     '  pids+=("$!")',
     '  spawned="$i"',
-    '  [ "$i" -lt 96 ] || break',
+    `  [ "$i" -lt ${FORK_STORM_SAFETY_CAP} ] || break`,
     "done",
     'printf "spawned=%s\\n" "$spawned"',
     'printf "fork_status=%s\\n" "$fork_status"',
@@ -207,6 +209,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
   forkStormIt(
     "connect shell hook denies a bounded 5000-process fork storm with Resource temporarily unavailable",
     () => {
+      expect(FORK_STORM_SAFETY_CAP).toBeGreaterThan(FORK_STORM_NPROC_LIMIT);
       const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fork-storm-rlimit-"));
       const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
@@ -216,7 +219,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
 
       try {
         fs.mkdirSync(path.dirname(profileHook), { recursive: true });
-        copyRlimitFixtureWithNprocLimit(rlimitLib, 128);
+        copyRlimitFixtureWithNprocLimit(rlimitLib, FORK_STORM_NPROC_LIMIT);
         fs.writeFileSync(bashrc, "# existing bashrc\n");
         const command = dockerRunCommandBetween(
           dockerfile,
