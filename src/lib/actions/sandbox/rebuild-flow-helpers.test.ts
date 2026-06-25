@@ -8,10 +8,13 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 type RebuildFlowHelpersModule =
   typeof import("../../../../dist/lib/actions/sandbox/rebuild-flow-helpers");
 type SandboxStateModule = typeof import("../../../../dist/lib/state/sandbox");
+type UserManagedFilesProbeModule =
+  typeof import("../../../../dist/lib/state/user-managed-files-probe");
 
 const requireDist = createRequire(import.meta.url);
 const rebuildFlowHelpersPath = "../../../../dist/lib/actions/sandbox/rebuild-flow-helpers.js";
 const sandboxStatePath = "../../../../dist/lib/state/sandbox.js";
+const userManagedFilesProbePath = "../../../../dist/lib/state/user-managed-files-probe.js";
 
 function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
   delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
@@ -20,6 +23,10 @@ function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
 
 function loadSandboxState(): SandboxStateModule {
   return requireDist(sandboxStatePath);
+}
+
+function loadUserManagedFilesProbe(): UserManagedFilesProbeModule {
+  return requireDist(userManagedFilesProbePath);
 }
 
 function makeBackupResult(): ReturnType<SandboxStateModule["backupSandboxState"]> {
@@ -82,7 +89,8 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
 
     const sandboxState = loadSandboxState();
     backupSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue(makeBackupResult());
-    probeSpy = vi.spyOn(sandboxState, "probeUserManagedFiles").mockReturnValue({
+    const probeModule = loadUserManagedFilesProbe();
+    probeSpy = vi.spyOn(probeModule, "probeUserManagedFiles").mockReturnValue({
       declared: [],
       existing: [],
     });
@@ -176,7 +184,7 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
     expect(probeSpy).not.toHaveBeenCalled();
   });
 
-  it("swallows probe errors without failing the backup", () => {
+  it("surfaces a user-visible warning when the probe errors but does not fail the backup", () => {
     probeSpy.mockImplementation(() => {
       throw new Error("ssh boom");
     });
@@ -193,8 +201,8 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
 
     expect(result).toBeTruthy();
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(false);
+    expect(warnLines.some((line: string) => line.includes("Could not check declared user-managed files"))).toBe(true);
+    expect(warnLines.some((line: string) => line.includes("Re-add any user-managed files"))).toBe(true);
     expect(errorSpy).not.toHaveBeenCalled();
-    expect(logSpy).toHaveBeenCalled();
   });
 });

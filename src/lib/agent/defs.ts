@@ -164,6 +164,44 @@ function readStringArray(record: ManifestRecord, key: string): string[] | undefi
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+
+function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
+  const value = record.user_managed_files;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("Agent manifest field 'user_managed_files' must be an array");
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a string`,
+      );
+    }
+    if (entry.length === 0) {
+      throw new Error(`Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`);
+    }
+    if (CONTROL_CHAR_RE.test(entry)) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain control characters`,
+      );
+    }
+    if (entry.startsWith("/")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a relative path, not absolute`,
+      );
+    }
+    const segments = entry.split("/");
+    if (segments.some((segment) => segment === "..")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain '..' path components`,
+      );
+    }
+    return entry;
+  });
+}
+
 function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
   const value = record.state_files;
   if (value === undefined) return undefined;
@@ -386,7 +424,7 @@ export function loadAgent(name: string): AgentDefinition {
   const inference = readInference(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
-  const userManagedFiles = readStringArray(raw, "user_managed_files");
+  const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
