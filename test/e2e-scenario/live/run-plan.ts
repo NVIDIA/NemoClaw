@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
 import type { ScenarioDefinition } from "../scenarios/types.ts";
 
 export interface LiveScenarioRunPlan {
@@ -25,11 +26,11 @@ export function buildLiveScenarioRunPlan(scenario: ScenarioDefinition): LiveScen
       "state-validation",
     ],
   };
-  if (scenario.environment?.onboarding === "cloud-langchain-deepagents-code") {
-    plan.e2eCloudExperimentalChecks = [
-      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
-      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-    ];
+  const cloudExperimentalChecks = cloudExperimentalChecksForOnboarding(
+    scenario.environment?.onboarding,
+  );
+  if (cloudExperimentalChecks.length > 0) {
+    plan.e2eCloudExperimentalChecks = [...cloudExperimentalChecks];
   }
   return plan;
 }

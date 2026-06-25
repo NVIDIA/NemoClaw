@@ -2,61 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-import { expect, test, type E2EScenarioFixtures } from "../fixtures/e2e-test.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
 import type { LifecycleProfile } from "../fixtures/phases/index.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 import { liveScenarioSupport, liveScenarioTestName } from "../scenarios/runtime-support.ts";
+import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
+import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import { buildLiveScenarioRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set(["post-reboot-recovery"]);
 
 function isLifecycleProfile(value: string | undefined): value is LifecycleProfile {
   return value !== undefined && LIFECYCLE_PROFILES.has(value as LifecycleProfile);
-}
-
-function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
-    ...process.env,
-    PATH: `${os.homedir()}/.local/bin:${os.homedir()}/.npm-global/bin:${process.env.PATH ?? ""}`,
-    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-    NEMOCLAW_NON_INTERACTIVE: "1",
-    NEMOCLAW_SANDBOX_NAME: sandboxName,
-    OPENSHELL_GATEWAY: "nemoclaw",
-    ...extra,
-  };
-}
-
-async function runE2eCloudExperimentalChecks(
-  scenarioId: string,
-  sandboxName: string,
-  checkScripts: readonly string[],
-  context: Pick<E2EScenarioFixtures, "artifacts" | "host" | "secrets">,
-): Promise<void> {
-  const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
-  await context.artifacts.writeJson("e2e-cloud-experimental-checks.json", {
-    scenarioId,
-    sandboxName,
-    checkScripts,
-  });
-  for (const scriptPath of checkScripts) {
-    const result = await context.host.command("bash", [path.join(REPO_ROOT, scriptPath)], {
-      artifactName: `cloud-experimental-${path.basename(scriptPath, ".sh")}`,
-      cwd: REPO_ROOT,
-      env: commandEnv(sandboxName, {
-        CLOUD_EXPERIMENTAL_MODEL: process.env.NEMOCLAW_MODEL,
-        COMPATIBLE_API_KEY: apiKey,
-        NEMOCLAW_E2E_CLOUD_API_KEY_ENV: "COMPATIBLE_API_KEY",
-        REPO: REPO_ROOT,
-        SANDBOX_NAME: sandboxName,
-      }),
-      redactionValues: [apiKey],
-      timeoutMs: 180_000,
-    });
-    expect(result.exitCode, `${scriptPath}: ${result.stdout}\n${result.stderr}`).toBe(0);
-  }
 }
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -108,7 +67,8 @@ for (const scenario of listScenarios()) {
         pendingRuntimeSuites: support.pendingRuntimeSuites,
       });
 
-      await artifacts.writeJson("run-plan.json", buildLiveScenarioRunPlan(scenario));
+      const runPlan = buildLiveScenarioRunPlan(scenario);
+      await artifacts.writeJson("run-plan.json", runPlan);
 
       const ready = await environment.assertReady(scenario.environment);
       const instance = await onboard.from(ready, { sandboxName: `e2e-${scenario.id}` });
@@ -139,13 +99,10 @@ for (const scenario of listScenarios()) {
 
       const validation = await stateValidation.from(scenario.expectedStateId, instance);
 
-      const checkScripts =
-        scenario.environment.onboarding === "cloud-langchain-deepagents-code"
-          ? [
-              "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
-              "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
-            ]
-          : [];
+      const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
+      expect(checkScripts).toEqual(
+        cloudExperimentalChecksForOnboarding(scenario.environment.onboarding),
+      );
       for (const scriptPath of checkScripts) {
         expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
       }

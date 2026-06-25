@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { cloudExperimentalChecksForOnboarding } from "./e2e-scenario/live/cloud-experimental-check-list.ts";
+
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 
 function readAgentFile(name: string): string {
@@ -271,6 +273,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain(
       "arbitrary Python cannot reach ${label} without explicit policy",
     );
+    expect(pythonEgressCheck).toContain("grep -q \"BLOCKED:\"");
+    expect(pythonEgressCheck).toContain("lacked denial evidence");
+    expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+    ]);
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {

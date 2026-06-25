@@ -52,10 +52,12 @@ expect_blocked() {
   local url="$2"
   local output
   output="$(python_probe "$url" || true)"
-  if ! echo "$output" | grep -q "REACHED:"; then
+  if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "arbitrary Python cannot reach ${label} without explicit policy"
-  else
+  elif echo "$output" | grep -q "REACHED:"; then
     fail_test "arbitrary Python reached ${label} unexpectedly: $output"
+  else
+    fail_test "arbitrary Python probe for ${label} lacked denial evidence: $output"
   fi
 }
 
