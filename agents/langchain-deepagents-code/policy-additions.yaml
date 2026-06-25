@@ -68,10 +68,13 @@ network_policies:
       - { path: /usr/bin/git }
       - { path: /usr/local/bin/dcode }
       # OpenShell observes Python module traffic from dcode as the Python
-      # interpreter, not only as the /usr/local/bin/dcode shell wrapper. Keep
-      # this broad Python boundary limited to approved GitHub hosts; optional
-      # Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent.
+      # interpreter, not only as the /usr/local/bin/dcode shell wrapper. Match
+      # both Debian and /usr/local Python entrypoints/module paths seen on CI.
+      # Keep this broad Python boundary limited to approved GitHub hosts;
+      # optional Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent.
       - { path: /usr/bin/python3* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/local/lib/python3.13/** }
 
   pypi:
     name: pypi
@@ -90,8 +93,11 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/pip3 }
-      # pip and dcode package-install traffic execute through Python. This is
-      # intentionally process-wide only for the read-only PyPI hosts listed
-      # above; optional service egress must be added explicitly by policy.
+      # pip and dcode package-install traffic execute through Python. Match
+      # both Debian and /usr/local Python entrypoints/module paths seen on CI.
+      # This is intentionally process-wide only for the read-only PyPI hosts
+      # listed above; optional service egress must be added explicitly by policy.
       - { path: /usr/bin/python3* }
+      - { path: /usr/local/bin/python3* }
+      - { path: /usr/local/lib/python3.13/** }
       - { path: /usr/local/bin/dcode }

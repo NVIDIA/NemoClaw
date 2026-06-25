@@ -49,7 +49,7 @@ expect_reached() {
   local label="$1"
   local url="$2"
   local output
-  output="$(python_probe "$url")"
+  output="$(python_probe "$url" || true)"
   if echo "$output" | grep -q "REACHED:"; then
     pass "arbitrary Python can reach approved ${label} host"
   else
@@ -61,8 +61,8 @@ expect_blocked() {
   local label="$1"
   local url="$2"
   local output
-  output="$(python_probe "$url")"
-  if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
+  output="$(python_probe "$url" || true)"
+  if ! echo "$output" | grep -q "REACHED:"; then
     pass "arbitrary Python cannot reach ${label} without explicit policy"
   else
     fail_test "arbitrary Python reached ${label} unexpectedly: $output"

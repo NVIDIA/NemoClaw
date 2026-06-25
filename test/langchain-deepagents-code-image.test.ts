@@ -219,6 +219,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(policy).toContain("fail closed when Landlock cannot be applied");
     expect(policy).toContain("silently degrading");
     expect(policy).toContain("observes Python module traffic from dcode as the Python");
+    expect(policy).toContain("/usr/bin/python3*");
+    expect(policy).toContain("/usr/local/bin/python3*");
+    expect(policy).toContain("/usr/local/lib/python3.13/**");
     expect(policy).toContain("process-wide only for the read-only PyPI hosts");
     expect(policy).toContain(
       "Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent",
@@ -257,6 +260,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("/usr is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
     expect(pythonEgressCheck).toContain("python3 - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain('output="$(python_probe "$url" || true)"');
     expect(pythonEgressCheck).toContain('expect_reached "GitHub" "https://api.github.com/"');
     expect(pythonEgressCheck).toContain('expect_reached "PyPI" "https://pypi.org/"');
     expect(pythonEgressCheck).toContain("https://api.tavily.com/");
