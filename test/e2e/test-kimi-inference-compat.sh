@@ -11,6 +11,9 @@
 #   - verifies the trajectory records safe exec tool execution without a
 #     combined shell command. Public Kimi output is intentionally accepted as
 #     non-canonical because the hosted model can choose fewer safe tool calls.
+#     Tighten live mode back to the strict hostname/date/uptime command-set
+#     checks once the hosted Kimi route/runtime provides stable split tool-call
+#     trajectories, or when the #2620/#3046 compatibility contract is redefined.
 #
 # Hermetic fallback:
 #   - set NEMOCLAW_KIMI_USE_MOCK=1 to use the local OpenAI-compatible mock

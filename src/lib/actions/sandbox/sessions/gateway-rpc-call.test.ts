@@ -35,6 +35,21 @@ function captureResult(
   return { status, output, ...streams, error: undefined as Error | undefined };
 }
 
+function gatewayScriptHarness(envLines: string[]): string {
+  return [
+    "const Module = require('node:module');",
+    "const originalRequire = Module.prototype.require;",
+    "Module.prototype.require = function patchedRequire(id) {",
+    "  if (id === 'node:fs') {",
+    "    return { accessSync() { throw new Error('openclaw lookup should not run'); }, constants: { X_OK: 1 }, realpathSync() { throw new Error('realpath should not run'); } };",
+    "  }",
+    "  return originalRequire.apply(this, arguments);",
+    "};",
+    ...envLines,
+    `import("data:text/javascript;base64,${Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString("base64")}");`,
+  ].join("\n");
+}
+
 let processExitSpy: ReturnType<typeof vi.spyOn>;
 let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
@@ -192,26 +207,33 @@ describe("callOpenclawGateway", () => {
   });
 
   it("rejects malformed gateway ports before loading OpenClaw or using the gateway token", () => {
-    const script = [
-      "const Module = require('node:module');",
-      "const originalRequire = Module.prototype.require;",
-      "Module.prototype.require = function patchedRequire(id) {",
-      "  if (id === 'node:fs') {",
-      "    return { accessSync() { throw new Error('openclaw lookup should not run'); }, constants: { X_OK: 1 }, realpathSync() { throw new Error('realpath should not run'); } };",
-      "  }",
-      "  return originalRequire.apply(this, arguments);",
-      "};",
+    const script = gatewayScriptHarness([
       'process.env.NEMOCLAW_GATEWAY_RPC_METHOD = "sessions.reset";',
       'process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64 = "e30=";',
       'process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gateway-token";',
       'process.env.OPENCLAW_GATEWAY_PORT = "18789@attacker.example";',
-      `import("data:text/javascript;base64,${Buffer.from(GATEWAY_ADMIN_RPC_SCRIPT, "utf8").toString("base64")}");`,
-    ].join("\n");
+    ]);
 
     const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("OPENCLAW_GATEWAY_PORT must be a canonical TCP port");
+    expect(result.stderr).not.toContain("secret-gateway-token");
+    expect(result.stderr).not.toContain("openclaw lookup should not run");
+  });
+
+  it("rejects unsupported script methods before loading OpenClaw or using the gateway token", () => {
+    const script = gatewayScriptHarness([
+      'process.env.NEMOCLAW_GATEWAY_RPC_METHOD = "devices.approve";',
+      'process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64 = "e30=";',
+      'process.env.OPENCLAW_GATEWAY_TOKEN = "secret-gateway-token";',
+      'process.env.OPENCLAW_GATEWAY_PORT = "18789";',
+    ]);
+
+    const result = spawnSync(process.execPath, ["-e", script], { encoding: "utf8" });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("unsupported gateway RPC method: devices.approve");
     expect(result.stderr).not.toContain("secret-gateway-token");
     expect(result.stderr).not.toContain("openclaw lookup should not run");
   });

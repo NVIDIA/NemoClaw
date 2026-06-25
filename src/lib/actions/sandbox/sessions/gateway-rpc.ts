@@ -76,6 +76,12 @@ function requireCanonicalGatewayPort(value, label) {
 }
 
 const method = process.env.NEMOCLAW_GATEWAY_RPC_METHOD;
+const SUPPORTED_METHODS = new Set(["sessions.reset", "sessions.delete"]);
+if (!method) throw new Error("gateway RPC method argument is required");
+if (!SUPPORTED_METHODS.has(method)) {
+  throw new Error("unsupported gateway RPC method: " + method);
+}
+
 const paramsJson = process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64
   ? Buffer.from(process.env.NEMOCLAW_GATEWAY_RPC_PARAMS_B64, "base64").toString("utf8")
   : "{}";
@@ -88,7 +94,6 @@ const portLabel = process.env.OPENCLAW_GATEWAY_PORT
 const port = requireCanonicalGatewayPort(rawPort, portLabel);
 const token = process.env.OPENCLAW_GATEWAY_TOKEN;
 
-if (!method) throw new Error("gateway RPC method argument is required");
 if (!token) throw new Error("OPENCLAW_GATEWAY_TOKEN is required for NemoClaw sessions admin RPCs");
 
 const openclawBin = realpathSync(process.env.OPENCLAW_BIN || findOnPath("openclaw"));
