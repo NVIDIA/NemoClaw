@@ -353,9 +353,35 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
   const dir = agent.configPaths?.dir;
   if (!dir) return;
 
+  // Validate every manifest-derived relative path resolves under `dir`. A
+  // manifest declaring `state_dirs: ["../etc"]` or an absolute path like
+  // `/etc/passwd` would otherwise be shell-quoted and fed straight into
+  // `rm -rf -- ...` inside `cd ${dir}`, where the relative form would
+  // traverse outside the agent config directory. Reuses the
+  // `path.resolve()` + `startsWith()` boundary check from
+  // `removeShieldsState` above (PRA-6 #5455).
+  const resolvedDir = path.resolve(dir);
+  const validateManifestPath = (p: string): string | null => {
+    const resolved = path.resolve(resolvedDir, p);
+    if (resolved !== resolvedDir && !resolved.startsWith(`${resolvedDir}${path.sep}`)) {
+      console.warn(
+        `  ${YW}⚠${R} Skipping state path '${p}' from agent '${agentName}' manifest: ` +
+          `resolves outside ${dir}`,
+      );
+      return null;
+    }
+    return p;
+  };
+  const validStateDirs = agent.stateDirs
+    .map(validateManifestPath)
+    .filter((p): p is string => p !== null);
+  const validStateFiles = agent.stateFiles
+    .map((file) => validateManifestPath(file.path))
+    .filter((p): p is string => p !== null);
+
   const targets = [
-    ...agent.stateDirs.map(shellQuote),
-    ...agent.stateFiles.map((file) => shellQuote(file.path)),
+    ...validStateDirs.map(shellQuote),
+    ...validStateFiles.map(shellQuote),
     // Left unquoted so the sandbox shell expands the multi-agent
     // `workspace-<name>` glob (#1260). A no-match leaves the literal token,
     // which `rm -rf` silently ignores.
@@ -447,11 +473,6 @@ export async function destroySandbox(
     killStaleProxy();
   }
 
-  // Wipe persistent state while the sandbox is still live. `openshell sandbox
-  // delete` leaves the per-sandbox PVC intact, so without this a re-onboard
-  // with the same name resurrects old workspace files (USER.md, ...) (#5449).
-  wipeSandboxState(sandboxName);
-
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: DestroyRunOpenshell;
@@ -461,6 +482,17 @@ export async function destroySandbox(
   // recorded for this sandbox, not whichever gateway happens to be active.
   const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
+
+  // Wipe persistent state while the sandbox is still live and AFTER the
+  // gateway is selected (PRA-5 #5455). The wipe issues `sandbox exec --name
+  // <name>` and must run against the sandbox's recorded gateway, not whichever
+  // gateway happened to be active when destroy was invoked. Running it before
+  // gateway selection could wipe a same-named sandbox on the wrong gateway
+  // and leave the intended PVC intact (#5449). `openshell sandbox delete`
+  // leaves the per-sandbox PVC intact, so without this a re-onboard with the
+  // same name resurrects old workspace files (USER.md, ...).
+  wipeSandboxState(sandboxName);
+
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
     runOpenshell,
     redact,

@@ -92,4 +92,86 @@ describe("wipeSandboxState (#5449)", () => {
       warn.mockRestore();
     }
   });
+
+  // PRA-6 #5455: a manifest declaring a relative escape (e.g. `../etc`) or an
+  // absolute path (e.g. `/etc/passwd`) in state_dirs/state_files would be
+  // shell-quoted but fed straight into `rm -rf -- ...` inside `cd ${dir}`,
+  // where the relative form would traverse outside the agent config dir.
+  // Validate paths against the resolved config dir and skip with a warning.
+  it("skips a state_dir whose resolved path escapes the agent config dir (#5455 PRA-6)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: ["workspace", "../etc", "/etc/passwd"],
+        stateFiles: [],
+      })),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      destroy.wipeSandboxState("test-sb", deps as never);
+      const { script } = execCommand(runOpenshell);
+      // Legitimate target survives.
+      expect(script).toContain("workspace");
+      // Path escapes are NOT in the script.
+      expect(script).not.toContain("../etc");
+      expect(script).not.toContain("/etc/passwd");
+      // Warns about each rejected path.
+      const warningCalls = warn.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(warningCalls).toContain("../etc");
+      expect(warningCalls).toContain("/etc/passwd");
+      expect(warningCalls).toContain("resolves outside");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("skips a state_file whose resolved path escapes the agent config dir (#5455 PRA-6)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: [],
+        stateFiles: [
+          { path: "agents.json" },
+          { path: "../../../etc/shadow" },
+          { path: "/root/.ssh/authorized_keys" },
+        ],
+      })),
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      destroy.wipeSandboxState("test-sb", deps as never);
+      const { script } = execCommand(runOpenshell);
+      expect(script).toContain("agents.json");
+      expect(script).not.toContain("../../../etc/shadow");
+      expect(script).not.toContain("/root/.ssh/authorized_keys");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  // PRA-7 #5455: regression coverage should prove the destroy/re-onboard
+  // contract, not just helper-command construction. After a destroy, the
+  // re-onboard must NOT inherit USER.md from the prior sandbox. The proof
+  // here is that the wipe script targets workspace/ under the agent config
+  // dir AND contains no path escape that could rm -rf outside it.
+  it("targets workspace/ under the agent config dir and never contains a `..` escape (#5455 PRA-7)", () => {
+    const { deps, runOpenshell } = buildDeps();
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const { script } = execCommand(runOpenshell);
+    // cd into the agent config dir before any rm -rf.
+    expect(script).toMatch(/cd '[^']*\/sandbox\/\.openclaw'/);
+    // The rm -rf phase must reach `workspace` (where USER.md lives).
+    expect(script).toMatch(/rm\s+-rf\s+--[^\n]*workspace/);
+    // Pull just the rm phase to assert on its targets in isolation; the
+    // preceding `cd '<abs-path>'` legitimately contains the config dir.
+    const rmPhase = script.split(/rm\s+-rf\s+--/)[1] ?? "";
+    // No `..` segment in any path argument — would let rm -rf escape the cd.
+    expect(rmPhase).not.toMatch(/\.\.\//);
+    // No quoted absolute path argument either (would also escape the cd).
+    expect(rmPhase).not.toMatch(/'\//);
+  });
 });
