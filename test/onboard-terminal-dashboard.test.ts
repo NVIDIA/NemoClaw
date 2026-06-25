@@ -18,7 +18,11 @@ function writeExecutable(target: string, contents: string) {
 }
 
 function parseStdoutJson<T>(stdout: string): T {
-  const line = stdout.trim().split("\n").pop();
+  const line = stdout
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((candidate) => candidate.startsWith("{") && candidate.endsWith("}"));
   assert.ok(line, `expected JSON payload in stdout:\n${stdout}`);
   return JSON.parse(line);
 }
@@ -55,6 +59,7 @@ const sandboxName = "deepagents-box";
 const commands = [];
 const registerCalls = [];
 const updateCalls = [];
+const keepAlive = setInterval(() => {}, 1000);
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 
 agentOnboard.createAgentSandbox = () => {
@@ -104,11 +109,11 @@ childProcess.spawn = (...args) => {
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   child.unref = () => {};
+  child.kill = () => true;
   child.pid = 4242;
   commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: " + sandboxName + "\n"));
-    child.emit("close", 0);
   });
   return child;
 };
@@ -122,7 +127,9 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
   process.env.NEMOCLAW_DASHBOARD_PORT = "19000";
   const resultName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, sandboxName, null, null, null, agent);
   console.log(JSON.stringify({ resultName, commands, registerCalls, updateCalls }));
+  clearInterval(keepAlive);
 })().catch((error) => {
+  clearInterval(keepAlive);
   console.error(error);
   process.exit(1);
 });
@@ -137,7 +144,9 @@ const agent = agentDefs.loadAgent("langchain-deepagents-code");
       HOME: tmpDir,
       PATH: `${fakeBin}:${process.env.PATH || ""}`,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      OPENSHELL_DRIVERS: scenario === "create" ? "vm" : "docker",
     },
+    timeout: 15000,
   });
   assert.equal(result.status, 0, result.stderr);
   return parseStdoutJson<{
