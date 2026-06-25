@@ -10,7 +10,8 @@
 # security fix applied here protects both agents automatically.
 #
 # Usage (from an entrypoint script):
-#   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+#   SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+#   SCRIPT_DIR="${SCRIPT_SOURCE%/*}"
 #   # shellcheck source=scripts/lib/sandbox-init.sh
 #   source "${SCRIPT_DIR}/../scripts/lib/sandbox-init.sh"  # adjust path
 #
@@ -20,7 +21,13 @@
 [ -z "${_SANDBOX_INIT_LOADED:-}" ] || return 0
 _SANDBOX_INIT_LOADED=1
 
-_SANDBOX_INIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_SANDBOX_INIT_SOURCE="${BASH_SOURCE[0]}"
+_SANDBOX_INIT_DIR="${_SANDBOX_INIT_SOURCE%/*}"
+if [ "$_SANDBOX_INIT_DIR" = "$_SANDBOX_INIT_SOURCE" ]; then
+  _SANDBOX_INIT_DIR="."
+fi
+_SANDBOX_INIT_DIR="$(cd "$_SANDBOX_INIT_DIR" && pwd)"
+unset _SANDBOX_INIT_SOURCE
 # shellcheck source=scripts/lib/sandbox-rlimits.sh
 source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 

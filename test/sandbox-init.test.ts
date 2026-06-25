@@ -675,6 +675,28 @@ EOF
   });
 
   describe("harden_resource_limits", () => {
+    it("sources the shared init without resolving a PATH-controlled dirname", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-path-"));
+      const fakeBin = join(workDir, "bin");
+      const marker = join(workDir, "dirname-called");
+      mkdirSync(fakeBin, { recursive: true });
+      writeFileSync(
+        join(fakeBin, "dirname"),
+        ["#!/usr/bin/env bash", `printf called > ${JSON.stringify(marker)}`, "exit 99"].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const { stdout } = runWithLib('printf "INIT_OK\\n"', {
+          env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+        });
+        expect(stdout).toBe("INIT_OK");
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+
     it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
       const nprocLimit = process.platform === "darwin" ? 4096 : 512;
       const { stdout } = runWithLib(

@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
@@ -24,16 +27,19 @@ set -euo pipefail
 # Dev fallback: scripts/lib/sandbox-init.sh relative to this script.
 _SANDBOX_INIT="/usr/local/lib/nemoclaw/sandbox-init.sh"
 if [ ! -f "$_SANDBOX_INIT" ]; then
-  _SANDBOX_INIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-init.sh"
+  _HERMES_START_SOURCE="${BASH_SOURCE[0]}"
+  _HERMES_START_DIR="${_HERMES_START_SOURCE%/*}"
+  if [ "$_HERMES_START_DIR" = "$_HERMES_START_SOURCE" ]; then
+    _HERMES_START_DIR="."
+  fi
+  _SANDBOX_INIT="$(cd "$_HERMES_START_DIR" && pwd)/../../scripts/lib/sandbox-init.sh"
+  unset _HERMES_START_SOURCE _HERMES_START_DIR
 fi
 # shellcheck source=scripts/lib/sandbox-init.sh
 source "$_SANDBOX_INIT"
 
 # Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before any step-down.
 harden_resource_limits
-
-# SECURITY: Lock down PATH
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 if [ -d /opt/hermes/hermes_cli/web_dist ]; then
   export HERMES_WEB_DIST="${HERMES_WEB_DIST:-/opt/hermes/hermes_cli/web_dist}"
