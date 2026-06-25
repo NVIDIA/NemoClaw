@@ -1414,12 +1414,25 @@ Hermes stores session history in a SQLite database, so the command refuses posit
 `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
 The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
+<AgentOnly variant="openclaw">
+
 ```bash
 $$nemoclaw my-assistant sessions export
 $$nemoclaw my-assistant sessions export main --agent main
 $$nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
 $$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+$$nemoclaw my-assistant sessions export
+$$nemoclaw my-assistant sessions export --agent hermes --out ./sessions-my-assistant.jsonl
+$$nemoclaw my-assistant sessions export --json
+```
+
+</AgentOnly>
 
 | Flag | Description |
 |------|-------------|
