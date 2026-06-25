@@ -530,7 +530,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     fs.writeFileSync(
       envFile,
-      ["# comment", "DISCORD_ALLOWED_USERS=alice,bob", "OPENAI_API_KEY=placeholder"].join("\n"),
+      ["# comment", "DISCORD_ALLOWED_USERS=alice,bob", "MODEL_NAME=gpt-4"].join("\n"),
       "utf8",
     );
 
@@ -605,6 +605,90 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.stderr).not.toContain("NET:OPEN");
     expect(result.stderr).not.toContain("inference.local");
     expect(result.stderr).not.toContain("pypi.org");
+  });
+
+  it("rejects bearer-wrapped opaque secret values without a recognized token prefix", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-bearer-opaque-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueRandomSessionTokenZ1234567890";
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      CUSTOM_HEADER: `Bearer ${opaque}`,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("CUSTOM_HEADER");
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects credential-name-context runtime env values with opaque payloads", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-namectx-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueOpenAiCustomKeyMarker12345";
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      OPENAI_API_KEY: opaque,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects credential-name-context env-file entries with opaque payloads", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-namectx-file-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueOpenAiCustomKeyMarker12345";
+    fs.writeFileSync(envFile, `OPENAI_API_KEY=${opaque}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("OPENAI_API_KEY");
+    expect(result.stderr).toContain(envFile);
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects dotenv variable expansion in env-file entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-dynamic-var-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    fs.writeFileSync(envFile, "MY_CRED=$OTHER_SECRET\n", "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("MY_CRED");
+    expect(result.stderr).toContain("dynamic value");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects dotenv command substitution in env-file entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-dynamic-cmd-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    fs.writeFileSync(envFile, "MY_CRED=$(whoami)\n", "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("MY_CRED");
+    expect(result.stderr).toContain("dynamic value");
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects dotenv backtick substitution in env-file entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-dynamic-bt-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    fs.writeFileSync(envFile, "MY_CRED=`whoami`\n", "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("MY_CRED");
+    expect(result.stderr).toContain("dynamic value");
+    expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
   it("rejects bearer-wrapped secret values carried in runtime env vars", () => {
