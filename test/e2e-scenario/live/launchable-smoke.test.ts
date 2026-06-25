@@ -287,8 +287,20 @@ runLaunchableSmokeTest(
 
     const network = await host.command(
       "curl",
-      ["-sf", "--max-time", "10", "https://inference-api.nvidia.com/v1/models"],
-      { artifactName: "prereq-inference-api-models", env: runEnv(), timeoutMs: 30_000 },
+      [
+        "-sf",
+        "--max-time",
+        "10",
+        "-H",
+        `Authorization: Bearer ${apiKey}`,
+        "https://inference-api.nvidia.com/v1/models",
+      ],
+      {
+        artifactName: "prereq-inference-api-models",
+        env: runEnv(),
+        redactionValues: [apiKey],
+        timeoutMs: 30_000,
+      },
     );
     expectExitZero(network, "inference-api.nvidia.com reachable");
 

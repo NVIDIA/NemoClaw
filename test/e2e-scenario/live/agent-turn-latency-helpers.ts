@@ -328,21 +328,21 @@ export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellPro
 }
 
 export function openclawConfigCommand(): string {
-  return `node <<'NODE'
-const fs = require('node:fs');
-function redact(value) {
-  if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [key, entry] of Object.entries(value)) {
-      out[key] = /api[_-]?key|token|secret|credential/i.test(key) ? '[REDACTED]' : redact(entry);
-    }
-    return out;
-  }
-  return value;
-}
-console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8'))), null, 2));
-NODE`;
+  const script =
+    "const fs=require('node:fs');" +
+    "function redact(value){" +
+    "if(Array.isArray(value))return value.map(redact);" +
+    "if(value&&typeof value==='object'){" +
+    "const out={};" +
+    "for(const [key,entry] of Object.entries(value)){" +
+    "out[key]=/api[_-]?key|token|secret|credential/i.test(key)?'[REDACTED]':redact(entry);" +
+    "}" +
+    "return out;" +
+    "}" +
+    "return value;" +
+    "}" +
+    "console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'))),null,2));";
+  return `node -e ${JSON.stringify(script)}`;
 }
 
 export function assertNoOpenClawTransportErrors(output: string): void {
