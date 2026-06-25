@@ -8,7 +8,7 @@ import {
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
-import { createChannelManifestRegistry, type ChannelManifest } from "../manifest";
+import { type ChannelManifest, createChannelManifestRegistry } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -783,6 +783,47 @@ describe("MessagingWorkflowPlanner", () => {
       false,
     );
     expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
+  });
+
+  it("preserves an explicit empty plan on rebuild after the final channel is removed", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      channelId: "telegram",
+    });
+
+    expect(removed?.channels).toEqual([]);
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: removed! },
+      },
+      supportedChannelIds: ["telegram"],
+    });
+
+    expect(rebuilt).toMatchObject({
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+    });
   });
 
   it("rebuilds from stored plan input values when config env is unavailable", async () => {

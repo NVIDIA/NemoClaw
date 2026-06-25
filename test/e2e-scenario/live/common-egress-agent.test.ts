@@ -19,6 +19,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import {
+  type HostedInferenceConfig,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -233,7 +237,7 @@ async function assertPrerequisites(
   host: HostCliClient,
   secrets: SecretStore,
   skip: SkipFn,
-): Promise<string> {
+): Promise<HostedInferenceConfig> {
   expect(
     fs.existsSync(CLI_DIST_ENTRYPOINT),
     "run `npm run build:cli` before live repo CLI scenarios",
@@ -258,14 +262,13 @@ async function assertPrerequisites(
   });
   expect(openshell.exitCode, text(openshell)).toBe(0);
 
-  const apiKey = secrets.required("NVIDIA_API_KEY");
-  expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+  const hosted = requireHostedInferenceConfig(secrets);
   expect(process.env.NEMOCLAW_NON_INTERACTIVE, "NEMOCLAW_NON_INTERACTIVE=1 is required").toBe("1");
   expect(
     process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE,
     "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required",
   ).toBe("1");
-  return apiKey;
+  return hosted;
 }
 
 async function bestEffortDestroySandbox(
@@ -336,8 +339,8 @@ async function runOnboard(
   host: HostCliClient,
   args: {
     agent: "openclaw" | "hermes";
-    apiKey: string;
     artifacts: ArtifactSink;
+    hosted: HostedInferenceConfig;
     sandboxName: string;
     skip: SkipFn;
     tier: "balanced" | "open";
@@ -356,13 +359,13 @@ async function runOnboard(
       artifactName: `onboard-common-egress-${args.sandboxName}`,
       cwd: REPO_ROOT,
       env: commandEnv({
-        NVIDIA_API_KEY: args.apiKey,
+        ...args.hosted.env,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
         NEMOCLAW_SANDBOX_NAME: args.sandboxName,
       }),
-      redactionValues: [args.apiKey],
+      redactionValues: [args.hosted.apiKey],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
@@ -666,7 +669,8 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
   expect(
     classifyPreContractProviderValidationSkip({
       stdout: "",
-      stderr: "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_API_KEY credential",
+      stderr:
+        "NVIDIA Endpoints endpoint validation failed.\ninvalid NVIDIA_INFERENCE_API_KEY credential",
     }),
   ).toMatchObject({ matches: false });
 });
@@ -676,7 +680,8 @@ describe.sequential("common-egress agent live scenarios", () => {
     "C1 OpenClaw balanced includes weather and agent fetches Open-Meteo",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-      const apiKey = await assertPrerequisites(host, secrets, skip);
+      const hosted = await assertPrerequisites(host, secrets, skip);
+      const apiKey = hosted.apiKey;
       await artifacts.writeJson("scenario.json", {
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
@@ -691,8 +696,8 @@ describe.sequential("common-egress agent live scenarios", () => {
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
       await runOnboard(host, {
         agent: "openclaw",
-        apiKey,
         artifacts,
+        hosted,
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         skip,
         tier: "balanced",
@@ -728,7 +733,8 @@ After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response 
     "C2 OpenClaw open includes public reference and agent fetches Wikidata",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-      const apiKey = await assertPrerequisites(host, secrets, skip);
+      const hosted = await assertPrerequisites(host, secrets, skip);
+      const apiKey = hosted.apiKey;
       await artifacts.writeJson("scenario.json", {
         id: "common-egress-agent",
         case: "openclaw-open-public-reference",
@@ -742,8 +748,8 @@ After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response 
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_OPEN_SANDBOX);
       await runOnboard(host, {
         agent: "openclaw",
-        apiKey,
         artifacts,
+        hosted,
         sandboxName: OPENCLAW_OPEN_SANDBOX,
         skip,
         tier: "open",
@@ -774,7 +780,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
     "C3 Hermes open includes public reference plus Nous presets and agent fetches Wikidata",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-      const apiKey = await assertPrerequisites(host, secrets, skip);
+      const hosted = await assertPrerequisites(host, secrets, skip);
+      const apiKey = hosted.apiKey;
       await artifacts.writeJson("scenario.json", {
         id: "common-egress-agent",
         case: "hermes-open-public-reference",
@@ -789,8 +796,8 @@ After web_fetch returns, reply exactly REFERENCE_AGENT_OK if the fetched respons
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, HERMES_SANDBOX);
       await runOnboard(host, {
         agent: "hermes",
-        apiKey,
         artifacts,
+        hosted,
         sandboxName: HERMES_SANDBOX,
         skip,
         tier: "open",

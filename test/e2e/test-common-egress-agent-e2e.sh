@@ -304,7 +304,7 @@ ${stderr_text}"
     fi
 
     reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
-    if [ "$rc" -eq 0 ] && grep -Fq "$expected" <<<"$reply"; then
+    if [ "$rc" -eq 0 ] && openclaw_agent_text_has_token "$expected" <<<"$reply"; then
       rm -f "$ssh_cfg"
       pass "${label}: OpenClaw agent returned ${expected}"
       return
@@ -373,7 +373,7 @@ PY
       printf '%s\n' "$response"
     } >>"$log_file"
 
-    if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && grep -Fq "$expected" <<<"$reply"; then
+    if [ "$rc" -eq 0 ] && [ "$http_code" = "200" ] && openclaw_agent_text_has_token "$expected" <<<"$reply"; then
       pass "${label}: Hermes agent returned ${expected}"
       return
     fi

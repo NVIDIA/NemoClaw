@@ -99,7 +99,6 @@ describe("tunnel lifecycle workflow boundary", () => {
     expect(install).toBeDefined();
     install!.env = {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
     };
     install!.run = "npm install";
 
@@ -109,7 +108,6 @@ describe("tunnel lifecycle workflow boundary", () => {
     expect(cloudflared).toBeDefined();
     cloudflared!.env = {
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
-      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
     };
     cloudflared!.run = "cloudflared --version";
 
@@ -139,12 +137,9 @@ describe("tunnel lifecycle workflow boundary", () => {
           "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "tunnel-lifecycle-vitest checkout step must set persist-credentials=false",
           "tunnel-lifecycle-vitest step 'Install root dependencies' env must not include NVIDIA_INFERENCE_API_KEY",
-          "tunnel-lifecycle-vitest step 'Install root dependencies' env must not include NVIDIA_API_KEY",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "tunnel-lifecycle-vitest step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_INFERENCE_API_KEY",
-          "tunnel-lifecycle-vitest step 'Install and verify cloudflared prerequisite' env must not include NVIDIA_API_KEY",
           "tunnel-lifecycle-vitest cloudflared prerequisite step env must not include NVIDIA_INFERENCE_API_KEY",
-          "tunnel-lifecycle-vitest cloudflared prerequisite step env must not include NVIDIA_API_KEY",
           "step 'Install and verify cloudflared prerequisite' run script must include test/e2e/lib/cloudflared-version-resolver.sh",
           "step 'Install and verify cloudflared prerequisite' run script must include sudo apt-get install -y",
           "step 'Install and verify cloudflared prerequisite' run script must include cloudflared=${cf_version}",
