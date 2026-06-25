@@ -902,9 +902,8 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       fakeGateway.captureFile,
       (row) => row.event === "identify",
     );
-    const gatewayCaptureText = fs.existsSync(fakeGateway.captureFile)
-      ? fs.readFileSync(fakeGateway.captureFile, "utf8")
-      : "";
+    check(fs.existsSync(fakeGateway.captureFile), "M13f: fake Gateway capture file exists");
+    const gatewayCaptureText = fs.readFileSync(fakeGateway.captureFile, "utf8");
     check(
       gatewayIdentify?.tokenMatchesExpected === true &&
         gatewayIdentify?.tokenLooksPlaceholder === false &&
