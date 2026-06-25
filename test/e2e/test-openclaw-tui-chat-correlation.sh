@@ -17,7 +17,9 @@ REPO="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-openclaw-tui-correlation}"
 INSTALL_LOG="${E2E_OPENCLAW_TUI_CORRELATION_INSTALL_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log}"
+GATEWAY_LOG_EXPORT="${E2E_OPENCLAW_TUI_CORRELATION_GATEWAY_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-gateway.log}"
 
+# shellcheck disable=SC2329 # invoked indirectly by the EXIT trap
 cleanup() {
   if [ "${NEMOCLAW_E2E_SKIP_CLEANUP:-0}" = "1" ]; then
     return
@@ -61,21 +63,26 @@ fi
 vitest_status=0
 NEMOCLAW_ISSUE_2603_LIVE=1 \
   NEMOCLAW_ISSUE_2603_SANDBOX="$SANDBOX_NAME" \
-  ./node_modules/.bin/vitest run test/openclaw-tui-chat-correlation.test.ts --reporter=verbose ||
-  vitest_status=$?
+  ./node_modules/.bin/vitest run test/openclaw-tui-chat-correlation.test.ts --reporter=verbose \
+  || vitest_status=$?
 
 # On failure, export the in-sandbox gateway log before cleanup destroys the
 # sandbox: it records why the gateway aborted or delayed chat.send runs, which
 # the websocket capture alone cannot explain (#4881).
 if [ "$vitest_status" -ne 0 ]; then
-  GATEWAY_LOG_EXPORT="${E2E_OPENCLAW_TUI_CORRELATION_GATEWAY_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-gateway.log}"
-  echo "Vitest failed (exit ${vitest_status}); exporting sandbox gateway log to ${GATEWAY_LOG_EXPORT}"
+  GATEWAY_LOG_RAW="$(mktemp "${GATEWAY_LOG_EXPORT}.raw.XXXXXX")"
+  echo "Vitest failed (exit ${vitest_status}); exporting redacted sandbox gateway log to ${GATEWAY_LOG_EXPORT}"
   openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
     'tail -n 400 /tmp/openclaw-issue2603-gateway.log 2>/dev/null || echo "gateway log missing"' \
-    >"$GATEWAY_LOG_EXPORT" 2>&1 || true
-  echo "==== openclaw gateway log (tail) ===="
+    >"$GATEWAY_LOG_RAW" 2>&1 || true
+  # Redact before printing or artifact upload: this live gateway can hold
+  # hosted-inference keys, gateway auth tokens, headers, and prompt content.
+  # The raw gateway log is deleted after sanitization.
+  bash "${SCRIPT_DIR}/lib/redact-openclaw-gateway-log.sh" "$GATEWAY_LOG_RAW" "$GATEWAY_LOG_EXPORT" || true
+  rm -f "$GATEWAY_LOG_RAW"
+  echo "==== redacted openclaw gateway log (tail) ===="
   cat "$GATEWAY_LOG_EXPORT" || true
-  echo "==== end openclaw gateway log ===="
+  echo "==== end redacted openclaw gateway log ===="
 fi
 
 exit "$vitest_status"

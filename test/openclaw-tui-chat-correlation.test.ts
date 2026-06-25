@@ -595,7 +595,9 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
     (event) => typeof event.runId === "string" && submittedRunIds.has(event.runId),
   );
   const hasReplyTokenEvent = repro.sentRuns.some((entry) =>
-    analysis.chatEvents.some((event) => event.text.includes(entry.replyToken)),
+    analysis.chatEvents.some((event) =>
+      containsReplyTokenAllowingWhitespace(event.text, entry.replyToken),
+    ),
   );
   return repro.sentRuns.length === 3 && !hasSubmittedRunEvent && !hasReplyTokenEvent;
 }
@@ -863,6 +865,28 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     // reply token must still classify as a capture failure.
     expect(analyzeIssue2603Trace(repro).chatEvents).toHaveLength(3);
     expect(looksLikeEventCaptureFailure(repro)).toBe(true);
+  });
+
+  it("does not classify a whitespace-split reply token under a non-submitted run as a capture failure", () => {
+    const [, runB] = capturedIssue2603Trace.sentRuns;
+    const repro = {
+      sentRuns: capturedIssue2603Trace.sentRuns,
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "0870f90c-1534-49f1-9731-37f04dbd31d1",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "B\n2603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [],
+    };
+
+    expect(runB.replyToken).toBe("B2603-REPLY");
+    expect(analyzeIssue2603Trace(repro).chatEvents).toHaveLength(1);
+    expect(looksLikeEventCaptureFailure(repro)).toBe(false);
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
