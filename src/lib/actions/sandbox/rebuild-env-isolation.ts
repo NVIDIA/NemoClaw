@@ -1,0 +1,78 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// #5735: A rebuild recreates a sandbox from its persisted registry/session
+// config. Ambient onboarding-selection env vars left over from an *unrelated*
+// onboard (e.g. the installer's just-completed Deep Agents onboard right before
+// `upgrade-sandboxes --auto`) must never steer `onboard --resume` away from the
+// target sandbox's recorded agent/provider/model/credential. These are the env
+// vars that onboard's resume path reads to pick the agent, provider, model,
+// endpoint, and credential — isolating them during the recreate forces the
+// pinned session + gateway-registered provider to win.
+export const AMBIENT_RECREATE_ENV_VARS = [
+  "NEMOCLAW_AGENT",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_PROVIDER_KEY",
+  "NEMOCLAW_ENDPOINT_URL",
+  "NEMOCLAW_MODEL",
+] as const;
+
+export interface AmbientRecreateEnvAssessment {
+  /** Ambient onboard-selection env vars currently set (non-empty). */
+  readonly presentVars: string[];
+  /**
+   * Set when ambient `NEMOCLAW_AGENT` would recreate the sandbox as a different
+   * agent than the registry records — the structural target change behind the
+   * reporter's destroyed-then-recreated-as-Deep-Agents failure.
+   */
+  readonly agentMismatch: { readonly envAgent: string; readonly registryAgent: string } | null;
+}
+
+/**
+ * Describe how the ambient process env would alter this sandbox's recreate,
+ * relative to its authoritative registry agent. Pure — does not mutate env.
+ */
+export function assessAmbientRecreateEnv(
+  registryAgent: string | null | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): AmbientRecreateEnvAssessment {
+  const presentVars = AMBIENT_RECREATE_ENV_VARS.filter(
+    (name) => typeof env[name] === "string" && env[name]?.trim() !== "",
+  );
+
+  // The registry's null agent is the default OpenClaw runtime.
+  const effectiveRegistryAgent = (registryAgent || "openclaw").trim();
+  const envAgent = (env.NEMOCLAW_AGENT || "").trim();
+  const agentMismatch =
+    envAgent && envAgent !== effectiveRegistryAgent
+      ? { envAgent, registryAgent: effectiveRegistryAgent }
+      : null;
+
+  return { presentVars: [...presentVars], agentMismatch };
+}
+
+/**
+ * Remove the ambient onboard-selection env vars so the immediate
+ * `onboard --resume` recreate cannot read a different onboard's values.
+ * Returns a restore function that puts the original values back (including
+ * re-deleting any var that was unset). Always pair with a `finally`.
+ */
+export function isolateAmbientRecreateEnv(env: NodeJS.ProcessEnv = process.env): () => void {
+  const saved = new Map<string, string | undefined>();
+  for (const name of AMBIENT_RECREATE_ENV_VARS) {
+    saved.set(name, env[name]);
+    delete env[name];
+  }
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    for (const [name, value] of saved) {
+      if (value === undefined) {
+        delete env[name];
+      } else {
+        env[name] = value;
+      }
+    }
+  };
+}

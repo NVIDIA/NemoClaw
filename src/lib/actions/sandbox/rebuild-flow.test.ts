@@ -46,6 +46,8 @@ type RebuildFlowOverrides = {
     failedFiles: string[];
   };
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
+  sandboxEntry?: Record<string, unknown>;
+  sessionSandboxName?: string;
 };
 
 type RebuildFlowHarness = {
@@ -188,6 +190,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     .spyOn(onboardSession, "releaseOnboardLock")
     .mockImplementation(() => undefined);
   const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",
     provider: "ollama-local",
@@ -195,6 +198,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     policies: ["npm"],
     agent: null,
     nimContainer: null,
+    ...(overrides.sandboxEntry ?? {}),
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
@@ -484,6 +488,134 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
     expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+  });
+
+  it("isolates ambient onboard-selection env during recreate, then restores it (#5735)", async () => {
+    // Simulate an installer that just onboarded an unrelated Deep Agents
+    // sandbox and left its selection env in the process before
+    // `upgrade-sandboxes --auto` rebuilds an existing OpenClaw (registry agent
+    // null) sandbox.
+    process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
+    process.env.NEMOCLAW_PROVIDER_KEY = "sk-bogus-installer-key";
+
+    let envSeenInsideOnboard: {
+      agent: string | undefined;
+      providerKey: string | undefined;
+    } | null = null;
+
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        onboard: () => {
+          // onboard --resume's agent/provider/credential resolution reads these
+          // directly from process.env; they must be gone during recreate so the
+          // pinned registry session wins.
+          envSeenInsideOnboard = {
+            agent: process.env.NEMOCLAW_AGENT,
+            providerKey: process.env.NEMOCLAW_PROVIDER_KEY,
+          };
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(envSeenInsideOnboard).toEqual({ agent: undefined, providerKey: undefined });
+      // The mismatch (env agent != registry agent) is surfaced before delete.
+      const logged = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(logged).toContain("Ignoring ambient NEMOCLAW_AGENT='langchain-deepagents-code'");
+      // The caller's env is left exactly as it was after the rebuild.
+      expect(process.env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
+      expect(process.env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus-installer-key");
+    } finally {
+      // Test-injected selection env — unset unconditionally so it cannot leak
+      // into other tests in this worker.
+      delete process.env.NEMOCLAW_AGENT;
+      delete process.env.NEMOCLAW_PROVIDER_KEY;
+    }
+  });
+
+  it("aborts before backup/delete when a custom-endpoint target has no matching session (#5735)", async () => {
+    // Installer flow: the loaded onboard session belongs to a different
+    // (just-created) sandbox, and the target uses a custom OpenAI-compatible
+    // provider whose base URL is only in its own session. Recreating it would
+    // either fail or reconfigure against the wrong endpoint after deletion — so
+    // rebuild must fail closed with the sandbox intact.
+    process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight first
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { provider: "compatible-endpoint", model: "custom-model" },
+        sessionSandboxName: "some-other-sandbox",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Cannot determine recreate endpoint");
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("cannot determine the inference endpoint");
+      expect(errors).toContain("Sandbox is untouched");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.COMPATIBLE_API_KEY;
+    }
+  });
+
+  it("rebuilds a known-remote target even when the session belongs to another sandbox (#5735)", async () => {
+    // The same non-matching-session scenario but with a provider that has a
+    // canonical endpoint (NVIDIA Endpoints): the endpoint is re-derivable from
+    // registry, so the rebuild proceeds (no abort) and pins it.
+    process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-key"; // pass credential preflight
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        sandboxEntry: { provider: "nvidia-prod", model: "nvidia/nemotron" },
+        sessionSandboxName: "some-other-sandbox",
+      });
+      // A stale endpoint carried over from the unrelated session must be
+      // repinned from the nvidia-prod canonical config, not reused as-is.
+      const staleEndpoint = "https://stale.example.test/v1";
+      harness.session.endpointUrl = staleEndpoint;
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalled();
+      expect(harness.session.endpointUrl).not.toBe(staleEndpoint);
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+    } finally {
+      delete process.env.NVIDIA_INFERENCE_API_KEY;
+    }
+  });
+
+  it("does not abort a routed (nvidia-router) target with a non-matching session (#5735)", async () => {
+    // nvidia-router derives its endpoint from the blueprint, not the session, so
+    // the endpoint preflight must not treat it like a custom endpoint and abort.
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      sandboxEntry: { provider: "nvidia-router", model: "router-model" },
+      sessionSandboxName: "some-other-sandbox",
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "delete", "alpha"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(harness.onboardSpy).toHaveBeenCalled();
   });
 
   it("marks recreate onboarding failures as terminal and preserves retry cleanup", async () => {
