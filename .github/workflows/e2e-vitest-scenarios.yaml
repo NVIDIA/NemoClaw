@@ -4677,6 +4677,12 @@ jobs:
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
       OPENSHELL_GATEWAY: "nemoclaw"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_PROVIDER: custom
+      NEMOCLAW_ENDPOINT_URL: https://inference-api.nvidia.com/v1
+      NEMOCLAW_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_COMPAT_MODEL: nvidia/nvidia/nemotron-3-ultra
+      NEMOCLAW_PREFERRED_API: openai-completions
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -4736,6 +4742,7 @@ jobs:
         # channels remove cleanup.
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          COMPATIBLE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
           TELEGRAM_REQUIRE_MENTION: "0"

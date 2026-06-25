@@ -5781,8 +5781,39 @@ function validateChannelsAddRemoveVitestJob(
       "channels-add-remove-vitest job must force OPENSHELL_GATEWAY=nemoclaw",
     );
   }
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push(
+      "channels-add-remove-vitest job must enable hosted-compatible inference mode",
+    );
+  }
+  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
+    errors.push(
+      "channels-add-remove-vitest job must route hosted inference through the custom provider",
+    );
+  }
+  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
+    errors.push(
+      "channels-add-remove-vitest job must use the hosted compatible inference endpoint",
+    );
+  }
+  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
+    errors.push(
+      "channels-add-remove-vitest job must use the hosted Inference Hub model id",
+    );
+  }
+  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
+    errors.push(
+      "channels-add-remove-vitest job must set NEMOCLAW_COMPAT_MODEL to the hosted model id",
+    );
+  }
+  if (jobEnv.NEMOCLAW_PREFERRED_API !== "openai-completions") {
+    errors.push(
+      "channels-add-remove-vitest job must prefer openai-completions for hosted inference",
+    );
+  }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
+    "COMPATIBLE_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
     "GITHUB_TOKEN",
@@ -5806,6 +5837,12 @@ function validateChannelsAddRemoveVitestJob(
         stepName,
         stepEnv,
         "NVIDIA_INFERENCE_API_KEY",
+      );
+      requireEnvDoesNotExposeSecret(
+        errors,
+        stepName,
+        stepEnv,
+        "COMPATIBLE_API_KEY",
       );
     }
     if (step.name !== "Authenticate to Docker Hub") {
@@ -5909,6 +5946,11 @@ function validateChannelsAddRemoveVitestJob(
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(
       "channels-add-remove-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+    );
+  }
+  if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
+    errors.push(
+      "channels-add-remove-vitest step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
     );
   }
   if (
