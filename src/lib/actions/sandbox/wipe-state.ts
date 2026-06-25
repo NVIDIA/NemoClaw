@@ -202,16 +202,25 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     // openshell connectivity transient): blocking destroy there would leave
     // the user with an unkillable broken sandbox. The next re-onboard with
     // the same name is the only path where stale workspace state actually
-    // surfaces, so the contract is: warn loudly here, let destroy proceed,
-    // and the re-onboard banner re-surfaces the warning if the PVC is
-    // detected as non-empty. The behavioral validation for that full
-    // destroy -> re-onboard -> clean-workspace contract (#5455 PRA-1) is an
-    // E2E concern -- the helper-level test below pins the warning and the
-    // CLI-level lifecycle test in test/cli/destroy-gateway-cleanup.test.ts
-    // pins the gateway-select-then-exec-then-delete order.
+    // surfaces, so the contract is: warn explicitly here, let destroy
+    // proceed, and the re-onboard banner re-surfaces the warning if the
+    // PVC is detected as non-empty. The behavioral validation for that
+    // full destroy -> re-onboard -> clean-workspace contract (#5455 PRA-1)
+    // is an E2E concern -- the helper-level behavioral test below executes
+    // the constructed script against a real temp dir and asserts USER.md /
+    // SOUL.md / workspace-* all get removed, and the CLI-level lifecycle
+    // test in test/cli/destroy-gateway-cleanup.test.ts pins the
+    // gateway-select-then-exec-then-delete order.
+    //
+    // Name the persistent files concretely so the output matches the
+    // documented promise: this is the path where the wipe could leave
+    // state behind, not the path where it succeeded.
     console.warn(
       `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
-        "re-onboarding with the same name may resurface old files.",
+        "USER.md, SOUL.md, and other workspace files may persist on the per-sandbox PVC " +
+        "and re-surface on the next re-onboard with the same name. Re-run destroy after " +
+        "starting the sandbox, or manually remove the affected files from the new sandbox " +
+        "if they reappear.",
     );
   }
 }
