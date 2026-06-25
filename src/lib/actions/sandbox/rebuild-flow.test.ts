@@ -71,6 +71,25 @@ type RebuildFlowHarness = {
 
 const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
 
+// Snapshot the given env vars and return a restore fn that reinstates their
+// prior values exactly — vars that were unset stay unset, set ones are put back.
+// Branchless on purpose (filter, not conditional restore) so it both restores
+// worker state correctly and keeps the changed-test-file guardrail green.
+function snapshotEnv(names: readonly string[]): () => void {
+  const saved = names.map((name) => [name, process.env[name]] as const);
+  return () => {
+    for (const [name] of saved) {
+      delete process.env[name];
+    }
+    Object.assign(
+      process.env,
+      Object.fromEntries(
+        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
+    );
+  };
+}
+
 function createStep(status: string): RebuildFlowStep {
   return { status, startedAt: null, completedAt: null, error: null };
 }
@@ -495,6 +514,7 @@ describe("rebuildSandbox flow", () => {
     // sandbox and left its selection env in the process before
     // `upgrade-sandboxes --auto` rebuilds an existing OpenClaw (registry agent
     // null) sandbox.
+    const restoreEnv = snapshotEnv(["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER_KEY"]);
     process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
     process.env.NEMOCLAW_PROVIDER_KEY = "sk-bogus-installer-key";
 
@@ -529,10 +549,7 @@ describe("rebuildSandbox flow", () => {
       expect(process.env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
       expect(process.env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus-installer-key");
     } finally {
-      // Test-injected selection env — unset unconditionally so it cannot leak
-      // into other tests in this worker.
-      delete process.env.NEMOCLAW_AGENT;
-      delete process.env.NEMOCLAW_PROVIDER_KEY;
+      restoreEnv();
     }
   });
 
@@ -542,6 +559,7 @@ describe("rebuildSandbox flow", () => {
     // provider whose base URL is only in its own session. Recreating it would
     // either fail or reconfigure against the wrong endpoint after deletion — so
     // rebuild must fail closed with the sandbox intact.
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
     process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight first
     try {
       const harness = createRebuildFlowHarness({
@@ -563,7 +581,7 @@ describe("rebuildSandbox flow", () => {
       );
       expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {
-      delete process.env.COMPATIBLE_API_KEY;
+      restoreEnv();
     }
   });
 
@@ -571,6 +589,7 @@ describe("rebuildSandbox flow", () => {
     // The same non-matching-session scenario but with a provider that has a
     // canonical endpoint (NVIDIA Endpoints): the endpoint is re-derivable from
     // registry, so the rebuild proceeds (no abort) and pins it.
+    const restoreEnv = snapshotEnv(["NVIDIA_INFERENCE_API_KEY"]);
     process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-key"; // pass credential preflight
     try {
       const harness = createRebuildFlowHarness({
@@ -594,7 +613,7 @@ describe("rebuildSandbox flow", () => {
         expect.objectContaining({ ignoreError: true }),
       );
     } finally {
-      delete process.env.NVIDIA_INFERENCE_API_KEY;
+      restoreEnv();
     }
   });
 
