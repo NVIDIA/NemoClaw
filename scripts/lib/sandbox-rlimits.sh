@@ -27,6 +27,36 @@ _nemoclaw_set_resource_limit() {
   unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet
 }
 
+_nemoclaw_is_decimal_limit() {
+  case "$1" in
+    "" | *[!0-9]*)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+_nemoclaw_verify_resource_limit() {
+  _nemoclaw_limit_flag="$1"
+  _nemoclaw_limit_value="$2"
+  _nemoclaw_limit_label="$3"
+  _nemoclaw_limit_quiet="${4:-}"
+  _nemoclaw_effective_limit="$(ulimit "-S${_nemoclaw_limit_flag}" 2>/dev/null || printf '%s' unknown)"
+
+  if ! _nemoclaw_is_decimal_limit "$_nemoclaw_effective_limit" \
+    || [ "$_nemoclaw_effective_limit" -gt "$_nemoclaw_limit_value" ]; then
+    if [ "$_nemoclaw_limit_quiet" != "--quiet" ]; then
+      echo "[SECURITY] Effective ${_nemoclaw_limit_label} limit is ${_nemoclaw_effective_limit}; expected <= ${_nemoclaw_limit_value} (container runtime may restrict ulimit)" >&2
+    fi
+    unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet _nemoclaw_effective_limit
+    return 1
+  fi
+
+  unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet _nemoclaw_effective_limit
+}
+
 # Harden RLIMITs at PID 1 (root) so caps are inherited by entrypoint descendants
 # and cannot be raised after privilege step-down. The same function is also
 # sourced by connect-shell hooks, because OpenShell connect shells are spawned
@@ -36,4 +66,16 @@ harden_resource_limits() {
   _nemoclaw_set_resource_limit u "$NEMOCLAW_SANDBOX_NPROC_LIMIT" nproc "$_nemoclaw_rlimit_quiet"
   _nemoclaw_set_resource_limit n "$NEMOCLAW_SANDBOX_NOFILE_LIMIT" nofile "$_nemoclaw_rlimit_quiet"
   unset _nemoclaw_rlimit_quiet
+}
+
+verify_resource_limits() {
+  local _nemoclaw_rlimit_quiet="${1:-}"
+  local _nemoclaw_rlimit_status=0
+
+  _nemoclaw_verify_resource_limit u "$NEMOCLAW_SANDBOX_NPROC_LIMIT" nproc "$_nemoclaw_rlimit_quiet" \
+    || _nemoclaw_rlimit_status=1
+  _nemoclaw_verify_resource_limit n "$NEMOCLAW_SANDBOX_NOFILE_LIMIT" nofile "$_nemoclaw_rlimit_quiet" \
+    || _nemoclaw_rlimit_status=1
+
+  return "$_nemoclaw_rlimit_status"
 }

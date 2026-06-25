@@ -939,18 +939,20 @@ RUN set -eu; \
 
 # System-wide shell hooks for shells where ~/.bashrc / ~/.profile aren't
 # sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
-# without HOME=/sandbox). Defined in Dockerfile.base; replayed here so these
-# fixes apply before the GHCR base image catches up. Idempotent — `mv` of
-# a freshly-rebuilt /etc/bash.bashrc is harmless once the base layer
-# already includes the prepended hook (the cat | mv block just rewrites
-# with the same first line).
+# without HOME=/sandbox). Dockerfile.base is the source of truth. This final
+# image replay only repairs stale published bases that predate the v0.0.69
+# base layer and therefore lack /etc/profile.d/nemoclaw-rlimits.sh, the
+# /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
+# the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
+# three artifacts are guaranteed by the base image and covered by
+# test/sandbox-provisioning.test.ts.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
 # hadolint ignore=SC2028,DL4006
 RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \
         printf '%s\n' \
             '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
             > /etc/profile.d/nemoclaw-rlimits.sh \
         && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh; \
     fi \
@@ -961,13 +963,13 @@ RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
             > /etc/profile.d/nemoclaw-proxy.sh \
         && chmod 444 /etc/profile.d/nemoclaw-proxy.sh; \
     fi \
-    && chmod 644 /etc/bash.bashrc 2>/dev/null || true \
+    && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
     && { printf '%s\n' \
           '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
           '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
           '' \
           '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
           ''; \
         grep -Ev 'NemoClaw runtime proxy config|nemoclaw-proxy-env[.]sh|NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc; \
       } > /etc/bash.bashrc.new \

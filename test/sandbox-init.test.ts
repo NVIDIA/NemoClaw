@@ -707,6 +707,27 @@ EOF
       expect(stdout).toContain("Could not set soft nofile limit");
       expect(stdout).toContain("Could not set hard nofile limit");
     });
+
+    it("verifies effective limits and emits diagnostics when a runtime leaves them unbounded", () => {
+      const { stdout } = runWithLib(
+        [
+          "ulimit() {",
+          '  case "$1:$#" in',
+          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 1 ;;",
+          "    -Su:1) printf '%s\\n' unlimited; return 0 ;;",
+          "    -Sn:1) printf '%s\\n' 1048576; return 0 ;;",
+          "  esac",
+          "  return 1",
+          "}",
+          "harden_resource_limits --quiet 2>&1",
+          "verify_resource_limits 2>&1 || echo VERIFY_FAILED",
+        ].join("\n"),
+      );
+      expect(stdout).not.toContain("Could not set");
+      expect(stdout).toContain("Effective nproc limit is unlimited");
+      expect(stdout).toContain("Effective nofile limit is 1048576");
+      expect(stdout).toContain("VERIFY_FAILED");
+    });
   });
 
   describe("entrypoints call harden_resource_limits", () => {

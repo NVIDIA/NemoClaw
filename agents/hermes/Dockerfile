@@ -97,7 +97,26 @@ COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
-    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh
+    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && mkdir -p /etc/profile.d \
+    && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \
+        printf '%s\n' \
+            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+            > /etc/profile.d/nemoclaw-rlimits.sh \
+        && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh; \
+    fi \
+    && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
+    && { printf '%s\n' \
+          '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+          ''; \
+        if [ -f /etc/bash.bashrc ]; then \
+          grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc; \
+        fi; \
+      } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left

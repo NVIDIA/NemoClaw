@@ -902,7 +902,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
-    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet`;
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 
     try {
       fs.mkdirSync(path.dirname(profileHook), { recursive: true });
@@ -946,7 +946,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
-    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet`;
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 
     try {
       fs.mkdirSync(path.dirname(profileHook), { recursive: true });
