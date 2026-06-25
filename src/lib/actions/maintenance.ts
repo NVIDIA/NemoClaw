@@ -86,7 +86,12 @@ export async function backupAll(): Promise<void> {
       // timeout, permission denied, programming bugs) must propagate so the
       // installer aborts instead of marching forward with a silently
       // corrupt or absent backup.
-      if (!/^Agent '[^']*' not found/.test(msg)) {
+      // Anchor to the exact loadAgent() throw shape at
+      // src/lib/agent/defs.ts:365-372: `Agent '<name>' not found: <manifestPath>`.
+      // Requiring the `: <path>` suffix prevents accidentally catching unrelated
+      // "Agent '...' not found" messages that may surface from other layers and
+      // should still abort the backup batch.
+      if (!/^Agent '[^']+' not found: .+$/.test(msg)) {
         throw err;
       }
       console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);

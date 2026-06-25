@@ -106,7 +106,7 @@ describe("backupAll", () => {
     });
 
     mocks.backupSandboxState.mockImplementation(() => {
-      throw new Error("Agent 'orphan' not found");
+      throw new Error("Agent 'orphan' not found: /agents/orphan/manifest.yaml");
     });
 
     const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -140,5 +140,27 @@ describe("backupAll", () => {
     });
 
     await expect(backupAll()).rejects.toThrow(/EACCES/);
+  });
+
+  it("re-throws an Agent-not-found message without the `: manifest.yaml` suffix (loadAgent contract)", async () => {
+    // The orphan-manifest matcher is anchored to the exact loadAgent() shape
+    // `Agent '<name>' not found: <manifestPath>`. A bare `Agent '...' not found`
+    // could plausibly surface from a different layer (registry lookup, manifest
+    // index, future code) and should still abort the batch instead of being
+    // silently skipped as if it were a missing manifest file.
+    mocks.listSandboxes.mockReturnValue({
+      sandboxes: [{ name: "sb-bad" }],
+      defaultSandbox: null,
+    });
+    mocks.parseReadySandboxNames.mockReturnValue(new Set(["sb-bad"]));
+    mocks.captureSandboxListWithGatewayRecovery.mockResolvedValue({
+      result: { status: 0, output: "sb-bad\n" },
+    });
+
+    mocks.backupSandboxState.mockImplementation(() => {
+      throw new Error("Agent 'phantom' not found");
+    });
+
+    await expect(backupAll()).rejects.toThrow(/Agent 'phantom' not found/);
   });
 });
