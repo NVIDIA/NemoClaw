@@ -44,6 +44,7 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
   isMessagingSupportedAgent,
+  listSupportedMessagingChannelIdsForAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
@@ -221,23 +222,26 @@ export async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const agentId = tryGetMessagingAgentId(agent);
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifests = manifestRegistry.list();
+  const agentId = tryGetMessagingAgentId(agent, manifests);
   if (agentId === null) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not supported by any channel manifest`,
     );
     return null;
   }
-  if (!isMessagingSupportedAgent(agent)) {
+  if (!isMessagingSupportedAgent(agent, manifests)) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' has no supported messaging channels`,
     );
     return null;
   }
+  const supportedChannelIds = listSupportedMessagingChannelIdsForAgent(manifests, agentId);
   const planner = new MessagingWorkflowPlanner(
-    createBuiltInChannelManifestRegistry(),
+    manifestRegistry,
     undefined,
     createBuiltInRenderTemplateResolver(),
   );
@@ -245,7 +249,7 @@ export async function stageMessagingManifestPlanForRebuild(
     sandboxName,
     agent: agentId,
     sandboxEntry,
-    supportedChannelIds: agent.messagingPlatforms,
+    supportedChannelIds,
   });
   if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
@@ -393,10 +397,10 @@ async function stageRebuildMessagingPlanOrBail(
   try {
     return await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
   } catch (err) {
-    // Source boundary: registry messaging plans and agent manifests are durable
-    // host-side inputs from prior onboarding. If they drift or become invalid,
-    // rebuild must fail here before backup/delete; remove this boundary only if
-    // manifest staging becomes total over all persisted registry states.
+    // Source boundary: persisted registry messaging plans and current channel
+    // manifests are host-side inputs. If they drift or become invalid, rebuild
+    // must fail here before backup/delete; remove this boundary only if manifest
+    // staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(

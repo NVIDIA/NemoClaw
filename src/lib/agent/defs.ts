@@ -86,7 +86,6 @@ export interface AgentDefinition {
   state_dirs?: string[];
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
-  messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
   agentDir: string;
   manifestPath: string;
@@ -105,7 +104,6 @@ export interface AgentDefinition {
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
-  readonly messagingPlatforms: string[];
   readonly dockerfileBasePath: string | null;
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;
@@ -304,14 +302,6 @@ function readHealthProbe(record: ManifestRecord): AgentHealthProbe | undefined {
   return undefined;
 }
 
-function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] } | undefined {
-  const messagingPlatforms = readObject(record, "messaging_platforms");
-  if (!messagingPlatforms) return undefined;
-
-  const supported = readStringArray(messagingPlatforms, "supported");
-  return supported ? { supported } : {};
-}
-
 function readDashboard(record: ManifestRecord): AgentDashboard {
   const d = readObject(record, "dashboard") ?? {};
   const rawKind = d.kind;
@@ -433,7 +423,6 @@ export function loadAgent(name: string): AgentDefinition {
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
-  const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
 
@@ -456,7 +445,6 @@ export function loadAgent(name: string): AgentDefinition {
     state_dirs: stateDirs,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
-    messaging_platforms: messagingPlatforms,
     _legacy_paths: legacyPathConfig,
     agentDir,
     manifestPath,
@@ -536,10 +524,6 @@ export function loadAgent(name: string): AgentDefinition {
 
     get phoneHomeHosts(): string[] {
       return phoneHomeHosts ?? [];
-    },
-
-    get messagingPlatforms(): string[] {
-      return messagingPlatforms?.supported ?? [];
     },
 
     get dockerfileBasePath(): string | null {

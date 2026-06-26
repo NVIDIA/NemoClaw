@@ -40,7 +40,6 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     expectedVersion: "2026.4.30",
     hasDevicePairing: false,
     phoneHomeHosts: [],
-    messagingPlatforms: [],
     dockerfileBasePath: "/test/root/agents/hermes/Dockerfile.base",
     dockerfilePath: "/test/root/agents/hermes/Dockerfile",
     startScriptPath: null,

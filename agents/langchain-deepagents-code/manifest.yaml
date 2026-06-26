@@ -58,12 +58,6 @@ user_managed_files:
 
 device_pairing: false
 
-# Artifact-only messaging render exists for build validation, but DeepAgents
-# does not run a channel bridge today. Keep public channel support disabled
-# until inbound Telegram/Discord/Slack messages can reach dcode.
-messaging_platforms:
-  supported: []
-
 # ── Inference ───────────────────────────────────────────────────
 # V1 routes NVIDIA/OpenAI-compatible selections through OpenShell's managed
 # inference.local endpoint using Deep Agents Code's OpenAI-compatible provider.
