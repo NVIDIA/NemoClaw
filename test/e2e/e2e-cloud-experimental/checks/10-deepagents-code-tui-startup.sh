@@ -20,7 +20,7 @@ SECRET_PATTERN='(?:nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0
 CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Upstream dcode does not expose a stable machine-readable TUI ready marker.
 # Keep this localized heuristic prompt-shaped; do not match banner-only text.
-TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help|press enter)'
+TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -83,6 +83,9 @@ redact_secrets_in_file() {
     mv -- "$redacted_file" "$target_file"
   else
     rm -f -- "$redacted_file"
+    if ! printf '%s\n' "[redaction failed; sanitized capture unavailable]" >"$target_file"; then
+      rm -f -- "$target_file"
+    fi
     fail_test "unable to redact sanitized TUI capture"
     return 1
   fi
@@ -238,8 +241,10 @@ main() {
   local secret_detected=0
   if contains_secret <"$plain_capture_file"; then
     secret_detected=1
-    redact_secrets_in_file "$plain_capture_file" || true
-    if contains_secret <"$plain_capture_file"; then
+    if ! redact_secrets_in_file "$plain_capture_file"; then
+      :
+    fi
+    if [ -e "$plain_capture_file" ] && contains_secret <"$plain_capture_file"; then
       fail_test "secret-shaped value remained after redacting sanitized TUI capture"
     fi
   fi

@@ -16,6 +16,22 @@ export type CloudExperimentalChecksEvidence = {
   scenarioId: string;
   sandboxName: string;
   checkScripts: readonly string[];
+  terminalConnectHint?: {
+    agent: string;
+    interactiveCommand: string;
+    statusLine: string;
+    source: string;
+  };
+};
+
+const DEEPAGENTS_CODE_ONBOARDING = "cloud-langchain-deepagents-code";
+const DEEPAGENTS_CODE_TUI_CHECK =
+  "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
+const DEEPAGENTS_CODE_CONNECT_HINT = {
+  agent: "langchain-deepagents-code",
+  interactiveCommand: "dcode",
+  statusLine: "Interactive: dcode",
+  source: "agents/langchain-deepagents-code/manifest.yaml:runtime.interactive_command",
 };
 
 export function buildCloudExperimentalChecksEvidence(
@@ -27,6 +43,10 @@ export function buildCloudExperimentalChecksEvidence(
     scenarioId,
     sandboxName,
     checkScripts,
+    ...(scenarioId === DEEPAGENTS_CODE_ONBOARDING &&
+    checkScripts.includes(DEEPAGENTS_CODE_TUI_CHECK)
+      ? { terminalConnectHint: DEEPAGENTS_CODE_CONNECT_HINT }
+      : {}),
   };
 }
 

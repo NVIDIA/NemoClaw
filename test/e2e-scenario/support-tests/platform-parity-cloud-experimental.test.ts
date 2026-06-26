@@ -94,6 +94,12 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(evidence.checkScripts).toContain(
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
     );
+    expect(evidence.terminalConnectHint).toEqual({
+      agent: "langchain-deepagents-code",
+      interactiveCommand: "dcode",
+      statusLine: "Interactive: dcode",
+      source: "agents/langchain-deepagents-code/manifest.yaml:runtime.interactive_command",
+    });
   });
 
   it("builds a minimal cloud-experimental child environment", () => {

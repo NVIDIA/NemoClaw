@@ -612,6 +612,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       );
 
     expect(readiness("Deep Agents Code starting...\nLoading tools...")).toBe("not-ready");
+    expect(readiness("Press Enter to continue")).toBe("not-ready");
     expect(readiness("What would you like to do next?")).toBe("ready");
     expect(readiness("Enter your task, then press Enter")).toBe("ready");
     expect(readiness("How can I help with the codebase today?")).toBe("ready");
@@ -641,17 +642,84 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(assertExit("1")).toBe("passed=0 failed=1");
   });
 
-  it("detects representative secret families in TUI startup artifacts", () => {
+  it("detects and redacts every canonical secret family in TUI startup artifacts", () => {
     const detectsSecret = (token: string) =>
       runTuiStartupCheckHelper(
         'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
         { TOKEN: token },
       );
+    const redactsSecret = (token: string) =>
+      runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
+    const secretSamples: Array<{ name: string; sample: string; rawSecret?: string }> = [
+      { name: "nvapi", sample: "nvapi-abcdefghijklmnop" },
+      { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" },
+      { name: "ghp", sample: "ghp_abcdefghijklmnopqr" },
+      { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
+      { name: "sk_proj", sample: "sk-proj-abcdefghij" },
+      { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
+      { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
+      { name: "xoxb", sample: "xoxb-1234567890" },
+      { name: "xoxp", sample: "xoxp-1234567890" },
+      { name: "xoxa", sample: "xoxa-1234567890" },
+      { name: "xoxs", sample: "xoxs-1234567890" },
+      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
+      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
+      { name: "hf", sample: "hf_abcdefghijklmnopq" },
+      { name: "glpat", sample: "glpat-abcdefghijklmn" },
+      { name: "gsk", sample: "gsk_abcdefghijklmnop" },
+      { name: "pypi", sample: "pypi-abcdefghijklmnop" },
+      { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      {
+        name: "discord",
+        sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+      },
+      {
+        name: "bearer_context",
+        sample: "Authorization: Bearer abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "api_key_context",
+        sample: "API_KEY=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "token_context",
+        sample: "TOKEN=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "secret_context",
+        sample: "SECRET=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "password_context",
+        sample: "PASSWORD=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "credential_context",
+        sample: "CREDENTIAL=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+      {
+        name: "suffix_key_context",
+        sample: "SERVICE_KEY=abcdefghijklmnopqrst",
+        rawSecret: "abcdefghijklmnopqrst",
+      },
+    ];
 
-    expect(detectsSecret("nvapi-" + "A".repeat(10))).toBe("secret");
-    expect(detectsSecret("sk-" + "A".repeat(20))).toBe("secret");
-    expect(detectsSecret("Authorization: Bearer " + "a".repeat(20))).toBe("secret");
-    expect(detectsSecret("API_KEY=" + "b".repeat(20))).toBe("secret");
+    for (const { name, sample, rawSecret } of secretSamples) {
+      expect(detectsSecret(sample), `${name} should be detected`).toBe("secret");
+      const redacted = redactsSecret(sample);
+      expect(redacted, `${name} should include a redaction marker`).toContain("[REDACTED_SECRET]");
+      expect(redacted, `${name} should not retain the raw secret`).not.toContain(
+        rawSecret ?? sample,
+      );
+    }
     expect(detectsSecret("plain startup text")).toBe("clean");
   });
 
@@ -752,6 +820,40 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(fs.existsSync(rawCapture)).toBe(false);
       expect(fs.existsSync(expectLog)).toBe(false);
       expect(fs.existsSync(combinedCapture)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("truncates retained TUI startup capture when redaction fails", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-redact-fail-"));
+    const sanitizedCapture = path.join(tempDir, "sanitized.log");
+    const prefixedToken = `sk-${"A".repeat(20)}`;
+
+    try {
+      const result = runTuiStartupCheckHelperResult(
+        [
+          'plain_capture_file="$SANITIZED_CAPTURE"',
+          'printf "%s\\n" "$PREFIXED_TOKEN" >"$plain_capture_file"',
+          "redact_secrets() { return 1; }",
+          'if ! redact_secrets_in_file "$plain_capture_file"; then printf "redaction_failed=1\\n"; fi',
+          'if [ -e "$plain_capture_file" ] && grep -Fq "$PREFIXED_TOKEN" "$plain_capture_file"; then printf "leaked=1\\n"; fi',
+          'printf "failed=%s\\n" "$FAILED"',
+        ].join("; "),
+        {
+          PREFIXED_TOKEN: prefixedToken,
+          SANITIZED_CAPTURE: sanitizedCapture,
+        },
+      );
+
+      const output = `${result.stdout}\n${result.stderr}`;
+      const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
+      expect(result.status).toBe(0);
+      expect(output).toContain("redaction_failed=1");
+      expect(output).toContain("failed=1");
+      expect(output).not.toContain(prefixedToken);
+      expect(output).not.toContain("leaked=1");
+      expect(sanitizedText).toBe("[redaction failed; sanitized capture unavailable]\n");
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
