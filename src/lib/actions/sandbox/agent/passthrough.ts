@@ -72,7 +72,9 @@
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
 // the enforced `--no-tty` argv shape, the non-Ready phase recovery path, the
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
-// the `--flag=value` selector-acceptance branch.
+// the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
+// captured transport path used to append failure provenance without polluting
+// machine-readable stdout.
 //
 // Removal conditions:
 //
@@ -92,11 +94,29 @@ import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
+import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 
 export {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
 } from "./passthrough-help";
+
+const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
+  "-a",
+  "--agent",
+  "-m",
+  "--message",
+  "--model",
+  "--provider",
+  "--reply-channel",
+  "--session-id",
+  "--session-key",
+  "--thinking",
+  "--timeout",
+  "--to",
+]);
+
+const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
@@ -106,8 +126,10 @@ export interface AgentPassthroughDeps {
   getSandbox?: typeof registry.getSandbox;
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
+  execJson?: typeof runAgentJsonPassthrough;
   process?: {
     exit(code: number): never;
+    stdout?: { write(s: string): unknown };
     stderr: { write(s: string): unknown };
   };
 }
@@ -271,6 +293,46 @@ function rejectRegistryReadError(
   return proc.exit(2);
 }
 
+function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
+  // Invalid state: the host wrapper must pick captured JSON transport only for
+  // the top-level OpenClaw output flag, not for a literal "--json" consumed as
+  // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
+  // the complete argv grammar; NemoClaw mirrors documented flags only to choose
+  // the host transport path. Unknown options fail conservative to normal
+  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
+  // documented value flag, documented equals-form value flags, documented
+  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
+  // special-casing the JSON transport path.
+  let skipNextValue = false;
+  for (const arg of extraArgs) {
+    if (skipNextValue) {
+      skipNextValue = false;
+      continue;
+    }
+    if (arg === "--") return false;
+    if (arg === "--json") return true;
+    if (arg.startsWith("--json=")) {
+      return !["0", "false", "no", "off"].includes(arg.slice("--json=".length).toLowerCase());
+    }
+    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
+      skipNextValue = true;
+      continue;
+    }
+    const equalsIndex = arg.indexOf("=");
+    if (
+      equalsIndex > 0 &&
+      arg.startsWith("--") &&
+      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
+    ) {
+      continue;
+    }
+    if (OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) continue;
+    if (arg.startsWith("-")) return false;
+  }
+  return false;
+}
+
 const TARGET_SELECTOR_FLAGS = ["--agent", "--session-id", "--session-key", "--to"] as const;
 
 function hasTargetSelector(args: readonly string[]): boolean {
@@ -351,6 +413,15 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
+  }
+  if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
+    const execJson = deps.execJson ?? runAgentJsonPassthrough;
+    execJson(sandboxName, command, {
+      exit: proc.exit.bind(proc),
+      stdout: proc.stdout ?? process.stdout,
+      stderr: proc.stderr,
+    } satisfies AgentJsonPassthroughProcess);
+    return;
   }
   const exec = deps.exec ?? execSandbox;
   await exec(sandboxName, command, { tty: false });

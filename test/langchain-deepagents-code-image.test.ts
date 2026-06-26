@@ -429,10 +429,27 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_audit_logs");
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_network_logs");
     expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
+    const tavilyOptInCheck = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test",
+        "e2e",
+        "e2e-cloud-experimental",
+        "checks",
+        "09-deepagents-code-tavily-opt-in.sh",
+      ),
+      "utf8",
+    );
+    expect(tavilyOptInCheck).toContain("policy-add tavily --dry-run");
+    expect(tavilyOptInCheck).toContain("policy-add tavily --yes");
+    expect(tavilyOptInCheck).toContain("https://api.tavily.com/");
+    expect(tavilyOptInCheck).toContain("/opt/venv/");
+    expect(tavilyOptInCheck).toContain("managed Deep Agents Code python can reach Tavily");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
     ]);
   });
 

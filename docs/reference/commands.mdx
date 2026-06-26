@@ -105,6 +105,24 @@ $$nemoclaw resources [--json]
 
 If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
 
+### `$$nemoclaw agents list`
+
+List the installed agent runtimes that can be selected with `$$nemoclaw onboard --agent <name>`.
+Use this global command when you need valid runtime names before creating or recreating a sandbox.
+It lists runtime names with the descriptions from their installed manifests.
+
+```bash
+$$nemoclaw agents list
+```
+
+Expected output:
+
+```text
+openclaw                   Gateway-based AI agent with plugin ecosystem (openclaw.ai)
+hermes                     Self-improving AI agent with learning loop (Nous Research)
+langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
+```
+
 ### `$$nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
@@ -263,6 +281,7 @@ The CLI rejects names that do not match these rules.
 It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant`.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
+The `$$nemoclaw onboard --help` output lists installed runtime names inline, and `$$nemoclaw agents list` shows the same runtimes with manifest descriptions.
 
 <AgentOnly variant="openclaw">
 
@@ -565,7 +584,12 @@ $$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 ```
 
 The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it.
-Streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
+Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
+Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path.
+Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags.
+If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
 
 Common OpenClaw flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`.
 For OpenClaw sandboxes and registry fallbacks, `$$nemoclaw <name> agent --help` prints the wrapper-level summary locally.

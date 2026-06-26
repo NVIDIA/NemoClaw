@@ -143,6 +143,7 @@ describe("policies", () => {
         "public-reference",
         "pypi",
         "slack",
+        "tavily",
         "teams",
         "telegram",
         "weather",
@@ -175,7 +176,6 @@ describe("policies", () => {
         expect(content).toContain("/usr/bin/node");
       }
     });
-
     it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
       // The /ws/chat upgrade is HTTP/1.1-only; if the proxy terminates TLS it
       // negotiates h2 ALPN with Meta's edge and the WS upgrade fails (Meta
