@@ -11,7 +11,7 @@ content:
 skill:
   priority: 20
 ---
-Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
+Use NemoHermes to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
 Review the [Prerequisites](prerequisites) before starting.
@@ -31,7 +31,7 @@ export NEMOCLAW_AGENT=hermes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-If a headless host needs to expose the Hermes dashboard through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
+To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
 Use the externally reachable origin for the dashboard port `18789`.
 NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.
 The OpenAI-compatible API remains available separately on port `8642`.
@@ -86,7 +86,7 @@ Hermes uses an agent-specific baseline policy that allows the Hermes binary and 
 ## Use Non-Interactive Setup
 
 For CI or scripted installs, set the required environment variables before running the installer.
-The example below uses NVIDIA Endpoints and creates a sandbox named `my-hermes`.
+The following example uses NVIDIA Endpoints and creates a sandbox named `my-hermes`.
 
 ```bash
 export NEMOCLAW_AGENT=hermes
@@ -105,7 +105,7 @@ For the recovery commands, refer to [Previous onboarding session failed](../refe
 
 When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, the Hermes dashboard URL, and the OpenAI-compatible API URL.
 Hermes exposes its built-in browser dashboard on port `18789`.
-NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary now announces both URLs.
+NemoClaw also forwards the OpenAI-compatible API on port `8642` for local clients, and the summary announces both URLs.
 NemoClaw builds the Hermes dashboard assets into the sandbox image, so the dashboard starts without running `npm` as the sandbox user under `/opt/hermes`.
 Dashboard chat uses the prebuilt `/opt/hermes/ui-tui` bundle.
 If you need to recover the Hermes dashboard manually, use `hermes dashboard --tui --skip-build` so recovery does not try to rebuild assets under root-owned install paths.
@@ -141,7 +141,7 @@ Manage later
 ──────────────────────────────────────────────────
 ```
 
-To chat with the agent from a terminal, follow these steps:
+To chat with the agent from a terminal, follow these steps.
 
 1. Connect to the sandbox and start the Hermes CLI.
 
@@ -158,7 +158,7 @@ To chat with the agent from a terminal, follow these steps:
 ## Open the Dashboard
 
 The onboard flow starts the dashboard port forward automatically.
-Open the dashboard from the host:
+Open the dashboard from the host.
 
 ```bash
 nemohermes my-hermes dashboard-url --quiet
@@ -222,7 +222,7 @@ nemohermes my-hermes destroy
 
 ## Next Steps
 
-- [Inference Options](../inference/inference-options) to choose a provider and model.
-- [Commands](../reference/commands) to see the full `nemohermes` alias behavior.
-- [Backup and Restore](../manage-sandboxes/backup-restore) to preserve sandbox state before destructive operations.
-- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) to inspect OpenShell events and sandbox logs.
+- [Inference Options](../inference/inference-options) explains how to choose a provider and model.
+- The [Commands](../reference/commands) page explains the full `nemohermes` alias behavior.
+- [Backup and Restore](../manage-sandboxes/backup-restore) explains how to preserve sandbox state before destructive operations.
+- [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity) explains how to inspect OpenShell events and sandbox logs.
