@@ -8,7 +8,11 @@ import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
 import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
-import { setupMessagingChannels, setupSelectedMessagingChannels } from "./messaging-channel-setup";
+import {
+  detectMessagingChannelsFromEnv,
+  setupMessagingChannels,
+  setupSelectedMessagingChannels,
+} from "./messaging-channel-setup";
 
 vi.mock("../credentials/store", () => ({
   getCredential: vi.fn(() => null),
@@ -590,5 +594,45 @@ describe("setupMessagingChannels", () => {
     expect(errors.join("\n")).toContain("open");
     expect(errors.join("\n")).toContain("allowlist");
     expect(errors.join("\n")).toContain("disabled");
+  });
+});
+
+describe("detectMessagingChannelsFromEnv", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+    delete process.env.NEMOCLAW_POLICY_PRESETS;
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("returns no telegram channel when no messaging env inputs are present", () => {
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+
+  it("detects telegram when TELEGRAM_BOT_TOKEN is supplied", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv(null)).toContain("telegram");
+  });
+
+  it("does not select telegram from NEMOCLAW_POLICY_PRESETS alone", () => {
+    process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
+
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
   });
 });
