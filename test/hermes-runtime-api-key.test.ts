@@ -172,10 +172,13 @@ function baseMessagingRuntimePlan(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function runExtractedProviderPlaceholderRefresh(opts: { runtimePlanExists: boolean }) {
+function runExtractedProviderPlaceholderRefresh(opts: {
+  runtimePlanPathKind: "absent" | "regular" | "brokenSymlink";
+}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-start-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
+  const missingRuntimePlanPath = path.join(tmpDir, "missing-runtime-plan.json");
   const logPath = path.join(tmpDir, "python-args.log");
   const fakePythonPath = path.join(tmpDir, "fake-python.sh");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -185,9 +188,12 @@ function runExtractedProviderPlaceholderRefresh(opts: { runtimePlanExists: boole
     path.join(hermesHome, ".env"),
     "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n",
   );
-  opts.runtimePlanExists
-    ? fs.writeFileSync(runtimePlanPath, JSON.stringify(baseMessagingRuntimePlan()))
-    : undefined;
+  const writeRuntimePlanPath = {
+    absent: () => undefined,
+    regular: () => fs.writeFileSync(runtimePlanPath, JSON.stringify(baseMessagingRuntimePlan())),
+    brokenSymlink: () => fs.symlinkSync(missingRuntimePlanPath, runtimePlanPath),
+  } satisfies Record<typeof opts.runtimePlanPathKind, () => void | undefined>;
+  writeRuntimePlanPath[opts.runtimePlanPathKind]();
 
   const functionSource = extractShellFunctionFromSource(
     fs.readFileSync(START_SCRIPT, "utf-8"),
@@ -486,6 +492,20 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
+  it("does not normalize new-channel ambient placeholders without a runtime plan", () => {
+    const originalEnv = "WECOM_BOT_TOKEN=openshell:resolve:env:v1_WECOM_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        WECOM_BOT_TOKEN: "openshell:resolve:env:v2_WECOM_BOT_TOKEN",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
   it("normalizes versioned provider placeholders from the runtime env before refreshing .env", () => {
     for (const envFile of [
       "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",
@@ -689,16 +709,22 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refresh_hermes_provider_placeholders passes --runtime-plan only when the artifact exists", () => {
-    const present = runExtractedProviderPlaceholderRefresh({ runtimePlanExists: true });
-    const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanExists: false });
+  it("refresh_hermes_provider_placeholders passes --runtime-plan only for regular artifacts", () => {
+    const present = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "regular" });
+    const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "absent" });
+    const brokenSymlink = runExtractedProviderPlaceholderRefresh({
+      runtimePlanPathKind: "brokenSymlink",
+    });
 
     expect(present.result.status, present.result.stderr).toBe(0);
     expect(absent.result.status, absent.result.stderr).toBe(0);
+    expect(brokenSymlink.result.status, brokenSymlink.result.stderr).toBe(0);
     expect(present.args).toContain("--runtime-plan");
     expect(present.args).toContain(present.runtimePlanPath);
     expect(absent.args).not.toContain("--runtime-plan");
     expect(absent.args).not.toContain(absent.runtimePlanPath);
+    expect(brokenSymlink.args).not.toContain("--runtime-plan");
+    expect(brokenSymlink.args).not.toContain(brokenSymlink.runtimePlanPath);
   });
 
   it.each([
@@ -742,15 +768,22 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("Hermes Dockerfile runtime-plan guard rejects unreduced agentRender/buildSteps artifacts", () => {
+  it("Hermes Dockerfile runtime-plan guard accepts reduced artifacts", () => {
     const accepted = runHermesDockerfileRuntimePlanGuard(baseMessagingRuntimePlan());
-    const rejected = runHermesDockerfileRuntimePlanGuard(
-      baseMessagingRuntimePlan({ agentRender: [], buildSteps: [] }),
-    );
 
     expect(accepted.status, accepted.stderr).toBe(0);
+  });
+
+  it.each([
+    "agentRender",
+    "buildSteps",
+    "stateUpdates",
+    "healthChecks",
+  ])("Hermes Dockerfile runtime-plan guard rejects unreduced %s artifacts", (key) => {
+    const rejected = runHermesDockerfileRuntimePlanGuard(baseMessagingRuntimePlan({ [key]: [] }));
+
     expect(rejected.status).toBe(1);
-    expect(rejected.stderr).toContain("runtime plan contains unreduced key agentRender");
+    expect(rejected.stderr).toContain(`runtime plan contains unreduced key ${key}`);
   });
 
   it.each([

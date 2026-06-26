@@ -1191,7 +1191,7 @@ refresh_hermes_provider_placeholders() {
     --boundary-validator "$_HERMES_BOUNDARY_VALIDATOR"
     --mode "$mode"
   )
-  if [ -e "$runtime_plan" ] || [ -L "$runtime_plan" ]; then
+  if [ -f "$runtime_plan" ]; then
     args+=(--runtime-plan "$runtime_plan")
   fi
   "$_HERMES_PYTHON" "${args[@]}"

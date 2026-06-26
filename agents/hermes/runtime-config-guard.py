@@ -24,6 +24,10 @@ API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
+# Restrictive compatibility fallback for provider placeholders persisted before
+# Hermes messaging runtime-plan metadata existed. New channels must flow through
+# runtime-plan credentialBindings/envAliases; do not broaden this set without a
+# migration plan and source-of-truth review.
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
     {
         "TELEGRAM_BOT_TOKEN",
@@ -372,6 +376,8 @@ def _upsert_env_assignments(text: str, assignments: dict[str, str]) -> tuple[str
         if updated and not updated[-1].endswith("\n"):
             updated[-1] = updated[-1] + "\n"
             changed = True
+        # Appended provider placeholders use standard dotenv syntax; existing
+        # export-prefixed assignments preserve their export prefix above.
         updated.append(f"{key}={value}\n")
         changed = True
         changed_keys.add(key)
