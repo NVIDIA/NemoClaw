@@ -8,7 +8,12 @@ import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
 
-function buildStubOpenshell(home: string, logFile: string, sessionListJson: string): string {
+function buildStubOpenshell(
+  home: string,
+  logFile: string,
+  sessionListJson: string,
+  sessionListStderr = "",
+): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
@@ -22,6 +27,7 @@ function buildStubOpenshell(home: string, logFile: string, sessionListJson: stri
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',
       '  *"openclaw sessions list"*)',
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
+      `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,
       "    exit 0 ;;",
       '  *"sandbox exec --name alpha -- sh -c"*) exit 0 ;;',
       '  "sandbox download"*)',
@@ -36,6 +42,47 @@ function buildStubOpenshell(home: string, logFile: string, sessionListJson: stri
   );
   return localBin;
 }
+
+describe("sandbox sessions list CLI", () => {
+  it("filters warm-up sessions and preserves OpenClaw stderr", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-list-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify({
+          count: 2,
+          totalCount: 2,
+          sessions: [
+            { key: "agent:main:explicit:warm", sessionId: "nemoclaw-onboard-warmup-1" },
+            { key: "agent:main:explicit:real", sessionId: "sid-real" },
+          ],
+        }),
+        "warning: noisy but non-fatal",
+      );
+
+      const result = runWithEnv("alpha sessions list --json 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain("warning: noisy but non-fatal");
+      expect(result.out).not.toContain("nemoclaw-onboard-warmup-");
+      expect(JSON.parse(result.out.slice(0, result.out.indexOf("\nwarning:")))).toEqual({
+        count: 1,
+        totalCount: 1,
+        sessions: [{ key: "agent:main:explicit:real", sessionId: "sid-real" }],
+      });
+
+      const calls = fs.readFileSync(openshellLog, "utf8");
+      expect(calls).toMatch(/openclaw sessions list --json/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("sandbox sessions export CLI", () => {
   it("enumerates every session via openclaw sessions list when no keys are supplied and tars only the resolved files", () => {
@@ -235,6 +282,40 @@ describe("sandbox sessions export CLI", () => {
       expect(result.out).toMatch(/agent 'main' has no sessions to bundle/);
 
       const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).not.toMatch(/-- sh -c/);
+      expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("reports nothing to export and creates no output artifact when only warm-up sessions exist", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-warmup-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([
+          {
+            key: "agent:main:explicit:warm",
+            sessionId: "nemoclaw-onboard-warmup-cli-only",
+          },
+        ]),
+      );
+
+      const outDir = path.join(home, "sessions-alpha");
+      const result = runWithEnv(`alpha sessions export --out ${outDir} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(1);
+      expect(result.out).toMatch(/agent 'main' has no sessions to bundle/);
+      expect(fs.existsSync(outDir)).toBe(false);
+
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).toMatch(/openclaw sessions list --agent main --json/);
       expect(calls).not.toMatch(/-- sh -c/);
       expect(calls).not.toMatch(/sandbox download/);
     } finally {
