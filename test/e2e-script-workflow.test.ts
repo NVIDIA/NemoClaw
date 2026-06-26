@@ -1086,31 +1086,34 @@ describe("E2E reusable workflow contract", () => {
 
   it("keeps apt package requests tied to reviewed host-tool consumers", () => {
     const reviewedAptPackageLiterals = new Set(["expect", "expect iptables"]);
-    const reusableExpectConsumers: Record<string, string> = {};
+    const reusableAptPackageRequests = Object.entries(nightlyWorkflow.jobs)
+      .map(([name, job]) => ({
+        name,
+        packages: job.with?.apt_packages,
+        script: String(job.with?.script ?? ""),
+      }))
+      .filter(({ packages }) => packages !== undefined);
+    const directAptPackageRequests = Object.entries(nightlyWorkflow.jobs).flatMap(([name, job]) =>
+      (job.steps ?? [])
+        .filter((step) => String(step.uses ?? "").includes("install-apt-packages"))
+        .map((step) => ({
+          name: `${name}:${step.name ?? ""}`,
+          packages: String(step.with?.packages ?? ""),
+        })),
+    );
 
-    for (const [name, job] of Object.entries(nightlyWorkflow.jobs)) {
-      const aptPackages = job.with?.apt_packages;
-      if (aptPackages !== undefined) {
-        expect(reviewedAptPackageLiterals.has(aptPackages), name).toBe(true);
-        expect(aptPackages, name).not.toMatch(
-          /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
-        );
-        if (aptPackages.split(/\s+/).includes("expect")) {
-          reusableExpectConsumers[name] = String(job.with?.script ?? "");
-        }
-      }
-
-      for (const step of job.steps ?? []) {
-        if (!String(step.uses ?? "").includes("install-apt-packages")) continue;
-
-        const packages = String(step.with?.packages ?? "");
-        expect(reviewedAptPackageLiterals.has(packages), `${name}:${step.name ?? ""}`).toBe(true);
-        expect(packages, `${name}:${step.name ?? ""}`).not.toMatch(
-          /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
-        );
-      }
+    for (const { name, packages } of [...reusableAptPackageRequests, ...directAptPackageRequests]) {
+      expect(reviewedAptPackageLiterals.has(String(packages)), name).toBe(true);
+      expect(String(packages), name).not.toMatch(
+        /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
+      );
     }
 
+    const reusableExpectConsumers = Object.fromEntries(
+      reusableAptPackageRequests
+        .filter(({ packages }) => String(packages).split(/\s+/).includes("expect"))
+        .map(({ name, script }) => [name, script]),
+    );
     expect(reusableExpectConsumers).toEqual({
       "network-policy-e2e": "test/e2e/test-network-policy.sh",
     });
