@@ -213,6 +213,8 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/schema.json");
   requireRunContains(errors, analyze, "$PR_REVIEW_ADVISOR_MODEL");
   requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_SUPPORTED=0");
+  requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
+  requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_UNAVAILABLE_REASON");
   requireRunContains(errors, analyze, "trusted main checkout does not yet support");
   if (analyze) {
     const analyzeEnv = asRecord(analyze.env);

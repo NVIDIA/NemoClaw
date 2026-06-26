@@ -209,34 +209,12 @@ jobs:
           }; then
             echo "PR_REVIEW_ADVISOR_SUPPORTED=0" >> "$GITHUB_ENV"
             echo "Skipping PR review advisor: trusted main checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
-            mkdir -p "$OUT_DIR"
-            HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse HEAD)"
-            export BASE_REF HEAD_REF HEAD_SHA
-            node <<'NODE'
-          const fs = require("node:fs");
-          const path = require("node:path");
-          const outDir = process.env.OUT_DIR;
-          const title = process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || "PR Review Advisor";
-          const model = process.env.PR_REVIEW_ADVISOR_MODEL || "unknown";
-          const reason = `Trusted main checkout does not yet support advisor model ${model}; this parallel advisor will run after the implementation lands on main.`;
-          const result = {
-            version: 1,
-            baseRef: process.env.BASE_REF || "origin/main",
-            headRef: process.env.HEAD_REF || "HEAD",
-            headSha: process.env.HEAD_SHA || "unknown",
-            changedFiles: [],
-            summary: { recommendation: "info_only", confidence: "low", oneLine: `PR review advisor skipped: ${reason}` },
-            findings: [],
-            acceptanceCoverage: [],
-            securityCategories: [{ category: "Holistic Security Posture", verdict: "warning", justification: "Advisor bootstrap skip; human review required." }],
-            testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
-            positives: [],
-            reviewCompleteness: { limitations: [reason], requiresHumanReview: true },
-          };
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-result.json"), `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# ${title}\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`);
-          NODE
+            export PR_REVIEW_ADVISOR_UNAVAILABLE_REASON="Trusted main checkout does not yet support advisor model $PR_REVIEW_ADVISOR_MODEL; this parallel advisor will run after the implementation lands on main."
+            PR_REVIEW_ADVISOR_RUN_ANALYSIS=0 node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
+              --base "$BASE_REF" \
+              --head "$HEAD_REF" \
+              --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
+              --out-dir "$OUT_DIR"
             exit 0
           fi
           echo "PR_REVIEW_ADVISOR_SUPPORTED=1" >> "$GITHUB_ENV"

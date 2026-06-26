@@ -347,7 +347,9 @@ async function main(): Promise<void> {
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
-    writeUnavailable("PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
+    writeUnavailable(
+      process.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON || "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0",
+    );
     process.exit(0);
   }
 

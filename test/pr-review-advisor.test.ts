@@ -684,6 +684,49 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     });
   });
 
+  it("validates parallel advisor previous-review provenance with marker isolation", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      const runId = url.split("/").at(-1);
+      return {
+        ok: true,
+        json: async () => ({
+          name: "PR Review / Advisor",
+          head_sha: runId === "100" ? "def5678" : "abc1234",
+          event: "pull_request",
+          run_attempt: 1,
+          run_started_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:10:00Z",
+        }),
+      } as Response;
+    });
+
+    const previous = await collectTrustedPreviousAdvisorReview(
+      "NVIDIA/NemoClaw",
+      "token",
+      [
+        {
+          id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ndefault",
+        },
+        {
+          id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->\n<!-- head_sha: def5678; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nnemotron",
+        },
+      ],
+      { marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" },
+    );
+
+    expect(previous).toMatchObject({
+      headSha: "def5678",
+      body: expect.stringContaining("nemotron"),
+    });
+  });
+
   it("ignores spoofed previous advisor comments from untrusted authors", () => {
     const previous = extractPreviousAdvisorReview(
       [
