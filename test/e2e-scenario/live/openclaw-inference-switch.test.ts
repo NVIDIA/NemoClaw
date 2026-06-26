@@ -662,13 +662,15 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
 
 function agentReplyContainsToken(reply: string, expected: string): boolean {
   const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
-  if (!normalizedExpected) return false;
   const tokenPattern = normalizedExpected
     .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
     .split("")
     .join("\\s*");
-  return new RegExp(String.raw`(^|[^\p{L}\p{N}_])${tokenPattern}(?=$|[^\p{L}\p{N}_])`, "u").test(
-    reply.toUpperCase(),
+  return (
+    normalizedExpected.length > 0 &&
+    new RegExp(String.raw`(^|[^\p{L}\p{N}_])${tokenPattern}(?=$|[^\p{L}\p{N}_])`, "u").test(
+      reply.toUpperCase(),
+    )
   );
 }
 
