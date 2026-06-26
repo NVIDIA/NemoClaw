@@ -115,8 +115,10 @@ preflight() {
   log "Docker is running"
   install_nemoclaw
   # CI installs expect through the install-apt-packages action before this
-  # script starts. Local runners must install it up front too: this coverage is
-  # intentionally fail-closed so a missing host tool cannot become a silent skip.
+  # script starts. Local developer images/runners must provide it up front too:
+  # this coverage is intentionally fail-closed so a missing host tool cannot
+  # become a silent skip. Keep the guard until interactive policy-add coverage
+  # no longer depends on expect.
   if ! command -v expect >/dev/null 2>&1; then
     log "ERROR: expect is required for interactive network policy coverage"
     exit 1

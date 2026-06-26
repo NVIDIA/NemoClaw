@@ -1203,6 +1203,11 @@ jobs:
         with:
           persist-credentials: false
 
+      # This free-standing job checks out and executes the PR target ref. Keep
+      # host dependency setup inline here so it remains trusted workflow code;
+      # the contract tests pin the retry/install behavior to match the shared
+      # install-apt-packages action without loading a repo-local action from the
+      # target ref.
       - name: "Install issue #4434 host dependencies"
         shell: bash
         run: |

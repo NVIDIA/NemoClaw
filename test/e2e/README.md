@@ -7,7 +7,8 @@
 
 Interactive E2E coverage that drives terminal prompts requires `expect`.
 GitHub Actions installs it before the affected tests begin through the shared `install-apt-packages` action.
-Local runners must install `expect` before starting `test/e2e/test-network-policy.sh` or `test/e2e/test-gpu-e2e.sh`; missing `expect` is a test failure so interactive coverage cannot silently skip.
+Local developer images and runners must install `expect` before starting `test/e2e/test-network-policy.sh` or `test/e2e/test-gpu-e2e.sh`; missing `expect` is a test failure so interactive coverage cannot silently skip.
+Keep those guards until the affected interactive policy-add and OpenClaw TUI harnesses no longer depend on `expect`.
 
 ## Hermetic Compatible Inference for Direct Bash Jobs
 

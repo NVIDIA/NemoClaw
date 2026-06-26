@@ -66,10 +66,11 @@ function runInstallAptActionScript(
       { mode: 0o755 },
     );
 
+    const testPath = [binDir, process.env.PATH ?? ""].filter(Boolean).join(":");
     const result = spawnSync("bash", ["-c", script], {
       encoding: "utf8",
       env: {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        PATH: testPath,
         APT_PACKAGES: aptPackages,
         SLEEP_LOG: sleepLog,
         SUDO_LOG: sudoLog,
