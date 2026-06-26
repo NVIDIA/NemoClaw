@@ -441,9 +441,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
-    const result = await setupNim(null, "dcode-station", null, {
-      allowRecordedProviderRecovery: false,
-    });
+    const result = await setupNim(null, "dcode-station", null, false);
     originalLog(JSON.stringify({ result, lines }));
   } finally {
     console.log = originalLog;

@@ -144,9 +144,7 @@ describe("handleProviderInferenceState", () => {
     const result = await handleProviderInferenceState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
-    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, {
-      allowRecordedProviderRecovery: true,
-    });
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true);
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
       expect.objectContaining({ provider: "nvidia-prod" }),
@@ -203,9 +201,7 @@ describe("handleProviderInferenceState", () => {
       sandboxName: "dcode-station",
     });
 
-    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, {
-      allowRecordedProviderRecovery: false,
-    });
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {

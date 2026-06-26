@@ -222,7 +222,7 @@ describe("core onboard flow phases", () => {
       { platform: "linux" },
       "my-sandbox",
       { name: "openclaw" },
-      { allowRecordedProviderRecovery: false },
+      false,
     );
   });
 

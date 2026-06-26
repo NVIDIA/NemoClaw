@@ -3264,22 +3264,12 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
-type ProviderSelectionRecoveryReaders =
-  import("./onboard/provider-selection").ProviderSelectionRecoveryReaders;
-type SetupNimOptions = {
-  allowRecordedProviderRecovery?: boolean;
-};
 
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
     parseGatewayInference,
     runCaptureOpenshell,
   });
-const DISABLED_PROVIDER_RECOVERY_READERS: ProviderSelectionRecoveryReaders = {
-  readRecordedProvider: () => null,
-  readRecordedNimContainer: () => null,
-  readRecordedModel: () => null,
-};
 
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
@@ -3935,7 +3925,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
-  setupOptions: SetupNimOptions = {},
+  recoverProvider = true,
 ): Promise<{
   model: string | null;
   provider: string;
@@ -3983,17 +3973,12 @@ async function setupNim(
     ollamaInstallMenu,
     gpuNimCapable,
   } = providerHostState;
-  const requestedProvider = getNonInteractiveProvider();
+  const requestedProvider = getNonInteractiveProvider() || (recoverProvider ? null : "build");
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
-  const providerRecoveryReaders =
-    setupOptions.allowRecordedProviderRecovery === false
-      ? DISABLED_PROVIDER_RECOVERY_READERS
-      : { readRecordedProvider, readRecordedNimContainer, readRecordedModel };
 
-  // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
   const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4048,7 +4033,9 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          ...providerRecoveryReaders,
+          readRecordedProvider,
+          readRecordedNimContainer,
+          readRecordedModel,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({

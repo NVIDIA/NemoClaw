@@ -21,10 +21,6 @@ export interface ProviderSelectionResult {
   skipHostInferenceSmoke?: boolean;
 }
 
-export interface ProviderSelectionSetupOptions {
-  allowRecordedProviderRecovery?: boolean;
-}
-
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   resume: boolean;
   fresh: boolean;
@@ -57,7 +53,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       gpu: Gpu,
       sandboxName: string | null,
       agent: Agent,
-      options?: ProviderSelectionSetupOptions,
+      allowRecordedProviderRecovery?: boolean,
     ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
@@ -257,10 +253,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () =>
-          deps.setupNim(gpu, sandboxName, agent, {
-            allowRecordedProviderRecovery: !fresh,
-          }),
+        () => deps.setupNim(gpu, sandboxName, agent, !fresh),
       );
       model = selection.model;
       provider = selection.provider;
