@@ -22,7 +22,7 @@ NemoClaw supports both static policy changes that persist across restarts and dy
 If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
 Apply a custom NemoClaw preset with `$$nemoclaw <sandbox> policy-add --from-file`.
 Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
-See [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
+Refer to [Agent cannot reach a host-side HTTP service](../reference/troubleshooting#agent-cannot-reach-a-host-side-http-service).
 </Note>
 
 <Warning>
@@ -183,7 +183,7 @@ Use this flow to test a destination before you decide whether it belongs in a pe
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
-For guided post-install examples, see [Common Integration Policy Examples](integration-policy-examples).
+For guided post-install examples, refer to [Common Integration Policy Examples](integration-policy-examples).
 
 During onboarding, the [policy tier](../reference/network-policies#policy-tiers) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -251,7 +251,7 @@ $$nemoclaw my-assistant policy-remove pypi --yes
 ```
 
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` to drive the same flow from an environment variable.
-See [Commands](../reference/commands#$$nemoclaw-name-policy-add) for the full flag reference.
+Refer to [Commands](../reference/commands#$$nemoclaw-name-policy-add) for the full flag reference.
 
 `$$nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 

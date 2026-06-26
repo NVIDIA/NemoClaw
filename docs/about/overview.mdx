@@ -53,7 +53,7 @@ NemoClaw provides these benefits to mitigate those risks.
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
 | Sandboxed execution        | Every agent runs inside an OpenShell sandbox with Landlock, seccomp, and network namespace isolation. The sandbox grants no access by default. |
-| Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. See [Inference Options](../inference/inference-options).          |
+| Routed inference           | The OpenShell gateway routes model traffic to your selected provider, transparent to the agent. You can switch providers or models. Refer to [Inference Options](../inference/inference-options).          |
 | Declarative network policy | YAML defines egress rules. OpenShell blocks unknown hosts and surfaces them to the operator for approval.                 |
 | Single CLI                 | The <AgentCli /> command orchestrates the full stack: gateway, sandbox, inference provider, and network policy.           |
 | Blueprint lifecycle        | Versioned blueprints handle sandbox creation, digest verification, and reproducible setup.                             |

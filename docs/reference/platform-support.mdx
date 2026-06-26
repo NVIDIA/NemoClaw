@@ -30,7 +30,7 @@ Update the JSON so the tables and partial views on other pages stay in sync with
 
 ## Project Status
 
-For version highlights, see [Release Notes](../about/release-notes).
+For version highlights, refer to [Release Notes](../about/release-notes).
 
 {/* project-status:begin */}
 - **Stage:** alpha
@@ -73,7 +73,7 @@ Pick the matching onboarding entry point for each agent.
 The table below lists every platform tracked by NemoClaw, including deferred entries that are on the roadmap but not yet validated.
 The `CI` column reports whether the platform has a dedicated GitHub Actions job.
 A "Tested with limitations" row that is not in CI carries a stronger caveat than one that is.
-For the onboarding-time supported set without deferred rows, see [Prerequisites](../get-started/prerequisites#platforms).
+For the onboarding-time supported set without deferred rows, refer to [Prerequisites](../get-started/prerequisites#platforms).
 
 {/* platform-matrix-full:begin */}
 | OS | Container runtime | Status | PRD priority | CI | Notes |
@@ -176,7 +176,7 @@ They are listed here so launch material, sales conversations, and support triage
 
 ## Known Caveats and Active Blockers
 
-- Sandbox bounding-set capability drop on hosts without `CAP_SETPCAP` is partially fixed. The agent process tree drops dangerous caps with `NEMOCLAW_REQUIRE_CAP_DROP=1` (see [#4707](https://github.com/NVIDIA/NemoClaw/pull/4707)). The `nemoclaw <name> connect` shell still inherits the container's create-time bounding set on Colossus, Docker Desktop, and WSL hosts where `CAP_SETPCAP` is absent. The remaining fix is upstream in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452). See tracking [#3280](https://github.com/NVIDIA/NemoClaw/issues/3280).
+- Sandbox bounding-set capability drop on hosts without `CAP_SETPCAP` is partially fixed. The agent process tree drops dangerous caps with `NEMOCLAW_REQUIRE_CAP_DROP=1` (refer to [#4707](https://github.com/NVIDIA/NemoClaw/pull/4707)). The `nemoclaw <name> connect` shell still inherits the container's create-time bounding set on Colossus, Docker Desktop, and WSL hosts where `CAP_SETPCAP` is absent. The remaining fix is upstream in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452). Refer to tracking [#3280](https://github.com/NVIDIA/NemoClaw/issues/3280).
 
 ## Using This Matrix
 

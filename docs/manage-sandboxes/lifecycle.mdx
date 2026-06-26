@@ -21,10 +21,10 @@ Use this guide after you finish [Quickstart with Hermes](../get-started/quicksta
 </AgentOnly>
 It covers ongoing sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
 <AgentOnly variant="openclaw">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
 </AgentOnly>
 
 ## List Sandboxes
@@ -153,7 +153,7 @@ Change the active model or provider at runtime without rebuilding the sandbox:
 $$nemoclaw inference set --model <model> --provider <provider>
 ```
 
-See [Switch Inference Providers](../inference/switch-inference-providers) for provider-specific model IDs and API compatibility notes.
+Refer to [Switch Inference Providers](../inference/switch-inference-providers) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
 
@@ -170,7 +170,7 @@ $$nemoclaw <sandbox-name> recover
 
 The command restarts the in-sandbox gateway and re-establishes the dashboard port-forward in one step.
 It is idempotent and safe to script.
-See [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
+Refer to [`$$nemoclaw <name> recover`](../reference/commands#$$nemoclaw-name-recover) for details.
 
 ### Reset a Stored Credential
 
@@ -182,7 +182,7 @@ $$nemoclaw credentials reset <PROVIDER>    # clear a single provider, for exampl
 $$nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-See [`$$nemoclaw credentials reset <PROVIDER>`](../reference/commands#$$nemoclaw-credentials-reset-provider) for full command details.
+Refer to [`$$nemoclaw credentials reset <PROVIDER>`](../reference/commands#$$nemoclaw-credentials-reset-provider) for full command details.
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
@@ -199,7 +199,7 @@ $$nemoclaw <sandbox-name> rebuild
 
 The rebuild command preserves the mounted workspace and registered policies while recreating the container.
 If NemoClaw cannot archive any requested state path, it reports the backup failure and stops before deleting the original sandbox.
-See [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for flag details.
+Refer to [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
 ### Add a Network Preset After Onboarding
 
@@ -209,11 +209,11 @@ Apply an additional preset, such as Telegram or GitHub, to a running sandbox wit
 $$nemoclaw <sandbox-name> policy-add
 ```
 
-See [`$$nemoclaw <name> policy-add`](../reference/commands#$$nemoclaw-name-policy-add) for usage details and flags.
+Refer to [`$$nemoclaw <name> policy-add`](../reference/commands#$$nemoclaw-name-policy-add) for usage details and flags.
 
 Non-interactive re-onboards in the default `suggested` policy mode preserve presets added this way.
 To make a re-onboard authoritative, set `NEMOCLAW_POLICY_MODE=custom` and provide `NEMOCLAW_POLICY_PRESETS` with the exact list to apply; onboarding removes anything else.
-See [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for the full table.
+Refer to [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for the full table.
 
 ## Update to the Maintained Version
 
@@ -239,8 +239,8 @@ Each rebuild destroys the old container and creates a new one, while preserving 
 `upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
 Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
 Runtime changes outside those state paths, such as packages installed manually in the running container, are not preserved.
-See [Backup and Restore](backup-restore) for the full state-preservation contract, snapshot restore behavior, and manual backup workflow.
-See [`$$nemoclaw update`](../reference/commands#$$nemoclaw-update), [`$$nemoclaw upgrade-sandboxes`](../reference/commands#$$nemoclaw-upgrade-sandboxes), and [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for command flags.
+Refer to [Backup and Restore](backup-restore) for the full state-preservation contract, snapshot restore behavior, and manual backup workflow.
+Refer to [`$$nemoclaw update`](../reference/commands#$$nemoclaw-update), [`$$nemoclaw upgrade-sandboxes`](../reference/commands#$$nemoclaw-upgrade-sandboxes), and [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for command flags.
 
 ## Uninstall
 
@@ -261,7 +261,7 @@ The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapsh
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
 For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
-See the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
+Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
 
 The CLI uninstall command runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
@@ -278,7 +278,7 @@ The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above a
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
 ```
 
-See [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#$$nemoclaw-uninstall-vs-the-hosted-uninstallsh) for a full comparison of what the two forms fetch, what they trust, and when to prefer each.
+Refer to [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#$$nemoclaw-uninstall-vs-the-hosted-uninstallsh) for a full comparison of what the two forms fetch, what they trust, and when to prefer each.
 
 ## Related Topics
 

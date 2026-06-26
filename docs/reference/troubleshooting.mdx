@@ -253,7 +253,7 @@ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onbo
 
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the network should be able to reach the gateway.
 
-See [Environment Variables](commands#environment-variables) for the full list of port overrides.
+Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -738,7 +738,7 @@ If Ollama times out during a cold model load, NemoClaw retries once with a 300-s
 If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
-The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); see [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
 
 ### Sandbox onboard times out with "did not become ready within Ns"
 
@@ -1173,7 +1173,7 @@ Current versions derive the dashboard port from `CHAT_UI_URL` automatically and 
 CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 ```
 
-If you need to run multiple sandboxes at different ports at the same time, see [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+If you need to run multiple sandboxes at different ports at the same time, refer to [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
 ### Control UI config endpoint returns 404 or non-JSON
 
@@ -1299,7 +1299,7 @@ http://host.openshell.internal:11435/v1
 `11435` there and forwards requests to `127.0.0.1:11434` on the host.
 If you need a different host service exposed to the sandbox, route it through
 the OpenShell gateway rather than relying on `host.docker.internal`.
-See issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
@@ -1440,7 +1440,7 @@ If you run other services on Spark that expect port 3000, bind them to a differe
 <a id="windows-wsl-2"></a>
 ## Windows Subsystem for Linux
 
-For environment setup steps, see [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
+For environment setup steps, refer to [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -1516,12 +1516,12 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
+For additional troubleshooting, refer to the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
 <AgentOnly variant="openclaw">
-For first-time OpenClaw setup, see the [Quickstart](../get-started/quickstart).
+For first-time OpenClaw setup, refer to the [Quickstart](../get-started/quickstart).
 </AgentOnly>
 <AgentOnly variant="hermes">
-For first-time Hermes setup, see [Quickstart with Hermes](../get-started/quickstart).
+For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/quickstart).
 </AgentOnly>
 
 ## Podman
@@ -1734,7 +1734,7 @@ Reset a specific provider's credentials with `nemohermes credentials reset <prov
 
 ### `Brave Search` policy preset has no effect under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (refer to [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
 If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
 Configure Hermes web search from the agent's own configuration inside the sandbox.
 
