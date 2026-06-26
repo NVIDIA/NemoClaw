@@ -453,11 +453,18 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");
     expect(secretBoundaryCheck).toContain("NETWORK_LOG_PATTERN=");
+    expect(secretBoundaryCheck).toContain("AUDIT_NETWORK_LOG_PATTERN=");
     expect(secretBoundaryCheck).toContain("NET:OPEN|inference\\\\.local|pypi\\\\.org");
     expect(secretBoundaryCheck).toContain("integrate\\\\.api\\\\.nvidia\\\\.com");
     expect(secretBoundaryCheck).toContain("/tmp/gateway.log");
     expect(secretBoundaryCheck).toContain("/tmp/nemoclaw-start.log");
+    expect(secretBoundaryCheck).toContain("ocsf_json_enabled");
+    expect(secretBoundaryCheck).toContain(
+      'openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m',
+    );
+    expect(secretBoundaryCheck).toContain("AUDIT_LOG_READ:1");
     expect(secretBoundaryCheck).toContain("LOG_MARKER_FOUND:1");
+    expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_audit_logs");
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_network_logs");
     expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([

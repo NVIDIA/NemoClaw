@@ -17,6 +17,7 @@ FAKE_SECRET="sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000"
 ENV_BACKUP="/tmp/${PREFIX}.env.backup.$$"
 ENV_EXISTED=0
 NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com|Server ready|Task completed|PING"
+AUDIT_NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -79,6 +80,36 @@ printf 'LOG_MARKER_FOUND:%s\n' \"\$found\"
 "
 }
 
+enable_openshell_audit_logs() {
+  if openshell settings set "$SANDBOX_NAME" --key ocsf_json_enabled --value true >/dev/null 2>&1; then
+    pass "OpenShell audit logs enabled"
+  else
+    fail_test "could not enable OpenShell audit logs for ${SANDBOX_NAME}"
+  fi
+}
+
+openshell_audit_logs_since_epoch() {
+  local start_epoch="$1"
+  local output=""
+
+  if ! output="$(openshell logs "$SANDBOX_NAME" -n 500 --source all --since 2m 2>&1)"; then
+    printf 'AUDIT_LOG_READ:0\n%s\n' "$output"
+    return 0
+  fi
+
+  printf 'AUDIT_LOG_READ:1\n'
+  printf '%s\n' "$output" | awk -v start="$start_epoch" '
+    /^\[[0-9]+(\.[0-9]+)?\]/ {
+      close = index($0, "]");
+      ts = substr($0, 2, close - 2) + 0;
+      keep = ts >= start;
+      if (keep) print;
+      next;
+    }
+    keep { print; }
+  '
+}
+
 restore_env_file() {
   if [ "$ENV_EXISTED" -eq 1 ]; then
     sandbox_exec "cp ${ENV_BACKUP@Q} ${DEEPAGENTS_ENV_FILE@Q} 2>/dev/null || true; rm -f ${ENV_BACKUP@Q}" >/dev/null || true
@@ -138,6 +169,25 @@ assert_no_rejected_interval_network_logs() {
   pass "${label}: sandbox logs show no network path after rejection"
 }
 
+assert_no_rejected_interval_audit_logs() {
+  local label="$1"
+  local logs="$2"
+
+  if ! echo "$logs" | grep -q "AUDIT_LOG_READ:1"; then
+    fail_test "${label}: OpenShell audit logs could not be read: $logs"
+    return
+  fi
+  if echo "$logs" | grep -q "$FAKE_SECRET"; then
+    fail_test "${label}: raw fake secret leaked into OpenShell audit logs"
+    return
+  fi
+  if echo "$logs" | grep -Eq "$AUDIT_NETWORK_LOG_PATTERN"; then
+    fail_test "${label}: OpenShell audit logs show network path after rejection: $logs"
+    return
+  fi
+  pass "${label}: OpenShell audit logs show no network path after rejection"
+}
+
 PASSED=0
 FAILED=0
 
@@ -147,13 +197,17 @@ if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2
 fi
 
 info "Running Deep Agents Code secret-boundary checks in sandbox: $SANDBOX_NAME"
+enable_openshell_audit_logs
 
 runtime_log_marker="$(make_log_marker runtime-env)"
+runtime_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$runtime_log_marker"
 runtime_output="$(dcode_secret_probe "env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING'" || true)"
 runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
+runtime_audit_logs="$(openshell_audit_logs_since_epoch "$runtime_audit_start" || true)"
 assert_secret_rejected "runtime environment injection" "$runtime_output" "OPENAI_API_KEY"
 assert_no_rejected_interval_network_logs "runtime environment injection" "$runtime_logs"
+assert_no_rejected_interval_audit_logs "runtime environment injection" "$runtime_audit_logs"
 
 if sandbox_exec "test -f ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null; then
   ENV_EXISTED=1
@@ -164,13 +218,16 @@ trap restore_env_file EXIT
 sandbox_exec "printf '%s\n' OPENAI_API_KEY=${FAKE_SECRET@Q} >> ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null
 env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 env_log_marker="$(make_log_marker env-file)"
+env_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$env_log_marker"
 env_output="$(dcode_secret_probe "dcode -n 'Reply with the single word PING'" || true)"
 env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"
+env_audit_logs="$(openshell_audit_logs_since_epoch "$env_audit_start" || true)"
 env_after_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 
 assert_secret_rejected "deepagents env file" "$env_output" "OPENAI_API_KEY"
 assert_no_rejected_interval_network_logs "deepagents env file" "$env_logs"
+assert_no_rejected_interval_audit_logs "deepagents env file" "$env_audit_logs"
 if [ -n "$env_before_hash" ] && [ "$env_before_hash" = "$env_after_hash" ]; then
   pass "env file is unchanged after rejection"
 else
