@@ -1342,7 +1342,7 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
-This is a thin pass-through to `openclaw sessions` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+NemoClaw invokes `openclaw sessions` via `openshell sandbox exec` and forwards OpenClaw flags verbatim, but filters default list output so internal `nemoclaw-onboard-warmup-*` sessions created during onboarding are hidden from user-facing output.
 
 ```bash
 $$nemoclaw my-assistant sessions
@@ -1351,8 +1351,8 @@ $$nemoclaw my-assistant sessions --all-agents --json
 
 ### `$$nemoclaw <name> sessions list`
 
-Pass-through to `openclaw sessions list` inside the sandbox.
-Accepts every flag the in-sandbox CLI does (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`).
+Invoke `openclaw sessions list` inside the sandbox.
+NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
 
 ```bash
 $$nemoclaw my-assistant sessions list
@@ -1408,7 +1408,8 @@ The command routes by the sandbox's agent kind recorded in the registry.
 
 For an OpenClaw sandbox, the command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
-With no positional keys, the command exports every session for the agent.
+With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, the command reports that there are no sessions to bundle and writes no artifact.
+Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
 
 For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.

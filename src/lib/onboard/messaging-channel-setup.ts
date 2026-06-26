@@ -22,7 +22,10 @@ import * as registry from "../state/registry";
 
 export { MessagingHostStateApplier };
 
-import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
+import {
+  detectInvalidMessagingChannelConfigEnvValues,
+  resolveMessagingChannelConfigEnvValue,
+} from "../messaging-channel-config";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
@@ -61,6 +64,14 @@ export async function setupMessagingChannels(
   deps: SetupMessagingChannelsDeps = {},
 ): Promise<string[]> {
   deps.step?.(5, 8, "Messaging channels");
+
+  const invalidConfigEnvValues = detectInvalidMessagingChannelConfigEnvValues();
+  for (const { key, rawValue, validValues } of invalidConfigEnvValues) {
+    console.error(
+      `  Invalid ${key} value '${rawValue}' (expected one of: ${validValues.join(", ")})`,
+    );
+  }
+  if (invalidConfigEnvValues.length > 0) process.exit(1);
 
   const note = deps.note ?? console.log;
   const isNonInteractive =
