@@ -28,7 +28,13 @@ const GENERATOR_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
-const HERMES_DOCKERFILE_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
+const HERMES_DOCKERFILE_PATH = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "Dockerfile",
+);
 
 const BASE_GENERATOR_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
