@@ -72,6 +72,25 @@ function teamsConfigB64(overrides: Record<string, string | string[]> = {}): stri
   ).toString("base64");
 }
 
+function writeAlreadyPatchedMSTeamsRuntime(root: string): string {
+  const runtimeFile = path.join(root, "msteams", "dist", "probe.js");
+  fs.mkdirSync(path.dirname(runtimeFile), { recursive: true });
+  fs.writeFileSync(
+    runtimeFile,
+    [
+      "function parseMentions(text) {",
+      "\treturn { text, entities: [] };",
+      "}",
+      "function buildActivity(msg) {",
+      "\treturn msg;",
+      "}",
+      "// nemoclaw: normalize Teams display-name AAD mentions (#5852)",
+      "",
+    ].join("\n"),
+  );
+  return runtimeFile;
+}
+
 function runDryRun(envOverrides: Record<string, string> = {}) {
   const env = withLegacyMessagingPlanEnv(
     {
@@ -536,6 +555,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-message-plugins-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
+    const msteamsPluginRoot = path.join(tmp, "extensions");
+    const msteamsRuntimeFile = writeAlreadyPatchedMSTeamsRuntime(msteamsPluginRoot);
     fs.writeFileSync(
       fakeOpenclaw,
       [
@@ -553,6 +574,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           PATH: `${tmp}:${TEST_PATH}`,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_VERSION: "2026.5.22",
+          NEMOCLAW_MSTEAMS_PLUGIN_ROOT: msteamsPluginRoot,
           NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([
             "telegram",
             "discord",
@@ -592,6 +614,9 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/msteams@2026.5.22|--pin|||",
       ]);
+      expect(fs.readFileSync(msteamsRuntimeFile, "utf-8")).toContain(
+        "nemoclaw: normalize Teams display-name AAD mentions (#5852)",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
