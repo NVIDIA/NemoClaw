@@ -24,6 +24,14 @@ const headlessCheckPath = path.join(
   "checks",
   "07-deepagents-code-headless-inference.sh",
 );
+const tuiStartupCheckPath = path.join(
+  process.cwd(),
+  "test",
+  "e2e",
+  "e2e-cloud-experimental",
+  "checks",
+  "09-deepagents-code-tui-startup.sh",
+);
 const DCODE_CANONICAL_PATH =
   "/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -120,6 +128,13 @@ function makeStartScriptFixture(tempDir: string): {
 
 function runHeadlessCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
   return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", headlessCheckPath], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
+}
+
+function runTuiStartupCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
+  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", tuiStartupCheckPath], {
     encoding: "utf8",
     env: { ...process.env, ...env },
   });
@@ -403,6 +418,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ),
       "utf8",
     );
+    const tuiStartupCheck = fs.readFileSync(tuiStartupCheckPath, "utf8");
 
     expect(landlockCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(landlockCheck).toContain("touch /sandbox/.deepagents/deepagents-landlock-test");
@@ -467,10 +483,24 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_audit_logs");
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_network_logs");
     expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
+    expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
+    expect(tuiStartupCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
+    expect(tuiStartupCheck).toContain("expect <<'EXPECT'");
+    expect(tuiStartupCheck).toContain("openshell sandbox exec --name $sandbox --tty");
+    expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_READY");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
+    expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
+    expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
+    expect(tuiStartupCheck).toContain("${PREFIX}.sanitized.log");
+    expect(tuiStartupCheck).toContain("secret-shaped value found in sanitized TUI capture");
+    expect(tuiStartupCheck).toContain("nvapi-");
+    expect(tuiStartupCheck).toContain("sk-");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tui-startup.sh",
     ]);
   });
 
@@ -552,6 +582,30 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(validate("120")).toBe("valid");
     expect(validate("0")).toBe("invalid");
     expect(validate("1; touch /tmp/nemoclaw-timeout-injection")).toBe("invalid");
+  });
+
+  it("rejects unsafe TUI startup timeout values before sandbox execution", () => {
+    const validate = (timeout: string) =>
+      runTuiStartupCheckHelper(
+        'if is_positive_integer "$TUI_TIMEOUT"; then printf valid; else printf invalid; fi',
+        { DEEPAGENTS_TUI_TIMEOUT: timeout },
+      );
+
+    expect(validate("90")).toBe("valid");
+    expect(validate("0")).toBe("invalid");
+    expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
+  });
+
+  it("detects representative secret families in TUI startup artifacts", () => {
+    const detectsSecret = (token: string) =>
+      runTuiStartupCheckHelper(
+        'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
+        { TOKEN: token },
+      );
+
+    expect(detectsSecret("nvapi-" + "A".repeat(10))).toBe("secret");
+    expect(detectsSecret("sk-" + "A".repeat(20))).toBe("secret");
+    expect(detectsSecret("plain startup text")).toBe("clean");
   });
 
   it("detects representative secret families in headless inference artifacts", () => {
