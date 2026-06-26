@@ -141,7 +141,7 @@ describe("blueprint/state", () => {
       expect(loaded.shieldsDownReason).toBeNull();
     });
 
-    it("does not treat legacy shieldsDown false as configured lockdown", () => {
+    it("loads legacy shieldsDown false without treating it as lockdown evidence", () => {
       store.set(
         STATE_PATH,
         JSON.stringify({
@@ -152,23 +152,31 @@ describe("blueprint/state", () => {
       );
       const loaded = loadState();
       expect(loaded.shieldsDown).toBe(false);
-      expect(loaded.shieldsConfigured).toBeUndefined();
     });
 
-    it("marks shields configured when persisted state has lock evidence", () => {
+    it("ignores host-only lock evidence in the plugin-local state parser", () => {
       store.set(
         STATE_PATH,
         JSON.stringify({
           sandboxName: "sb",
           shieldsDown: false,
-          fileHashes: { "/sandbox/.openclaw/openclaw.json": "abc123" },
+          chattrApplied: true,
+          fileHashes: {
+            "/sandbox/.openclaw/openclaw.json":
+              "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          },
+          shieldsPolicySnapshotPath: "/home/user/.nemoclaw/state/policy-snapshot.yaml",
           updatedAt: "2026-03-01T12:00:00.000Z",
         }),
       );
-      expect(loadState().shieldsConfigured).toBe(true);
+      const loaded = loadState();
+      expect(loaded.shieldsDown).toBe(false);
+      expect(loaded.shieldsPolicySnapshotPath).toBe(
+        "/home/user/.nemoclaw/state/policy-snapshot.yaml",
+      );
     });
 
-    it("marks shields configured when persisted state is temporarily unlocked", () => {
+    it("loads persisted temporarily unlocked state", () => {
       store.set(
         STATE_PATH,
         JSON.stringify({
@@ -177,7 +185,7 @@ describe("blueprint/state", () => {
           updatedAt: "2026-03-01T12:00:00.000Z",
         }),
       );
-      expect(loadState().shieldsConfigured).toBe(true);
+      expect(loadState().shieldsDown).toBe(true);
     });
   });
 

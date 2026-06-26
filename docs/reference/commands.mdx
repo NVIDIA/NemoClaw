@@ -61,7 +61,7 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 |---|---|
 | `/nemoclaw` | Show slash-command help and host CLI pointers |
 | `/nemoclaw status` | Show sandbox and inference state |
-| `/nemoclaw shields [status]` | Show read-only shields posture; default mutable or missing state reports `NOT CONFIGURED` |
+| `/nemoclaw shields [status]` | Show read-only shields posture; reports explicit `DOWN` state, otherwise treats unverifiable host-side lockdown as `NOT CONFIGURED` and points to `$$nemoclaw <name> shields status` |
 | `/nemoclaw onboard` | Show onboarding status and reconfiguration guidance |
 | `/nemoclaw eject` | Show rollback instructions for returning to the host installation |
 

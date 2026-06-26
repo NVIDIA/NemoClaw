@@ -45,30 +45,22 @@ describe("commands/shields-status", () => {
     expect(result.text).toContain("Shields: NOT CONFIGURED");
     expect(result.text).toContain("default mutable state");
     expect(result.text).toContain("shields up");
+    expect(result.text).toContain("shields status");
     expect(result.text).not.toContain("normal security level");
   });
 
-  it("reports shields UP when explicitly configured and not down", () => {
+  it("does not report UP from plugin-local lock evidence", () => {
     mockedLoadState.mockReturnValue({
       ...blankState(),
-      shieldsConfigured: true,
-      shieldsDown: false,
-    });
-    const result = slashShieldsStatus();
-    expect(result.text).toContain("Shields: UP");
-    expect(result.text).toContain("normal security level");
-  });
-
-  it("shows last-lowered info when UP with a previous snapshot", () => {
-    mockedLoadState.mockReturnValue({
-      ...blankState(),
-      shieldsConfigured: true,
       shieldsDown: false,
       shieldsPolicySnapshotPath: "/home/user/.nemoclaw/state/policy-snapshot-123.yaml",
     });
     const result = slashShieldsStatus();
-    expect(result.text).toContain("Shields: UP");
-    expect(result.text).toContain("policy-snapshot-123.yaml");
+    expect(result.text).toContain("Shields: NOT CONFIGURED");
+    expect(result.text).toContain("host-side lockdown");
+    expect(result.text).toContain("shields status");
+    expect(result.text).not.toContain("Shields: UP");
+    expect(result.text).not.toContain("policy-snapshot-123.yaml");
   });
 
   it("reports shields DOWN with details", () => {

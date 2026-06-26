@@ -57,22 +57,12 @@ export function slashShieldsStatus(arg?: string): PluginCommandResult {
 
   const state = loadState();
 
-  if (!state.shieldsDown && state.shieldsConfigured) {
-    const lines = ["**Shields: UP**", "", "Sandbox policy is at normal security level."];
-
-    if (state.shieldsPolicySnapshotPath) {
-      lines.push("", `Last lowered: policy snapshot at ${state.shieldsPolicySnapshotPath}`);
-    }
-
-    return { text: lines.join("\n") };
-  }
-
   if (!state.shieldsDown) {
     return {
       text: [
         "**Shields: NOT CONFIGURED (default mutable state)**",
         "",
-        "Sandbox policy is mutable. Run `nemoclaw <name> shields up` from the host to opt into lockdown.",
+        "This in-sandbox command cannot verify host-side lockdown. Run `nemoclaw <name> shields status` from the host for authoritative status, or `nemoclaw <name> shields up` to opt into lockdown.",
       ].join("\n"),
     };
   }
