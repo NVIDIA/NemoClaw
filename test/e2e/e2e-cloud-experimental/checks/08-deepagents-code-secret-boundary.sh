@@ -16,6 +16,7 @@ DEEPAGENTS_ENV_FILE="/sandbox/.deepagents/.env"
 FAKE_SECRET="sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000"
 ENV_BACKUP="/tmp/${PREFIX}.env.backup.$$"
 ENV_EXISTED=0
+NETWORK_LOG_PATTERN="NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|integrate\\.api\\.nvidia\\.com|Server ready|Task completed|PING"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -42,6 +43,39 @@ cat \"\$tmp\"
 rm -f \"\$tmp\"
 printf 'DCODE_EXIT:%s\n' \"\$status\"
 exit 0
+"
+}
+
+make_log_marker() {
+  local label="$1"
+  printf '%s-%s-%s-%s' "$PREFIX" "$label" "$(date +%s%N)" "$$" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+mark_sandbox_logs() {
+  local marker="$1"
+  sandbox_exec "
+for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
+  if [ ! -e \"\$log\" ]; then
+    : > \"\$log\" 2>/dev/null || true
+  fi
+  printf '%s\n' ${marker@Q} >> \"\$log\" 2>/dev/null || true
+done
+" >/dev/null || true
+}
+
+sandbox_logs_since_marker() {
+  local marker="$1"
+  sandbox_exec "
+found=0
+for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
+  [ -r \"\$log\" ] || continue
+  if grep -Fq ${marker@Q} \"\$log\" 2>/dev/null; then
+    found=1
+    printf '== %s ==\n' \"\$log\"
+    awk -v marker=${marker@Q} 'found { print } index(\$0, marker) { found=1; next }' \"\$log\" 2>/dev/null || true
+  fi
+done
+printf 'LOG_MARKER_FOUND:%s\n' \"\$found\"
 "
 }
 
@@ -78,11 +112,30 @@ assert_secret_rejected() {
     fail_test "${label}: raw fake secret leaked into output"
     return
   fi
-  if echo "$output" | grep -Eq "NET:OPEN|inference\\.local|pypi\\.org|api\\.openai\\.com|Server ready|Task completed|PING"; then
+  if echo "$output" | grep -Eq "$NETWORK_LOG_PATTERN"; then
     fail_test "${label}: output shows dcode/network path ran before rejection: $output"
     return
   fi
   pass "${label}: secret rejected before dcode/network path"
+}
+
+assert_no_rejected_interval_network_logs() {
+  local label="$1"
+  local logs="$2"
+
+  if ! echo "$logs" | grep -q "LOG_MARKER_FOUND:1"; then
+    fail_test "${label}: sandbox logs did not preserve the rejection-time marker: $logs"
+    return
+  fi
+  if echo "$logs" | grep -q "$FAKE_SECRET"; then
+    fail_test "${label}: raw fake secret leaked into sandbox logs"
+    return
+  fi
+  if echo "$logs" | grep -Eq "$NETWORK_LOG_PATTERN"; then
+    fail_test "${label}: sandbox logs show network or dcode execution after rejection: $logs"
+    return
+  fi
+  pass "${label}: sandbox logs show no network path after rejection"
 }
 
 PASSED=0
@@ -95,8 +148,12 @@ fi
 
 info "Running Deep Agents Code secret-boundary checks in sandbox: $SANDBOX_NAME"
 
+runtime_log_marker="$(make_log_marker runtime-env)"
+mark_sandbox_logs "$runtime_log_marker"
 runtime_output="$(dcode_secret_probe "env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING'" || true)"
+runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
 assert_secret_rejected "runtime environment injection" "$runtime_output" "OPENAI_API_KEY"
+assert_no_rejected_interval_network_logs "runtime environment injection" "$runtime_logs"
 
 if sandbox_exec "test -f ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null; then
   ENV_EXISTED=1
@@ -106,10 +163,14 @@ trap restore_env_file EXIT
 
 sandbox_exec "printf '%s\n' OPENAI_API_KEY=${FAKE_SECRET@Q} >> ${DEEPAGENTS_ENV_FILE@Q}" >/dev/null
 env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
+env_log_marker="$(make_log_marker env-file)"
+mark_sandbox_logs "$env_log_marker"
 env_output="$(dcode_secret_probe "dcode -n 'Reply with the single word PING'" || true)"
+env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"
 env_after_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"
 
 assert_secret_rejected "deepagents env file" "$env_output" "OPENAI_API_KEY"
+assert_no_rejected_interval_network_logs "deepagents env file" "$env_logs"
 if [ -n "$env_before_hash" ] && [ "$env_before_hash" = "$env_after_hash" ]; then
   pass "env file is unchanged after rejection"
 else

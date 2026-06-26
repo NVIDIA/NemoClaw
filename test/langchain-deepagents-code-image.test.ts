@@ -437,7 +437,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");
+    expect(secretBoundaryCheck).toContain("NETWORK_LOG_PATTERN=");
     expect(secretBoundaryCheck).toContain("NET:OPEN|inference\\\\.local|pypi\\\\.org");
+    expect(secretBoundaryCheck).toContain("integrate\\\\.api\\\\.nvidia\\\\.com");
+    expect(secretBoundaryCheck).toContain("/tmp/gateway.log");
+    expect(secretBoundaryCheck).toContain("/tmp/nemoclaw-start.log");
+    expect(secretBoundaryCheck).toContain("LOG_MARKER_FOUND:1");
+    expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_network_logs");
     expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
