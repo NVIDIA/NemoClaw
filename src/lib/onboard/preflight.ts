@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
+import { printRemediationActions } from "./remediation";
 import {
   assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
@@ -385,11 +386,46 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
-  if (!commandExists("nvidia-smi", runCaptureImpl)) {
+// lspci line shape: "<slot> <class label>: <vendor> <device> ...".
+// The slot token contains colons (e.g. "01:00.0"), so anchor on the class
+// label that follows it and ends at the first ": ".
+const LSPCI_LINE = /^\S+\s+([^:]+):\s*(.*)$/;
+// NVIDIA GPUs surface as display-class devices: "VGA compatible controller"
+// (graphics cards), "3D controller" (datacenter/Tesla parts), or the generic
+// "Display controller". Restricting to these classes prevents NVIDIA/Mellanox
+// NICs and other non-GPU NVIDIA PCI devices from being mistaken for a GPU.
+const PCI_DISPLAY_CLASS = /\b(?:vga compatible controller|3d controller|display controller)\b/i;
+
+function lspciLineIsNvidiaGpu(line: string): boolean {
+  const match = LSPCI_LINE.exec(line.trim());
+  if (!match) return false;
+  const [, classLabel, deviceDescription] = match;
+  return PCI_DISPLAY_CLASS.test(classLabel) && /nvidia/i.test(deviceDescription);
+}
+
+function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
+  // PCI bus probe so a physically present NVIDIA GPU is still detected when the
+  // driver is not loaded (nvidia-smi unavailable). Mirrors the lspci hint used
+  // by the onboarding GPU-passthrough note.
+  if (!commandExists("lspci", runCaptureImpl)) {
     return false;
   }
-  return Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim());
+  const output = String(runCaptureImpl(["lspci"], { ignoreError: true }) || "");
+  return output.split("\n").some(lspciLineIsNvidiaGpu);
+}
+
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
+  if (
+    commandExists("nvidia-smi", runCaptureImpl) &&
+    Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim())
+  ) {
+    return true;
+  }
+  // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
+  // NVIDIA GPU hardware is present. Fall back to a hardware probe so CDI/toolkit
+  // remediation still fires when the toolkit is missing and Docker CDI dirs are
+  // configured (#5489); otherwise preflight silently skips toolkit enforcement.
+  return detectNvidiaGpuHardware(runCaptureImpl);
 }
 
 function detectPackageManager(runCaptureImpl: RunCaptureFn): PackageManager {
@@ -602,6 +638,47 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   }
 
   return assessment;
+}
+
+/**
+ * Decide whether onboarding must enforce a present-and-configured NVIDIA CDI
+ * spec (i.e. block on a missing/stale spec). The fix for #5489 makes
+ * `assessHost().hasNvidiaGpu` true via an lspci hardware probe when the driver
+ * is unloaded, which is what flags `cdiNvidiaGpuSpecMissing`. The onboard gate
+ * must enforce based on whether the operator *explicitly* opted out of GPU
+ * passthrough — NOT on whether sandbox GPU was *auto*-disabled because
+ * `nvidia-smi` is unavailable. Auto-disable was the bypass that let onboard skip
+ * the toolkit/CDI remediation in #5489; an explicit `--no-gpu` still skips it so
+ * a host with an unusable GPU can still onboard CPU-only.
+ */
+export function shouldEnforceCdiNvidiaGpuSpec(opts: {
+  cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecNeedsRepair: boolean;
+  explicitlyOptedOutGpuPassthrough: boolean;
+}): boolean {
+  if (opts.explicitlyOptedOutGpuPassthrough) return false;
+  return opts.cdiNvidiaGpuSpecNeedsRepair || opts.cdiNvidiaGpuSpecMissing;
+}
+
+export function assertCdiNvidiaGpuSpecPresent(
+  host: HostAssessment,
+  explicitlyOptedOutGpuPassthrough: boolean,
+  hostGpuPlatform: string | null | undefined = null,
+): void {
+  if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
+  if (
+    !shouldEnforceCdiNvidiaGpuSpec({
+      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
+      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
+      explicitlyOptedOutGpuPassthrough,
+    })
+  )
+    return;
+  console.error(
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+  );
+  printRemediationActions(planHostRemediation(host));
+  process.exit(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
