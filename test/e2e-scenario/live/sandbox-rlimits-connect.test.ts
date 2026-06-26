@@ -26,6 +26,12 @@ function numericProbe(text: string, key: string): number {
   return Number(match?.[1] ?? "NaN");
 }
 
+function expectNoRlimitStartupDiagnostics(text: string): void {
+  expect(text, "connect shell startup must not print rlimit security diagnostics").not.toMatch(
+    /\[SECURITY\].*(?:Effective|Could not set).*(?:nproc|nofile).*limit/iu,
+  );
+}
+
 function connectAcceptanceScript(cliPath: string, sandboxName: string): string {
   const cli = JSON.stringify(cliPath);
   const sandbox = JSON.stringify(sandboxName);
@@ -66,6 +72,7 @@ runConnectRlimitTest(
         "bash -lc 'ulimit -u; ulimit -n'",
         "bash -ic 'ulimit -u; ulimit -n'",
         "ulimit -a",
+        "shell startup does not emit [SECURITY] rlimit diagnostics before user commands",
         "for i in $(seq 1 5000); do sleep 60 & done 2>&1 | tail -5",
       ],
       hermesCoverage:
@@ -127,6 +134,7 @@ runConnectRlimitTest(
     expect(connect.exitCode, output).toBe(0);
     expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_BEGIN__");
     expect(output).toContain("__NEMOCLAW_RLIMIT_CONNECT_END__");
+    expectNoRlimitStartupDiagnostics(output);
 
     expect(numericProbe(output, "login_nproc")).toBeLessThanOrEqual(4096);
     expect(numericProbe(output, "login_nofile")).toBeLessThanOrEqual(65536);
