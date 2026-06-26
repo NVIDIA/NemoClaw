@@ -32,7 +32,12 @@ const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const BACKUP_ROOT = path.join(os.homedir(), ".nemoclaw", "rebuild-backups");
-const DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+const HOSTED_ENDPOINT_URL =
+  process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1";
+const DEFAULT_MODEL =
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  "nvidia/nvidia/nemotron-3-ultra";
 const TEST_SANDBOX_PREFIX = "e2e-rebuild-openclaw";
 const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -135,13 +140,17 @@ function dockerContextEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 function cliEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return dockerContextEnv({
+    COMPATIBLE_API_KEY: apiKey,
     NVIDIA_INFERENCE_API_KEY: apiKey,
     // Keep the recreate resume request aligned with the registry/session this
-    // test seeds below. Without explicit selection, hosted-inference staging can
-    // reinterpret NVIDIA_INFERENCE_API_KEY as compatible-endpoint input and make
-    // onboard --resume reject the recorded nvidia-prod sandbox after deletion.
-    NEMOCLAW_PROVIDER: "build",
+    // test seeds below. The rebuild workflow supplies a hosted-compatible key
+    // through NVIDIA_INFERENCE_API_KEY, so record and request the matching
+    // compatible-endpoint route instead of NVIDIA Endpoints.
+    NEMOCLAW_COMPAT_MODEL: DEFAULT_MODEL,
+    NEMOCLAW_ENDPOINT_URL: HOSTED_ENDPOINT_URL,
     NEMOCLAW_MODEL: DEFAULT_MODEL,
+    NEMOCLAW_PREFERRED_API: "openai-completions",
+    NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...extra,
   });
@@ -195,12 +204,12 @@ async function configureGatewayInferenceRoute(
       "-lc",
       [
         "set -euo pipefail",
-        "if openshell provider get nvidia-prod >/dev/null 2>&1; then",
-        "  openshell provider update nvidia-prod --credential NVIDIA_INFERENCE_API_KEY",
+        "if openshell provider get compatible-endpoint >/dev/null 2>&1; then",
+        "  openshell provider update compatible-endpoint --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=$NEMOCLAW_ENDPOINT_URL",
         "else",
-        "  openshell provider create --name nvidia-prod --type nvidia --credential NVIDIA_INFERENCE_API_KEY",
+        "  openshell provider create --name compatible-endpoint --type openai --credential COMPATIBLE_API_KEY --config OPENAI_BASE_URL=$NEMOCLAW_ENDPOINT_URL",
         "fi",
-        `openshell inference set --no-verify --provider nvidia-prod --model ${model}`,
+        `openshell inference set --no-verify --provider compatible-endpoint --model ${model}`,
       ].join("\n"),
     ],
     {
@@ -229,7 +238,7 @@ function seedRegistryAndSession(): void {
     name: SANDBOX_NAME,
     createdAt: new Date().toISOString(),
     model: DEFAULT_MODEL,
-    provider: "nvidia-prod",
+    provider: "compatible-endpoint",
     gpuEnabled: false,
     policies: [],
     policyTier: null,
@@ -249,9 +258,10 @@ function seedRegistryAndSession(): void {
     resumable: true,
     lastCompletedStep: "inference",
     failure: null,
-    provider: "nvidia-prod",
+    provider: "compatible-endpoint",
     model: DEFAULT_MODEL,
-    credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+    credentialEnv: "COMPATIBLE_API_KEY",
+    endpointUrl: HOSTED_ENDPOINT_URL,
     agent: null,
     steps: {
       preflight: complete,
