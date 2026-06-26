@@ -401,6 +401,25 @@ describe("oclif compatibility dispatch", () => {
     expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
   });
 
+  it("uses the Deep Agents alias binary name in native oclif help", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["bin/nemo-deepagents.js", "sandbox", "channels", "start", "--help"],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          NO_COLOR: "1",
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("$ nemo-deepagents sandbox channels start <name> <channel>");
+    expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+  });
+
   it("keeps nested internal commands routable through native oclif help", () => {
     const result = spawnSync(
       process.execPath,

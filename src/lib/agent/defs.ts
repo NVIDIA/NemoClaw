@@ -121,6 +121,86 @@ export interface AgentChoice {
 
 const _cache = new Map<string, AgentDefinition>();
 
+const AGENT_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+  nemoclaw: "openclaw",
+  "nemo-claw": "openclaw",
+  nemohermes: "hermes",
+  "nemo-hermes": "hermes",
+  "nemo-deepagents": "langchain-deepagents-code",
+  "nemo-deepagent": "langchain-deepagents-code",
+  nemodeepagents: "langchain-deepagents-code",
+  nemodeepagent: "langchain-deepagents-code",
+  dcode: "langchain-deepagents-code",
+  deepagent: "langchain-deepagents-code",
+  deepagents: "langchain-deepagents-code",
+  "deep-agent": "langchain-deepagents-code",
+  "deep-agents": "langchain-deepagents-code",
+  deepagentcode: "langchain-deepagents-code",
+  deepagentscode: "langchain-deepagents-code",
+  "deepagent-code": "langchain-deepagents-code",
+  "deepagents-code": "langchain-deepagents-code",
+  "deep-agent-code": "langchain-deepagents-code",
+  "deep-agents-code": "langchain-deepagents-code",
+  langchain: "langchain-deepagents-code",
+  "langchain-code": "langchain-deepagents-code",
+  langchaindeepagent: "langchain-deepagents-code",
+  langchaindeepagents: "langchain-deepagents-code",
+  "langchain-deepagent": "langchain-deepagents-code",
+  "langchain-deepagents": "langchain-deepagents-code",
+  langchaindeepagentcode: "langchain-deepagents-code",
+  langchaindeepagentscode: "langchain-deepagents-code",
+  "langchain-deepagent-code": "langchain-deepagents-code",
+  "langchain-deepagents-code": "langchain-deepagents-code",
+  "langchain-deep-agent": "langchain-deepagents-code",
+  "langchain-deep-agents": "langchain-deepagents-code",
+  "langchain-deep-agent-code": "langchain-deepagents-code",
+  "langchain-deep-agents-code": "langchain-deepagents-code",
+});
+
+function normalizeAgentSelector(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/-+/g, "-");
+}
+
+export function resolveAgentNameAlias(
+  value: string | null | undefined,
+  availableAgents: readonly string[] = listAgents(),
+): string | null {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) return null;
+
+  if (availableAgents.includes(trimmed)) return trimmed;
+
+  const normalized = normalizeAgentSelector(trimmed);
+  const exactNormalized = availableAgents.find(
+    (agentName) => normalizeAgentSelector(agentName) === normalized,
+  );
+  if (exactNormalized) return exactNormalized;
+
+  const aliasTarget = AGENT_ALIASES[normalized];
+  return aliasTarget && availableAgents.includes(aliasTarget) ? aliasTarget : null;
+}
+
+export function agentAliasSummary(): string {
+  return [
+    "nemohermes → hermes",
+    "nemo-deepagents/dcode/deepagents/deepagents-code/langchain → langchain-deepagents-code",
+  ].join("; ");
+}
+
+function unknownAgentMessage(
+  value: string,
+  context: string | null,
+  available: readonly string[],
+): string {
+  const choices = available.join(", ");
+  const suffix = context ? ` ${context}` : "";
+  return `Unknown agent '${value}'${suffix}. Available: ${choices} (aliases: ${agentAliasSummary()})`;
+}
+
 function isManifestValue(value: unknown): value is ManifestValue {
   if (value === null || value instanceof Date) return true;
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -625,32 +705,33 @@ export function resolveAgentName({
 } = {}): string {
   if (agentFlag) {
     const available = listAgents();
-    if (!available.includes(agentFlag)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${agentFlag}'. Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(agentFlag, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(agentFlag, null, available));
     }
-    return agentFlag;
+    return resolved;
   }
 
   const envAgent = process.env.NEMOCLAW_AGENT;
   if (envAgent) {
     const available = listAgents();
-    if (!available.includes(envAgent)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${envAgent}' (from NEMOCLAW_AGENT). Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(envAgent, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(envAgent, "(from NEMOCLAW_AGENT)", available));
     }
-    return envAgent;
+    return resolved;
   }
 
   if (session?.agent) {
     const available = listAgents();
-    if (!available.includes(session.agent)) {
+    const resolved = resolveAgentNameAlias(session.agent, available);
+    if (!resolved) {
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );
       return "openclaw";
     }
-    return session.agent;
+    return resolved;
   }
 
   return "openclaw";

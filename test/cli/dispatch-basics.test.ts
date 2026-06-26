@@ -147,8 +147,9 @@ describe("CLI dispatch", () => {
     const r = run("onboard --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
     );
+    expect(r.out).toContain("aliases: nemohermes, dcode, deepagents, deepagents-code, langchain)");
   });
 
   it("agents parent shows command help instead of sandbox lookup", () => {

@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(TEST_DIR, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(TEST_DIR, "..", "bin", "nemohermes.js");
+const DEEPAGENTS_CLI = path.join(TEST_DIR, "..", "bin", "nemo-deepagents.js");
 
 describe("nemoclaw update command", () => {
   it("appears in root help as an Upgrade command", () => {
@@ -37,6 +38,21 @@ describe("nemoclaw update command", () => {
     expect(updateHelp).toContain("$ nemohermes update [--check] [--yes|-y]");
     expect(updateHelp).toContain("Run the maintained NemoHermes installer update flow");
     expect(updateHelp).toContain("Check for a NemoHermes CLI update");
+    expect(updateHelp).not.toContain("NemoClaw CLI update");
+  });
+
+  it("renders NemoDeepAgents command names and product copy for the Deep Agents alias", () => {
+    const rootHelp = execSync(`node "${DEEPAGENTS_CLI}" help`, { encoding: "utf-8" });
+    expect(rootHelp).toMatch(
+      /nemo-deepagents update\s+Run the maintained NemoDeepAgents installer update flow\s+\(--check, --yes\|-y\)/,
+    );
+
+    const updateHelp = execSync(`node "${DEEPAGENTS_CLI}" update --help`, {
+      encoding: "utf-8",
+    });
+    expect(updateHelp).toContain("$ nemo-deepagents update [--check] [--yes|-y]");
+    expect(updateHelp).toContain("Run the maintained NemoDeepAgents installer update flow");
+    expect(updateHelp).toContain("Check for a NemoDeepAgents CLI update");
     expect(updateHelp).not.toContain("NemoClaw CLI update");
   });
 });

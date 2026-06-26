@@ -16,7 +16,7 @@ describe("buildOnboardFlags --agent help (#5779)", () => {
     const flags = buildOnboardFlags();
 
     expect(flags.agent.description).toBe(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code; aliases: nemohermes, dcode, deepagents, deepagents-code, langchain)",
     );
   });
 
@@ -27,6 +27,8 @@ describe("buildOnboardFlags --agent help (#5779)", () => {
 
     const flags = buildOnboardFlags();
 
-    expect(flags.agent.description).toBe("Agent runtime to onboard");
+    expect(flags.agent.description).toBe(
+      "Agent runtime to onboard (aliases: nemohermes, dcode, deepagents, deepagents-code, langchain)",
+    );
   });
 });

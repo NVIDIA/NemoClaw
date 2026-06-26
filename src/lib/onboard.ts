@@ -4655,8 +4655,21 @@ function skippedStepMessage(
   console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
 }
 
+function canonicalizeRequestedAgentName(agentName: string | null | undefined): string | null {
+  if (!agentName) return null;
+  return agentDefs.resolveAgentNameAlias(agentName) ?? agentName;
+}
+
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
+  const canonicalOptAgent = canonicalizeRequestedAgentName(opts.agent);
+  if (canonicalOptAgent && canonicalOptAgent !== opts.agent) {
+    opts = { ...opts, agent: canonicalOptAgent };
+  }
+  const canonicalEnvAgent = canonicalizeRequestedAgentName(process.env.NEMOCLAW_AGENT);
+  if (canonicalEnvAgent && canonicalEnvAgent !== process.env.NEMOCLAW_AGENT) {
+    process.env.NEMOCLAW_AGENT = canonicalEnvAgent;
+  }
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";

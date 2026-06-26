@@ -7,7 +7,8 @@
 // registry / runner import chain.
 export function describeAgentFlag(agents: readonly string[]): string {
   const names = agents.filter((name) => typeof name === "string" && name.length > 0);
+  const aliasHint = "aliases: nemohermes, dcode, deepagents, deepagents-code, langchain";
   return names.length > 0
-    ? `Agent runtime to onboard (${names.join(", ")})`
-    : "Agent runtime to onboard";
+    ? `Agent runtime to onboard (${names.join(", ")}; ${aliasHint})`
+    : `Agent runtime to onboard (${aliasHint})`;
 }

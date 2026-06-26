@@ -65,6 +65,13 @@ function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
       maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
     };
   }
+  if (env.NEMOCLAW_AGENT === "langchain-deepagents-code") {
+    return {
+      cliName: "nemo-deepagents",
+      displayName: "NemoDeepAgents",
+      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
+    };
+  }
   return {
     cliName: "nemoclaw",
     displayName: "NemoClaw",
