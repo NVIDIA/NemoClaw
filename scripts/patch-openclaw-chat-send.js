@@ -142,7 +142,27 @@ function patchGetReplyFollowupRunId(source, file) {
 }
 
 function patchGetReplyWebchatQueueMode(source, file) {
-  if (source.includes("force webchat chat.send queued turns")) {
+  const oldMarker = "force webchat chat.send queued turns";
+  const marker = "force webchat/msteams chat.send queued turns";
+  const oldCondition =
+    'opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer"';
+  const newCondition =
+    'opts?.runId && ["webchat", "msteams"].includes(sessionCtx.Provider) && resolvedQueue.mode === "steer"';
+
+  if (source.includes(marker)) {
+    return { nextSource: source, status: "already-applied" };
+  }
+  if (source.includes(oldMarker)) {
+    const nextSource = source
+      .replace(oldCondition, newCondition)
+      .replace(oldMarker, marker)
+      .replace(
+        "force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145)",
+        "force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145, #5851)",
+      );
+    if (nextSource !== source) {
+      return { nextSource, status: "would-apply" };
+    }
     return { nextSource: source, status: "already-applied" };
   }
   let working = source;
@@ -161,11 +181,11 @@ function patchGetReplyWebchatQueueMode(source, file) {
   const nextSource = working.replace(
     /\n(\s*)(const (?:piRuntime|embeddedAgentRuntime) = useFastReplyRuntime \? null : await traceRunPhase\("reply\.(?:load_pi_runtime|load_embedded_agent_runtime)", \(\) => (?:loadPiEmbeddedRuntime|loadEmbeddedAgentRuntime)\(\)\);)/,
     (_match, indent, runtimeLine) =>
-      `\n${indent}if (opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer") resolvedQueue = {\n` +
+      `\n${indent}if (${newCondition}) resolvedQueue = {\n` +
       `${indent}\t...resolvedQueue,\n` +
       `${indent}\tmode: "followup",\n` +
       `${indent}\tdebounceMs: 0\n` +
-      `${indent}}; // nemoclaw: force webchat chat.send queued turns to keep per-message replies (#2603, #3145)\n` +
+      `${indent}}; // nemoclaw: force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145, #5851)\n` +
       `${indent}${runtimeLine}`,
   );
   if (nextSource === working) {
@@ -303,8 +323,8 @@ const FILES = [
       },
       {
         id: "webchat-queue-mode",
-        marker: "force webchat chat.send queued turns",
-        postVerifyError: "get-reply webchat queue mode patch did not apply",
+        marker: "force webchat/msteams chat.send queued turns",
+        postVerifyError: "get-reply webchat/msteams queue mode patch did not apply",
         patch: patchGetReplyWebchatQueueMode,
       },
     ],

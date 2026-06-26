@@ -669,10 +669,10 @@ describe("OpenClaw chat.send compatibility patch", () => {
         "runId: opts?.runId, // nemoclaw: carry chat.send run id into queued followup (#2603, #3145)",
       );
       expect(patchedGetReply).toContain(
-        'if (opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer") resolvedQueue = {',
+        'if (opts?.runId && ["webchat", "msteams"].includes(sessionCtx.Provider) && resolvedQueue.mode === "steer") resolvedQueue = {',
       );
       expect(patchedGetReply).toContain(
-        "}; // nemoclaw: force webchat chat.send queued turns to keep per-message replies (#2603, #3145)",
+        "}; // nemoclaw: force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145, #5851)",
       );
 
       const rerun = runPatch(dist);
@@ -689,7 +689,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(
         rerunPatchedGetReply.match(/carry chat\.send run id into queued followup/g),
       ).toHaveLength(1);
-      expect(rerunPatchedGetReply.match(/force webchat chat\.send queued turns/g)).toHaveLength(1);
+      expect(rerunPatchedGetReply.match(/force webchat\/msteams chat\.send queued turns/g)).toHaveLength(1);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -803,10 +803,10 @@ describe("OpenClaw chat.send compatibility patch", () => {
         "runId: opts?.runId, // nemoclaw: carry chat.send run id into queued followup (#2603, #3145)",
       );
       expect(patchedGetReply).toContain(
-        'if (opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer") resolvedQueue = {',
+        'if (opts?.runId && ["webchat", "msteams"].includes(sessionCtx.Provider) && resolvedQueue.mode === "steer") resolvedQueue = {',
       );
       expect(patchedGetReply).toContain(
-        "}; // nemoclaw: force webchat chat.send queued turns to keep per-message replies (#2603, #3145)",
+        "}; // nemoclaw: force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145, #5851)",
       );
       expect(patchedGetReply).toContain(
         'const embeddedAgentRuntime = useFastReplyRuntime ? null : await traceRunPhase("reply.load_embedded_agent_runtime", () => loadEmbeddedAgentRuntime());',
@@ -823,7 +823,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
       const rerunPatchedChat = fs.readFileSync(chatFixture, "utf-8");
       expect(rerunPatchedChat.match(/suppressing empty final event/g)).toHaveLength(1);
       const rerunPatchedGetReply = fs.readFileSync(getReplyFixture, "utf-8");
-      expect(rerunPatchedGetReply.match(/force webchat chat\.send queued turns/g)).toHaveLength(1);
+      expect(rerunPatchedGetReply.match(/force webchat\/msteams chat\.send queued turns/g)).toHaveLength(1);
       const rerunPatchedFollowup = fs.readFileSync(followupFixture, "utf-8");
       expect(
         rerunPatchedFollowup.match(/preserve chat\.send run ids in followup queue/g),
@@ -889,7 +889,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(patchedGetReply).toContain(
         'const embeddedAgentRuntime = useFastReplyRuntime ? null : await traceRunPhase("reply.load_embedded_agent_runtime", () => loadEmbeddedAgentRuntime());',
       );
-      expect(patchedGetReply).toContain("force webchat chat.send queued turns");
+      expect(patchedGetReply).toContain("force webchat/msteams chat.send queued turns");
 
       const rerun = runPatch(dist);
       expect(rerun.status, `${rerun.stdout}${rerun.stderr}`).toBe(0);
@@ -946,6 +946,42 @@ describe("OpenClaw chat.send compatibility patch", () => {
       expect(patch.stderr).toContain(
         "OpenClaw embedded-agent user persistence callback shape not recognized",
       );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades the old webchat-only queue shim to cover Microsoft Teams", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-msteams-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeChatSendFixture(dist);
+    writeFollowupRunnerFixture(dist);
+    const getReplyFixture = writeGetReplyFixture(dist);
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      const patched = fs.readFileSync(getReplyFixture, "utf-8");
+      const oldPatched = patched
+        .replace(
+          'opts?.runId && ["webchat", "msteams"].includes(sessionCtx.Provider) && resolvedQueue.mode === "steer"',
+          'opts?.runId && sessionCtx.Provider === "webchat" && resolvedQueue.mode === "steer"',
+        )
+        .replace("force webchat/msteams chat.send queued turns", "force webchat chat.send queued turns")
+        .replace(", #5851", "");
+      fs.writeFileSync(getReplyFixture, oldPatched);
+
+      const upgrade = runPatch(dist);
+      expect(upgrade.status, `${upgrade.stdout}${upgrade.stderr}`).toBe(0);
+      const upgraded = fs.readFileSync(getReplyFixture, "utf-8");
+      expect(upgraded).toContain(
+        'opts?.runId && ["webchat", "msteams"].includes(sessionCtx.Provider) && resolvedQueue.mode === "steer"',
+      );
+      expect(upgraded).toContain(
+        "force webchat/msteams chat.send queued turns to keep per-message replies (#2603, #3145, #5851)",
+      );
+      expect(upgraded).not.toContain('sessionCtx.Provider === "webchat"');
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
