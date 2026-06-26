@@ -175,8 +175,7 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
     'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
     'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 256)"',
     'case "$current_nofile" in "" | *[!0-9]*) current_nofile=256 ;; esac',
-    'target_nofile="$current_nofile"',
-    'if [ "$current_nofile" -gt 64 ]; then target_nofile=$((current_nofile - 1)); fi',
+    "target_nofile=$((current_nofile - 1))",
     'NEMOCLAW_SANDBOX_NPROC_LIMIT="$current_nproc"',
     'NEMOCLAW_SANDBOX_NOFILE_LIMIT="$target_nofile"',
     "harden_resource_limits --quiet",
@@ -197,9 +196,7 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
   const values = parseProbeOutput(result.stdout);
   expect(values.ok).toBe("true");
   expect(Number(values.effective_nofile)).toBeLessThanOrEqual(Number(values.target_nofile));
-  if (Number(values.current_nofile) > 64) {
-    expect(Number(values.effective_nofile)).toBeLessThan(Number(values.current_nofile));
-  }
+  expect(Number(values.effective_nofile)).toBeLessThan(Number(values.current_nofile));
 }
 
 function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
