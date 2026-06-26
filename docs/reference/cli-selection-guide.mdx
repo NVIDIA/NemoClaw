@@ -113,7 +113,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
 - Inspect or replace raw OpenShell policy:
 
   ```bash
-  openshell policy get <sandbox-name> --base | awk 'found { print } /^---$/ { found = 1 }' > current-policy.yaml
+  openshell policy get <sandbox-name> --full | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' > current-policy.yaml
   openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
   openshell policy set <sandbox-name> --policy current-policy.yaml --wait
   ```
@@ -203,7 +203,7 @@ Use `$$nemoclaw <name> policy-add` or `policy-remove` for NemoClaw presets and c
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `openshell policy get <name> --base` and `openshell policy set <name> --policy <file>` only when you need to edit and replace the raw policy file.
+Use `openshell policy get <name> --full` and `openshell policy set <name> --policy <file>` only when you need to edit and replace the raw policy file.
 
 ### Move Workspace Files
 

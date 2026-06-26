@@ -364,10 +364,12 @@ Use `policy-list` for normal preset state:
 $$nemoclaw my-assistant policy-list
 ```
 
-Use OpenShell when you need an editable copy of the sandbox-authored policy:
+Use OpenShell when you need an editable copy of the live policy:
 
 ```bash
-openshell policy get my-assistant --base | awk 'found { print } /^---$/ { found = 1 }' > current-policy.yaml
+openshell policy get my-assistant --full \
+  | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
+  > current-policy.yaml
 ```
 
 If you must replace the live policy, edit the policy file and apply it back to the sandbox:

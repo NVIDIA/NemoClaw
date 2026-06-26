@@ -149,11 +149,14 @@ The preset file under `presets/` also persists across sandbox recreations.
 ### Option 2: Snapshot, Edit, and Set with OpenShell
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
-Start from the current sandbox-authored policy so the presets layered on at onboarding stay in the file you apply.
-The `--base` view keeps baseline and preset entries while omitting OpenShell provider-composed entries that should not be round-tripped through `policy set`.
+Start from the current live policy so the presets layered on at onboarding stay in the file you apply.
+Strip the OpenShell metadata header before editing the file.
 
 ```bash
-openshell policy get my-assistant --base | awk 'found { print } /^---$/ { found = 1 }' > current-policy.yaml
+openshell policy get my-assistant --full \
+  | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
+  > current-policy.yaml
+grep -q '^version:' current-policy.yaml
 ```
 
 Edit `current-policy.yaml` to add your entries under `network_policies:`, keeping the existing `version` field intact, then apply:
