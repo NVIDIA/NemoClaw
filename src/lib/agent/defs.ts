@@ -10,7 +10,10 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { ROOT } from "../runner";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentWebAuth, readWebAuth } from "./web-auth";
+
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
@@ -82,6 +85,7 @@ export interface AgentDefinition {
   inference?: AgentInference;
   state_dirs?: string[];
   state_files?: AgentStateFile[];
+  user_managed_files?: string[];
   messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
   agentDir: string;
@@ -90,11 +94,13 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe | null;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly webAuth: AgentWebAuth;
   readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
   readonly stateFiles: AgentStateFile[];
+  readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
@@ -160,6 +166,46 @@ function readStringArray(record: ManifestRecord, key: string): string[] | undefi
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+
+function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
+  const value = record.user_managed_files;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("Agent manifest field 'user_managed_files' must be an array");
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a string`,
+      );
+    }
+    if (entry.length === 0) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`,
+      );
+    }
+    if (CONTROL_CHAR_RE.test(entry)) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain control characters`,
+      );
+    }
+    if (entry.startsWith("/")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a relative path, not absolute`,
+      );
+    }
+    const segments = entry.split("/");
+    if (segments.some((segment) => segment === "..")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain '..' path components`,
+      );
+    }
+    return entry;
+  });
 }
 
 function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
@@ -379,11 +425,13 @@ export function loadAgent(name: string): AgentDefinition {
   const runtime = readAgentRuntime(raw);
   const forwardPorts = readPortArray(raw, "forward_ports");
   const dashboard = readDashboard(raw);
+  const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
+  const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
@@ -407,6 +455,7 @@ export function loadAgent(name: string): AgentDefinition {
     inference,
     state_dirs: stateDirs,
     state_files: stateFiles,
+    user_managed_files: userManagedFiles,
     messaging_platforms: messagingPlatforms,
     _legacy_paths: legacyPathConfig,
     agentDir,
@@ -440,6 +489,10 @@ export function loadAgent(name: string): AgentDefinition {
       return dashboard;
     },
 
+    get webAuth(): AgentWebAuth {
+      return webAuth;
+    },
+
     get dashboardUi(): AgentDashboardUi | null {
       return dashboardUi;
     },
@@ -463,6 +516,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get stateFiles(): AgentStateFile[] {
       return stateFiles ?? [];
+    },
+
+    get userManagedFiles(): string[] {
+      return userManagedFiles ?? [];
     },
 
     get versionCommand(): string {

@@ -203,6 +203,29 @@ describe("core onboard flow phases", () => {
     expect(Array.isArray(result.result)).toBe(true);
   });
 
+  it("passes fresh context through to provider setup recovery policy", async () => {
+    const setupNim = vi.fn(async () => ({
+      model: "nvidia/test",
+      provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: "chat",
+      nimContainer: null,
+    }));
+    const [providerPhase] = createPhases({ providerDeps: { setupNim } });
+
+    await providerPhase.run(context({ fresh: true }));
+
+    expect(setupNim).toHaveBeenCalledWith(
+      { platform: "linux" },
+      "my-sandbox",
+      { name: "openclaw" },
+      false,
+    );
+  });
+
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
     const [providerPhase] = createPhases({

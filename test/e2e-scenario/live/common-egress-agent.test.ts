@@ -156,6 +156,15 @@ function parseChatContent(raw: string): string {
   return typeof content === "string" ? content.trim() : "";
 }
 
+function compactAgentReply(value: string): string {
+  return value.replace(/\s+/gu, "");
+}
+
+function agentReplyContainsToken(reply: string, expected: string): boolean {
+  const compactExpected = compactAgentReply(expected);
+  return compactExpected.length > 0 && compactAgentReply(reply).includes(compactExpected);
+}
+
 function httpStatusFromResponse(raw: string): string {
   return (
     raw
@@ -496,7 +505,7 @@ async function runOpenClawAgentAssertion(
     }
 
     const reply = parseOpenClawAgentText(agent.stdout);
-    if (agent.exitCode === 0 && reply.includes(args.expected)) {
+    if (agent.exitCode === 0 && agentReplyContainsToken(reply, args.expected)) {
       return;
     }
     lastFailure = `reply='${reply.slice(0, 240)}' exit=${agent.exitCode} stdout='${agent.stdout.slice(
@@ -587,7 +596,11 @@ async function runHermesAgentAssertion(
     } catch {
       reply = "";
     }
-    if (agent.exitCode === 0 && httpStatus === "200" && reply.includes(args.expected)) {
+    if (
+      agent.exitCode === 0 &&
+      httpStatus === "200" &&
+      agentReplyContainsToken(reply, args.expected)
+    ) {
       return;
     }
     lastFailure = `exit=${agent.exitCode} http=${httpStatus} reply='${reply.slice(
@@ -631,6 +644,13 @@ test("common-egress agent Hermes response parser reads message content", () => {
       JSON.stringify({ choices: [{ message: { content: "HERMES_REFERENCE_AGENT_OK" } }] }),
     ),
   ).toBe("HERMES_REFERENCE_AGENT_OK");
+});
+
+test("common-egress agent expected-token matching ignores model line breaks", () => {
+  expect(agentReplyContainsToken("REFER\nENCE_AGENT_OK", "REFERENCE_AGENT_OK")).toBe(true);
+  expect(agentReplyContainsToken("HERMES_REFERENCE\n_AGENT_OK", "HERMES_REFERENCE_AGENT_OK")).toBe(
+    true,
+  );
 });
 
 test("common-egress agent classifies pre-contract provider validation skips", () => {

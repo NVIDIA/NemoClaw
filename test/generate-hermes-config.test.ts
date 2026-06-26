@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../src/lib/hermes-proxy-api-key";
+import { testTimeout } from "./helpers/timeouts";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "generate-config.ts");
@@ -169,6 +170,12 @@ function findRawSecretEnvEntries(envFile: string): string[] {
   const secretKey = /(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)/;
   const slackAlias = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$/;
   const allowedNonsecretKeys = new Set(["API_SERVER_HOST", "API_SERVER_PORT"]);
+  // Mirror ENV_FILE_ALLOWED_RAW_SECRET_KEYS in
+  // agents/hermes/validate-env-secret-boundary.py. API_SERVER_KEY is the bearer
+  // token Hermes' own api_server (v0.16.0+) requires; it is minted at sandbox
+  // startup and never travels through the OpenShell proxy, so it has no resolver
+  // placeholder and is allowed to be raw.
+  const allowedRawSecretKeys = new Set(["API_SERVER_KEY"]);
   const allowedLiterals = new Set(["", "[STRIPPED_BY_MIGRATION]"]);
   const violations: string[] = [];
 
@@ -178,7 +185,7 @@ function findRawSecretEnvEntries(envFile: string): string[] {
     if (line.startsWith("export ")) line = line.slice("export ".length).trimStart();
     const [rawKey, ...valueParts] = line.split("=");
     const key = rawKey.trim();
-    if (allowedNonsecretKeys.has(key)) continue;
+    if (allowedNonsecretKeys.has(key) || allowedRawSecretKeys.has(key)) continue;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !secretKey.test(key)) continue;
     let value = valueParts.join("=").trim();
     if (
@@ -210,21 +217,52 @@ afterEach(() => {
 });
 
 describe("agents/hermes/generate-config.ts", () => {
-  it("leaves messaging render to the messaging build applier", () => {
-    const result = runConfigScriptRaw({
-      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
-    });
-    expect(result.status, result.stderr).toBe(0);
-    const hermesDir = path.join(tmpDir, ".hermes");
-    const config = YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8"));
-    const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
-    expect(config.platforms.telegram).toBeUndefined();
-    expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
-  });
+  it(
+    "leaves messaging render to the messaging build applier",
+    () => {
+      const result = runConfigScriptRaw({
+        NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["telegram"]),
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const hermesDir = path.join(tmpDir, ".hermes");
+      const config = YAML.parse(fs.readFileSync(path.join(hermesDir, "config.yaml"), "utf-8"));
+      const envFile = fs.readFileSync(path.join(hermesDir, ".env"), "utf-8");
+      expect(config.platforms.telegram).toBeUndefined();
+      expect(envFile).not.toContain("TELEGRAM_BOT_TOKEN=");
+    },
+    testTimeout(15_000),
+  );
 
   it("generates API server config without messaging platform token blocks", () => {
     const { config, envFile } = runConfigScript();
 
+    expect(config._config_version).toBe(30);
+    expect(config.display).toMatchObject({
+      compact: false,
+      tool_progress: "all",
+      interim_assistant_messages: true,
+    });
+    expect(config.curator).toMatchObject({
+      enabled: true,
+      interval_hours: 168,
+      min_idle_hours: 2,
+      stale_after_days: 30,
+      archive_after_days: 90,
+      consolidate: false,
+      prune_builtins: true,
+      backup: {
+        enabled: true,
+        keep: 5,
+      },
+    });
+    expect(config.auxiliary?.curator).toEqual({
+      provider: "auto",
+      model: "",
+      base_url: "",
+      api_key: "",
+      timeout: 600,
+      extra_body: {},
+    });
     expect(config.model).toMatchObject({
       default: "test-model",
       provider: "custom",
@@ -242,6 +280,7 @@ describe("agents/hermes/generate-config.ts", () => {
     });
     expect(envFile).toContain("API_SERVER_PORT=18642\n");
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
+    expect(envFile).not.toContain("API_SERVER_KEY=");
   });
 
   it("records the upstream provider and model as a self-describing annotation", () => {
@@ -253,6 +292,57 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(config._nemoclaw_upstream).toEqual({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
+    });
+  });
+
+  it("exposes the managed endpoint to Hermes v16 providers and legacy custom_providers", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_PROVIDER_KEY: "nvidia-prod",
+      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    // The inline `model:` block must stay on Hermes' custom provider while
+    // the picker metadata preserves the upstream OpenShell route name.
+    expect(config.model.provider).toBe("custom");
+    expect(config.providers).toEqual({
+      "nvidia-prod": {
+        name: "nvidia-prod",
+        api: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        default_model: "nvidia/nemotron-3-super-120b-a12b",
+        discover_models: true,
+      },
+    });
+    expect(config.custom_providers).toEqual([
+      {
+        name: "nvidia-prod",
+        base_url: "https://inference.local/v1",
+        api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
+        discover_models: true,
+      },
+    ]);
+  });
+
+  it("falls back to a stable picker provider name when no upstream is named", () => {
+    const { config } = runConfigScript();
+
+    // upstreamProvider defaults to "custom"; the picker entry stays well-formed.
+    expect(config.custom_providers[0]).toMatchObject({
+      base_url: "https://inference.local/v1",
+      discover_models: true,
+    });
+    expect(typeof config.custom_providers[0].name).toBe("string");
+    expect(config.custom_providers[0].name.length).toBeGreaterThan(0);
+  });
+
+  it("mirrors the inference api_mode onto the picker provider for non-default routing", () => {
+    const { config } = runConfigScript({
+      NEMOCLAW_INFERENCE_API: "anthropic-messages",
+    });
+
+    expect(config.custom_providers[0]).toMatchObject({
+      api_mode: "anthropic_messages",
+      discover_models: true,
     });
   });
 
@@ -473,6 +563,38 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
     expect(envFile).toContain("NEMOCLAW_DISCORD_GUILD_IDS=1491590992753590594\n");
     expect(envFile).toContain("DISCORD_ALLOWED_USERS=1005536447329222676\n");
+  });
+
+  it("derives Hermes env placeholders from minimal persisted credential bindings", () => {
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      workflow: "rebuild",
+      channels: [{ channelId: "discord", active: true, disabled: false }],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "discord",
+          credentialId: "discordBotToken",
+          providerEnvKey: "DISCORD_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:v1442987827285932589_DISCORD_BOT_TOKEN",
+          credentialAvailable: true,
+        },
+      ],
+      agentRender: [],
+      buildSteps: [],
+    };
+
+    const result = runConfigScriptRaw({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson([]),
+      NEMOCLAW_MESSAGING_PLAN_B64: encodeJson(plan),
+    });
+    const envFile = fs.readFileSync(path.join(tmpDir, ".hermes", ".env"), "utf-8");
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(envFile).toContain("DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n");
+    expect(findRawSecretEnvEntries(envFile)).toEqual([]);
   });
 
   it("preserves the Discord all-messages reply mode from onboarding", () => {

@@ -12,6 +12,7 @@ export type WorkflowJob = {
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;
+  env?: Record<string, string>;
   secrets?: Record<string, string>;
   steps?: WorkflowStep[];
   with?: Record<string, string>;

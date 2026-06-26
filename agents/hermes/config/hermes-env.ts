@@ -7,6 +7,10 @@ import { loadManagedToolGatewayMatrix } from "./managed-tool-gateway.ts";
 export function buildHermesEnvLines(settings: HermesBuildSettings): string[] {
   const envLines = ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1"];
 
+  for (const { envKey, placeholder } of settings.messagingCredentialPlaceholders) {
+    envLines.push(`${envKey}=${placeholder}`);
+  }
+
   if (!settings.managedToolGateways.brokerEnabled) return envLines;
 
   const matrix = loadManagedToolGatewayMatrix();

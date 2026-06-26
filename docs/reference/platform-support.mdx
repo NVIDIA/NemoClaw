@@ -117,6 +117,7 @@ NemoClaw configures messaging channels during onboarding. The OpenShell gateway 
 | Telegram | Tested | Configured through an OpenShell-managed channel during onboarding. |
 | WeChat | Tested with limitations | Channel hook available. Verify regional account access before relying on this path. |
 | WhatsApp | Tested with limitations | Supported by both OpenClaw and Hermes (see `messaging_platforms` in `agents/openclaw/manifest.yaml` and `agents/hermes/manifest.yaml`). Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `nemoclaw-blueprint/policies/presets/whatsapp.yaml`. No Meta Business API integration today; that path is out of scope for this matrix. |
+| Microsoft Teams | Experimental | Supported by both OpenClaw and Hermes through the manifest-first messaging channel contract. Requires Bot Framework app credentials, a tenant ID, and a public HTTPS endpoint that reaches the sandbox webhook path `/api/messages`. Sandbox egress goes through the `teams` policy preset, and only one active Teams sandbox can use a given local `MSTEAMS_PORT` forward. |
 {/* integration-status:end */}
 
 ## Capabilities
