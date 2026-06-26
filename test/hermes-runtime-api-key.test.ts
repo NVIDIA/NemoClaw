@@ -142,6 +142,7 @@ function runHermesRuntimeApiServerKeyMint(
 function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   envFile: string;
   envOverrides: Record<string, string>;
+  hashFileContent?: string;
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-placeholders-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -152,7 +153,11 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   fs.mkdirSync(hermesHome, { recursive: true });
   fs.writeFileSync(configPath, "model:\n  default: test-model\n");
   fs.writeFileSync(envPath, opts.envFile, { mode: 0o640 });
-  writeHermesHash(hashPath, configPath, envPath);
+  if (opts.hashFileContent === undefined) {
+    writeHermesHash(hashPath, configPath, envPath);
+  } else {
+    fs.writeFileSync(hashPath, opts.hashFileContent);
+  }
 
   try {
     const result = spawnSync(
@@ -181,6 +186,7 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
     return {
       result,
       envFileContent,
+      strictHashContent: fs.readFileSync(hashPath, "utf-8"),
       strictHashValid: strictHashCheck.status === 0,
     };
   } finally {
@@ -239,6 +245,36 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.result.stderr).not.toContain("Minted Hermes API_SERVER_KEY");
   });
 
+  it("deduplicates an existing API_SERVER_KEY while preserving the first generated value", () => {
+    const existingKey = "c".repeat(64);
+    const duplicateKey = "d".repeat(64);
+    const run = runHermesRuntimeApiServerKeyMint({
+      envFile: [
+        "API_SERVER_PORT=18642",
+        `export API_SERVER_KEY=${existingKey}`,
+        `API_SERVER_KEY=${duplicateKey}`,
+        "API_SERVER_HOST=127.0.0.1",
+        "",
+      ].join("\n"),
+      fakeRoot: true,
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.apiServerKey).toBe(existingKey);
+    expect(run.envFileContent).toBe(
+      [
+        "API_SERVER_PORT=18642",
+        `export API_SERVER_KEY=${existingKey}`,
+        "API_SERVER_HOST=127.0.0.1",
+        "",
+      ].join("\n"),
+    );
+    expect(run.envFileContent).not.toContain(duplicateKey);
+    expect(run.strictHashValid).toBe(true);
+    expect(run.compatHashValid).toBe(true);
+    expect(run.result.stderr).not.toContain("Minted Hermes API_SERVER_KEY");
+  });
+
   it("ensure_hermes_runtime_api_server_key rotates malformed existing API_SERVER_KEY values and refreshes hashes", () => {
     for (const { envLine, weakValue } of [
       { envLine: "API_SERVER_KEY=x", weakValue: "x" },
@@ -281,6 +317,73 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       expect(run.envFileContent).not.toContain("v111_DISCORD_BOT_TOKEN");
       expect(run.strictHashValid).toBe(true);
     }
+  });
+
+  it("appends missing provider placeholders from the runtime env before refreshing .env", () => {
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: ["API_SERVER_PORT=18642", "API_SERVER_HOST=127.0.0.1", ""].join("\n"),
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v101_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v102_SLACK_APP_TOKEN",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(
+      [
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        "",
+      ].join("\n"),
+    );
+    expect(run.envFileContent).not.toContain("openshell:resolve:env:v101_SLACK_BOT_TOKEN");
+    expect(run.envFileContent).not.toContain("openshell:resolve:env:v102_SLACK_APP_TOKEN");
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("upserts provider placeholders without duplicates and preserves export prefixes", () => {
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: [
+        "export SLACK_BOT_TOKEN=xoxb-stale-placeholder",
+        "SLACK_BOT_TOKEN=xoxb-duplicate-placeholder",
+        "API_SERVER_PORT=18642",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:v1_DISCORD_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:v2_DISCORD_BOT_TOKEN",
+        "",
+      ].join("\n"),
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v101_SLACK_BOT_TOKEN",
+        DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(
+      [
+        "export SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "API_SERVER_PORT=18642",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "",
+      ].join("\n"),
+    );
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("does not rewrite provider placeholders when .env is already canonical", () => {
+    const hashFileContent = "sentinel\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: "SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n",
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v101_SLACK_BOT_TOKEN",
+      },
+      hashFileContent,
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
+    expect(run.strictHashContent).toBe(hashFileContent);
   });
 
   it("generates distinct API_SERVER_KEY values for separate sandbox homes", () => {

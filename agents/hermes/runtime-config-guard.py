@@ -25,6 +25,10 @@ PROVIDER_PLACEHOLDER_KEYS = (
     "SLACK_BOT_TOKEN",
     "SLACK_APP_TOKEN",
 )
+PROVIDER_PLACEHOLDER_ALIASES = {
+    "SLACK_BOT_TOKEN": "xoxb",
+    "SLACK_APP_TOKEN": "xapp",
+}
 
 
 class UnsafePathError(RuntimeError):
@@ -329,6 +333,54 @@ def _parse_env_assignment(line: str) -> tuple[str, str, str] | None:
     return prefix, key, value
 
 
+def _upsert_env_assignments(text: str, assignments: dict[str, str]) -> tuple[str, bool]:
+    if not assignments:
+        return text, False
+
+    seen: set[str] = set()
+    changed = False
+    updated: list[str] = []
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            updated.append(line)
+            continue
+        prefix, key, _value = parsed
+        if key not in assignments:
+            updated.append(line)
+            continue
+        if key in seen:
+            changed = True
+            continue
+        seen.add(key)
+        new_line = f"{prefix}{key}={assignments[key]}\n"
+        updated.append(new_line)
+        changed = changed or new_line != line
+
+    for key, value in assignments.items():
+        if key in seen:
+            continue
+        if updated and not updated[-1].endswith("\n"):
+            updated[-1] = updated[-1] + "\n"
+            changed = True
+        updated.append(f"{key}={value}\n")
+        changed = True
+
+    updated_text = "".join(updated)
+    return updated_text, changed or updated_text != text
+
+
+def _first_env_assignment_value(text: str, env_key: str) -> str | None:
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            continue
+        _prefix, key, value = parsed
+        if key == env_key:
+            return value
+    return None
+
+
 def _is_generated_api_server_key(value: str) -> bool:
     candidate = value.strip()
     if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in ("'", '"'):
@@ -349,6 +401,9 @@ def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str
     suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
         return None
+    alias_prefix = PROVIDER_PLACEHOLDER_ALIASES.get(env_key)
+    if alias_prefix:
+        return f"{alias_prefix}-OPENSHELL-RESOLVE-ENV-{env_key}"
     return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
 
 
@@ -357,42 +412,18 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     if not os.path.exists(env_path):
         return
     text, snapshot = _read_text(env_path)
-    lines = text.splitlines(keepends=True)
-    changed = False
-    seen = False
-    updated: list[str] = []
-    for line in lines:
-        parsed = _parse_env_assignment(line)
-        if parsed is None:
-            updated.append(line)
-            continue
-        prefix, key, value = parsed
-        if key != "API_SERVER_KEY":
-            updated.append(line)
-            continue
-        if seen:
-            changed = True
-            continue
-        seen = True
-        if _is_generated_api_server_key(value):
-            updated.append(line)
-            continue
-        updated.append(f"{prefix}API_SERVER_KEY={secrets.token_hex(32)}\n")
-        changed = True
-
-    if not seen:
-        if updated and not updated[-1].endswith("\n"):
-            updated[-1] = updated[-1] + "\n"
-        updated.append(f"API_SERVER_KEY={secrets.token_hex(32)}\n")
-        changed = True
+    existing_value = _first_env_assignment_value(text, "API_SERVER_KEY")
+    minted = existing_value is None or not _is_generated_api_server_key(existing_value)
+    api_server_key = secrets.token_hex(32) if minted else existing_value
+    updated_text, changed = _upsert_env_assignments(text, {"API_SERVER_KEY": api_server_key})
 
     if not changed:
         print("minted=0")
         return
 
-    _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
+    _write_existing(env_path, updated_text, snapshot, mode=0o640)
     refresh_hashes(hermes_dir, hash_file, mode)
-    print("minted=1")
+    print("minted=1" if minted else "updated=1")
 
 
 def provider_placeholders(hermes_dir: str, hash_file: str, mode: str) -> None:
@@ -409,26 +440,13 @@ def provider_placeholders(hermes_dir: str, hash_file: str, mode: str) -> None:
         return
 
     text, snapshot = _read_text(env_path)
-    changed = False
-    updated: list[str] = []
-    for line in text.splitlines(keepends=True):
-        parsed = _parse_env_assignment(line)
-        if parsed is None:
-            updated.append(line)
-            continue
-        prefix, key, _value = parsed
-        if key in replacements:
-            new_line = f"{prefix}{key}={replacements[key]}\n"
-            updated.append(new_line)
-            changed = changed or new_line != line
-            continue
-        updated.append(line)
+    updated_text, changed = _upsert_env_assignments(text, replacements)
 
     if not changed:
         return
 
     try:
-        _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
+        _write_existing(env_path, updated_text, snapshot, mode=0o640)
         refresh_hashes(hermes_dir, hash_file, mode)
     except PermissionError:
         if os.geteuid() != 0:
