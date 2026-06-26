@@ -9,6 +9,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
+const headlessCheckPath = path.join(
+  process.cwd(),
+  "test",
+  "e2e",
+  "e2e-cloud-experimental",
+  "checks",
+  "07-deepagents-code-headless-inference.sh",
+);
 const DCODE_CANONICAL_PATH =
   "/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -34,6 +42,13 @@ function makeStartScriptFixture(tempDir: string): {
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
   return { envFile, messagingEnvFile, scriptPath };
+}
+
+function runHeadlessCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
+  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", headlessCheckPath], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
 }
 
 describe("LangChain Deep Agents Code image contracts", () => {
@@ -322,27 +337,107 @@ describe("LangChain Deep Agents Code image contracts", () => {
   });
 
   it("ships a headless inference acceptance check for Deep Agents Code", () => {
-    const headlessCheck = fs.readFileSync(
-      path.join(
-        process.cwd(),
-        "test",
-        "e2e",
-        "e2e-cloud-experimental",
-        "checks",
-        "07-deepagents-code-headless-inference.sh",
-      ),
-      "utf8",
-    );
+    const headlessCheck = fs.readFileSync(headlessCheckPath, "utf8");
 
     expect(headlessCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(headlessCheck).toContain("dcode -n 'Reply with exactly one word: PONG'");
-    expect(headlessCheck).toContain("inference.local");
-    expect(headlessCheck).toContain("nvapi-");
-    expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
-    expect(headlessCheck).toContain('cat /sandbox/.deepagents/config.toml 2>/dev/null" || true');
+    expect(headlessCheck).toContain("https://inference\\.local(/v1)?");
+    expect(headlessCheck).toContain("references_managed_placeholder_key");
     expect(headlessCheck).toContain(
-      'cat /sandbox/.deepagents/config.toml /sandbox/.deepagents/.env /sandbox/.deepagents/.mcp.json /tmp/nemoclaw-proxy-env.sh 2>/dev/null" || true',
+      'api_key_env[[:space:]]*=[[:space:]]*"DEEPAGENTS_CODE_OPENAI_API_KEY"',
     );
+    expect(headlessCheck).toContain("classify_headless_output");
+    expect(headlessCheck).toContain("DEEPAGENTS_HEADLESS_TIMEOUT must be a positive integer");
+    expect(headlessCheck).toContain("nvapi-");
+    expect(headlessCheck).toContain("nvcf-");
+    expect(headlessCheck).toContain("ghp_");
+    expect(headlessCheck).toContain("github_pat_");
+    expect(headlessCheck).toContain("sk-proj-");
+    expect(headlessCheck).toContain("sk-ant-");
+    expect(headlessCheck).toContain("xapp");
+    expect(headlessCheck).toContain("A(K|S)IA");
+    expect(headlessCheck).toContain("/tmp/nemoclaw-proxy-env.sh");
+    expect(headlessCheck).toContain("sandbox_artifact_scan_command");
+    expect(headlessCheck).toContain('cat /sandbox/.deepagents/config.toml 2>/dev/null" || true');
+    expect(headlessCheck).toContain("find /sandbox/.deepagents -maxdepth 3 -type f");
+    expect(headlessCheck).toContain('-name "*.log"');
+    expect(headlessCheck).not.toContain("config_output:0:200");
+  });
+
+  it("requires the managed inference route and placeholder key in Deep Agents Code config", () => {
+    expect(
+      runHeadlessCheckHelper(
+        'printf "%s" "$CONFIG" | references_managed_inference_route && printf route',
+        { CONFIG: 'base_url = "https://inference.local/v1"' },
+      ),
+    ).toBe("route");
+    expect(
+      runHeadlessCheckHelper(
+        'printf "%s" "$CONFIG" | references_managed_placeholder_key && printf key',
+        { CONFIG: 'api_key_env = "DEEPAGENTS_CODE_OPENAI_API_KEY"' },
+      ),
+    ).toBe("key");
+  });
+
+  it("classifies Deep Agents Code headless output without accepting local failures", () => {
+    const classify = (exitCode: string, output: string) =>
+      runHeadlessCheckHelper(
+        [
+          'if classification="$(classify_headless_output "$DCODE_EXIT" "$HEADLESS_OUTPUT")"; then',
+          '  printf "pass:%s" "$classification";',
+          "else",
+          '  printf "fail:%s" "$classification";',
+          "fi",
+        ].join(" "),
+        { DCODE_EXIT: exitCode, HEADLESS_OUTPUT: output },
+      );
+
+    expect(classify("0", "PONG\nDCODE_EXIT:0")).toBe("pass:pong");
+    expect(
+      classify("1", "OpenAI provider returned HTTP 401 for inference.local\nDCODE_EXIT:1"),
+    ).toBe("pass:actionable-inference-error");
+    expect(classify("124", "still waiting\nDCODE_EXIT:124")).toBe("fail:timeout");
+    expect(classify("1", "usage: dcode [-h]\nDCODE_EXIT:1")).toBe("fail:local-execution-failure");
+    expect(classify("1", "Traceback (most recent call last):\nDCODE_EXIT:1")).toBe(
+      "fail:local-execution-failure",
+    );
+    expect(classify("1", "something happened\nDCODE_EXIT:1")).toBe("fail:ambiguous-output");
+  });
+
+  it("rejects unsafe headless timeout values before sandbox execution", () => {
+    const validate = (timeout: string) =>
+      runHeadlessCheckHelper(
+        'if is_positive_integer "$HEADLESS_TIMEOUT"; then printf valid; else printf invalid; fi',
+        { DEEPAGENTS_HEADLESS_TIMEOUT: timeout },
+      );
+
+    expect(validate("120")).toBe("valid");
+    expect(validate("0")).toBe("invalid");
+    expect(validate("1; touch /tmp/nemoclaw-timeout-injection")).toBe("invalid");
+  });
+
+  it("detects representative secret families in headless inference artifacts", () => {
+    const detectsSecret = (token: string) =>
+      runHeadlessCheckHelper(
+        'if printf "%s" "$TOKEN" | contains_secret; then printf secret; else printf clean; fi',
+        { TOKEN: token },
+      );
+    const secretSamples = [
+      "nvapi-" + "A".repeat(10),
+      "nvcf-" + "A".repeat(10),
+      "ghp_" + "A".repeat(10),
+      "github_pat_" + "A".repeat(30),
+      "sk-proj-" + "A".repeat(10),
+      "sk-ant-" + "A".repeat(10),
+      "sk-" + "A".repeat(20),
+      "xapp-" + "A".repeat(10),
+      "ASIA" + "A".repeat(16),
+    ];
+
+    for (const sample of secretSamples) {
+      expect(detectsSecret(sample)).toBe("secret");
+    }
+    expect(detectsSecret("managed-placeholder-key")).toBe("clean");
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
