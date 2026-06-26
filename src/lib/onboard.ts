@@ -1582,23 +1582,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
-// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
-function assertCdiNvidiaGpuSpecPresent(
-  host: ReturnType<typeof assessHost>,
-  optedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-): void {
-  if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough)
-    return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-  );
-  printRemediationActions(planHostRemediation(host));
-  process.exit(1);
-}
-
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
@@ -1645,11 +1628,13 @@ async function preflight(
     device: preflightOpts.sandboxGpuDevice ?? null,
   });
   exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
-  const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true ||
-    preflightOpts.noGpu === true ||
-    !sandboxGpuConfig.sandboxGpuEnabled;
-  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
+  const explicitlyOptedOutGpuPassthrough =
+    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+  preflightUtils.assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+  );
 
   assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
@@ -3064,10 +3049,10 @@ async function createSandbox(
       dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
+    readyCheckOutputPatterns: agentDefs.isTerminalAgent(agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: onboardTracing.addTraceEvent,
   });
-
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -3940,6 +3925,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
+  recoverProvider = true,
 ): Promise<{
   model: string | null;
   provider: string;
@@ -3993,7 +3979,6 @@ async function setupNim(
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
-  // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
   const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4048,9 +4033,9 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider,
-          readRecordedNimContainer,
-          readRecordedModel,
+          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
+          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -4933,7 +4918,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent,
+        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,

@@ -439,7 +439,7 @@ The exit code is the remote command's exit code.
 
 ### `nemohermes <name> agent`
 
-The `agent` wrapper is an OpenClaw passthrough and rejects Hermes sandboxes with guidance for the Hermes HTTP API.
+The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API.
 Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
@@ -512,12 +512,14 @@ Older Hermes sandbox images that predate the standalone validator are detected a
 Show sandbox status, health, and inference configuration.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
 `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
-The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), or `failureLayer` is non-null.
+For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
+If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `nemohermes <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, or a terminal runtime sandbox reports a recorded OOM kill.
 The alias form `nemohermes <name> status --json` requires the sandbox to be registered locally; the canonical form `nemohermes sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 ```bash
@@ -1042,7 +1044,7 @@ nemohermes my-assistant agents delete work --force --json
 
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
-This is a thin pass-through to `openclaw sessions` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+NemoClaw invokes `openclaw sessions` via `openshell sandbox exec` and forwards OpenClaw flags verbatim, but filters default list output so internal `nemoclaw-onboard-warmup-*` sessions created during onboarding are hidden from user-facing output.
 
 ```bash
 nemohermes my-assistant sessions
@@ -1051,8 +1053,8 @@ nemohermes my-assistant sessions --all-agents --json
 
 ### `nemohermes <name> sessions list`
 
-Pass-through to `openclaw sessions list` inside the sandbox.
-Accepts every flag the in-sandbox CLI does (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`).
+Invoke `openclaw sessions list` inside the sandbox.
+NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
 
 ```bash
 nemohermes my-assistant sessions list
@@ -1108,7 +1110,8 @@ The command routes by the sandbox's agent kind recorded in the registry.
 
 For an OpenClaw sandbox, the command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
-With no positional keys, the command exports every session for the agent.
+With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, the command reports that there are no sessions to bundle and writes no artifact.
+Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
 
 For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.
@@ -1118,9 +1121,8 @@ The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a d
 
 ```bash
 nemohermes my-assistant sessions export
-nemohermes my-assistant sessions export main --agent main
-nemohermes my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
-nemohermes my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
+nemohermes my-assistant sessions export --agent hermes --out ./sessions-my-assistant.jsonl
+nemohermes my-assistant sessions export --json
 ```
 
 | Flag | Description |

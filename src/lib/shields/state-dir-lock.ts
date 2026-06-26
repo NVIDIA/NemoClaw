@@ -40,7 +40,10 @@ export interface PrivilegedExec {
 // config dir are silently skipped.
 //
 // Coverage tracks the union of state_dirs declared by every shipped agent
-// manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml).
+// manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml,
+// agents/langchain-deepagents-code/manifest.yaml).
+// Nested state dirs may be covered by locking their parent directory; `agent`
+// covers Deep Agents Code's `agent/skills` so the parent cannot be rename-swapped.
 // Runtime-mutable subtrees/files that must keep being writable while shields
 // are up are intentionally omitted:
 //   - `sessions` (Hermes top-level) and `agents/*/sessions` (OpenClaw) — the
@@ -59,6 +62,7 @@ export interface PrivilegedExec {
 
 export const HIGH_RISK_STATE_DIRS = [
   "skills",
+  "agent",
   "hooks",
   "cron",
   "agents",

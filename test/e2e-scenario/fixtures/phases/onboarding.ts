@@ -4,14 +4,19 @@
 import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-
-import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ArtifactSink } from "../artifacts.ts";
+import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import { artifactLabel, assertExitZero } from "../clients/command.ts";
 import type { HostCliClient } from "../clients/host.ts";
 import { validateSandboxName } from "../clients/sandbox.ts";
-import type { ShellProbeResult } from "../shell-probe.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_BASE_URL,
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  HOSTED_INFERENCE_CREDENTIAL_ENV,
+  HOSTED_INFERENCE_PROVIDER,
+} from "../hosted-inference.ts";
 import { redactString } from "../redaction.ts";
+import type { ShellProbeResult } from "../shell-probe.ts";
 import type { EnvironmentReady } from "./environment.ts";
 
 const ONBOARD_ARGS = [
@@ -65,7 +70,7 @@ export interface OnboardingExpectedFailure {
 export interface NemoClawInstance {
   onboarding: string;
   sandboxName: string;
-  agent: "openclaw" | "hermes";
+  agent: "openclaw" | "hermes" | "langchain-deepagents-code";
   provider: "nvidia" | "ollama";
   providerEnv: "cloud" | "local";
   platformOs?: "ubuntu" | "macos" | "windows";
@@ -85,12 +90,30 @@ function sandboxNameFromOptions(onboarding: string, options: OnboardingOptions):
 }
 
 function commandEnv(sandboxName: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const useHostedCompatible = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+  const model =
+    process.env.NEMOCLAW_MODEL ||
+    process.env.NEMOCLAW_COMPAT_MODEL ||
+    DEFAULT_HOSTED_INFERENCE_MODEL;
+  const compatibleEnv: NodeJS.ProcessEnv = useHostedCompatible
+    ? {
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
+        NEMOCLAW_ENDPOINT_URL:
+          process.env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL,
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_COMPAT_MODEL: model,
+        NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
+        [HOSTED_INFERENCE_CREDENTIAL_ENV]: extra.NVIDIA_INFERENCE_API_KEY,
+      }
+    : {};
   return {
     ...buildAvailabilityProbeEnv(),
-    ...extra,
     NEMOCLAW_AGENT: "openclaw",
     NEMOCLAW_PROVIDER: "cloud",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
+    ...compatibleEnv,
+    ...extra,
   };
 }
 
@@ -157,6 +180,9 @@ export class OnboardingPhaseFixture {
         case "cloud-openclaw-no-docker":
           result = await this.cloudOpenClawNoDocker(environment, options);
           break;
+        case "cloud-langchain-deepagents-code":
+          result = await this.cloudLangchainDeepAgentsCode(environment, options);
+          break;
         default:
           throw new Error(`Unsupported onboarding profile '${environment.onboarding}'.`);
       }
@@ -189,6 +215,53 @@ export class OnboardingPhaseFixture {
       onboarding: environment.onboarding,
       sandboxName,
       agent: "openclaw",
+      provider: "nvidia",
+      providerEnv: "cloud",
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      result,
+    };
+  }
+
+  async cloudLangchainDeepAgentsCode(
+    environment: EnvironmentReady,
+    options: OnboardingOptions = {},
+  ): Promise<NemoClawInstance> {
+    if (!environment.docker.available) {
+      throw new Error(
+        "cloud-langchain-deepagents-code onboarding requires an available Docker runtime.",
+      );
+    }
+    const sandboxName = sandboxNameFromOptions(environment.onboarding, options);
+    const apiKey = this.secrets.required("NVIDIA_INFERENCE_API_KEY");
+    this.registerSandboxCleanup(sandboxName);
+    const result = await this.host.nemoclaw(ONBOARD_ARGS, {
+      artifactName: "onboard-cloud-langchain-deepagents-code",
+      env: commandEnv(sandboxName, {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+        NEMOCLAW_PROVIDER: HOSTED_INFERENCE_PROVIDER,
+        NEMOCLAW_ENDPOINT_URL:
+          process.env.NEMOCLAW_ENDPOINT_URL || DEFAULT_HOSTED_INFERENCE_BASE_URL,
+        NEMOCLAW_MODEL:
+          process.env.NEMOCLAW_MODEL ||
+          process.env.NEMOCLAW_COMPAT_MODEL ||
+          DEFAULT_HOSTED_INFERENCE_MODEL,
+        NEMOCLAW_COMPAT_MODEL:
+          process.env.NEMOCLAW_MODEL ||
+          process.env.NEMOCLAW_COMPAT_MODEL ||
+          DEFAULT_HOSTED_INFERENCE_MODEL,
+        NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API || "openai-completions",
+        NVIDIA_INFERENCE_API_KEY: apiKey,
+        [HOSTED_INFERENCE_CREDENTIAL_ENV]: apiKey,
+      }),
+      redactionValues: [apiKey],
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    });
+    assertExitZero(result, "cloud-langchain-deepagents-code onboarding");
+    return {
+      onboarding: environment.onboarding,
+      sandboxName,
+      agent: "langchain-deepagents-code",
       provider: "nvidia",
       providerEnv: "cloud",
       gatewayUrl: OPENCLAW_GATEWAY_URL,

@@ -5,7 +5,8 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 import { wrapSandboxShellScript } from "./auto-pair-approval";
-import { WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
+import { WARMUP_SCRIPT, WARMUP_TIMEOUT_MS } from "./auto-pair-warmup";
+import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 // NOTE on coverage shape (#4504-v2): `runSandboxScopeWarmupRun` is not exercised
 // in-process here. Like its sibling `runSandboxAutoPairApprovalPass`, the leaf
@@ -50,7 +51,7 @@ describe("warm-up payload survives OpenShell exec (#4504-v2)", () => {
     const warmupShaped = [
       "command -v openclaw >/dev/null 2>&1 || exit 0",
       'openclaw agent --agent main -m "ping" \\',
-      '  --session-id "nemoclaw-onboard-warmup-$$-$(date +%s)" >/dev/null 2>&1 || true',
+      `  --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true`,
       "exit 0",
       "",
     ].join("\n");
@@ -60,7 +61,10 @@ describe("warm-up payload survives OpenShell exec (#4504-v2)", () => {
     expect(wrapped).toContain("mktemp");
   });
 
-  it("round-trips a warm-up-shaped payload and preserves its exit-0 status when run", () => {
+  const shAvailable = spawnSync("sh", ["-c", "exit 0"], { encoding: "utf-8" }).status === 0;
+  const itWithSh = shAvailable ? it : it.skip;
+
+  itWithSh("round-trips a warm-up-shaped payload and preserves its exit-0 status when run", () => {
     // Mirror the real warm-up: the provoke command itself may "fail" (the agent
     // falls back to embedded mode), but `|| true` + trailing `exit 0` mean the
     // wrapped script always exits 0 — so a failed provoke never surfaces as a
@@ -70,5 +74,20 @@ describe("warm-up payload survives OpenShell exec (#4504-v2)", () => {
     const wrapped = wrapSandboxShellScript(inner);
     const result = spawnSync("sh", ["-c", wrapped], { encoding: "utf-8", timeout: 10_000 });
     expect(result.status).toBe(0);
+  });
+});
+
+describe("warm-up tags its throwaway session for user-facing filters (#5511)", () => {
+  it("tags the provoke session with the shared warm-up prefix", () => {
+    expect(WARMUP_SESSION_ID_PREFIX).toBe("nemoclaw-onboard-warmup-");
+    expect(WARMUP_SCRIPT).toContain(`--session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`);
+  });
+
+  it("keeps the #4504-v2 provoke run foreground and within the original budget", () => {
+    expect(WARMUP_SCRIPT).toContain('openclaw agent --agent main -m "ping" \\');
+    expect(WARMUP_SCRIPT).toContain(">/dev/null 2>&1 || true");
+    expect(WARMUP_SCRIPT).not.toContain("setsid");
+    expect(WARMUP_SCRIPT).not.toContain("WARMUP_AGENT_PID");
+    expect(WARMUP_SCRIPT).not.toContain("warmup_cleanup_attempt");
   });
 });

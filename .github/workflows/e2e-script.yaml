@@ -58,10 +58,15 @@ on:
         type: string
         default: ""
       nvidia_api_key:
-        description: Pass the hosted inference source secret as the CI custom endpoint credential.
+        description: Pass the NVIDIA inference credential to the script.
         required: false
         type: boolean
         default: false
+      inference_route:
+        description: "Inference route to export when nvidia_api_key is true: hosted-custom or nvidia-internal."
+        required: false
+        type: string
+        default: hosted-custom
       brave_api_key:
         description: Pass the BRAVE_API_KEY secret to the script.
         required: false
@@ -212,28 +217,48 @@ jobs:
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
 
-      - name: Export hosted CI inference environment
+      - name: Export CI inference environment
         if: ${{ inputs.nvidia_api_key }}
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NEMOCLAW_E2E_INFERENCE_ROUTE: ${{ inputs.inference_route }}
+          HOSTED_NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
-            echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for hosted CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
-            exit 1
-          fi
+          case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in
+            nvidia-internal|hosted-custom)
+              # Source of truth: both labels intentionally export the same
+              # internal hosted-compatible runtime env. `hosted-custom` remains
+              # the default legacy route; `nvidia-internal` is only an explicit
+              # caller-selection label for jobs moved away from public NVIDIA
+              # Endpoints/Build after HTTP 429s. Remove the split once those jobs
+              # no longer need an auditable opt-in label.
+              if [ -z "${HOSTED_NVIDIA_INFERENCE_API_KEY:-}" ]; then
+                echo "::error::NVIDIA_INFERENCE_API_KEY secret is required for ${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom} CI inference; it is withheld for workflow_dispatch target_ref runs." >&2
+                exit 1
+              fi
+              if [[ "${HOSTED_NVIDIA_INFERENCE_API_KEY}" == *$'\n'* || "${HOSTED_NVIDIA_INFERENCE_API_KEY}" == *$'\r'* ]]; then
+                echo "::error::NVIDIA_INFERENCE_API_KEY secret must be a single-line value before export to GITHUB_ENV." >&2
+                exit 1
+              fi
 
-          {
-            printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
-            printf 'NEMOCLAW_PROVIDER=custom\n'
-            printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
-            printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
-            printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
-            printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
-            printf 'COMPATIBLE_API_KEY=%s\n' "${NVIDIA_INFERENCE_API_KEY}"
-          } >> "$GITHUB_ENV"
+              {
+                printf 'NVIDIA_INFERENCE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
+                printf 'NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1\n'
+                printf 'NEMOCLAW_PROVIDER=custom\n'
+                printf 'NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1\n'
+                printf 'NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
+                printf 'NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-ultra\n'
+                printf 'NEMOCLAW_PREFERRED_API=openai-completions\n'
+                printf 'COMPATIBLE_API_KEY=%s\n' "${HOSTED_NVIDIA_INFERENCE_API_KEY}"
+              } >> "$GITHUB_ENV"
+              ;;
+            *)
+              echo "::error::Unsupported inference_route value." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Run E2E script
         uses: ./workflow-actions/.github/actions/run-e2e-script
@@ -248,7 +273,6 @@ jobs:
         env:
           BRAVE_API_KEY: ${{ inputs.brave_api_key && secrets.BRAVE_API_KEY || '' }}
           GITHUB_TOKEN: ${{ inputs.github_token && github.token || '' }}
-          NVIDIA_INFERENCE_API_KEY: ${{ inputs.nvidia_api_key && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
           TELEGRAM_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_BOT_TOKEN_REAL || '' }}
           TELEGRAM_CHAT_ID_E2E: ${{ inputs.messaging_live_secrets && secrets.TELEGRAM_CHAT_ID_E2E || '' }}
           DISCORD_BOT_TOKEN_REAL: ${{ inputs.messaging_live_secrets && secrets.DISCORD_BOT_TOKEN_REAL || '' }}

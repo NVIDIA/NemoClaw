@@ -35,6 +35,10 @@ function resultText(result: ProcessResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 function outputContainsSandbox(result: ProcessResult, sandboxName: string): boolean {
   const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
@@ -42,6 +46,17 @@ function outputContainsSandbox(result: ProcessResult, sandboxName: string): bool
 
 function expectExitZero(result: ProcessResult, label: string): void {
   expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
+}
+
+function expectJsonStdout(result: ProcessResult, label: string): void {
+  expect(
+    result.stdout.trim(),
+    `${label} produced empty stdout\nstderr:\n${result.stderr}`,
+  ).not.toBe("");
+  expect(
+    () => JSON.parse(result.stdout),
+    `${label} stdout is not JSON:\n${result.stdout}`,
+  ).not.toThrow();
 }
 
 async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -243,13 +258,7 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
   const sessionId = `e2e-sbx-02-${Date.now()}-${process.pid}`;
   const result = await host.nemoclaw(
     [
-      "sandbox",
-      "exec",
       sandboxName,
-      "--timeout",
-      "90",
-      "--",
-      "openclaw",
       "agent",
       "--agent",
       "main",
@@ -260,14 +269,77 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
       "What is 6 multiplied by 7? Reply with only the integer, no extra words.",
     ],
     {
-      artifactName: "tc-sbx-02-openclaw-agent-json",
+      artifactName: "tc-sbx-02-nemoclaw-agent-json",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 120_000,
     },
   );
   const reply = parseOpenClawAgentText(result.stdout);
-  expectExitZero(result, "openclaw agent --json");
+  expectExitZero(result, `nemoclaw ${sandboxName} agent --json`);
   expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
+}
+
+async function assertAgentJsonTransportBoundaries(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<void> {
+  const invalidFlag = await host.nemoclaw(
+    [sandboxName, "agent", "--json", "--nemoclaw-e2e-invalid-openclaw-agent-flag"],
+    {
+      artifactName: "tc-sbx-02b-agent-json-nonzero",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(invalidFlag.timedOut, resultText(invalidFlag)).toBe(false);
+  expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBeNull();
+  expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBe(0);
+
+  const stdinPrompt = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
+  const stdinSessionId = `e2e-sbx-02b-stdin-${Date.now()}-${process.pid}`;
+  const stdinScript = [
+    "set -euo pipefail",
+    `printf '%s\\n' ${shellQuote(stdinPrompt)} | ${shellQuote(host.commandPath)} ${shellQuote(
+      sandboxName,
+    )} agent --agent main --json --session-id ${shellQuote(stdinSessionId)}`,
+  ].join("\n");
+  const stdinResult = await host.command("bash", ["-lc", stdinScript], {
+    artifactName: "tc-sbx-02b-agent-json-stdin",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 120_000,
+  });
+  expectExitZero(stdinResult, `printf prompt | nemoclaw ${sandboxName} agent --json`);
+  expectJsonStdout(stdinResult, "stdin agent --json");
+  expect(parseOpenClawAgentText(stdinResult.stdout), resultText(stdinResult)).toMatch(
+    /(^|[^0-9])42([^0-9]|$)/,
+  );
+
+  const provenanceMarker = `NEMOCLAW_PROVENANCE_E2E_${Date.now()}_${process.pid}`;
+  const failureSessionId = `e2e-sbx-02b-failure-${Date.now()}-${process.pid}`;
+  const failure = await host.nemoclaw(
+    [
+      sandboxName,
+      "agent",
+      "--agent",
+      "main",
+      "--json",
+      "--thinking",
+      "off",
+      "--session-id",
+      failureSessionId,
+      "-m",
+      `Use the exec tool to run exactly: /bin/sh -lc 'echo ${provenanceMarker}; exit 7'. Do not retry the command. Then reply with exactly: observed expected failure.`,
+    ],
+    {
+      artifactName: "tc-sbx-02b-agent-json-failed-tool-provenance",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 180_000,
+    },
+  );
+  expectExitZero(failure, `nemoclaw ${sandboxName} agent --json failed-tool provenance`);
+  expectJsonStdout(failure, "failed-tool agent --json");
+  expect(failure.stderr, resultText(failure)).toContain("[openclaw provenance] failed tool result");
+  expect(failure.stderr, resultText(failure)).toContain(provenanceMarker);
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -538,7 +610,8 @@ liveTest(
       legacySource: "test/e2e/test-sandbox-operations.sh",
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
-        "TC-SBX-02 openclaw agent answers through sandbox inference.local",
+        "TC-SBX-02 nemoclaw <sandbox> agent --json answers through sandbox inference.local",
+        "TC-SBX-02b agent --json preserves stdin, nonzero status, and failed-tool provenance boundaries",
         "TC-SBX-03 status renders Sandbox/Model/Provider/GPU fields",
         "TC-SBX-04 logs and logs --follow behave as streaming commands",
         "TC-SBX-05 destroy removes NemoClaw and OpenShell entries",
@@ -572,6 +645,7 @@ liveTest(
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
+    await assertAgentJsonTransportBoundaries(host, SANDBOX_A);
     await assertStatusFields(host, SANDBOX_A);
     await assertLogsStream(host, SANDBOX_A);
     await assertTmuxPtyFlow(sandbox, SANDBOX_A);

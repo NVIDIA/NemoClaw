@@ -546,27 +546,46 @@ The exit code is the remote command's exit code.
 
 <AgentOnly variant="openclaw">
 
-Run one OpenClaw agent turn non-interactively in a running sandbox.
-This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Run one agent turn non-interactively in a running sandbox.
+For OpenClaw sandboxes, this command forwards arguments to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+For terminal-runtime sandboxes, NemoClaw forwards arguments to the manifest-declared interactive command; LangChain Deep Agents Code sandboxes run `dcode ...`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
 
-All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
+All flags accepted by the selected in-sandbox agent CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
+
+OpenClaw invocations must include at least one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour. Conflict resolution between multiple selectors is delegated to the in-sandbox `openclaw agent` argv contract; the host-side guard only checks presence.
 
 ```bash
-$$nemoclaw my-assistant agent -m "Summarise README.md"
+$$nemoclaw my-assistant agent --agent work -m "Summarise README.md"
 $$nemoclaw my-assistant agent --agent work -m "Status update?"
 $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
-$$nemoclaw my-assistant agent --json -m 'ping'
+$$nemoclaw my-assistant agent --session-key intake-42 --json -m 'ping'
+$$nemoclaw dcode-sandbox agent --help
+$$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 ```
 
-The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
+The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it.
+For normal turns, streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
+When the top-level OpenClaw `--json` output flag is present, the wrapper uses a captured no-TTY path with a `64 MiB` buffer so `stdout` stays parseable JSON.
+Raw `stderr` is forwarded, and failed-tool or untrusted-child provenance found in the stdout JSON is appended to `stderr`.
+Literal `--json` values consumed by flags such as `-m` or `--reply-channel`, or arguments after `--`, stay on the normal passthrough path.
+Documented value flags written as `--flag=value`, such as `--session-id=s1`, are recognized the same way as separated value flags.
+If an unrecognized OpenClaw option appears before `--json`, NemoClaw also keeps the command on the normal passthrough path so OpenClaw remains the argv source of truth.
 
-Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+Common OpenClaw flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`.
+For OpenClaw sandboxes and registry fallbacks, `$$nemoclaw <name> agent --help` prints the wrapper-level summary locally.
+Invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+For registered terminal-runtime sandboxes, bare invocations and `--help` are forwarded to the terminal command, so a LangChain Deep Agents Code sandbox receives `dcode` for `$$nemoclaw <name> agent` and `dcode --help` for `$$nemoclaw <name> agent --help`.
+
+Host-side validation runs before the sandbox dispatch:
+
+- OpenClaw sandboxes and registry fallbacks must include at least one target selector flag — `--agent`, `--session-id`, `--session-key`, or `--to` (in either `--flag value` or `--flag=value` form). OpenClaw invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost. Registered terminal-runtime sandboxes delegate bare invocations and help flags to the manifest command instead.
+- If the sandbox is registered but not in a `Ready` or `Running` phase, the wrapper exits `1` and prints the documented recovery commands (`$$nemoclaw <name> recover`, `$$nemoclaw <name> rebuild --yes`, `$$nemoclaw onboard --resume`) rather than deferring the readiness rejection to `openshell sandbox exec`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-The `agent` wrapper is an OpenClaw passthrough and rejects Hermes sandboxes with guidance for the Hermes HTTP API.
+The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API.
 Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:
@@ -645,12 +664,14 @@ Older Hermes sandbox images that predate the standalone validator are detected a
 Show sandbox status, health, and inference configuration.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, and `dockerPaused`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, `terminalRuntimeHealth`, and `dockerPaused`.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
 `failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
 `dockerPaused` is `true` when NemoClaw detects that the Docker-driver sandbox container is paused.
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
-The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), or `failureLayer` is non-null.
+For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
+If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, or a terminal runtime sandbox reports a recorded OOM kill.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 ```bash
@@ -1333,7 +1354,7 @@ Pass `-f` / `--file <agents.yaml>` to point at the manifest; `--yes` confirms th
 
 List OpenClaw conversation sessions in the sandbox.
 With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
-This is a thin pass-through to `openclaw sessions` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+NemoClaw invokes `openclaw sessions` via `openshell sandbox exec` and forwards OpenClaw flags verbatim, but filters default list output so internal `nemoclaw-onboard-warmup-*` sessions created during onboarding are hidden from user-facing output.
 
 ```bash
 $$nemoclaw my-assistant sessions
@@ -1342,8 +1363,8 @@ $$nemoclaw my-assistant sessions --all-agents --json
 
 ### `$$nemoclaw <name> sessions list`
 
-Pass-through to `openclaw sessions list` inside the sandbox.
-Accepts every flag the in-sandbox CLI does (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`).
+Invoke `openclaw sessions list` inside the sandbox.
+NemoClaw forwards every flag the in-sandbox CLI accepts (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`) and filters the resulting default table or JSON so internal `nemoclaw-onboard-warmup-*` sessions are hidden.
 
 ```bash
 $$nemoclaw my-assistant sessions list
@@ -1399,7 +1420,8 @@ The command routes by the sandbox's agent kind recorded in the registry.
 
 For an OpenClaw sandbox, the command enumerates the session store through `openclaw sessions list --agent <id> --json` and copies only the matching `<sessionId>.jsonl` (plus optional `<sessionId>.trajectory.jsonl`) files, so the export never picks up `sessions.json`, stale `.jsonl.lock` files, or other store bookkeeping.
 By default it writes a browsable directory of session files (`dir` format); pass `--format tar` for a single `.tgz` bundle suited to sharing or upload.
-With no positional keys, the command exports every session for the agent.
+With no positional keys, the command exports every non-internal session for the agent; if only internal warm-up sessions exist, the command reports that there are no sessions to bundle and writes no artifact.
+Internal `nemoclaw-onboard-warmup-*` sessions are excluded from export-all output, but passing an explicit warm-up session key still exports that session for debugging.
 Pass one or more keys (alias or canonical `agent:<id>:<rest>`) to filter.
 
 For a Hermes sandbox, the command invokes the in-sandbox `hermes sessions export` against a staging path under `/sandbox/.nemoclaw-staging` (the same downloadable workspace boundary OpenClaw uses), then downloads the resulting single JSONL stream to the host.
@@ -1407,12 +1429,25 @@ Hermes stores session history in a SQLite database, so the command refuses posit
 `--agent` accepts only `hermes` as a no-op alias on a Hermes sandbox and rejects any other value.
 The host destination defaults to `./sessions-<sandbox>.jsonl`; `--out` picks a different path.
 
+<AgentOnly variant="openclaw">
+
 ```bash
 $$nemoclaw my-assistant sessions export
 $$nemoclaw my-assistant sessions export main --agent main
 $$nemoclaw my-assistant sessions export agent:work:telegram:t-1 --include-trajectory
 $$nemoclaw my-assistant sessions export --format tar --out ./bundles/alpha.tgz --json
 ```
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+```bash
+$$nemoclaw my-assistant sessions export
+$$nemoclaw my-assistant sessions export --agent hermes --out ./sessions-my-assistant.jsonl
+$$nemoclaw my-assistant sessions export --json
+```
+
+</AgentOnly>
 
 | Flag | Description |
 |------|-------------|

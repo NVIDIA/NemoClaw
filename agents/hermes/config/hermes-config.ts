@@ -38,14 +38,44 @@ function hermesApiMode(inferenceApi: string): string | null {
 
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
   const remotePlatformToolsets = buildHermesRemotePlatformToolsets(settings);
+  const modelProviderName = "custom";
+  const pickerProviderName = settings.upstreamProvider || "nemoclaw-inference";
   const modelConfig: Record<string, unknown> = {
     default: settings.model,
-    provider: "custom",
+    provider: modelProviderName,
     base_url: settings.baseUrl,
     api_key: "sk-OPENSHELL-PROXY-REWRITE",
   };
   const apiMode = hermesApiMode(settings.inferenceApi);
   if (apiMode) modelConfig.api_mode = apiMode;
+
+  // Surface the managed endpoint to Hermes' model picker. The inline `model:`
+  // block above is enough for the gateway to ROUTE inference, but the picker
+  // (CLI `hermes model` and the dashboard Models page via /api/model/options)
+  // enumerates providers through get_compatible_custom_providers(), which only
+  // reads `custom_providers:` / `providers:` — never the inline `model:` block.
+  // Without an entry here the picker shows zero models even though inference
+  // works. Mirror the same proxied endpoint and let Hermes live-discover the
+  // available models from /v1/models (served by the OpenShell inference proxy;
+  // GET /v1/models is allowlisted in policy-additions.yaml). discover_models is
+  // Hermes' default, but we set it explicitly so the intent survives upstream
+  // default changes, and we omit an explicit `models:` list precisely so the
+  // picker reflects the live catalog rather than a single hard-coded id.
+  const customProvider: Record<string, unknown> = {
+    name: pickerProviderName,
+    base_url: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+    discover_models: true,
+  };
+  if (apiMode) customProvider.api_mode = apiMode;
+  const providerConfig: Record<string, unknown> = {
+    name: pickerProviderName,
+    api: settings.baseUrl,
+    api_key: "sk-OPENSHELL-PROXY-REWRITE",
+    default_model: settings.model,
+    discover_models: true,
+  };
+  if (apiMode) providerConfig.transport = apiMode;
 
   const upstream: Record<string, unknown> = {
     provider: settings.upstreamProvider,
@@ -53,9 +83,13 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   };
 
   const config: Record<string, unknown> = {
-    _config_version: 12,
+    _config_version: 30,
     _nemoclaw_upstream: upstream,
     model: modelConfig,
+    providers: {
+      [pickerProviderName]: providerConfig,
+    },
+    custom_providers: [customProvider],
     terminal: {
       backend: "local",
       timeout: 180,
@@ -74,6 +108,30 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
     display: {
       compact: false,
       tool_progress: "all",
+      interim_assistant_messages: true,
+    },
+    curator: {
+      enabled: true,
+      interval_hours: 168,
+      min_idle_hours: 2,
+      stale_after_days: 30,
+      archive_after_days: 90,
+      consolidate: false,
+      prune_builtins: true,
+      backup: {
+        enabled: true,
+        keep: 5,
+      },
+    },
+    auxiliary: {
+      curator: {
+        provider: "auto",
+        model: "",
+        base_url: "",
+        api_key: "",
+        timeout: 600,
+        extra_body: {},
+      },
     },
     plugins: {
       enabled: ["nemoclaw"],

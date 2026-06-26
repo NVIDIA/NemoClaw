@@ -5,7 +5,7 @@
 # Hermes rebuild upgrade E2E — same upgrade scenario as OpenClaw but for Hermes:
 #
 #   1. Install NemoClaw (install.sh)
-#   2. Build a Hermes base image with an OLDER version (v2026.4.13)
+#   2. Build a Hermes base image with an OLDER version (v2026.5.16)
 #   3. Build a minimal Hermes sandbox image (no current-Dockerfile patches)
 #   4. Create sandbox via openshell directly
 #   5. Write marker files into Hermes state dirs
@@ -34,9 +34,11 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-rebuild-hm}"
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
-OLD_HERMES_VERSION="v2026.4.13"
+OLD_HERMES_VERSION="v2026.5.16"
 OLD_HERMES_REGISTRY_VERSION="${OLD_HERMES_VERSION#v}"
-OLD_HERMES_TARBALL_SHA256="5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c"
+OLD_HERMES_SEMVER="0.14.0"
+OLD_HERMES_TARBALL_SHA256="c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143"
+OLD_HERMES_NPM_INTEGRITY="sha512-kkHSw8iprp0JWAOf3ZZF0OHzRBj3E/BbG/QV0O4lwonxuY7AWhSepOhzSMlWo21VbQ/fTLwFkr/q3cIjDZDLBA=="
 STALE_BASE_REBUILD="${NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E:-0}"
 MARKER_FILE="/sandbox/.hermes/memories/rebuild-marker.txt"
 MARKER_CONTENT="REBUILD_HM_E2E_$(date +%s)"
@@ -156,7 +158,9 @@ OLD_BASE_TAG="nemoclaw-hermes-old-base:e2e-rebuild"
 
 docker build \
   --build-arg "HERMES_VERSION=${OLD_HERMES_VERSION}" \
+  --build-arg "HERMES_SEMVER=${OLD_HERMES_SEMVER}" \
   --build-arg "HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}" \
+  --build-arg "HERMES_NPM_INTEGRITY=${OLD_HERMES_NPM_INTEGRITY}" \
   --build-arg "HERMES_UV_EXTRAS=messaging" \
   -f "${REPO_ROOT}/agents/hermes/Dockerfile.base" \
   -t "${OLD_BASE_TAG}" \

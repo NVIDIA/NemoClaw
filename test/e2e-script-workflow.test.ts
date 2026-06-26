@@ -42,7 +42,7 @@ type TraceTimingAnalyzer = {
 };
 
 const require = createRequire(import.meta.url);
-const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
+const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.ts");
 
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
@@ -135,6 +135,67 @@ function envReferencesHostedInferenceSecret(env?: Record<string, string>): boole
   return Object.values(env ?? {}).some((value) =>
     String(value).includes("secrets.NVIDIA_INFERENCE_API_KEY"),
   );
+}
+
+type InferenceExportResult = {
+  env: Record<string, string>;
+  stderr: string;
+  failed: boolean;
+};
+
+function parseGithubEnv(pathname: string): Record<string, string> {
+  return Object.fromEntries(
+    readFileSync(pathname, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const index = line.indexOf("=");
+        return [line.slice(0, index), line.slice(index + 1)];
+      }),
+  );
+}
+
+function runInferenceExportStepRaw(
+  script: string,
+  env: Record<string, string>,
+): InferenceExportResult {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-e2e-inference-export-"));
+  const githubEnv = path.join(tempDir, "github-env");
+  writeFileSync(githubEnv, "", "utf8");
+  try {
+    try {
+      execFileSync("bash", ["-c", script], {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "",
+          GITHUB_ENV: githubEnv,
+          ...env,
+        },
+      });
+      return { env: parseGithubEnv(githubEnv), stderr: "", failed: false };
+    } catch (error) {
+      return {
+        env: parseGithubEnv(githubEnv),
+        stderr: error && typeof error === "object" && "stderr" in error ? String(error.stderr) : "",
+        failed: true,
+      };
+    }
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+function runInferenceExportStep(
+  script: string,
+  env: Record<string, string>,
+): Record<string, string> {
+  const result = runInferenceExportStepRaw(script, env);
+  result.failed &&
+    (() => {
+      throw new Error(result.stderr || "Inference export step failed");
+    })();
+  return result.env;
 }
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
@@ -584,6 +645,20 @@ describe("E2E reusable workflow contract", () => {
     );
   });
 
+  it("uses NVIDIA_API_KEY for the live Kimi Vitest lane", () => {
+    const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const job = vitestWorkflow.jobs["kimi-inference-compat-vitest"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi compatibility live Vitest test",
+    );
+
+    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe("public-nvidia");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
     const directE2eJobs = [
       "openclaw-tui-chat-correlation-e2e",
@@ -905,36 +980,147 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
-  it("routes reusable hosted inference jobs through the hosted custom endpoint", () => {
+  it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {
     const exportStep = runnerWorkflow.jobs.run.steps.find(
-      (step) => step.name === "Export hosted CI inference environment",
+      (step) => step.name === "Export CI inference environment",
     );
     const workflowCall = runnerWorkflow.on?.workflow_call ?? runnerWorkflow.true?.workflow_call;
     const hostedJobs = reusableNightlyJobs(nightlyWorkflow).filter(
       ([, job]) => String(job.with?.nvidia_api_key) === "true",
     );
+    const internalInferenceJobs = new Set([
+      "messaging-providers-e2e",
+      "channels-add-remove-e2e",
+      "channels-stop-start-openclaw-e2e",
+      "channels-stop-start-hermes-e2e",
+      "hermes-discord-e2e",
+      "upgrade-stale-sandbox-e2e",
+      "rebuild-hermes-e2e",
+      "rebuild-hermes-stale-base-e2e",
+    ]);
 
     expect(workflowCall?.inputs?.nvidia_api_key).toMatchObject({
       required: false,
       type: "boolean",
       default: false,
     });
+    expect(workflowCall?.inputs?.inference_route).toMatchObject({
+      required: false,
+      type: "string",
+      default: "hosted-custom",
+    });
     expect(workflowCall?.inputs?.nvidia_secret_as_compatible_api_key).toBeUndefined();
+    expect(
+      (workflowCall as { secrets?: Record<string, { required?: boolean }> } | undefined)?.secrets
+        ?.NVIDIA_API_KEY,
+    ).toBeUndefined();
     expect(exportStep?.if).toBe("${{ inputs.nvidia_api_key }}");
-    expect(exportStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
-    expect(exportStep?.run).toContain("withheld for workflow_dispatch target_ref runs");
-    expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1");
-    expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
-    expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
-    expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-ultra");
-    expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-ultra");
-    expect(exportStep?.run).toContain("NEMOCLAW_PREFERRED_API=openai-completions");
-    expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
+    expect(exportStep?.env?.NEMOCLAW_E2E_INFERENCE_ROUTE).toBe("${{ inputs.inference_route }}");
+    expect(exportStep?.env?.HOSTED_NVIDIA_INFERENCE_API_KEY).toBe(RAW_HOSTED_INFERENCE_SECRET);
+    expect(exportStep?.env?.NVIDIA_BUILD_API_KEY).toBeUndefined();
+    expect(exportStep?.run).toContain('case "${NEMOCLAW_E2E_INFERENCE_ROUTE:-hosted-custom}" in');
+    expect(exportStep?.run).toContain("nvidia-internal|hosted-custom)");
+    expect(exportStep?.run).toContain("both labels intentionally export the same");
+    expect(exportStep?.run).toContain("Remove the split once those jobs");
+    expect(exportStep?.run).toContain("Unsupported inference_route");
+
+    const script = exportStep?.run ?? "";
+    const hostedEnv = runInferenceExportStep(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+    });
+    expect(hostedEnv).toMatchObject({
+      NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: "hosted-compatible-key",
+    });
+    expect(hostedEnv.NVIDIA_API_KEY).toBeUndefined();
+
+    const hostedEnvWithPublicSecret = runInferenceExportStep(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      NVIDIA_API_KEY: "nvapi-public-build-key",
+    });
+    expect(hostedEnvWithPublicSecret).toMatchObject(hostedEnv);
+    expect(hostedEnvWithPublicSecret.NVIDIA_API_KEY).toBeUndefined();
+
+    const internalInferenceEnv = runInferenceExportStep(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+    });
+    expect(internalInferenceEnv).toMatchObject({
+      NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+      COMPATIBLE_API_KEY: "hosted-compatible-key",
+    });
+    expect(internalInferenceEnv.NVIDIA_API_KEY).toBeUndefined();
+
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "hosted-custom",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "",
+      }),
+    ).toThrow();
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "",
+      }),
+    ).toThrow();
+
+    const multilineSecretResult = runInferenceExportStepRaw(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "nvidia-internal",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key\nINJECTED_ENV=1",
+    });
+    expect(multilineSecretResult.failed).toBe(true);
+    expect(multilineSecretResult.stderr).toContain("secret must be a single-line value");
+    expect(multilineSecretResult.env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(multilineSecretResult.env.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(multilineSecretResult.env.INJECTED_ENV).toBeUndefined();
+
+    const unsupportedRouteResult = runInferenceExportStepRaw(script, {
+      NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route\n::error::injected",
+      HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+    });
+    expect(unsupportedRouteResult.failed).toBe(true);
+    expect(unsupportedRouteResult.stderr).toContain("Unsupported inference_route value.");
+    expect(unsupportedRouteResult.stderr).not.toContain("unsupported-route");
+    expect(unsupportedRouteResult.stderr).not.toContain("injected");
+    expect(() =>
+      runInferenceExportStep(script, {
+        NEMOCLAW_E2E_INFERENCE_ROUTE: "unsupported-route",
+        HOSTED_NVIDIA_INFERENCE_API_KEY: "hosted-compatible-key",
+      }),
+    ).toThrow();
 
     expect(hostedJobs.length).toBeGreaterThan(20);
-    for (const [name, job] of hostedJobs) {
+    for (const name of internalInferenceJobs) {
+      const job = nightlyWorkflow.jobs[name];
+      const envJson = JSON.parse(job.with?.env_json ?? "{}") as Record<string, unknown>;
       expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      expect(job.with?.inference_route, name).toBe("nvidia-internal");
+      expect(job.secrets?.NVIDIA_INFERENCE_API_KEY, name).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
+      expect(job.secrets?.NVIDIA_API_KEY, name).toBeUndefined();
+      expect(envJson.NEMOCLAW_MODEL, name).toBeUndefined();
+      expect(envJson.NEMOCLAW_PROVIDER, name).toBeUndefined();
+      expect(envJson.NEMOCLAW_PREFERRED_API, name).toBeUndefined();
     }
+    for (const [name, job] of hostedJobs.filter(([name]) => !internalInferenceJobs.has(name))) {
+      expect(job.with?.nvidia_secret_as_compatible_api_key, name).toBeUndefined();
+      expect(job.with?.inference_route, name).toBeUndefined();
+    }
+
+    expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
   });
 
   it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
@@ -981,8 +1167,6 @@ describe("E2E reusable workflow contract", () => {
         "credential-migration-e2e:Run credential migration Vitest test",
         "onboard-repair-e2e:Install NemoClaw",
         "onboard-repair-e2e:Run onboard repair E2E test",
-        "onboard-resume-e2e:Install NemoClaw",
-        "onboard-resume-e2e:Run onboard resume E2E test",
         "onboard-negative-paths-e2e:Install NemoClaw",
         "onboard-negative-paths-e2e:Run onboard negative-path E2E test",
         "runtime-overrides-e2e:Install NemoClaw",
@@ -993,7 +1177,7 @@ describe("E2E reusable workflow contract", () => {
       ]),
     );
 
-    expect(directSecretSteps.length).toBeGreaterThanOrEqual(17);
+    expect(directSecretSteps.length).toBeGreaterThanOrEqual(15);
     for (const { jobName, step } of directSecretSteps) {
       const stepKey = `${jobName}:${step.name ?? "<unnamed>"}`;
       expect(step.env?.NVIDIA_INFERENCE_API_KEY, stepKey).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
@@ -1018,6 +1202,50 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(script).toContain("lib/ci-compatible-inference.sh");
     expect(script).toContain("nemoclaw_e2e_configure_compatible_inference");
+  });
+
+  it("keeps onboard-resume hermetic and off hosted inference secrets", () => {
+    const job = nightlyWorkflow.jobs["onboard-resume-e2e"];
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const installDepsStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const buildStep = job.steps?.find((step) => step.name === "Build CLI");
+    const installOpenShellStep = job.steps?.find((step) => step.name === "Install OpenShell CLI");
+    const runStep = job.steps?.find((step) => step.name === "Run onboard resume E2E test");
+
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installDepsStep?.run).toBe("npm ci --ignore-scripts");
+    expect(buildStep?.run).toBe("npm run build:cli");
+    expect(installOpenShellStep?.run).toContain("scripts/install-openshell.sh");
+    expect(installOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
+    expect(installOpenShellStep?.run).toContain("-u GITHUB_TOKEN");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBeUndefined();
+
+    const script = readFileSync(new URL("./e2e/test-onboard-resume.sh", import.meta.url), "utf8");
+    const helper = readFileSync(
+      new URL("./e2e/lib/hermetic-compatible-inference.sh", import.meta.url),
+      "utf8",
+    );
+    expect(script).toContain("lib/hermetic-compatible-inference.sh");
+    expect(script).toContain("nemoclaw_e2e_start_hermetic_compatible_inference");
+    expect(script).toContain("nemoclaw_e2e_assert_hermetic_compatible_inference_used");
+    expect(script).not.toContain("lib/ci-compatible-inference.sh");
+    expect(helper).toContain("openai-compatible-api-proof.sh");
+    expect(helper).toContain("NEMOCLAW_PROVIDER=custom");
+    expect(helper).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
+    expect(helper).toContain("unset NVIDIA_INFERENCE_API_KEY NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
+    expect(helper).toContain("FAKE_OPENAI_REQUIRE_AUTH=1");
+    expect(helper).not.toContain('FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

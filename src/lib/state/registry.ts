@@ -376,13 +376,30 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return { ...entry, messaging };
 }
 
+/**
+ * Prepare a sandbox entry for persistence: normalize messaging state and drop
+ * transient #5714 display-only markers (`recoveredFromGateway`, `livePhase`)
+ * that must never reach sandboxes.json.
+ */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  const messaging = serializeSandboxMessagingStateForDisk(entry.messaging);
+  // #5714: defensively drop transient, display-only recovery markers so they
+  // can never reach sandboxes.json even if a caller force-passed one through
+  // updateSandbox(). These are not part of the durable SandboxEntry type; they
+  // live only on the ephemeral list-recovery rows.
+  const {
+    recoveredFromGateway: _recovered,
+    livePhase: _phase,
+    ...durable
+  } = entry as SandboxEntry & {
+    recoveredFromGateway?: boolean;
+    livePhase?: string | null;
+  };
+  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   if (!messaging) {
-    const { messaging: _messaging, ...rest } = entry;
+    const { messaging: _messaging, ...rest } = durable;
     return rest;
   }
-  return { ...entry, messaging };
+  return { ...durable, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {

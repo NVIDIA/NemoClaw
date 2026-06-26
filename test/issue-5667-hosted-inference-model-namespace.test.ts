@@ -327,7 +327,8 @@ const { setupNim } = require(${onboardPath});
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: {
-          ...process.env,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          HOME: home,
           PYTHONPATH: fakePythonPath,
         },
         timeout: 60_000,

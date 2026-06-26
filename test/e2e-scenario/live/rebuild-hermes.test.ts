@@ -6,15 +6,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText, type HostCliClient } from "../fixtures/clients/index.ts";
+import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-hermes.sh.
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -27,10 +26,13 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
-const OLD_HERMES_VERSION = "v2026.4.13";
+const OLD_HERMES_VERSION = "v2026.5.16";
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
+const OLD_HERMES_SEMVER = "0.14.0";
 const OLD_HERMES_TARBALL_SHA256 =
-  "5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c";
+  "c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143";
+const OLD_HERMES_NPM_INTEGRITY =
+  "sha512-kkHSw8iprp0JWAOf3ZZF0OHzRBj3E/BbG/QV0O4lwonxuY7AWhSepOhzSMlWo21VbQ/fTLwFkr/q3cIjDZDLBA==";
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
 const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-hermes-base" : "e2e-rebuild-hermes";
 const SANDBOX_NAME =
@@ -304,6 +306,13 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     agentVersion: OLD_HERMES_REGISTRY_VERSION,
     messaging: { schemaVersion: 1, plan: messagingPlan },
   };
+  expect(
+    Object.prototype.hasOwnProperty.call(
+      registry.sandboxes[SANDBOX_NAME],
+      "providerCredentialHashes",
+    ),
+    "legacy providerCredentialHashes must stay out of the curated rebuild registry; credential fingerprints live on messaging plan bindings",
+  ).toBe(false);
   registry.defaultSandbox = SANDBOX_NAME;
   writeJsonFile(REGISTRY_FILE, registry);
 
@@ -455,7 +464,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         "--build-arg",
         `HERMES_VERSION=${OLD_HERMES_VERSION}`,
         "--build-arg",
+        `HERMES_SEMVER=${OLD_HERMES_SEMVER}`,
+        "--build-arg",
         `HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}`,
+        "--build-arg",
+        `HERMES_NPM_INTEGRITY=${OLD_HERMES_NPM_INTEGRITY}`,
         "--build-arg",
         "HERMES_UV_EXTRAS=messaging",
         "-f",

@@ -23,6 +23,7 @@ export interface ProviderSelectionResult {
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   resume: boolean;
+  fresh: boolean;
   session: Session | null;
   gpu: Gpu;
   sandboxName: string | null;
@@ -48,7 +49,12 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   };
   deps: {
     normalizeHermesAuthMethod(value: string | null | undefined): string | null;
-    setupNim(gpu: Gpu, sandboxName: string | null, agent: Agent): Promise<ProviderSelectionResult>;
+    setupNim(
+      gpu: Gpu,
+      sandboxName: string | null,
+      agent: Agent,
+      allowRecordedProviderRecovery?: boolean,
+    ): Promise<ProviderSelectionResult>;
     setupInference(
       sandboxName: string | null,
       model: string,
@@ -167,6 +173,7 @@ function clearStagedCredentialEnv(
 
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   resume,
+  fresh,
   session,
   gpu,
   sandboxName,
@@ -195,6 +202,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
+  const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -202,7 +210,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let forceInferenceSetup = false;
     const resumeProviderSelection =
       !forceProviderSelection &&
-      resume &&
+      effectiveResume &&
       session?.steps?.provider_selection?.status === "complete" &&
       typeof provider === "string" &&
       typeof model === "string";
@@ -246,7 +254,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const selection = await withProviderSelectionTrace(
         sandboxName,
         (agent as { name?: string } | null)?.name,
-        () => deps.setupNim(gpu, sandboxName, agent),
+        () => deps.setupNim(gpu, sandboxName, agent, !fresh),
       );
       model = selection.model;
       provider = selection.provider;
@@ -292,7 +300,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       !needsBedrockRuntimeAdapter &&
       !forceProviderSelection &&
       !forceInferenceSetup &&
-      resume &&
+      effectiveResume &&
       deps.isInferenceRouteReady(provider, model);
     if (resumeInference) {
       if (provider === constants.hermesProviderName) {
