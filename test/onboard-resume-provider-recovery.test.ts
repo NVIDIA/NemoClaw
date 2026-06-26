@@ -465,9 +465,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
       },
     });
 
-    if (result.status !== 0) {
-      throw new Error(result.stderr || result.stdout);
-    }
+    expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout.trim());
     expect(payload.result.provider).toBe("nvidia-prod");
     expect(payload.result.model).toBe("nvidia/test-model");
