@@ -143,6 +143,14 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
   });
 
+  it("onboard help lists installed agent runtime names in the --agent description", () => {
+    const r = run("onboard --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+    );
+  });
+
   it("agents parent shows command help instead of sandbox lookup", () => {
     const r = run("agents");
     expect(r.code).toBe(0);
