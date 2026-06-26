@@ -184,6 +184,11 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
+# Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
+# config refresh consumes generic manifest-owned aliases from this artifact.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup
+
 # Apply messaging agent-install hooks as root so Hermes Python packages can update
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
 WORKDIR /opt/hermes
