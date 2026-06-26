@@ -79,9 +79,7 @@ export function loadE2eWorkflowContract(): {
     cliCoverageShardAction: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
     ),
-    installAptAction: readYaml<CompositeAction>(
-      ".github/actions/install-apt-packages/action.yaml",
-    ),
+    installAptAction: readYaml<CompositeAction>(".github/actions/install-apt-packages/action.yaml"),
   };
 }
 
