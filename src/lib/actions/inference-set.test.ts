@@ -123,6 +123,7 @@ function createDeps(options: {
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
+    readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
     log: ReturnType<typeof vi.fn>;
@@ -145,6 +146,7 @@ function createDeps(options: {
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     updateSandbox: vi.fn(() => true),
+    readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();
       session = mutator(current) ?? current;
@@ -167,7 +169,7 @@ function createDeps(options: {
     loadSession: () => session,
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
-    readSandboxConfig: () => options.config,
+    readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     runOpenshell: calls.runOpenshell,
@@ -460,6 +462,17 @@ describe("runInferenceSet", () => {
         model: "nvidia/nemotron-3-super-120b-a12b",
       }),
     );
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        credentialEnv: null,
+        endpointUrl: null,
+        nimContainer: null,
+        preferredInferenceApi: null,
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
@@ -883,6 +896,33 @@ describe("runInferenceSet", () => {
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
+    const deps = createDeps({ config: {}, session: baseSession() });
+    deps.calls.readSandboxConfig.mockImplementation(() => {
+      throw new Error("sandbox config unreadable");
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow("sandbox config unreadable");
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+      }),
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
   it("keeps gateway and registry consistent when the in-sandbox config write fails (#3726)", async () => {

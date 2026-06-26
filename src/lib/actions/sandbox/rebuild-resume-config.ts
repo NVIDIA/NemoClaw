@@ -37,20 +37,51 @@ export function isLocalInferenceProvider(provider: string | null | undefined): p
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
 }
 
+function canonicalRemoteProviderConfig(provider: string | null | undefined): {
+  providerName: string;
+  credentialEnv: string | null;
+  endpointUrl?: string | null;
+} | null {
+  if (!provider) return null;
+  return (
+    (provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider)) ||
+    null
+  );
+}
+
+function validCredentialEnvName(value: string | null | undefined): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return /^[A-Z_][A-Z0-9_]*$/.test(normalized) ? normalized : null;
+}
+
+function providerRecordedCredentialEnv(
+  provider: string | null | undefined,
+  recordedCredentialEnv?: string | null,
+): string | null {
+  const envName = validCredentialEnvName(recordedCredentialEnv);
+  switch (provider) {
+    case "compatible-endpoint":
+      return envName === "COMPATIBLE_API_KEY" ? envName : null;
+    case "compatible-anthropic-endpoint":
+      return envName === "COMPATIBLE_ANTHROPIC_API_KEY" ? envName : null;
+    case "nvidia-router":
+      return envName;
+    default:
+      return null;
+  }
+}
+
 /** Resolve the credential environment variable required to recreate a sandbox. */
 export function getRebuildCredentialEnvFromRegistry(
   provider: string | null | undefined,
   recordedCredentialEnv?: string | null,
 ): string | null {
-  if (recordedCredentialEnv) return recordedCredentialEnv;
-  if (!provider || isLocalInferenceProvider(provider)) {
-    return null;
-  }
-  const remoteConfig =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
-  return remoteConfig?.credentialEnv || null;
+  if (!provider || isLocalInferenceProvider(provider)) return null;
+  const remoteConfig = canonicalRemoteProviderConfig(provider);
+  if (remoteConfig?.credentialEnv) return remoteConfig.credentialEnv;
+  return providerRecordedCredentialEnv(provider, recordedCredentialEnv);
 }
 
 // Providers whose inference base URL is supplied by the operator at onboard time
@@ -80,6 +111,23 @@ const SESSION_ONLY_ENDPOINT_PROVIDER_NAMES = new Set(
  * the caller must then refuse to destroy the sandbox from an unrelated session
  * rather than guess the endpoint.
  */
+function canonicalCustomEndpointUrl(value: string | null | undefined): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  try {
+    const url = new URL(raw);
+    const supportedProtocol = url.protocol === "http:" || url.protocol === "https:";
+    const hasUserInfo = Boolean(url.username || url.password);
+    if (!supportedProtocol || hasUserInfo) return null;
+    url.search = "";
+    url.hash = "";
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = pathname || "/";
+    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
 export function getRebuildEndpointFromRegistry(
   provider: string | null | undefined,
   recordedEndpointUrl?: string | null,
@@ -88,16 +136,14 @@ export function getRebuildEndpointFromRegistry(
   if (isLocalInferenceProvider(provider)) return { known: true, endpointUrl: null };
   // Custom OpenAI/Anthropic-compatible providers carry their base URL only in
   // the selected sandbox's durable metadata or its own onboard session; never
-  // borrow the base URL from an unrelated session.
+  // borrow the base URL from an unrelated session. Durable metadata is trusted
+  // only after strict URL parsing, HTTP(S) scheme validation, and canonical
+  // query/hash stripping at this pre-delete rebuild boundary.
   if (SESSION_ONLY_ENDPOINT_PROVIDER_NAMES.has(provider)) {
-    return recordedEndpointUrl
-      ? { known: true, endpointUrl: recordedEndpointUrl }
-      : { known: false };
+    const endpointUrl = canonicalCustomEndpointUrl(recordedEndpointUrl);
+    return endpointUrl ? { known: true, endpointUrl } : { known: false };
   }
-  const remoteConfig =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  const remoteConfig = canonicalRemoteProviderConfig(provider);
   // Known remote provider with a canonical endpoint → pin it. Otherwise (routed
   // inference, NIM, or any provider without a custom session-only URL) there is
   // no static URL to pin; the resume path derives it, so leave it unpinned.

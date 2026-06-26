@@ -18,13 +18,24 @@ function nullableString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+const SUPPORTED_INFERENCE_APIS = new Set([
+  "openai-completions",
+  "anthropic-messages",
+  "openai-responses",
+]);
+
+function nullableInferenceApi(value: unknown): string | null {
+  const normalized = nullableString(value);
+  return normalized && SUPPORTED_INFERENCE_APIS.has(normalized) ? normalized : null;
+}
+
 export function normalizeInferenceSelection(input: InferenceSelectionInput): InferenceSelection {
   return {
     provider: nullableString(input?.provider),
     model: nullableString(input?.model),
     endpointUrl: nullableString(input?.endpointUrl),
     credentialEnv: nullableString(input?.credentialEnv),
-    preferredInferenceApi: nullableString(input?.preferredInferenceApi),
+    preferredInferenceApi: nullableInferenceApi(input?.preferredInferenceApi),
     nimContainer: nullableString(input?.nimContainer),
   };
 }

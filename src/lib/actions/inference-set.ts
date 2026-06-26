@@ -430,6 +430,27 @@ export async function runInferenceSet(
     );
   }
 
+  // Write minimal registry state before any sandbox-facing config read so the
+  // gateway and registry cannot split if the in-sandbox layer is unavailable.
+  const sameProvider = entry.provider === provider;
+  const registryFields = (preferredInferenceApi: string | null) =>
+    inferenceSelectionRegistryFields({
+      provider,
+      model,
+      endpointUrl: sameProvider ? (entry.endpointUrl ?? null) : null,
+      credentialEnv: sameProvider ? (entry.credentialEnv ?? null) : null,
+      preferredInferenceApi,
+      nimContainer: sameProvider ? (entry.nimContainer ?? null) : null,
+    });
+  if (
+    !deps.updateSandbox(
+      sandboxName,
+      registryFields(sameProvider ? (entry.preferredInferenceApi ?? null) : null),
+    )
+  ) {
+    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  }
+
   const config = deps.readSandboxConfig(sandboxName, target);
   const preferredInferenceApi = resolveRuntimeInferenceApi({
     agentName,
@@ -439,22 +460,9 @@ export async function runInferenceSet(
     sandboxName,
     session: deps.loadSession(),
   });
-  // Write the registry before the crash-prone in-sandbox sync so the gateway
-  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
-  const sameProvider = entry.provider === provider;
-  if (
-    !deps.updateSandbox(
-      sandboxName,
-      inferenceSelectionRegistryFields({
-        provider,
-        model,
-        endpointUrl: sameProvider ? (entry.endpointUrl ?? null) : null,
-        credentialEnv: sameProvider ? (entry.credentialEnv ?? null) : null,
-        preferredInferenceApi,
-        nimContainer: sameProvider ? (entry.nimContainer ?? null) : null,
-      }),
-    )
-  ) {
+  // Refresh the registry with config-derived API-family metadata before the
+  // crash-prone in-sandbox sync (#3725/#3726).
+  if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 

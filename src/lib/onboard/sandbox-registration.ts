@@ -46,18 +46,23 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
 }
 
 export function selection(
+  sandboxName: string,
   provider: string,
   model: string,
   preferredInferenceApi: string | null,
 ): InferenceSelection {
   const session = onboardSession.loadSession();
+  const sessionMatches =
+    session?.sandboxName === sandboxName &&
+    session.provider === provider &&
+    session.model === model;
   return inferenceSelectionRegistryFields({
     provider,
     model,
-    endpointUrl: session?.endpointUrl ?? null,
-    credentialEnv: session?.credentialEnv ?? null,
+    endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
+    credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
     preferredInferenceApi,
-    nimContainer: session?.nimContainer ?? null,
+    nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
 }
 
