@@ -334,6 +334,7 @@ describe("prepareRebuildResumeConfig", () => {
       { name: "wrong sandbox", sandboxName: "beta" },
       { name: "wrong provider", provider: "openai" },
       { name: "unknown provider", provider: "compatible-endpoint-alias" },
+      { name: "missing model", model: "" },
       { name: "wrong model", model: "other-model" },
       { name: "unsupported url", endpointUrl: "file:///tmp/x" },
       { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },

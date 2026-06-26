@@ -61,8 +61,7 @@ function providerNameFromEnvHint(value: string | null | undefined): string | nul
   if (!raw) return null;
   const hint = raw.toLowerCase();
   const config = Object.entries(REMOTE_PROVIDER_CONFIG).find(
-    ([key, config]) =>
-      key.toLowerCase() === hint || config.providerName.toLowerCase() === hint,
+    ([key, config]) => key.toLowerCase() === hint || config.providerName.toLowerCase() === hint,
   )?.[1];
   return config?.providerName ?? null;
 }
@@ -171,7 +170,7 @@ function getExplicitTargetEndpointFromEnv(
   if ((env.NEMOCLAW_SANDBOX_NAME || "").trim() !== sandboxName) return null;
   if (providerNameFromEnvHint(env.NEMOCLAW_PROVIDER) !== provider) return null;
   const envModel = typeof env.NEMOCLAW_MODEL === "string" ? env.NEMOCLAW_MODEL.trim() : "";
-  if (model && envModel && envModel !== model) return null;
+  if (model && envModel !== model) return null;
   return canonicalCustomEndpointUrl(env.NEMOCLAW_ENDPOINT_URL);
 }
 
