@@ -84,18 +84,22 @@ Rejected rules stay blocked unless you later approve the same rule or add a matc
 
 ## Run the Walkthrough
 
-The walkthrough script is available only in a NemoClaw source checkout.
-If you installed NemoClaw with the public installer, clone the repository before running it.
+The walkthrough script is available in the NemoClaw repository at [`scripts/walkthrough.sh`](https://github.com/NVIDIA/NemoClaw/blob/main/scripts/walkthrough.sh).
+If you installed NemoClaw with the public installer, download only that script before running it.
+
+<Download
+  sources={[
+    "https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/walkthrough.sh",
+  ]}
+  filename="nemoclaw-walkthrough.sh"
+>
+  <Button icon="download">Download walkthrough script</Button>
+</Download>
+
+Run the walkthrough script after you onboard at least one sandbox and confirm that it is reachable.
 
 ```bash
-git clone https://github.com/NVIDIA/NemoClaw.git ~/nemoclaw
-cd ~/nemoclaw
-```
-
-From the NemoClaw repository root, run the walkthrough script after you onboard at least one sandbox and confirm that it is reachable.
-
-```bash
-./scripts/walkthrough.sh
+bash nemoclaw-walkthrough.sh
 ```
 
 The script opens a split tmux session with the TUI on the left and the agent on the right.
