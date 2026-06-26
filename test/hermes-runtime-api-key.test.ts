@@ -328,6 +328,39 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     }
   });
 
+  it("does not append missing provider placeholders without a runtime plan", () => {
+    const originalEnv = "API_SERVER_PORT=18642\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v222_SLACK_APP_TOKEN",
+        DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("does not append raw ambient Slack values without a runtime plan", () => {
+    const originalEnv = "API_SERVER_PORT=18642\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "xoxb-raw-slack-token",
+        SLACK_APP_TOKEN: "xapp-raw-slack-token",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.envFileContent).not.toContain("xoxb-raw-slack-token");
+    expect(run.envFileContent).not.toContain("xapp-raw-slack-token");
+    expect(run.strictHashValid).toBe(true);
+  });
+
   it("normalizes versioned provider placeholders from the runtime env before refreshing .env", () => {
     for (const envFile of [
       "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN\n",

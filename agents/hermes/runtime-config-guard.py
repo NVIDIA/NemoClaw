@@ -391,6 +391,17 @@ def _first_env_assignment_value(text: str, env_key: str) -> str | None:
     return None
 
 
+def _env_assignment_keys(text: str) -> set[str]:
+    keys: set[str] = set()
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            continue
+        _prefix, key, _value = parsed
+        keys.add(key)
+    return keys
+
+
 def _is_generated_api_server_key(value: str) -> bool:
     candidate = value.strip()
     if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in ("'", '"'):
@@ -571,10 +582,12 @@ def provider_placeholders(
     replacements, runtime_plan_provider_keys, runtime_plan_loaded = _runtime_plan_replacements_and_provider_keys(
         runtime_plan_path
     )
-    allowed_fallback_keys = (
-        runtime_plan_provider_keys if runtime_plan_loaded else set(LEGACY_PROVIDER_PLACEHOLDER_KEYS)
-    )
     text, snapshot = _read_text(env_path)
+    allowed_fallback_keys = (
+        runtime_plan_provider_keys
+        if runtime_plan_loaded
+        else set(LEGACY_PROVIDER_PLACEHOLDER_KEYS).intersection(_env_assignment_keys(text))
+    )
     for key in allowed_fallback_keys:
         if key in replacements:
             continue
