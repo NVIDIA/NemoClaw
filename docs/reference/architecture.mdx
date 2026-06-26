@@ -157,7 +157,8 @@ When the policy or phase changes during a session, the plugin sends a smaller up
 The context tells the agent to try allowed network and filesystem operations before reporting them unavailable, and to distinguish policy denials from DNS, timeout, TLS, or filesystem errors.
 
 The Hermes integration follows the generic agent-manifest path instead of the OpenClaw plugin package path.
-The manifest declares Hermes' binary, health probe, config directory, state directories, messaging support, and OpenAI-compatible API endpoint.
+The manifest declares Hermes' binary, health probe, config directory, state directories, and OpenAI-compatible API endpoint.
+Messaging channel availability is declared by each channel manifest's `supportedAgents` list under `src/lib/messaging/channels/`, not by the Hermes agent manifest.
 The build-time config generator turns NemoClaw onboarding choices into Hermes YAML and environment files, and the Hermes plugin manifest exposes NemoClaw tools and an `on_session_start` hook.
 
 ## NemoClaw Blueprint
