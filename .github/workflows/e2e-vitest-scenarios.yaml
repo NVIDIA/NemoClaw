@@ -1238,11 +1238,10 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Install issue #4434 host dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y expect iptables
+      - name: "Install issue #4434 host dependencies"
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: expect iptables
 
       - name: Build CLI
         run: npm run build:cli
@@ -1250,7 +1249,7 @@ jobs:
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run issue #4434 TUI unreachable inference live test
+      - name: "Run issue #4434 TUI unreachable inference live test"
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
@@ -1272,7 +1271,7 @@ jobs:
             test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload issue #4434 TUI unreachable inference artifacts
+      - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

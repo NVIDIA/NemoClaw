@@ -150,17 +150,6 @@ else
   skip "Host is not Linux — test nominally targets Ubuntu (continuing)"
 fi
 
-if ! command -v expect >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then
-    sudo apt-get install -y -q expect >/dev/null 2>&1
-  fi
-fi
-if command -v expect >/dev/null 2>&1; then
-  pass "expect is available"
-else
-  skip "expect not available — 10-deepagents-code-tui-startup check will be skipped"
-fi
-
 # ══════════════════════════════════════════════════════════════════════
 # Phase 3: Install via public URL
 # ══════════════════════════════════════════════════════════════════════
@@ -194,8 +183,8 @@ fi
 
 if [ "$INTERACTIVE_INSTALL" = "1" ]; then
   # Interactive install via expect is not currently supported in the split
-  # tests. The original monolith inlined the expect heredoc; the standalone
-  # wrapper (expect-interactive-install.sh) was never self-contained.
+  # tests. The original monolith inlined the expect heredoc, but the split
+  # cloud-onboard test only supports non-interactive installs.
   # TODO(#2644): re-implement interactive install if needed.
   fail "Interactive install (RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=1) is not yet supported — use non-interactive mode"
   exit 1

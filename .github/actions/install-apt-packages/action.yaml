@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Install apt packages
+
+description: Validate and install requested apt packages on Ubuntu runners.
+
+inputs:
+  packages:
+    description: Space-separated apt package names to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+
+        read -r -a packages <<< "$APT_PACKAGES"
+        if [ "${#packages[@]}" -eq 0 ]; then
+          echo "::error::No apt packages requested." >&2
+          exit 1
+        fi
+        for package in "${packages[@]}"; do
+          if [[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]; then
+            echo "::error::Invalid apt package name: $package" >&2
+            exit 1
+          fi
+        done
+
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends "${packages[@]}"

@@ -115,13 +115,7 @@ preflight() {
   log "Docker is running"
   install_nemoclaw
   if ! command -v expect >/dev/null 2>&1; then
-    log "Installing expect..."
-    if ! (sudo apt-get update -qq && sudo apt-get install -y -qq expect >/dev/null 2>&1); then
-      log "WARNING: failed to install expect — interactive tests will skip"
-    fi
-    if ! command -v expect >/dev/null 2>&1; then
-      log "WARNING: expect not available — interactive tests will skip"
-    fi
+    log "WARNING: expect not available — interactive tests will skip"
   fi
   if ! command -v python3 >/dev/null 2>&1; then
     log "ERROR: python3 is required for JSON parsing"

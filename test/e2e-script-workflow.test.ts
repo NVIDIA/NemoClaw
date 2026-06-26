@@ -370,7 +370,8 @@ function collectLegacyE2eShellScriptRefs(value: unknown): string[] {
 }
 
 describe("E2E reusable workflow contract", () => {
-  const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
+  const { runnerWorkflow, nightlyWorkflow, action, installAptAction } =
+    loadE2eWorkflowContract();
 
   it("does not persist checkout credentials in the reusable runner", () => {
     const checkoutSteps = runnerWorkflow.jobs.run.steps.filter((step) =>
@@ -733,7 +734,7 @@ describe("E2E reusable workflow contract", () => {
     );
     const alwaysUploadStep = action.runs.steps.find((step) => step.name === "Upload E2E artifacts");
     const workflowActionCheckout = runnerWorkflow.jobs.run.steps.find(
-      (step) => step.name === "Checkout workflow action",
+      (step) => step.name === "Checkout workflow actions",
     );
     const cloudOnboardJob = nightlyWorkflow.jobs["cloud-onboard-e2e"];
     const envJson = JSON.parse(cloudOnboardJob.with?.env_json ?? "{}") as Record<string, unknown>;
@@ -978,6 +979,56 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('[[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]');
     expect(exportStep?.run).toContain("git -C repo rev-parse HEAD");
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
+  });
+
+  it("installs apt packages before scripts that need host tools start", () => {
+    const callInputs =
+      runnerWorkflow.on?.workflow_call?.inputs ??
+      runnerWorkflow.true?.workflow_call?.inputs ??
+      {};
+    const vitestScenarioWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const workflowActionsCheckout = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Checkout workflow actions",
+    );
+    const installStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Install requested apt packages",
+    );
+    const installActionStep = installAptAction.runs.steps.find(
+      (step) => step.name === "Install apt packages",
+    );
+
+    expect(callInputs.apt_packages?.default).toBe("");
+    expect(workflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/install-apt-packages",
+    );
+    expect(installStep?.if).toBe("${{ inputs.apt_packages != '' }}");
+    expect(installStep?.uses).toBe("./workflow-actions/.github/actions/install-apt-packages");
+    expect(installStep?.with?.packages).toBe("${{ inputs.apt_packages }}");
+
+    expect(nightlyWorkflow.jobs["cloud-onboard-e2e"].with?.apt_packages).toBe("expect");
+    expect(nightlyWorkflow.jobs["network-policy-e2e"].with?.apt_packages).toBe("expect");
+    expect(
+      nightlyWorkflow.jobs["issue-4434-tui-unreachable-inference-e2e"].steps?.find(
+        (step) => step.name === "Install issue #4434 test dependencies",
+      )?.with?.packages,
+    ).toBe("expect iptables");
+    expect(
+      vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps?.find(
+        (step) => step.name === "Install issue #4434 host dependencies",
+      )?.with?.packages,
+    ).toBe("expect iptables");
+
+    expect(installActionStep?.env?.APT_PACKAGES).toBe("${{ inputs.packages }}");
+    expect(installActionStep?.run).toContain('read -r -a packages <<< "$APT_PACKAGES"');
+    expect(installActionStep?.run).toContain('"${#packages[@]}" -eq 0');
+    expect(installActionStep?.run).toContain(
+      '[[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]',
+    );
+    expect(installActionStep?.run).toContain(
+      'sudo apt-get install -y --no-install-recommends "${packages[@]}"',
+    );
   });
 
   it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {
