@@ -665,6 +665,71 @@ describe("runInferenceSet", () => {
     });
   });
 
+  it("uses same-provider custom endpoint session metadata when switching only the model", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/nvidia/nemotron-3-ultra" } } },
+      models: {
+        providers: {
+          inference: {
+            baseUrl: "https://inference.local/v1",
+            api: "openai-completions",
+            models: [
+              {
+                id: "nvidia/nvidia/nemotron-3-ultra",
+                name: "inference/nvidia/nvidia/nemotron-3-ultra",
+              },
+            ],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "compatible-endpoint",
+        model: "nvidia/nvidia/nemotron-3-ultra",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+      },
+      session: baseSession({
+        provider: "compatible-endpoint",
+        model: "nvidia/nvidia/nemotron-3-ultra",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "nvidia/nvidia/nemotron-3-super-v3",
+        noVerify: true,
+      },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "nvidia/nvidia/nemotron-3-super-v3",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "nvidia/nvidia/nemotron-3-super-v3",
+      endpointUrl: "https://inference.local/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+  });
+
   it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {
     const deps = createDeps({
       config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },

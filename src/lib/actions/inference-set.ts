@@ -366,6 +366,15 @@ function isCustomCompatibleProvider(provider: string): boolean {
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
 }
 
+function metadataFromSession(session: onboardSession.Session): RegistryInferenceMetadata {
+  return {
+    endpointUrl: session.endpointUrl ?? null,
+    credentialEnv: session.credentialEnv ?? null,
+    preferredInferenceApi: session.preferredInferenceApi ?? null,
+    nimContainer: session.nimContainer ?? null,
+  };
+}
+
 function matchingSessionMetadata(options: {
   session: onboardSession.Session | null;
   sandboxName: string;
@@ -381,12 +390,23 @@ function matchingSessionMetadata(options: {
   ) {
     return null;
   }
-  return {
-    endpointUrl: session.endpointUrl,
-    credentialEnv: session.credentialEnv ?? null,
-    preferredInferenceApi: session.preferredInferenceApi ?? null,
-    nimContainer: session.nimContainer ?? null,
-  };
+  return metadataFromSession(session);
+}
+
+function matchingProviderSessionMetadata(options: {
+  session: onboardSession.Session | null;
+  sandboxName: string;
+  provider: string;
+}): RegistryInferenceMetadata | null {
+  const { session, sandboxName, provider } = options;
+  if (
+    session?.sandboxName !== sandboxName ||
+    session.provider !== provider ||
+    !session.endpointUrl
+  ) {
+    return null;
+  }
+  return metadataFromSession(session);
 }
 
 function registryMetadataForProviderSwitch(options: {
@@ -398,12 +418,17 @@ function registryMetadataForProviderSwitch(options: {
 }): RegistryInferenceMetadata {
   const { entry, provider, model, sandboxName, session } = options;
   if (entry.provider === provider) {
-    return {
+    const entryMetadata = {
       endpointUrl: entry.endpointUrl ?? null,
       credentialEnv: entry.credentialEnv ?? null,
       preferredInferenceApi: entry.preferredInferenceApi ?? null,
       nimContainer: entry.nimContainer ?? null,
     };
+    if (isCustomCompatibleProvider(provider) && !entryMetadata.endpointUrl) {
+      const sessionMetadata = matchingProviderSessionMetadata({ session, sandboxName, provider });
+      if (sessionMetadata) return sessionMetadata;
+    }
+    return entryMetadata;
   }
   const sessionMetadata = matchingSessionMetadata({ session, sandboxName, provider, model });
   if (sessionMetadata) return sessionMetadata;
