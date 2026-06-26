@@ -2,18 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Case: Deep Agents Code Python egress boundary (#4861).
-#
-# Deep Agents Code network traffic is attributed to the Python interpreter by
-# OpenShell. This live check documents the supported boundary: arbitrary Python
-# may use only the hosts explicitly present in policy-additions.yaml, while
-# optional Tavily, LangSmith, MCP, and arbitrary hosts remain denied until a
-# user adds explicit policy.
+# Case: Deep Agents Code Tavily opt-in policy (#5739).
 
 set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
-PREFIX="06-deepagents-code-python-egress"
+PREFIX="07-deepagents-code-tavily-opt-in"
+REPO="${REPO:-$(pwd)}"
+CLI="${NEMOCLAW_E2E_CLI:-${REPO}/bin/nemoclaw.js}"
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -28,6 +24,14 @@ pass() {
 
 sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
+}
+
+nemoclaw_cli() {
+  if [ -f "$CLI" ]; then
+    node "$CLI" "$@"
+  else
+    nemoclaw "$@"
+  fi
 }
 
 python_probe() {
@@ -89,32 +93,6 @@ PY
 "
 }
 
-expect_reached() {
-  local label="$1"
-  local url="$2"
-  local output
-  output="$(python_probe "$url")"
-  if echo "$output" | grep -q "REACHED:"; then
-    pass "arbitrary Python can reach approved ${label} host"
-  else
-    fail_test "arbitrary Python could not reach approved ${label} host: $output"
-  fi
-}
-
-expect_blocked() {
-  local label="$1"
-  local url="$2"
-  local output
-  output="$(python_probe "$url")"
-  if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
-    pass "arbitrary Python cannot reach ${label} without explicit policy"
-  elif echo "$output" | grep -q "REACHED:"; then
-    fail_test "arbitrary Python reached ${label} unexpectedly: $output"
-  else
-    fail_test "arbitrary Python probe for ${label} lacked denial evidence: $output"
-  fi
-}
-
 PASSED=0
 FAILED=0
 
@@ -123,14 +101,44 @@ if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2
   exit 0
 fi
 
-info "Running Deep Agents Code arbitrary-Python egress checks in sandbox: $SANDBOX_NAME"
+info "Running Deep Agents Code Tavily opt-in check in sandbox: $SANDBOX_NAME"
 
-expect_reached "GitHub" "https://api.github.com/"
-expect_reached "PyPI" "https://pypi.org/"
-expect_blocked "Tavily" "https://api.tavily.com/"
-expect_blocked "LangSmith" "https://api.smith.langchain.com/"
-expect_blocked "MCP hosts" "https://modelcontextprotocol.io/"
-expect_blocked "unapproved hosts" "https://example.com/"
+# shellcheck disable=SC2016 # command substitution must run inside the sandbox.
+PYTHON_REAL="$(sandbox_exec 'readlink -f "$(command -v python3)"' || true)"
+if [[ "$PYTHON_REAL" == /opt/venv/* ]]; then
+  pass "sandbox python resolves through the managed Deep Agents Code venv"
+else
+  fail_test "sandbox python does not resolve through /opt/venv: $PYTHON_REAL"
+fi
+
+DRY_RUN_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --dry-run 2>&1)" || {
+  fail_test "policy-add tavily --dry-run failed: $DRY_RUN_OUTPUT"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  exit 1
+}
+if echo "$DRY_RUN_OUTPUT" | grep -q "api.tavily.com"; then
+  pass "tavily dry-run shows api.tavily.com"
+else
+  fail_test "tavily dry-run did not show api.tavily.com: $DRY_RUN_OUTPUT"
+fi
+
+APPLY_OUTPUT="$(nemoclaw_cli "$SANDBOX_NAME" policy-add tavily --yes 2>&1)" || {
+  fail_test "policy-add tavily failed: $APPLY_OUTPUT"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  exit 1
+}
+pass "tavily policy preset applies"
+
+sleep "${NEMOCLAW_E2E_POLICY_SETTLE_SECONDS:-5}"
+
+PROBE_OUTPUT="$(python_probe "https://api.tavily.com/")"
+if echo "$PROBE_OUTPUT" | grep -q "REACHED:"; then
+  pass "managed Deep Agents Code python can reach Tavily after policy-add"
+elif echo "$PROBE_OUTPUT" | grep -q "BLOCKED:"; then
+  fail_test "managed Deep Agents Code python is still policy-blocked after policy-add: $PROBE_OUTPUT"
+else
+  fail_test "Tavily probe lacked reachability evidence after policy-add: $PROBE_OUTPUT"
+fi
 
 printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
 [ "$FAILED" -eq 0 ] || exit 1

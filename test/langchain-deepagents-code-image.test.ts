@@ -198,6 +198,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("/usr is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
     expect(pythonEgressCheck).toContain("python3 - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain("import urllib.error");
+    expect(pythonEgressCheck).toContain("except urllib.error.HTTPError as exc:");
+    expect(pythonEgressCheck).toContain("ERROR:URLError");
+    expect(pythonEgressCheck).toContain("lacked denial evidence");
     expect(pythonEgressCheck).toContain('expect_reached "GitHub" "https://api.github.com/"');
     expect(pythonEgressCheck).toContain('expect_reached "PyPI" "https://pypi.org/"');
     expect(pythonEgressCheck).toContain("https://api.tavily.com/");
@@ -207,6 +211,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain(
       "arbitrary Python cannot reach ${label} without explicit policy",
     );
+    const tavilyOptInCheck = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test",
+        "e2e",
+        "e2e-cloud-experimental",
+        "checks",
+        "07-deepagents-code-tavily-opt-in.sh",
+      ),
+      "utf8",
+    );
+    expect(tavilyOptInCheck).toContain("policy-add tavily --dry-run");
+    expect(tavilyOptInCheck).toContain("policy-add tavily --yes");
+    expect(tavilyOptInCheck).toContain("https://api.tavily.com/");
+    expect(tavilyOptInCheck).toContain("/opt/venv/");
+    expect(tavilyOptInCheck).toContain("managed Deep Agents Code python can reach Tavily");
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
