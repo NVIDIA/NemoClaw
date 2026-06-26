@@ -141,7 +141,7 @@ function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
   expect(Number(values.raise_nofile)).not.toBe(0);
 }
 
-function expectSystemRlimitHookUsesBuiltinUlimit(hookPath: string): void {
+function expectSystemRlimitHookBypassesShadowedUlimit(hookPath: string): void {
   const probe = [
     "set -euo pipefail",
     "ulimit() {",
@@ -166,6 +166,29 @@ function expectSystemRlimitHookUsesBuiltinUlimit(hookPath: string): void {
   expect(values.shadow).toBe("function");
   expect(Number(values.nproc)).toBeLessThanOrEqual(4096);
   expect(Number(values.nofile)).toBeLessThanOrEqual(65536);
+}
+
+function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
+  const probe = [
+    `. ${JSON.stringify(rlimitLib)}`,
+    'current_nproc="$(command ulimit -u 2>/dev/null || printf "%s" 512)"',
+    'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
+    'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 256)"',
+    'case "$current_nofile" in "" | *[!0-9]*) current_nofile=256 ;; esac',
+    'NEMOCLAW_SANDBOX_NPROC_LIMIT="$current_nproc"',
+    'NEMOCLAW_SANDBOX_NOFILE_LIMIT="$current_nofile"',
+    "harden_resource_limits --quiet",
+    "verify_resource_limits",
+    'printf "ok\\n"',
+  ].join("\n");
+  const result = spawnSync("sh", ["-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toBe("ok\n");
 }
 
 function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): void {
@@ -239,6 +262,18 @@ function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): 
 describe("sandbox rlimit system hooks (#2173)", () => {
   const forkStormIt = process.platform === "linux" ? it : it.skip;
 
+  it("rlimit helper is quiet and successful under POSIX sh", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-posix-sh-rlimit-"));
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+
+    try {
+      copyRlimitFixture(rlimitLib);
+      expectRlimitLibIsPosixShSafe(rlimitLib);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("connect shell reports numeric nproc <=4096 and nofile <=65536 and denies raising limits after system-wide rlimit hook startup", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-rlimit-hooks-"));
@@ -268,7 +303,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
-      expectSystemRlimitHookUsesBuiltinUlimit(rlimitHook);
+      expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
