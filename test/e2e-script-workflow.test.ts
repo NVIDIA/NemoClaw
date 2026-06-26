@@ -996,6 +996,9 @@ describe("E2E reusable workflow contract", () => {
     const installActionStep = installAptAction.runs.steps.find(
       (step) => step.name === "Install apt packages",
     );
+    const stepIndex = (name: string) =>
+      runnerWorkflow.jobs.run.steps.findIndex((step) => step.name === name);
+    const installStepIndex = stepIndex("Install requested apt packages");
 
     expect(callInputs.apt_packages?.default).toBe("");
     expect(workflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
@@ -1004,6 +1007,10 @@ describe("E2E reusable workflow contract", () => {
     expect(installStep?.if).toBe("${{ inputs.apt_packages != '' }}");
     expect(installStep?.uses).toBe("./workflow-actions/.github/actions/install-apt-packages");
     expect(installStep?.with?.packages).toBe("${{ inputs.apt_packages }}");
+    expect(installStepIndex).toBe(stepIndex("Checkout workflow actions") + 1);
+    expect(installStepIndex).toBeLessThan(stepIndex("Authenticate to Docker Hub"));
+    expect(installStepIndex).toBeLessThan(stepIndex("Export CI inference environment"));
+    expect(installStepIndex).toBeLessThan(stepIndex("Run E2E script"));
 
     expect(nightlyWorkflow.jobs["cloud-onboard-e2e"].with?.apt_packages).toBe("expect");
     expect(nightlyWorkflow.jobs["network-policy-e2e"].with?.apt_packages).toBe("expect");

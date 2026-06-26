@@ -158,6 +158,12 @@ jobs:
           path: workflow-actions
           persist-credentials: false
 
+      - name: Install requested apt packages
+        if: ${{ inputs.apt_packages != '' }}
+        uses: ./workflow-actions/.github/actions/install-apt-packages
+        with:
+          packages: ${{ inputs.apt_packages }}
+
       - name: Export script environment
         env:
           E2E_ENV_JSON: ${{ inputs.env_json }}
@@ -265,12 +271,6 @@ jobs:
               exit 1
               ;;
           esac
-
-      - name: Install requested apt packages
-        if: ${{ inputs.apt_packages != '' }}
-        uses: ./workflow-actions/.github/actions/install-apt-packages
-        with:
-          packages: ${{ inputs.apt_packages }}
 
       - name: Run E2E script
         uses: ./workflow-actions/.github/actions/run-e2e-script
