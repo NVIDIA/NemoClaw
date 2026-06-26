@@ -1181,7 +1181,7 @@ migrate_legacy_layout() {
 refresh_hermes_provider_placeholders() {
   local mode="${1:-strict}"
   local env_file="${HERMES_DIR}/.env"
-  local runtime_plan="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-/usr/local/share/nemoclaw/messaging-runtime-plan.json}"
+  local runtime_plan="/usr/local/share/nemoclaw/messaging-runtime-plan.json"
   [ -f "$env_file" ] || return 0
 
   local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN"
