@@ -224,7 +224,6 @@ jobs:
       always_artifact_name: "cloud-onboard-traces"
       always_artifact_path: "/tmp/nemoclaw-trace-summary/"
       always_artifact_trace_source_path: "/tmp/nemoclaw-traces/"
-      apt_packages: expect
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard","NEMOCLAW_TRACE_DIR":"/tmp/nemoclaw-traces"}'
       checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
       nvidia_api_key: true

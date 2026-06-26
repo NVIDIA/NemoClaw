@@ -1013,7 +1013,7 @@ describe("E2E reusable workflow contract", () => {
     expect(installStepIndex).toBeLessThan(stepIndex("Export CI inference environment"));
     expect(installStepIndex).toBeLessThan(stepIndex("Run E2E script"));
 
-    expect(nightlyWorkflow.jobs["cloud-onboard-e2e"].with?.apt_packages).toBe("expect");
+    expect(nightlyWorkflow.jobs["cloud-onboard-e2e"].with?.apt_packages).toBeUndefined();
     expect(nightlyWorkflow.jobs["network-policy-e2e"].with?.apt_packages).toBe("expect");
     expect(
       nightlyWorkflow.jobs["issue-4434-tui-unreachable-inference-e2e"].steps?.find(
@@ -1081,6 +1081,42 @@ describe("E2E reusable workflow contract", () => {
     ]) {
       expect(issue4434VitestInstallRun, fragment).toContain(fragment);
       expect(installActionRun, fragment).toContain(fragment);
+    }
+  });
+
+  it("keeps apt package requests tied to reviewed host-tool consumers", () => {
+    const reviewedAptPackageLiterals = new Set(["expect", "expect iptables"]);
+    const reusableExpectConsumers: Record<string, string> = {};
+
+    for (const [name, job] of Object.entries(nightlyWorkflow.jobs)) {
+      const aptPackages = job.with?.apt_packages;
+      if (aptPackages !== undefined) {
+        expect(reviewedAptPackageLiterals.has(aptPackages), name).toBe(true);
+        expect(aptPackages, name).not.toMatch(
+          /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
+        );
+        if (aptPackages.split(/\s+/).includes("expect")) {
+          reusableExpectConsumers[name] = String(job.with?.script ?? "");
+        }
+      }
+
+      for (const step of job.steps ?? []) {
+        if (!String(step.uses ?? "").includes("install-apt-packages")) continue;
+
+        const packages = String(step.with?.packages ?? "");
+        expect(reviewedAptPackageLiterals.has(packages), `${name}:${step.name ?? ""}`).toBe(true);
+        expect(packages, `${name}:${step.name ?? ""}`).not.toMatch(
+          /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
+        );
+      }
+    }
+
+    expect(reusableExpectConsumers).toEqual({
+      "network-policy-e2e": "test/e2e/test-network-policy.sh",
+    });
+    for (const [name, script] of Object.entries(reusableExpectConsumers)) {
+      const scriptText = readFileSync(new URL(`../${script}`, import.meta.url), "utf8");
+      expect(scriptText, name).toContain("command -v expect");
     }
   });
 

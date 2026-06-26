@@ -46,9 +46,13 @@ runs:
           echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
           sleep $((attempt * 5))
         done
-        # Keep runner setup small and predictable. The explicit package list
-        # plus --no-install-recommends intentionally: (1) minimizes attack
-        # surface, (2) reduces install time, (3) avoids pulling unnecessary
-        # recommended packages, and (4) makes callers request every additional
-        # host tool explicitly.
+        # Trust model: this CI-only action intentionally trusts the apt sources
+        # configured on GitHub/NVIDIA Ubuntu runners for small host tools.
+        # Callers must pass fixed, reviewed package literals from trusted
+        # workflow YAML, not target-ref, workflow_dispatch, matrix, or
+        # script-derived values. Keep runner setup small and predictable; the
+        # explicit package list plus --no-install-recommends intentionally:
+        # (1) minimizes attack surface, (2) reduces install time, (3) avoids
+        # pulling unnecessary recommended packages, and (4) makes callers
+        # request every additional host tool explicitly.
         sudo apt-get install -y --no-install-recommends "${packages[@]}"
