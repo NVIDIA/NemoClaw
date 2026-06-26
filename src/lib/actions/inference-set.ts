@@ -565,6 +565,7 @@ export async function runInferenceSet(
   }
   const session = deps.loadSession();
   const explicitMetadata = explicitCustomProviderMetadata(provider, options);
+  const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
   const registryMetadata = registryMetadataForProviderSwitch({
     entry,
     provider,
@@ -635,16 +636,23 @@ export async function runInferenceSet(
   }
 
   const config = deps.readSandboxConfig(sandboxName, target);
-  const preferredInferenceApi = resolveRuntimeInferenceApi({
-    agentName,
-    config,
-    currentProvider: entry.provider,
-    provider,
-    sandboxName,
-    session,
-  });
+  const preferredInferenceApi =
+    explicitPreferredInferenceApi ??
+    resolveRuntimeInferenceApi({
+      agentName,
+      config,
+      currentProvider: entry.provider,
+      provider,
+      sandboxName,
+      session,
+    });
+  const effectiveRegistryMetadata: RegistryInferenceMetadata = {
+    ...registryMetadata,
+    preferredInferenceApi,
+  };
   // Refresh the registry with config-derived API-family metadata before the
-  // crash-prone in-sandbox sync (#3725/#3726).
+  // crash-prone in-sandbox sync (#3725/#3726). Explicit operator-supplied
+  // metadata remains authoritative when present.
   if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
@@ -714,7 +722,7 @@ export async function runInferenceSet(
     provider,
     model,
     patched.route,
-    registryMetadata,
+    effectiveRegistryMetadata,
     deps,
   );
 

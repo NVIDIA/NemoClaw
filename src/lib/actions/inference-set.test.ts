@@ -730,6 +730,67 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("preserves explicit inference API through the final registry and session sync", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        noVerify: true,
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-responses",
+      },
+      deps,
+    );
+
+    expect(config.models).toMatchObject({
+      providers: {
+        inference: {
+          api: "openai-responses",
+          models: [{ id: "mock-responses-model", name: "inference/mock-responses-model" }],
+        },
+      },
+    });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "mock-responses-model",
+      endpointUrl: "https://compatible.example/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+  });
+
   it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
