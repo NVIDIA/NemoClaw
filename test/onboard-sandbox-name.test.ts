@@ -204,4 +204,62 @@ const onboardModule = require(${onboardPath});
       `expected standalone 'Try: myassistant' line, got ${JSON.stringify(payload.lines)}`,
     );
   });
+
+  it("exits nonzero for non-interactive resume when the session has no sandbox name", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-null-name-"));
+    const seedPath = path.join(tmpDir, "seed-null-sandbox-session.js");
+
+    const seedScript = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const sessionModule = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"))});
+const session = sessionModule.createSession({
+  status: "in_progress",
+  resumable: true,
+  mode: "interactive",
+  agent: "langchain-deepagents-code",
+  sandboxName: null,
+});
+fs.mkdirSync(path.dirname(sessionModule.sessionPath()), { recursive: true, mode: 0o700 });
+fs.writeFileSync(sessionModule.sessionPath(), JSON.stringify(session, null, 2));
+`;
+    fs.writeFileSync(seedPath, seedScript);
+
+    try {
+      const seedResult = spawnSync(process.execPath, [seedPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: { ...process.env, HOME: tmpDir },
+      });
+      assert.equal(seedResult.status, 0, seedResult.stderr);
+
+      const result = spawnSync(
+        process.execPath,
+        [path.join(repoRoot, "bin", "nemoclaw.js"), "onboard", "--resume", "--non-interactive"],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          },
+        },
+      );
+
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(
+        result.stderr,
+        /Cannot resume non-interactive onboard: the previous run was interrupted before sandbox creation completed,/,
+      );
+      assert.match(
+        result.stderr,
+        /so no sandbox name was recorded\. Re-run with --name <sandbox> \(or set NEMOCLAW_SANDBOX_NAME\)\./,
+      );
+      assert.doesNotMatch(result.stderr, /Resume requires --name flag/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 15_000);
 });
