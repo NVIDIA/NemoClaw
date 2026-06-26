@@ -33,6 +33,13 @@ runs:
             echo "::error::Invalid apt package name: $package" >&2
             exit 1
           fi
+          case "$package" in
+            expect|iptables) ;;
+            *)
+              echo "::error::Unsupported apt package: $package. Add it to the reviewed host-tool allowlist before use." >&2
+              exit 1
+              ;;
+          esac
         done
 
         for attempt in 1 2 3; do
@@ -48,10 +55,10 @@ runs:
         done
         # Trust model: this CI-only action intentionally trusts the apt sources
         # configured on GitHub/NVIDIA Ubuntu runners for small host tools.
-        # Callers must pass fixed, reviewed package literals from trusted
-        # workflow YAML, not target-ref, workflow_dispatch, matrix, or
-        # script-derived values. Keep runner setup small and predictable; the
-        # explicit package list plus --no-install-recommends intentionally:
+        # The allowlist above enforces that callers pass fixed, reviewed package
+        # literals from trusted workflow YAML, not target-ref, workflow_dispatch,
+        # matrix, or script-derived values. Keep runner setup small and
+        # predictable; the explicit package list plus --no-install-recommends:
         # (1) minimizes attack surface, (2) reduces install time, (3) avoids
         # pulling unnecessary recommended packages, and (4) makes callers
         # request every additional host tool explicitly.

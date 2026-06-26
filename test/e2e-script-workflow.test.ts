@@ -1070,6 +1070,8 @@ describe("E2E reusable workflow contract", () => {
     expect(installActionStep?.run).toContain(
       'sudo apt-get install -y --no-install-recommends "${packages[@]}"',
     );
+    expect(installActionStep?.run).toContain("expect|iptables");
+    expect(installActionStep?.run).toContain("Unsupported apt package");
     for (const fragment of [
       "for attempt in 1 2 3",
       "sudo apt-get update",

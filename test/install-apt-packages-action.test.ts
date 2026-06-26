@@ -102,6 +102,7 @@ describe("install-apt-packages action", () => {
       ["pkg; rm -rf /", "::error::Invalid apt package name: pkg;"],
       ["pkg:amd64", "::error::Invalid apt package name: pkg:amd64"],
       ["-oDebug::NoLocking=1", "::error::Invalid apt package name: -oDebug::NoLocking=1"],
+      ["libssl3", "::error::Unsupported apt package: libssl3"],
     ] as const) {
       const result = runInstallAptActionScript(installScript, aptPackages);
 
@@ -111,8 +112,8 @@ describe("install-apt-packages action", () => {
     }
   });
 
-  it("accepts valid Debian package name forms", () => {
-    for (const packageName of ["7zip", "libssl3", "c++", "libfoo-bar-dev"]) {
+  it("accepts reviewed host tool package literals", () => {
+    for (const packageName of ["expect", "iptables"]) {
       const result = runInstallAptActionScript(installScript, packageName);
 
       expect(result.status, packageName).toBe(0);
@@ -125,11 +126,11 @@ describe("install-apt-packages action", () => {
   });
 
   it("installs validated packages and retries apt metadata refresh at runtime", () => {
-    const success = runInstallAptActionScript(installScript, "expect libssl3 pkg-config");
+    const success = runInstallAptActionScript(installScript, "expect iptables");
     expect(success.status).toBe(0);
     expect(success.sudoLog.trim().split("\n")).toEqual([
       "apt-get update",
-      "apt-get install -y --no-install-recommends expect libssl3 pkg-config",
+      "apt-get install -y --no-install-recommends expect iptables",
     ]);
 
     const retried = runInstallAptActionScript(installScript, "expect", { updateFailures: 2 });
