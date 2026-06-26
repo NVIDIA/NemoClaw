@@ -122,10 +122,10 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
-  it("pins registry config and keeps a matching custom-endpoint session endpoint", () => {
+  it("validates and canonicalizes a matching custom-endpoint session endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "alpha",
-      endpointUrl: "http://127.0.0.1:19999/v1",
+      endpointUrl: " http://127.0.0.1:19999/v1/?x=1#frag ",
     });
     const config = prepareRebuildResumeConfig(
       "alpha",
@@ -141,6 +141,59 @@ describe("prepareRebuildResumeConfig", () => {
       pinEndpoint: false,
       endpointUrl: "http://127.0.0.1:19999/v1",
     });
+  });
+
+  it("prefers durable registry endpoint metadata over a stale matching session endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      endpointUrl: "https://stale.example.test/v1",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://registry.example.test/v1?x=1#frag",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "m",
+      pinEndpoint: true,
+      endpointUrl: "https://registry.example.test/v1",
+    });
+  });
+
+  it("fails closed for a matching custom-endpoint session with no recoverable endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
+    expect(() =>
+      prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-endpoint", model: "m" }),
+        null,
+        noopLog,
+        throwingBail,
+      ),
+    ).toThrow("Cannot validate recreate endpoint");
+  });
+
+  it("fails closed for a matching custom-endpoint session with an invalid endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      endpointUrl: "https://user:pass@example.test/v1",
+    });
+    expect(() =>
+      prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-endpoint", model: "m" }),
+        null,
+        noopLog,
+        throwingBail,
+      ),
+    ).toThrow("Cannot validate recreate endpoint");
   });
 
   it("pins the canonical endpoint when the session belongs to another sandbox", () => {

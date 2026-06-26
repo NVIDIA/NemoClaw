@@ -258,11 +258,24 @@ export function prepareRebuildResumeConfig(
     return null;
   }
 
-  const endpointUrl = rebuildEndpoint.known
-    ? rebuildEndpoint.endpointUrl
-    : sessionMatchesSandbox
-      ? (session?.endpointUrl ?? null)
-      : null;
+  let endpointUrl = rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : null;
+  if (!rebuildEndpoint.known && sessionMatchesSandbox) {
+    endpointUrl = canonicalCustomEndpointUrl(session?.endpointUrl);
+    if (!endpointUrl) {
+      console.error("");
+      console.error(
+        `  ${_RD}Rebuild preflight failed:${R} cannot validate the inference endpoint for provider '${registrySelection.provider}'.`,
+      );
+      console.error(
+        `  The custom endpoint for '${sandboxName}' is missing or invalid in its onboard session.`,
+      );
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail(
+        `Cannot validate recreate endpoint for provider '${registrySelection.provider}' from matching session`,
+      );
+      return null;
+    }
+  }
 
   return {
     agent: rebuildAgent,
@@ -274,7 +287,7 @@ export function prepareRebuildResumeConfig(
       registrySelection.credentialEnv,
     ),
     preferredInferenceApi: registrySelection.preferredInferenceApi,
-    pinEndpoint: !sessionMatchesSandbox && rebuildEndpoint.known,
+    pinEndpoint: rebuildEndpoint.known,
     endpointUrl,
     ambient,
   };

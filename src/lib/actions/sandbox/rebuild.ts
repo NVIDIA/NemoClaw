@@ -772,13 +772,11 @@ export async function rebuildSandbox(
       // null fallback) so a missing registry value doesn't silently leave a
       // stale session entry from an earlier sandbox in place.
       // #5735: apply the recreate config resolved + validated BEFORE delete by
-      // prepareRebuildResumeConfig (provider/model/credential/endpoint derived
-      // from the about-to-be-removed registry entry, never from ambient env), so
-      // onboard --resume recreates the recorded sandbox in non-interactive mode.
-      // Assign explicitly so a missing value doesn't leave a stale entry from an
-      // earlier sandbox in place. `pinEndpoint` is false for a matching session
-      // (keep its own custom endpoint) and true for a non-matching session with a
-      // canonical/registry-derivable endpoint.
+      // prepareRebuildResumeConfig, so onboard --resume recreates the recorded
+      // sandbox in non-interactive mode. Provider/model/credential/endpoint come
+      // from the about-to-be-removed registry entry or a validated matching
+      // custom-endpoint session, never ambient env. Assign explicitly so missing
+      // values cannot leave stale entries from an earlier sandbox in place.
       s.provider = resumeConfig.provider;
       s.model = resumeConfig.model;
       s.nimContainer = resumeConfig.nimContainer;

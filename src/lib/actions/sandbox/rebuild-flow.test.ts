@@ -552,11 +552,11 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("recreates a matching-session custom-endpoint sandbox from session, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
-    // be absent during recreate (so onboard --resume uses the session) and the
-    // session's own recorded endpoint must be preserved (not overwritten).
+    // be absent during recreate so onboard --resume uses the validated session
+    // endpoint selected by prepareRebuildResumeConfig.
     const restoreEnv = snapshotEnv([
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_PROVIDER",
@@ -581,8 +581,9 @@ describe("rebuildSandbox flow", () => {
           };
         },
       });
-      // The custom endpoint lives only in this sandbox's own (matching) session.
-      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1";
+      // The custom endpoint lives only in this sandbox's own matching session;
+      // it is canonicalized at the pre-delete rebuild boundary before rewrite.
+      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -594,7 +595,6 @@ describe("rebuildSandbox flow", () => {
         provider: undefined,
         model: undefined,
       });
-      // The matching session's own recorded endpoint is preserved (not pinned/overwritten).
       expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
       // Provider/model come from the registry entry, not the ambient values.
       expect(harness.session.provider).toBe("compatible-endpoint");
@@ -603,6 +603,86 @@ describe("rebuildSandbox flow", () => {
       expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe("https://attacker.example.test/v1");
       expect(process.env.NEMOCLAW_PROVIDER).toBe("build");
       expect(process.env.NEMOCLAW_MODEL).toBe("attacker-model");
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("overwrites a stale matching-session endpoint with durable registry metadata before onboard --resume (#4497/#5869)", async () => {
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+    process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: "registry-model",
+          endpointUrl: "https://registry.example.test/v1?x=1#frag",
+        },
+      });
+      harness.session.endpointUrl = "https://stale-retry.example.test/v1";
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalled();
+      expect(harness.session.endpointUrl).toBe("https://registry.example.test/v1");
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("aborts before backup/delete when a matching custom-endpoint session has no recoverable endpoint (#4497/#5869)", async () => {
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+    process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { provider: "compatible-endpoint", model: "custom-model" },
+      });
+      delete harness.session.endpointUrl;
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Cannot validate recreate endpoint");
+
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("cannot validate the inference endpoint");
+      expect(errors).toContain("Sandbox is untouched");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("aborts before backup/delete when a matching custom-endpoint session has an invalid endpoint (#4497/#5869)", async () => {
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+    process.env.COMPATIBLE_API_KEY = "compat-key"; // pass credential preflight
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { provider: "compatible-endpoint", model: "custom-model" },
+      });
+      harness.session.endpointUrl = "file:///tmp/not-http";
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Cannot validate recreate endpoint");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
     } finally {
       restoreEnv();
     }
