@@ -373,6 +373,9 @@ describe("setupNim provider recovery policy", () => {
     );
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -397,6 +400,7 @@ printf '%s' "$status"
 const fs = require("fs");
 const path = require("path");
 const Module = require("module");
+const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const onboardSession = require(${sessionPath});
@@ -409,6 +413,12 @@ onboardSession.loadSession = () => ({
   provider: "ollama-local",
   model: "llama3.1",
 });
+const prompts = [];
+credentials.prompt = async (message) => {
+  prompts.push(message);
+  return "";
+};
+credentials.ensureApiKey = async () => {};
 
 const onboardFile = ${onboardPath};
 const source = fs.readFileSync(onboardFile, "utf-8");
@@ -441,8 +451,10 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   try {
-    const result = await setupNim(null, "dcode-station", null, false);
-    originalLog(JSON.stringify({ result, lines }));
+    const nonInteractive = await setupNim(null, "dcode-station", null, false);
+    __setNonInteractive(false);
+    const interactive = await setupNim(null, "dcode-station", null, false);
+    originalLog(JSON.stringify({ nonInteractive, interactive, prompts, lines }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -467,9 +479,15 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
 
     expect(result.status).toBe(0);
     const payload = JSON.parse(result.stdout.trim());
-    expect(payload.result.provider).toBe("nvidia-prod");
-    expect(payload.result.model).toBe("nvidia/test-model");
-    expect(payload.result.preferredInferenceApi).toBe("openai-completions");
+    expect(payload.nonInteractive.provider).toBe("nvidia-prod");
+    expect(payload.nonInteractive.model).toBe("nvidia/test-model");
+    expect(payload.nonInteractive.preferredInferenceApi).toBe("openai-completions");
+    expect(payload.interactive.provider).toBe("nvidia-prod");
+    expect(payload.interactive.preferredInferenceApi).toBe("openai-completions");
+    expect(payload.prompts[0]).toMatch(/^  Choose \[\d+\]: $/);
+    expect(
+      payload.lines.some((line: string) => line.includes("Select your inference provider")),
+    ).toBe(true);
     expect(
       payload.lines.some((line: string) => line.includes("[non-interactive] Provider: build")),
     ).toBe(true);
