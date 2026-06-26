@@ -605,7 +605,16 @@ describe("runInferenceSet", () => {
         },
       },
     };
-    const deps = createDeps({ config, session: baseSession() });
+    const deps = createDeps({
+      config,
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    });
 
     const result = await runInferenceSet(
       {
@@ -635,6 +644,16 @@ describe("runInferenceSet", () => {
         },
       },
     });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
@@ -644,6 +663,34 @@ describe("runInferenceSet", () => {
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
     });
+  });
+
+  it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow(/without trusted durable endpoint metadata/);
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {
@@ -738,8 +785,11 @@ describe("runInferenceSet", () => {
       session: baseSession({
         agent: "hermes",
         sandboxName: "hermes",
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
       }),
     });
 
@@ -766,6 +816,16 @@ describe("runInferenceSet", () => {
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
     });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "hermes",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
