@@ -18,6 +18,10 @@
  * different agent at runtime.
  */
 
+import { resolveAgentNameAlias } from "../agent/aliases";
+
+const BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+
 export interface AgentBranding {
   /**
    * Binary name shown in usage strings, e.g. "nemoclaw", "nemohermes", or "nemo-deepagents".
@@ -74,7 +78,9 @@ function resolveInvokedCliName(): string {
 export function getAgentBranding(
   agentName: string | null | undefined = process.env.NEMOCLAW_AGENT,
 ): AgentBranding {
-  const product = AGENT_PRODUCT_BRANDING[agentName || DEFAULT_AGENT] ?? DEFAULT_PRODUCT_BRANDING;
+  const canonicalAgent = resolveAgentNameAlias(agentName, BRANDING_AGENTS) ?? agentName;
+  const product =
+    AGENT_PRODUCT_BRANDING[canonicalAgent || DEFAULT_AGENT] ?? DEFAULT_PRODUCT_BRANDING;
   return {
     cli: resolveInvokedCliName(),
     ...product,

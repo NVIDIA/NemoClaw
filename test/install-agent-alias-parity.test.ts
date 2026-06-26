@@ -17,11 +17,14 @@ const ALIAS_CASES = [
   ["nemohermes", "hermes"],
   ["langchain-deepagents-code", "langchain-deepagents-code"],
   ["nemo-deepagents", "langchain-deepagents-code"],
+  ["NEMO_DEEPAGENTS", "langchain-deepagents-code"],
   ["dcode", "langchain-deepagents-code"],
   ["deepagents", "langchain-deepagents-code"],
+  ["Deep Agents", "langchain-deepagents-code"],
   ["deepagents-code", "langchain-deepagents-code"],
   ["deepagentscode", "langchain-deepagents-code"],
   ["langchain", "langchain-deepagents-code"],
+  ["LANGCHAIN", "langchain-deepagents-code"],
 ] as const;
 
 function installerCanonicalAgentName(input: string): string {

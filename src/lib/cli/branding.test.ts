@@ -71,6 +71,17 @@ describe("getAgentBranding", () => {
     expect(branding.product).toBe("LangChain Deep Agents Code");
   });
 
+  it.each([
+    "dcode",
+    "langchain",
+  ])("uses Deep Agents Code product branding for NEMOCLAW_AGENT=%s aliases", (agentAlias) => {
+    process.env.NEMOCLAW_AGENT = agentAlias;
+    const branding = getAgentBranding();
+    expect(branding.cli).toBe("nemoclaw");
+    expect(branding.display).toBe("NemoDeepAgents");
+    expect(branding.product).toBe("LangChain Deep Agents Code");
+  });
+
   it("uses nemo-deepagents CLI when the Deep Agents alias launcher set NEMOCLAW_INVOKED_AS", () => {
     process.env.NEMOCLAW_AGENT = "langchain-deepagents-code";
     process.env.NEMOCLAW_INVOKED_AS = "nemo-deepagents";
