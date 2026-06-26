@@ -7840,11 +7840,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!runScript.includes("test/e2e-scenario/live/sandbox-rlimits-connect.test.ts")) {
       errors.push("sandbox-rlimits-connect-vitest job must run sandbox-rlimits-connect.test.ts");
     }
-    if (
-      asRecord(sandboxRlimitConnectRun.env).NVIDIA_INFERENCE_API_KEY !==
-      "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-    ) {
-      errors.push("sandbox-rlimits-connect-vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+    if (asRecord(sandboxRlimitConnectRun.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+      errors.push("sandbox-rlimits-connect-vitest step must receive NVIDIA_API_KEY from secrets");
     }
   }
 
