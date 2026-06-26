@@ -1003,7 +1003,6 @@ jobs:
     }
   });
 
-
   it("rejects workflow selector drift from the free-standing inventory", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-vitest-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
