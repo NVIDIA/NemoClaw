@@ -351,4 +351,87 @@ describe("wipeSandboxState (#5449)", () => {
       }
     },
   );
+
+  // Ultra advisor PRA-2 on #5455: parametrize over every shipped agent
+  // manifest shape so a future manifest with different state_dirs/state_files
+  // or a different /sandbox/<agent> path doesn't silently fall through the
+  // openclaw-specific assumptions. Pulls the real values from each
+  // manifest fixture so a manifest edit propagates here.
+  it.each([
+    {
+      agent: "openclaw",
+      configDir: "/sandbox/.openclaw",
+      stateDirs: ["agents", "extensions", "workspace", "skills", "hooks", "identity"],
+      stateFiles: [],
+      label: "openclaw",
+    },
+    {
+      agent: "hermes",
+      configDir: "/sandbox/.hermes",
+      stateDirs: [
+        "memories",
+        "sessions",
+        "skills",
+        "plugins",
+        "cron",
+        "logs",
+        "skins",
+        "plans",
+        "workspace",
+        "profiles",
+      ],
+      stateFiles: [{ path: "SOUL.md" }, { path: ".hermes_history" }],
+      label: "hermes",
+    },
+    {
+      agent: "langchain-deepagents-code",
+      configDir: "/sandbox/.deepagents",
+      stateDirs: [".state", "skills", "agent/skills"],
+      stateFiles: [{ path: "config.toml" }, { path: "hooks.json" }],
+      label: "langchain-deepagents-code",
+    },
+  ])(
+    "wipes the shipped $label manifest shape under its own /sandbox/<agent> dir (#5455 Ultra PRA-2)",
+    ({ agent, configDir, stateDirs, stateFiles }) => {
+      const { deps, runOpenshell } = buildDeps({
+        getSandbox: vi.fn(() => ({ agent }) as never),
+        loadAgent: vi.fn(() => ({ configPaths: { dir: configDir }, stateDirs, stateFiles })),
+      });
+
+      destroy.wipeSandboxState("test-sb", deps as never);
+
+      const { script } = execCommand(runOpenshell);
+      expect(script).toContain(`cd '${configDir}'`);
+      expect(script).toContain("workspace-*");
+      for (const dir of stateDirs) {
+        expect(script).toContain(`'${dir}'`);
+      }
+      for (const file of stateFiles) {
+        expect(script).toContain(`'${file.path}'`);
+      }
+    },
+  );
+
+  // Ultra advisor PRA-2 on #5455 (empty state dirs): a manifest with empty
+  // state_dirs and state_files must still issue the wipe so the multi-agent
+  // `workspace-*` glob runs, but the `rm -rf --` argv must not collapse into
+  // a syntactically broken command.
+  it("issues a syntactically valid wipe even when state_dirs and state_files are both empty (#5455 Ultra PRA-2)", () => {
+    const { deps, runOpenshell } = buildDeps({
+      loadAgent: vi.fn(() => ({
+        configPaths: { dir: "/sandbox/.openclaw" },
+        stateDirs: [],
+        stateFiles: [],
+      })),
+    });
+
+    destroy.wipeSandboxState("test-sb", deps as never);
+
+    const { script } = execCommand(runOpenshell);
+    // The script still cd's and runs rm -rf with only the workspace-* glob.
+    expect(script).toContain("cd '/sandbox/.openclaw'");
+    expect(script).toMatch(/rm\s+-rf\s+--\s+workspace-\*/);
+    // No empty quoted argument that would expand to nothing in sh -c.
+    expect(script).not.toMatch(/rm\s+-rf\s+--\s*''/);
+  });
 });
