@@ -35,7 +35,13 @@ openshell term
 <Tab title="Remote Sandbox">
 
 Connect to the remote host first.
-Use a host that resolves from your terminal, such as a Brev SSH alias or `user@host`.
+Replace `<your-sandbox-host>` with the SSH host or alias where your NemoClaw sandbox is running.
+Use a host that resolves from your terminal, such as a Brev SSH alias.
+
+```bash
+ssh <your-sandbox-host>
+```
+
 Then run the TUI from the NemoClaw directory on that host.
 
 ```bash
@@ -62,16 +68,18 @@ The blocked request includes the following details:
 ## Approve or Deny the Request
 
 Blocked requests appear as pending entries in the sandbox view's `Network Rules` panel.
-From the sandbox policy view, press `r` to focus `Network Rules`.
+After the sandbox opens, the TUI focuses the sandbox policy view.
+Press `r` to focus `Network Rules`.
 Use `j` or `k` to select a pending rule, and press `Enter` to inspect its details.
 
 - Press `a` to approve the selected pending rule and add the endpoint to the running policy for the current session.
 - Press `x` to reject the selected pending rule and keep the endpoint blocked.
 - Press `A` to approve all pending rules, then press `y` or `Enter` at the confirmation prompt.
 
-Approved endpoints remain in the running policy until the sandbox stops.
+Approved endpoints remain in the running policy for the sandbox instance.
+They reset to the baseline when you destroy and recreate the sandbox.
 They are not persisted to the baseline policy file.
-To keep an endpoint allowed after restart, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
+To keep an endpoint allowed for future sandbox instances, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](customize-network-policy).
 Rejected rules stay blocked unless you later approve the same rule or add a matching endpoint to the policy.
 
 ## Run the Walkthrough
@@ -80,8 +88,8 @@ The walkthrough script is available only in a NemoClaw source checkout.
 If you installed NemoClaw with the public installer, clone the repository before running it.
 
 ```bash
-git clone https://github.com/NVIDIA/NemoClaw.git
-cd NemoClaw
+git clone https://github.com/NVIDIA/NemoClaw.git ~/nemoclaw
+cd ~/nemoclaw
 ```
 
 From the NemoClaw repository root, run the walkthrough script after you onboard at least one sandbox and confirm that it is reachable.
