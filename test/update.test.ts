@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,7 +12,12 @@ import { describe, expect, it } from "vitest";
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(TEST_DIR, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(TEST_DIR, "..", "bin", "nemohermes.js");
-const DEEPAGENTS_CLI = path.join(TEST_DIR, "..", "bin", "nemo-deepagents.js");
+const DEEPAGENTS_CLI = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-update-bin-"));
+  const alias = path.join(dir, "nemo-deepagents");
+  fs.symlinkSync(CLI, alias);
+  return alias;
+})();
 
 describe("nemoclaw update command", () => {
   it("appears in root help as an Upgrade command", () => {
@@ -42,12 +49,12 @@ describe("nemoclaw update command", () => {
   });
 
   it("renders NemoDeepAgents command names and product copy for the Deep Agents alias", () => {
-    const rootHelp = execSync(`node "${DEEPAGENTS_CLI}" help`, { encoding: "utf-8" });
+    const rootHelp = execSync(`"${DEEPAGENTS_CLI}" help`, { encoding: "utf-8" });
     expect(rootHelp).toMatch(
       /nemo-deepagents update\s+Run the maintained NemoDeepAgents installer update flow\s+\(--check, --yes\|-y\)/,
     );
 
-    const updateHelp = execSync(`node "${DEEPAGENTS_CLI}" update --help`, {
+    const updateHelp = execSync(`"${DEEPAGENTS_CLI}" update --help`, {
       encoding: "utf-8",
     });
     expect(updateHelp).toContain("$ nemo-deepagents update [--check] [--yes|-y]");

@@ -3,21 +3,27 @@
 
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
-const DEEPAGENTS_CLI = path.join(import.meta.dirname, "..", "bin", "nemo-deepagents.js");
 const NEMOCLAW_CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const DEEPAGENTS_CLI = (() => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-bin-"));
+  const alias = path.join(dir, "nemo-deepagents");
+  fs.symlinkSync(NEMOCLAW_CLI, alias);
+  return alias;
+})();
 
 function runDeepAgents(
   args: string,
   env: Record<string, string | undefined> = {},
 ): { code: number; out: string } {
   try {
-    const out = execSync(`node "${DEEPAGENTS_CLI}" ${args}`, {
+    const out = execSync(`"${DEEPAGENTS_CLI}" ${args}`, {
       encoding: "utf-8",
       timeout: execTimeout(),
       env: {
@@ -69,10 +75,10 @@ function runNemoClaw(
 }
 
 describe("nemo-deepagents alias", () => {
-  it("bin/nemo-deepagents.js exists and is executable", () => {
+  it("package-style nemo-deepagents symlink exists and is executable", () => {
     expect(fs.existsSync(DEEPAGENTS_CLI)).toBe(true);
     const stat = fs.statSync(DEEPAGENTS_CLI);
-    // Owner execute bit
+    // Owner execute bit on the target launcher
     expect(stat.mode & 0o100).not.toBe(0);
   });
 

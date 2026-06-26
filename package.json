@@ -7,7 +7,7 @@
   "bin": {
     "nemoclaw": "./bin/nemoclaw.js",
     "nemohermes": "./bin/nemohermes.js",
-    "nemo-deepagents": "./bin/nemo-deepagents.js"
+    "nemo-deepagents": "./bin/nemoclaw.js"
   },
   "oclif": {
     "bin": "nemoclaw",

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -404,7 +407,18 @@ describe("oclif compatibility dispatch", () => {
   it("uses the Deep Agents alias binary name in native oclif help", () => {
     const result = spawnSync(
       process.execPath,
-      ["bin/nemo-deepagents.js", "sandbox", "channels", "start", "--help"],
+      [
+        (() => {
+          const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-oclif-bin-"));
+          const alias = path.join(dir, "nemo-deepagents");
+          fs.symlinkSync(path.join(process.cwd(), "bin", "nemoclaw.js"), alias);
+          return alias;
+        })(),
+        "sandbox",
+        "channels",
+        "start",
+        "--help",
+      ],
       {
         cwd: process.cwd(),
         encoding: "utf8",
