@@ -9,6 +9,30 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const BLUEPRINT_RELPATH = "nemoclaw-blueprint/blueprint.yaml";
+const DOCKERIGNORE_SECRET_FILE_NAMES = new Set([
+  ".credentials",
+  ".env",
+  ".envrc",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "credentials.json",
+  "key.json",
+  "secrets.json",
+  "secrets.yaml",
+  "token.json",
+]);
+const DOCKERIGNORE_SECRET_DIRS = new Set([".direnv", ".ssh", "secrets"]);
+const DOCKERIGNORE_SECRET_EXTENSIONS = new Set([
+  ".jks",
+  ".key",
+  ".keystore",
+  ".p12",
+  ".pem",
+  ".pfx",
+  ".tfvars",
+]);
+const DOCKERIGNORE_SECRET_SUFFIXES = ["_ecdsa", "_ed25519", "_rsa"];
 
 export function oldBaseContextSources(): string[] {
   return [BLUEPRINT_RELPATH, ...directDockerfileBaseCopySources()];
@@ -46,6 +70,20 @@ export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE
   return sources;
 }
 
+function matchesDockerignoreSecretPattern(relativePath: string): boolean {
+  const parts = relativePath.split("/");
+  const fileName = parts.at(-1) ?? "";
+  const extension = path.posix.extname(fileName);
+  return (
+    fileName.startsWith(".env.") ||
+    (fileName.startsWith("service-account") && fileName.endsWith(".json")) ||
+    DOCKERIGNORE_SECRET_FILE_NAMES.has(fileName) ||
+    parts.some((part) => DOCKERIGNORE_SECRET_DIRS.has(part)) ||
+    DOCKERIGNORE_SECRET_EXTENSIONS.has(extension) ||
+    DOCKERIGNORE_SECRET_SUFFIXES.some((suffix) => fileName.endsWith(suffix))
+  );
+}
+
 function validateOldBaseContextSource(relativePath: string): string {
   const parts = relativePath.split("/");
   const resolved = path.resolve(REPO_ROOT, relativePath);
@@ -57,6 +95,11 @@ function validateOldBaseContextSource(relativePath: string): string {
     (resolved !== REPO_ROOT && !resolved.startsWith(repoPrefix));
   if (invalidSource) {
     throw new Error(`Unsupported direct Dockerfile.base COPY source: ${relativePath}`);
+  }
+  if (matchesDockerignoreSecretPattern(relativePath)) {
+    throw new Error(
+      `Unsupported .dockerignore-secret Dockerfile.base COPY source: ${relativePath}`,
+    );
   }
   return resolved;
 }

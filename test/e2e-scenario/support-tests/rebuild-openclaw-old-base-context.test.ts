@@ -82,4 +82,25 @@ describe("rebuild-openclaw old-base build context", () => {
       "Unsupported direct Dockerfile.base COPY source",
     );
   });
+
+  it("rejects dockerignore-secret direct Dockerfile.base COPY sources before staging", () => {
+    const envDockerfilePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+      "Dockerfile.base",
+    );
+    const secretDockerfilePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+      "Dockerfile.base",
+    );
+    testFiles.push(path.dirname(envDockerfilePath), path.dirname(secretDockerfilePath));
+    fs.writeFileSync(envDockerfilePath, "COPY .env /tmp/env\n", "utf8");
+    fs.writeFileSync(secretDockerfilePath, "COPY secrets/token.json /tmp/token\n", "utf8");
+
+    expect(() => directDockerfileBaseCopySources(envDockerfilePath)).toThrow(
+      "Unsupported .dockerignore-secret Dockerfile.base COPY source",
+    );
+    expect(() => directDockerfileBaseCopySources(secretDockerfilePath)).toThrow(
+      "Unsupported .dockerignore-secret Dockerfile.base COPY source",
+    );
+  });
 });
