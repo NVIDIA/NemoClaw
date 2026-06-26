@@ -199,6 +199,11 @@ main() {
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
     exit 1
   fi
+  if ! command -v perl >/dev/null 2>&1; then
+    fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
 
   local probe_output
   if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then

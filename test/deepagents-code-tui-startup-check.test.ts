@@ -17,11 +17,15 @@ const tuiStartupCheckPath = path.join(
   "checks",
   "10-deepagents-code-tui-startup.sh",
 );
+const tuiStartupCheckSource = fs
+  .readFileSync(tuiStartupCheckPath, "utf8")
+  .replace('\nif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then\n  main "$@"\nfi\n', "\n");
 
 function runTuiStartupCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
-  return execFileSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", tuiStartupCheckPath], {
+  return execFileSync("bash", ["-s"], {
     encoding: "utf8",
     env: { ...process.env, ...env },
+    input: `${tuiStartupCheckSource}\n${snippet}\n`,
   });
 }
 
@@ -29,9 +33,10 @@ function runTuiStartupCheckHelperResult(
   snippet: string,
   env: NodeJS.ProcessEnv = {},
 ): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", tuiStartupCheckPath], {
+  return spawnSync("bash", ["-s"], {
     encoding: "utf8",
     env: { ...process.env, ...env },
+    input: `${tuiStartupCheckSource}\n${snippet}\n`,
   });
 }
 
