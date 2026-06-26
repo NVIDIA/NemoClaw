@@ -704,17 +704,9 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
 }
 
 function agentReplyContainsToken(reply: string, expected: string): boolean {
+  const normalizedReply = reply.replace(/\s+/gu, "").toUpperCase();
   const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
-  const tokenPattern = normalizedExpected
-    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-    .split("")
-    .join("\\s*");
-  return (
-    normalizedExpected.length > 0 &&
-    new RegExp(String.raw`(^|[^\p{L}\p{N}_])${tokenPattern}(?=$|[^\p{L}\p{N}_])`, "u").test(
-      reply.toUpperCase(),
-    )
-  );
+  return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
 }
 
 function parseOpenClawAgentText(raw: string): string {
@@ -814,7 +806,9 @@ exit "$rc"
 
 test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", () => {
   expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
-  expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(true);
+  expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(false);
+  expect(agentReplyContainsToken("the answer is PONG", "PONG")).toBe(false);
+  expect(agentReplyContainsToken("PONG because the route works", "PONG")).toBe(false);
   expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
   expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
   expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);

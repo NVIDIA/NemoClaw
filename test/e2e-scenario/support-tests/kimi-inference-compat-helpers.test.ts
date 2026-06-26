@@ -101,7 +101,7 @@ describe("Kimi inference compatibility mode selection", () => {
     const script = buildKimiTrajectoryCheckScript(false);
     expect(script).toContain("strict_mock = False");
     expect(script).toContain("min_metas = 3 if strict_mock else 1");
-    expect(script).toContain("combined shell command remains");
+    expect(script).toContain("unsafe source command remains");
 
     assertKimiTrajectorySummary({
       errors: [],
@@ -117,7 +117,16 @@ describe("Kimi inference compatibility mode selection", () => {
   });
 
   it("rejects unsafe or malformed source commands in both mock and public trajectory summaries", () => {
-    for (const sourceCommands of [["hostname; date; uptime"], ["hostname | date"], [null]]) {
+    for (const sourceCommands of [
+      ["hostname; date; uptime"],
+      ["hostname | date"],
+      ["hostname $(date)"],
+      ["hostname `date`"],
+      ["hostname > /tmp/out"],
+      ["cat < /etc/passwd"],
+      ["whoami"],
+      [null],
+    ]) {
       expect(() =>
         assertKimiTrajectorySummary({
           errors: [],

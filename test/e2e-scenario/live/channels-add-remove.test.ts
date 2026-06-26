@@ -498,8 +498,8 @@ liveTest(
     expectHostTelegramPlan("removed", "after channels remove");
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
-      artifactName: "phase-5-rebuild-after-remove-without-telegram-env",
-      env: baseEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
+      artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
+      env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,
     });
