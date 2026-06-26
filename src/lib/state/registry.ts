@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type { InferenceSelection } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
 
@@ -61,12 +63,9 @@ export interface SandboxGpuProofResult {
   at: string;
 }
 
-export interface SandboxEntry {
+export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   createdAt?: string;
-  model?: string | null;
-  nimContainer?: string | null;
-  provider?: string | null;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -422,9 +421,7 @@ export function registerSandbox(entry: SandboxEntry): void {
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
-      model: entry.model || null,
-      nimContainer: entry.nimContainer || null,
-      provider: entry.provider || null,
+      ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,

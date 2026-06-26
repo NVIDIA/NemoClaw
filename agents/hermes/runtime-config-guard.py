@@ -9,22 +9,20 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
+import json
 import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-PROVIDER_PLACEHOLDER_KEYS = (
-    "TELEGRAM_BOT_TOKEN",
-    "DISCORD_BOT_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-)
+BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 
 
 class UnsafePathError(RuntimeError):
@@ -352,6 +350,111 @@ def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str
     return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
 
 
+def _has_env_control_chars(value: str) -> bool:
+    return "\x00" in value or "\r" in value or "\n" in value
+
+
+def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | None) -> None:
+    if not boundary_validator_path:
+        raise UnsafePathError("Hermes provider placeholder refresh requires the secret-boundary validator")
+    fd, temp_path = tempfile.mkstemp(prefix="hermes-env-boundary-", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+        try:
+            result = subprocess.run(
+                [sys.executable, boundary_validator_path, "env-file", temp_path],
+                check=False,
+                timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
+        except OSError as exc:
+            raise UnsafePathError(f"Hermes secret-boundary validator failed: {exc}") from exc
+        if result.returncode != 0:
+            raise UnsafePathError(
+                "Hermes provider placeholder refresh would violate the secret boundary"
+            )
+    finally:
+        if fd != -1:
+            os.close(fd)
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            # Temp file may already be removed; cleanup should remain best-effort.
+            pass
+
+
+def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str, tuple[str, str]]:
+    if not runtime_plan_path:
+        return {}
+    try:
+        runtime_plan_text, _runtime_plan_snapshot = _read_text(runtime_plan_path)
+    except FileNotFoundError:
+        return {}
+    try:
+        plan = json.loads(runtime_plan_text)
+    except Exception as exc:
+        raise UnsafePathError(f"messaging runtime plan is invalid: {exc}") from exc
+    if not isinstance(plan, dict):
+        raise UnsafePathError("messaging runtime plan must be an object")
+
+    disabled_channels = {
+        channel_id
+        for channel_id in plan.get("disabledChannels", [])
+        if isinstance(channel_id, str)
+    }
+    active_channel_ids: set[str] = set()
+    for channel in plan.get("channels", []):
+        if not isinstance(channel, dict):
+            continue
+        channel_id = channel.get("channelId")
+        if (
+            isinstance(channel_id, str)
+            and channel.get("active") is True
+            and channel.get("disabled") is not True
+            and channel_id not in disabled_channels
+        ):
+            active_channel_ids.add(channel_id)
+
+    runtime_setup = plan.get("runtimeSetup") or {}
+    if not isinstance(runtime_setup, dict):
+        raise UnsafePathError("messaging runtime plan runtimeSetup must be an object")
+    aliases = runtime_setup.get("envAliases", [])
+    if not isinstance(aliases, list):
+        raise UnsafePathError("messaging runtime plan runtimeSetup.envAliases must be a list")
+
+    replacements: dict[str, tuple[str, str]] = {}
+    for alias in aliases:
+        if not isinstance(alias, dict):
+            raise UnsafePathError("messaging runtime plan envAliases entries must be objects")
+        channel_id = alias.get("channelId")
+        if not isinstance(channel_id, str) or channel_id not in active_channel_ids:
+            continue
+        env_key = alias.get("envKey")
+        pattern = alias.get("match")
+        value = alias.get("value")
+        message = alias.get("message") or ""
+        if (
+            not isinstance(env_key, str)
+            or not isinstance(pattern, str)
+            or not isinstance(value, str)
+            or not isinstance(message, str)
+            or env_key in replacements
+        ):
+            continue
+        if _has_env_control_chars(value) or _has_env_control_chars(message):
+            raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise UnsafePathError(f"messaging runtime plan env alias regex is invalid: {exc}") from exc
+        if compiled.search(os.environ.get(env_key, "")):
+            replacements[env_key] = (value, message)
+    return replacements
+
+
 def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     env_path = os.path.join(hermes_dir, ".env")
     if not os.path.exists(env_path):
@@ -395,21 +498,21 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     print("minted=1")
 
 
-def provider_placeholders(hermes_dir: str, hash_file: str, mode: str) -> None:
+def provider_placeholders(
+    hermes_dir: str,
+    hash_file: str,
+    mode: str,
+    runtime_plan_path: str | None,
+    boundary_validator_path: str | None,
+) -> None:
     env_path = os.path.join(hermes_dir, ".env")
     if not os.path.exists(env_path):
         return
 
-    replacements = {
-        key: normalized
-        for key in PROVIDER_PLACEHOLDER_KEYS
-        if (normalized := _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key))
-    }
-    if not replacements:
-        return
-
+    replacements = _runtime_plan_alias_replacements(runtime_plan_path)
     text, snapshot = _read_text(env_path)
     changed = False
+    refreshed_messages: set[str] = set()
     updated: list[str] = []
     for line in text.splitlines(keepends=True):
         parsed = _parse_env_assignment(line)
@@ -417,15 +520,25 @@ def provider_placeholders(hermes_dir: str, hash_file: str, mode: str) -> None:
             updated.append(line)
             continue
         prefix, key, _value = parsed
+        if key not in replacements:
+            normalized = _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key)
+            if normalized:
+                replacements[key] = (normalized, "")
         if key in replacements:
-            new_line = f"{prefix}{key}={replacements[key]}\n"
+            replacement, message = replacements[key]
+            new_line = f"{prefix}{key}={replacement}\n"
             updated.append(new_line)
-            changed = changed or new_line != line
+            if new_line != line:
+                changed = True
+                if message:
+                    refreshed_messages.add(message)
             continue
         updated.append(line)
 
     if not changed:
         return
+
+    _validate_env_text_with_boundary("".join(updated), boundary_validator_path)
 
     try:
         _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
@@ -439,6 +552,8 @@ def provider_placeholders(hermes_dir: str, hash_file: str, mode: str) -> None:
             )
             return
         raise
+    for message in sorted(refreshed_messages):
+        print(message, file=sys.stderr)
     print("[config] Refreshed Hermes provider placeholders from OpenShell runtime env", file=sys.stderr)
 
 
@@ -447,6 +562,8 @@ def main() -> int:
     parser.add_argument("action", choices=("ensure-api-key", "refresh-hashes", "provider-placeholders"))
     parser.add_argument("--hermes-dir", required=True)
     parser.add_argument("--hash-file", required=True)
+    parser.add_argument("--runtime-plan", default="")
+    parser.add_argument("--boundary-validator", default="")
     parser.add_argument("--mode", choices=("strict", "compat"), default="strict")
     args = parser.parse_args()
 
@@ -456,7 +573,13 @@ def main() -> int:
         elif args.action == "refresh-hashes":
             refresh_hashes(args.hermes_dir, args.hash_file, args.mode)
         elif args.action == "provider-placeholders":
-            provider_placeholders(args.hermes_dir, args.hash_file, args.mode)
+            provider_placeholders(
+                args.hermes_dir,
+                args.hash_file,
+                args.mode,
+                args.runtime_plan,
+                args.boundary_validator,
+            )
     except UnsafePathError as exc:
         _die(str(exc))
     except OSError as exc:

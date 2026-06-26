@@ -36,8 +36,14 @@ import {
 } from "../advisors/session.mts";
 
 const root = process.cwd();
+export const DEFAULT_ADVISOR_COMMENT_MARKER = "<!-- nemoclaw-pr-review-advisor -->";
+export const DEFAULT_ADVISOR_WORKFLOW_NAME = "PR Review / Advisor";
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
-const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
+const ADVISOR_MODEL = process.env.PR_REVIEW_ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL;
+const ADVISOR_COMMENT_MARKER =
+  process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || DEFAULT_ADVISOR_COMMENT_MARKER;
+const ADVISOR_WORKFLOW_NAME =
+  process.env.PR_REVIEW_ADVISOR_WORKFLOW_NAME || DEFAULT_ADVISOR_WORKFLOW_NAME;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
 const OPEN_PR_OVERLAP_LIMIT = 80;
 const OPEN_PR_OVERLAP_CONCURRENCY = 6;
@@ -341,7 +347,9 @@ async function main(): Promise<void> {
     writeUnavailableArtifacts(artifacts, metadata, reason, false);
 
   if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0") {
-    writeUnavailable("PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
+    writeUnavailable(
+      process.env.PR_REVIEW_ADVISOR_UNAVAILABLE_REASON || "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0",
+    );
     process.exit(0);
   }
 
@@ -534,6 +542,8 @@ async function runAdvisorConversation(
     timeoutMs: options.timeoutMs,
     heartbeatMs: options.heartbeatMs,
     maxCaptureBytes: options.maxCaptureBytes,
+    provider: ADVISOR_PROVIDER,
+    modelId: ADVISOR_MODEL,
     credentialEnv: ADVISOR_CREDENTIAL_ENV,
     logPrefix: options.logPrefix,
     logProgress,
@@ -1131,6 +1141,7 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
       repo,
       token,
       issueComments,
+      { marker: ADVISOR_COMMENT_MARKER, workflowName: ADVISOR_WORKFLOW_NAME },
     );
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
@@ -1277,18 +1288,25 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
 export function extractPreviousAdvisorReview(
   issueComments: unknown[],
   trustedCommentIds: ReadonlySet<string>,
+  options: AdvisorReviewProvenanceOptions = {},
 ): PreviousAdvisorReview | null {
-  const candidates = previousAdvisorCandidates(issueComments).filter((candidate) =>
-    trustedCommentIds.has(candidate.metadata.commentId),
+  const candidates = previousAdvisorCandidates(issueComments, advisorCommentMarker(options)).filter(
+    (candidate) => trustedCommentIds.has(candidate.metadata.commentId),
   );
   const candidate = candidates.at(-1);
   return candidate ? { headSha: candidate.metadata.headSha, body: candidate.body } : null;
 }
 
+export type AdvisorReviewProvenanceOptions = {
+  marker?: string;
+  workflowName?: string;
+};
+
 export async function collectTrustedPreviousAdvisorReview(
   repo: string,
   token: string,
   issueComments: unknown[],
+  options: AdvisorReviewProvenanceOptions = {},
 ): Promise<PreviousAdvisorReview | null> {
   // Kept with the deterministic context collector for now: the provenance
   // decision depends on GitHub issue comments, Actions-run metadata, and the
@@ -1306,14 +1324,16 @@ export async function collectTrustedPreviousAdvisorReview(
   // the REST API does not currently expose. Remove this local provenance check
   // only if such a stronger ownership signal becomes available.
 
-  const candidates = previousAdvisorCandidates(issueComments);
+  const marker = advisorCommentMarker(options);
+  const workflowName = advisorWorkflowName(options);
+  const candidates = previousAdvisorCandidates(issueComments, marker);
   const trustedCommentIds = new Set<string>();
   for (const candidate of candidates) {
-    if (await isTrustedAdvisorRun(repo, token, candidate)) {
+    if (await isTrustedAdvisorRun(repo, token, candidate, workflowName)) {
       trustedCommentIds.add(candidate.metadata.commentId);
     }
   }
-  return extractPreviousAdvisorReview(issueComments, trustedCommentIds);
+  return extractPreviousAdvisorReview(issueComments, trustedCommentIds, { marker });
 }
 
 type AdvisorCommentMetadata = {
@@ -1330,11 +1350,14 @@ type PreviousAdvisorCandidate = {
   metadata: AdvisorCommentMetadata;
 };
 
-function previousAdvisorCandidates(issueComments: unknown[]): PreviousAdvisorCandidate[] {
+function previousAdvisorCandidates(
+  issueComments: unknown[],
+  marker: string,
+): PreviousAdvisorCandidate[] {
   return issueComments.flatMap((comment) => {
     if (!hasAdvisorCommentAuthor(comment)) return [];
     const body = stringOrUndefined(getPath<unknown>(comment, ["body"]));
-    if (!body?.includes("<!-- nemoclaw-pr-review-advisor -->")) return [];
+    if (!body?.includes(marker)) return [];
     const metadata = advisorHiddenMetadata(body);
     const commentId = getPath<number>(comment, ["id"]);
     const updatedAt = stringOrUndefined(getPath<unknown>(comment, ["updated_at"]));
@@ -1376,10 +1399,19 @@ function hasAdvisorCommentAuthor(comment: unknown): boolean {
   return author === "github-actions[bot]";
 }
 
+function advisorCommentMarker(options: AdvisorReviewProvenanceOptions): string {
+  return options.marker || DEFAULT_ADVISOR_COMMENT_MARKER;
+}
+
+function advisorWorkflowName(options: AdvisorReviewProvenanceOptions): string {
+  return options.workflowName || DEFAULT_ADVISOR_WORKFLOW_NAME;
+}
+
 async function isTrustedAdvisorRun(
   repo: string,
   token: string,
   candidate: PreviousAdvisorCandidate,
+  workflowName: string,
 ): Promise<boolean> {
   try {
     const run = await githubRest<unknown>(
@@ -1396,7 +1428,7 @@ async function isTrustedAdvisorRun(
     const updatedAt = stringOrUndefined(getPath<unknown>(run, ["updated_at"]));
     if (!startedAt || !updatedAt) return false;
     return (
-      name === "PR Review / Advisor" &&
+      name === workflowName &&
       headSha === candidate.metadata.headSha &&
       event === "pull_request" &&
       String(runAttempt) === candidate.metadata.runAttempt &&

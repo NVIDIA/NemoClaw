@@ -191,4 +191,39 @@ describe("mergeTailLogLines", () => {
   it("appends a trailing newline so callers can pipe through process.stdout.write", () => {
     expect(mergeTailLogLines(["[1] a"], 3).endsWith("\n")).toBe(true);
   });
+
+  it("preserves sparse-source content when a chatty source dominates by timestamp", () => {
+    const gatewayBoot = [
+      "[1779488800.000] [gateway] starting HTTP server",
+      "[1779488815.000] [telegram] [default] bridge did not start within 15s",
+    ].join("\n");
+    const openshellDense = Array.from(
+      { length: 200 },
+      (_v, i) => `[${1779488900 + i}.000] [sandbox] [INFO] log line ${i}`,
+    ).join("\n");
+    const merged = mergeTailLogLines([`${gatewayBoot}\n`, `${openshellDense}\n`], 200);
+    expect(merged).toContain("bridge did not start within 15s");
+    expect(merged).toContain("starting HTTP server");
+  });
+
+  it("inherits a preceding timestamp for an untimestamped diagnostic line in the same source", () => {
+    const gateway = [
+      "[1779488800.000] [gateway] starting provider",
+      "[telegram] [default] bridge did not start within 15s",
+    ].join("\n");
+    const openshellLater = Array.from(
+      { length: 50 },
+      (_v, i) => `[${1779489000 + i}.000] [sandbox] [INFO] line ${i}`,
+    ).join("\n");
+    const merged = mergeTailLogLines([`${gateway}\n`, `${openshellLater}\n`], 50);
+    expect(merged).toContain("bridge did not start within 15s");
+  });
+
+  it("caps the total output at maxLines with two chatty sources", () => {
+    const gateway = Array.from({ length: 500 }, (_v, i) => `[${1000 + i}.000] g${i}`).join("\n");
+    const openshell = Array.from({ length: 500 }, (_v, i) => `[${2000 + i}.000] o${i}`).join("\n");
+    const merged = mergeTailLogLines([`${gateway}\n`, `${openshell}\n`], 100);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines.length).toBeLessThanOrEqual(100);
+  });
 });

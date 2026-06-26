@@ -1,12 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { createRequire } from "node:module";
 
 import {
   buildCreatedSandboxRegistryEntry,
   registerCreatedSandbox,
+  selection,
 } from "../../../dist/lib/onboard/sandbox-registration";
+
+const requireDist = createRequire(import.meta.url);
+const onboardSession = requireDist("../../../dist/lib/state/onboard-session.js");
 
 const runtimeFields = {
   gpuEnabled: true,
@@ -27,8 +33,14 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
-      model: "llama",
-      provider: "openai-compatible",
+      inferenceSelection: {
+        model: "llama",
+        provider: "openai-compatible",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        nimContainer: null,
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: true,
@@ -49,6 +61,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       name: "demo",
       model: "llama",
       provider: "openai-compatible",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       policies: ["discord", "slack"],
       hermesToolGateways: ["filesystem"],
@@ -74,8 +89,14 @@ describe("buildCreatedSandboxRegistryEntry", () => {
   it("skips stale messaging plans without writing legacy messaging fields", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
-      model: "",
-      provider: "",
+      inferenceSelection: {
+        model: "",
+        provider: "",
+        endpointUrl: "",
+        credentialEnv: "",
+        preferredInferenceApi: "",
+        nimContainer: "",
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: false,
@@ -94,6 +115,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(entry.model).toBeNull();
     expect(entry.provider).toBeNull();
+    expect(entry.endpointUrl).toBeNull();
+    expect(entry.credentialEnv).toBeNull();
+    expect(entry.preferredInferenceApi).toBeNull();
+    expect(entry.nimContainer).toBeNull();
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
     expect(rawEntry.messagingChannelConfig).toBeUndefined();
@@ -105,6 +130,79 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.hermesDashboardInternalPort).toBeUndefined();
     expect(entry.hermesDashboardTui).toBeUndefined();
   });
+
+  it("normalizes invalid preferred inference API values", () => {
+    const entry = buildCreatedSandboxRegistryEntry({
+      sandboxName: "demo",
+      inferenceSelection: {
+        model: "llama",
+        provider: "compatible-endpoint",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "chat",
+        nimContainer: null,
+      },
+      runtimeFields,
+      agent: null,
+      agentVersionKnown: true,
+      imageTag: null,
+      appliedPolicies: [],
+      plannedMessagingState: undefined,
+      hermesToolGateways: [],
+      hermesDashboardState: { enabled: false, config: null },
+      dashboardPort: 18789,
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    });
+
+    expect(entry.preferredInferenceApi).toBeNull();
+  });
+});
+
+describe("selection", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("does not borrow endpoint credential or NIM metadata from an unrelated session", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "other",
+      provider: "compatible-endpoint",
+      model: "llama",
+      endpointUrl: "https://wrong.test/v1",
+      credentialEnv: "WRONG_KEY",
+      nimContainer: "wrong",
+    });
+
+    expect(selection("demo", "compatible-endpoint", "llama", "openai-completions")).toEqual({
+      provider: "compatible-endpoint",
+      model: "llama",
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    });
+  });
+
+  it("borrows session-scoped metadata only when sandbox provider and model match", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "demo",
+      provider: "compatible-endpoint",
+      model: "llama",
+      endpointUrl: "https://right.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      nimContainer: "nim-right",
+    });
+
+    expect(selection("demo", "compatible-endpoint", "llama", "openai-completions")).toEqual({
+      provider: "compatible-endpoint",
+      model: "llama",
+      endpointUrl: "https://right.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "nim-right",
+    });
+  });
 });
 
 describe("registerCreatedSandbox", () => {
@@ -113,8 +211,14 @@ describe("registerCreatedSandbox", () => {
 
     const entry = registerCreatedSandbox({
       sandboxName: "demo",
-      model: "llama",
-      provider: "openai-compatible",
+      inferenceSelection: {
+        model: "llama",
+        provider: "openai-compatible",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: true,
