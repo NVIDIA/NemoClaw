@@ -688,6 +688,41 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("rebuilds a non-matching-session custom endpoint from explicit target-scoped env (#4497/#5869)", async () => {
+    const restoreEnv = snapshotEnv([
+      "COMPATIBLE_API_KEY",
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+    process.env.COMPATIBLE_API_KEY = "compat-key";
+    process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+    process.env.NEMOCLAW_PROVIDER = "custom";
+    process.env.NEMOCLAW_ENDPOINT_URL = "https://explicit.example.test/v1?x=1#frag";
+    process.env.NEMOCLAW_MODEL = "custom-model";
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        sandboxEntry: { provider: "compatible-endpoint", model: "custom-model" },
+        sessionSandboxName: "some-other-sandbox",
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.onboardSpy).toHaveBeenCalled();
+      expect(harness.session.endpointUrl).toBe("https://explicit.example.test/v1");
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("aborts before backup/delete when a custom-endpoint target has no matching session (#5735)", async () => {
     // Installer flow: the loaded onboard session belongs to a different
     // (just-created) sandbox, and the target uses a custom OpenAI-compatible

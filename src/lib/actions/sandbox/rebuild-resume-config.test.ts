@@ -23,6 +23,21 @@ function entry(overrides: Record<string, unknown> = {}) {
   return { name: "alpha", provider: null, model: null, nimContainer: null, ...overrides };
 }
 
+function snapshotEnv(names: readonly string[]): () => void {
+  const saved = names.map((name) => [name, process.env[name]] as const);
+  return () => {
+    for (const [name] of saved) {
+      delete process.env[name];
+    }
+    Object.assign(
+      process.env,
+      Object.fromEntries(
+        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
+    );
+  };
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -209,7 +224,7 @@ describe("prepareRebuildResumeConfig", () => {
     expect(typeof config?.endpointUrl).toBe("string");
   });
 
-  it("fails closed for a custom endpoint with a non-matching session and no registry endpoint", () => {
+  it("fails closed for a custom endpoint with a non-matching session and no registry or explicit endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
     expect(() =>
       prepareRebuildResumeConfig(
@@ -220,6 +235,62 @@ describe("prepareRebuildResumeConfig", () => {
         throwingBail,
       ),
     ).toThrow("Cannot determine recreate endpoint");
+  });
+
+  it("uses an explicit target-scoped endpoint for a custom endpoint with a non-matching session", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    const restore = snapshotEnv([
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+      process.env.NEMOCLAW_PROVIDER = "custom";
+      process.env.NEMOCLAW_ENDPOINT_URL = " http://127.0.0.1:19999/v1/?x=1#frag ";
+      process.env.NEMOCLAW_MODEL = "m";
+      const config = prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-endpoint", model: "m" }),
+        null,
+        noopLog,
+        throwingBail,
+      );
+      expect(config).toMatchObject({
+        provider: "compatible-endpoint",
+        model: "m",
+        pinEndpoint: true,
+        endpointUrl: "http://127.0.0.1:19999/v1",
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not use an explicit endpoint when its sandbox name targets another sandbox", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    const restore = snapshotEnv([
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+    ]);
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "beta";
+      process.env.NEMOCLAW_PROVIDER = "custom";
+      process.env.NEMOCLAW_ENDPOINT_URL = "http://127.0.0.1:19999/v1";
+      expect(() =>
+        prepareRebuildResumeConfig(
+          "alpha",
+          entry({ provider: "compatible-endpoint", model: "m" }),
+          null,
+          noopLog,
+          throwingBail,
+        ),
+      ).toThrow("Cannot determine recreate endpoint");
+    } finally {
+      restore();
+    }
   });
 
   it("recreates custom endpoints from durable registry metadata when the session is unrelated", () => {
