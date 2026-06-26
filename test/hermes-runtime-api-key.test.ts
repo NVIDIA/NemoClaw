@@ -155,11 +155,12 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   fs.writeFileSync(configPath, "model:\n  default: test-model\n");
   fs.writeFileSync(envPath, opts.envFile, { mode: 0o640 });
   writeHermesHash(hashPath, configPath, envPath);
-  if (opts.runtimePlan !== undefined) {
+  opts.runtimePlan === undefined ||
     fs.writeFileSync(runtimePlanPath, `${JSON.stringify(opts.runtimePlan, null, 2)}\n`);
-  }
 
   try {
+    const runtimePlanArgs =
+      opts.runtimePlan === undefined ? [] : ["--runtime-plan", runtimePlanPath];
     const args = [
       RUNTIME_CONFIG_GUARD,
       "provider-placeholders",
@@ -169,10 +170,8 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
       hashPath,
       "--mode",
       "strict",
+      ...runtimePlanArgs,
     ];
-    if (opts.runtimePlan !== undefined) {
-      args.push("--runtime-plan", runtimePlanPath);
-    }
     const result = spawnSync("python3", args, {
       encoding: "utf-8",
       timeout: 5000,
