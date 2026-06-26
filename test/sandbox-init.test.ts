@@ -697,8 +697,8 @@ EOF
       }
     });
 
-    it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
-      const nprocLimit = process.platform === "darwin" ? 4000 : 512;
+    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
+      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
       const { stdout } = runWithLib(
         [
           `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,

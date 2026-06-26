@@ -3,6 +3,23 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+const slackRuntimeEnvAliases = [
+  {
+    envKey: "SLACK_BOT_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    message:
+      "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+  {
+    envKey: "SLACK_APP_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+    value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    message:
+      "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+] as const;
+
 export const slackManifest = {
   schemaVersion: 1,
   id: "slack",
@@ -152,22 +169,7 @@ export const slackManifest = {
         configKeys: ["slack"],
         logPatterns: ["slack"],
       },
-      envAliases: [
-        {
-          envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          message:
-            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-        {
-          envKey: "SLACK_APP_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-          message:
-            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-      ],
+      envAliases: slackRuntimeEnvAliases,
       nodePreloads: [
         {
           module: "slack-channel-guard",
@@ -186,6 +188,9 @@ export const slackManifest = {
           exitCode: 78,
         },
       ],
+    },
+    hermes: {
+      envAliases: slackRuntimeEnvAliases,
     },
   },
   agentPackages: [

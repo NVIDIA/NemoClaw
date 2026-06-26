@@ -68,6 +68,24 @@ nemohermes resources [--json]
 
 If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
 
+### `nemohermes agents list`
+
+List the installed agent runtimes that can be selected with `nemohermes onboard --agent <name>`.
+Use this global command when you need valid runtime names before creating or recreating a sandbox.
+It lists runtime names with the descriptions from their installed manifests.
+
+```bash
+nemohermes agents list
+```
+
+Expected output:
+
+```text
+openclaw                   Gateway-based AI agent with plugin ecosystem (openclaw.ai)
+hermes                     Self-improving AI agent with learning loop (Nous Research)
+langchain-deepagents-code  Terminal coding agent built on the Deep Agents SDK
+```
+
 ### `nemohermes onboard`
 
 Run the interactive setup wizard (recommended for new installs).
@@ -192,6 +210,7 @@ The CLI rejects names that do not match these rules.
 It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant`.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
+The `nemohermes onboard --help` output lists installed runtime names inline, and `nemohermes agents list` shows the same runtimes with manifest descriptions.
 
 Use `--control-ui-port <N>` to choose the host dashboard port for a sandbox.
 The value must be an integer from `1024` through `65535`.
