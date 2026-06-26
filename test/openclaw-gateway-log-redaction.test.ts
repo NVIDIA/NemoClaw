@@ -208,6 +208,25 @@ fi
     expect(redacted).not.toContain(sandboxToken);
   });
 
+  it("clears stale upload artifacts before early pre-Vitest wrapper failures", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-clear-"));
+    const output = path.join(tmp, "gateway.redacted.log");
+    const staleRaw = path.join(tmp, "gateway.redacted.log.raw.ABCDEF");
+    const staleTmp = path.join(tmp, "gateway.redacted.log.tmp.ABCDEF");
+    fs.writeFileSync(output, "stale raw secret artifact", "utf8");
+    fs.writeFileSync(staleRaw, "stale raw sandbox log", "utf8");
+    fs.writeFileSync(staleTmp, "stale partially redacted log", "utf8");
+
+    const result = spawnSync("bash", [EXPORT_REDACTED_GATEWAY_LOG, "--clear", output], {
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(output)).toBe(false);
+    expect(fs.existsSync(staleRaw)).toBe(false);
+    expect(fs.existsSync(staleTmp)).toBe(false);
+  });
+
   it("removes stale output and raw logs when redaction fails", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-log-fail-closed-"));
     const output = path.join(tmp, "gateway.redacted.log");

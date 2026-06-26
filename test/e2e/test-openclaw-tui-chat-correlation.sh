@@ -19,6 +19,11 @@ SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-openclaw-tui-correlation}"
 INSTALL_LOG="${E2E_OPENCLAW_TUI_CORRELATION_INSTALL_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log}"
 GATEWAY_LOG_EXPORT="${E2E_OPENCLAW_TUI_CORRELATION_GATEWAY_LOG:-/tmp/nemoclaw-e2e-openclaw-tui-correlation-gateway.log}"
 
+# The workflow uploads GATEWAY_LOG_EXPORT on any job failure. Clear that path
+# before install/onboard steps so early pre-Vitest failures cannot publish a
+# stale or hand-created raw diagnostic from a previous attempt.
+bash "${SCRIPT_DIR}/lib/export-redacted-openclaw-gateway-log.sh" --clear "$GATEWAY_LOG_EXPORT"
+
 # shellcheck disable=SC2329 # invoked indirectly by the EXIT trap
 cleanup() {
   if [ "${NEMOCLAW_E2E_SKIP_CLEANUP:-0}" = "1" ]; then

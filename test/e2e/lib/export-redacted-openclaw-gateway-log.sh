@@ -5,6 +5,12 @@
 # Export the OpenClaw gateway log from a live sandbox, redact it, and fail
 # closed if redaction fails so CI never prints/uploads stale or raw diagnostics.
 
+nemoclaw_clear_redacted_openclaw_gateway_log_artifacts() {
+  local output_file="$1"
+  rm -f "$output_file"
+  rm -f "${output_file}.raw".* "${output_file}.tmp".* 2>/dev/null || true
+}
+
 nemoclaw_export_redacted_openclaw_gateway_log() {
   local sandbox_name="$1"
   local output_file="$2"
@@ -12,8 +18,8 @@ nemoclaw_export_redacted_openclaw_gateway_log() {
   local raw_file
   local sandbox_gateway_token
 
+  nemoclaw_clear_redacted_openclaw_gateway_log_artifacts "$output_file"
   raw_file="$(mktemp "${output_file}.raw.XXXXXX")"
-  rm -f "$output_file"
 
   sandbox_gateway_token="$(
     openshell sandbox exec --name "$sandbox_name" -- sh -lc \
@@ -33,11 +39,20 @@ nemoclaw_export_redacted_openclaw_gateway_log() {
     return 0
   fi
 
-  rm -f "$raw_file" "$output_file"
+  rm -f "$raw_file"
+  nemoclaw_clear_redacted_openclaw_gateway_log_artifacts "$output_file"
   return 1
 }
 
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  if [ "${1:-}" = "--clear" ]; then
+    if [ "$#" -ne 2 ]; then
+      echo "usage: $0 --clear <redacted-output>" >&2
+      exit 2
+    fi
+    nemoclaw_clear_redacted_openclaw_gateway_log_artifacts "$2"
+    exit 0
+  fi
   if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
     echo "usage: $0 <sandbox-name> <redacted-output> [redactor-script]" >&2
     exit 2

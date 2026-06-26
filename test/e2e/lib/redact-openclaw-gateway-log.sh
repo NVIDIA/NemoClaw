@@ -17,6 +17,7 @@ nemoclaw_redact_openclaw_gateway_log() (
   local tmp_file
 
   tmp_file="$(mktemp "${output_file}.tmp.XXXXXX")"
+  # shellcheck disable=SC2329 # invoked indirectly by the trap below
   cleanup_failed_redaction() {
     rm -f "$tmp_file" "$output_file"
   }
