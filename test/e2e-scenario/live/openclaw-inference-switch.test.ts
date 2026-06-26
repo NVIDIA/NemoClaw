@@ -26,8 +26,8 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -90,13 +90,26 @@ interface OpenClawConfig {
 }
 
 interface SandboxRegistry {
-  sandboxes?: Record<string, { provider?: unknown; model?: unknown }>;
+  sandboxes?: Record<
+    string,
+    {
+      provider?: unknown;
+      model?: unknown;
+      endpointUrl?: unknown;
+      credentialEnv?: unknown;
+      preferredInferenceApi?: unknown;
+      nimContainer?: unknown;
+    }
+  >;
 }
 
 interface OnboardSession {
   sandboxName?: unknown;
   provider?: unknown;
   model?: unknown;
+  endpointUrl?: unknown;
+  credentialEnv?: unknown;
+  preferredInferenceApi?: unknown;
 }
 
 interface MockAnthropicProvider {
@@ -368,9 +381,9 @@ async function ensureCompatibleAnthropicSwitchProvider(
   host: HostCliClient,
   home: string,
   mockProvider: MockAnthropicProvider | undefined,
-): Promise<void> {
-  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return;
-  if (SWITCH_INFERENCE_API !== "anthropic-messages") return;
+): Promise<string | null> {
+  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return null;
+  if (SWITCH_INFERENCE_API !== "anthropic-messages") return null;
 
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mockProvider?.endpointUrl ?? "";
   const apiKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
@@ -401,6 +414,7 @@ async function ensureCompatibleAnthropicSwitchProvider(
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(provider.exitCode, resultText(provider)).toBe(0);
+  return endpointUrl;
 }
 
 async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
@@ -436,13 +450,35 @@ async function assertOpenShellRoute(host: HostCliClient, home: string): Promise<
   expect(plain).toContain(`Model: ${SWITCH_MODEL}`);
 }
 
-async function assertRegistryAndSession(home: string): Promise<void> {
+async function assertRegistryAndSession(
+  home: string,
+  options: { hostedEndpointUrl: string; mockProvider?: MockAnthropicProvider },
+): Promise<void> {
   const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
   const registry = JSON.parse(fs.readFileSync(registryPath, "utf8")) as SandboxRegistry;
   const sandbox = registry.sandboxes?.[SANDBOX_NAME];
   expect(sandbox, `sandbox ${SANDBOX_NAME} missing from registry`).toBeTruthy();
   expect(sandbox?.provider).toBe(SWITCH_PROVIDER);
   expect(sandbox?.model).toBe(SWITCH_MODEL);
+  expect(sandbox?.nimContainer).toBeNull();
+  switch (SWITCH_PROVIDER) {
+    case "compatible-endpoint":
+      expect(sandbox?.endpointUrl).toBe(options.hostedEndpointUrl);
+      expect(sandbox?.credentialEnv).toBe("COMPATIBLE_API_KEY");
+      expect(sandbox?.preferredInferenceApi).toBe("openai-completions");
+      break;
+    case "compatible-anthropic-endpoint":
+      expect(sandbox?.endpointUrl).toBe(
+        process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? options.mockProvider?.endpointUrl,
+      );
+      expect(sandbox?.credentialEnv).toBe("COMPATIBLE_ANTHROPIC_API_KEY");
+      expect(sandbox?.preferredInferenceApi).toBe("anthropic-messages");
+      break;
+    default:
+      expect(sandbox?.endpointUrl).toBeNull();
+      expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
+      expect(sandbox?.preferredInferenceApi).toBeNull();
+  }
 
   const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
   const session = JSON.parse(fs.readFileSync(sessionPath, "utf8")) as OnboardSession;
@@ -450,6 +486,14 @@ async function assertRegistryAndSession(home: string): Promise<void> {
   expect(session.sandboxName).toBe(SANDBOX_NAME);
   expect(session.provider).toBe(SWITCH_PROVIDER);
   expect(session.model).toBe(SWITCH_MODEL);
+  switch (SWITCH_PROVIDER) {
+    case "compatible-endpoint":
+      expect(session.preferredInferenceApi).toBe("openai-completions");
+      break;
+    case "compatible-anthropic-endpoint":
+      expect(session.preferredInferenceApi).toBe("anthropic-messages");
+      break;
+  }
 }
 
 async function assertOpenClawConfig(sandbox: SandboxClient, home: string): Promise<void> {
@@ -772,8 +816,19 @@ async function runInferenceSetWithRetry(
   host: HostCliClient,
   home: string,
   redactionValues: string[],
+  switchEndpointUrl: string | null,
 ): Promise<ShellProbeResult> {
   const attempts = parsePositiveIntEnv("NEMOCLAW_SWITCH_SET_ATTEMPTS", 3);
+  const compatibleMetadataArgs = switchEndpointUrl
+    ? [
+        "--endpoint-url",
+        switchEndpointUrl,
+        "--credential-env",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+        "--inference-api",
+        SWITCH_INFERENCE_API,
+      ]
+    : [];
   const args = [
     "inference",
     "set",
@@ -783,6 +838,7 @@ async function runInferenceSetWithRetry(
     SWITCH_MODEL,
     "--sandbox",
     SANDBOX_NAME,
+    ...compatibleMetadataArgs,
   ];
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -900,10 +956,14 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         endpointUrl: mockProvider.endpointUrl,
       });
     }
-    await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
+    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(
+      host,
+      home,
+      mockProvider,
+    );
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
-    const switchResult = await runInferenceSetWithRetry(host, home, [apiKey]);
+    const switchResult = await runInferenceSetWithRetry(host, home, [apiKey], switchEndpointUrl);
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);
@@ -917,7 +977,7 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
 
     await assertOpenShellRoute(host, home);
     await assertOpenClawConfig(sandbox, home);
-    await assertRegistryAndSession(home);
+    await assertRegistryAndSession(home, { hostedEndpointUrl: hosted.endpointUrl, mockProvider });
 
     const inference = await checkSandboxInference(sandbox, home);
     if (inference !== "ok") {

@@ -25,7 +25,7 @@ Refer to [AI Agent Docs](../resources/agent-skills).
 
 ## Install NemoClaw and Onboard an OpenClaw Agent
 
-Download and run the installer script.
+Run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
 
 <Note>
@@ -44,7 +44,7 @@ In non-TTY contexts, such as CI, an SSH command with piped stdin, or a shell scr
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
-Or pass the installer flag through `bash -s`:
+You can also pass the installer flag through `bash -s`.
 
 ```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
@@ -79,7 +79,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
 On DGX Spark and DGX Station, express install selects managed vLLM; DGX Spark uses `qwen3.6-35b-a3b-nvfp4` by default.
-Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, local-inference, and read-only weather presets.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default.
+That tier uses the base sandbox policy plus supported package, model, web-search, local-inference, and read-only weather presets.
 On DGX Spark, express install uses `my-spark-assistant` as the sandbox name unless `NEMOCLAW_SANDBOX_NAME` is already set.
 On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
@@ -116,7 +117,8 @@ The inference provider prompt presents a numbered list.
   Choose [1]:
 ```
 
-Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
+Pick the option that matches where you want inference traffic to go.
+The provider you choose determines the follow-up prompts and the API key environment variable to set.
 For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options).
 Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
 A configured blueprint router profile makes the Model Router option appear.
@@ -169,7 +171,9 @@ For example, if you picked an OpenAI-compatible endpoint, the summary looks like
   Apply this configuration? [Y/n]:
 ```
 
-The default is `Y`, so you can press Enter one time to continue. Answer `n` to abort cleanly, fix the entries, and re-run `nemoclaw onboard`.
+The default is `Y`.
+Press Enter one time to continue.
+Answer `n` to abort cleanly, fix the entries, and re-run `nemoclaw onboard`.
 
 Non-interactive runs (`NEMOCLAW_NON_INTERACTIVE=1`) print the summary for log clarity but skip the prompt.
 
@@ -234,11 +238,12 @@ Manage later
 [INFO]  === Installation complete ===
 ```
 
-If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
+If you picked a different option, the `Model` line shows that provider's model and label instead.
+For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
 ## Run Your First Agent Prompt
 
-You can chat with the agent from the terminal or the browser.
+Chat with the agent from the terminal or the browser.
 
 ### Open the OpenClaw UI in a Browser to Chat with the Agent
 
@@ -269,16 +274,16 @@ openclaw tui
 
 ## Next Steps
 
-Navigate to the following topics to learn more about NemoClaw.
+Use these topics to learn more about NemoClaw.
 
-- [NemoClaw Overview](../about/overview) to learn what NemoClaw is and its capabilities.
-- [Architecture Overview](../about/how-it-works) to understand how NemoClaw works.
-- [Ecosystem](../about/ecosystem) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
+- [NemoClaw Overview](../about/overview) explains what NemoClaw is and what it supports.
+- [Architecture Overview](../about/how-it-works) explains how NemoClaw works.
+- [Ecosystem](../about/ecosystem) explains how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs.
 
-Use the following topics to learn how to use NemoClaw.
+Use these topics to work with NemoClaw.
 
-- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) for port forwards, rebuilds, upgrades, and uninstall.
-- [Inference Options](../inference/inference-options) to use a different model or endpoint.
-- [Network Policies](../network-policy/approve-network-requests) to manage egress approvals.
-- [Troubleshooting](../reference/troubleshooting) for common error messages and resolution steps.
+- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) covers port forwards, rebuilds, upgrades, and uninstall.
+- [Inference Options](../inference/inference-options) explains how to use a different model or endpoint.
+- [Network Policies](../network-policy/approve-network-requests) explains how to manage egress approvals.
+- [Troubleshooting](../reference/troubleshooting) covers common error messages and resolution steps.

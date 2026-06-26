@@ -81,6 +81,63 @@ function requireRunContains(
   }
 }
 
+function requireRunOrders(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex < 0 || afterIndex < 0 || beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must check ${before} before ${after}`,
+    );
+  }
+}
+
+function requireJobEnvValue(
+  errors: string[],
+  job: WorkflowRecord,
+  key: string,
+  expected: string,
+): void {
+  const actual = asRecord(job.env)[key];
+  if (actual !== expected) {
+    errors.push(`review job env.${key} must be ${expected}`);
+  }
+}
+
+function advisorMatrixEntries(errors: string[], reviewJob: WorkflowRecord): WorkflowRecord[] {
+  const advisor = asRecord(asRecord(reviewJob.strategy).matrix).advisor;
+  if (Array.isArray(advisor)) {
+    const entries = advisor.filter((entry) => asRecord(entry) === entry) as WorkflowRecord[];
+    if (entries.length < 2) errors.push("advisor matrix must include at least two lanes");
+    return entries;
+  }
+  errors.push("advisor matrix must declare strategy.matrix.advisor entries");
+  return [];
+}
+
+function requireUniqueAdvisorMatrixField(
+  errors: string[],
+  entries: readonly WorkflowRecord[],
+  field: string,
+): void {
+  const seen = new Set<string>();
+  for (const [index, entry] of entries.entries()) {
+    const value = stringValue(entry[field]).trim();
+    if (!value) {
+      errors.push(`advisor matrix entry ${index + 1} missing ${field}`);
+      continue;
+    }
+    if (seen.has(value)) errors.push(`advisor matrix field ${field} must be unique: ${value}`);
+    seen.add(value);
+  }
+}
+
 export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): string[] {
@@ -102,6 +159,36 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   }
 
   const reviewJob = asRecord(asRecord(workflow.jobs).review);
+  const advisorEntries = advisorMatrixEntries(errors, reviewJob);
+  for (const field of ["model", "artifact_dir", "artifact_name", "comment_marker"]) {
+    requireUniqueAdvisorMatrixField(errors, advisorEntries, field);
+  }
+  requireJobEnvValue(errors, reviewJob, "PR_REVIEW_ADVISOR_MODEL", "${{ matrix.advisor.model }}");
+  requireJobEnvValue(
+    errors,
+    reviewJob,
+    "PR_REVIEW_ADVISOR_ARTIFACT_DIR",
+    "${{ matrix.advisor.artifact_dir }}",
+  );
+  requireJobEnvValue(
+    errors,
+    reviewJob,
+    "PR_REVIEW_ADVISOR_COMMENT_MARKER",
+    "${{ matrix.advisor.comment_marker }}",
+  );
+  requireJobEnvValue(
+    errors,
+    reviewJob,
+    "PR_REVIEW_ADVISOR_COMMENT_TITLE",
+    "${{ matrix.advisor.comment_title }}",
+  );
+  requireJobEnvValue(
+    errors,
+    reviewJob,
+    "PR_REVIEW_ADVISOR_COMMENT_LABEL",
+    "${{ matrix.advisor.comment_label }}",
+  );
+
   const steps = asSteps(reviewJob.steps);
   if (steps.length === 0) errors.push("review job must declare steps");
 
@@ -141,6 +228,11 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   requireRunContains(errors, analyze, 'cd "$ADVISOR_WORKDIR"');
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts");
   requireRunContains(errors, analyze, "$ADVISOR_DIR/tools/pr-review-advisor/schema.json");
+  requireRunContains(errors, analyze, "$PR_REVIEW_ADVISOR_MODEL");
+  requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_SUPPORTED=0");
+  requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_RUN_ANALYSIS=0");
+  requireRunContains(errors, analyze, "PR_REVIEW_ADVISOR_UNAVAILABLE_REASON");
+  requireRunContains(errors, analyze, "trusted main checkout does not yet support");
   if (analyze) {
     const analyzeEnv = asRecord(analyze.env);
     if (
@@ -158,6 +250,16 @@ export function validatePrReviewAdvisorWorkflowBoundary(
 
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
   requireRunContains(errors, comment, "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts");
+  requireRunContains(errors, comment, "PR_REVIEW_ADVISOR_SUPPORTED");
+  requireRunOrders(
+    errors,
+    comment,
+    'if [ "${PR_REVIEW_ADVISOR_SUPPORTED:-1}" = "0" ]',
+    "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts",
+  );
+  requireRunContains(errors, comment, '--marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"');
+  requireRunContains(errors, comment, '--title "$PR_REVIEW_ADVISOR_COMMENT_TITLE"');
+  requireRunContains(errors, comment, '--label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"');
 
   const permissions = asRecord(workflow.permissions);
   if (permissions.contents !== "read") errors.push("workflow permissions.contents must be read");

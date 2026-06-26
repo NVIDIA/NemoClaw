@@ -11,7 +11,7 @@ content:
 ---
 NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
-Any request to an unlisted destination is intercepted by OpenShell, and the operator is prompted to approve or deny it in real time through the TUI.
+OpenShell intercepts any request to an unlisted destination and prompts the operator to approve or deny it in real time through the TUI.
 
 ## Baseline Policy
 
@@ -52,7 +52,7 @@ All endpoints use TLS termination and are enforced at port 443.
 <Note>
 GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
 Apply the `github` preset during onboarding if your agent needs GitHub access.
-See [Customize the Network Policy](../network-policy/customize-network-policy).
+Refer to [Customize the Network Policy](../network-policy/customize-network-policy).
 
 The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, or WhatsApp.
 Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
@@ -95,12 +95,13 @@ Interactive onboarding ignores an invalid environment value and shows the normal
 
 ### Inference
 
-The baseline policy allows only the `local` inference route. External inference
-providers are reached through the OpenShell gateway, not by direct sandbox egress.
+The baseline policy allows only the `local` inference route.
+External inference providers are reached through the OpenShell gateway, not by direct sandbox egress.
 
 ## Operator Approval Flow
 
-When the agent attempts to reach an endpoint not listed in the policy, OpenShell intercepts the request and presents it in the TUI for operator review:
+When the agent attempts to reach an endpoint not listed in the policy, OpenShell intercepts the request and presents it in the TUI for operator review.
+The flow has these steps:
 
 1. The agent makes a network request to an unlisted host.
 2. OpenShell blocks the connection and logs the attempt.

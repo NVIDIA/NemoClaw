@@ -9,8 +9,8 @@ keywords: ["nemoclaw tool calling", "ollama tool calls", "vllm tool-call-parser"
 content:
   type: "troubleshooting"
 ---
-Local inference is useful for privacy, cost control, and offline development, but tool-calling agents place stricter demands on the model server than simple chat.
-The model server must return structured `tool_calls`, not a JSON-looking string inside normal assistant text.
+Local inference supports privacy, cost control, and offline development, but tool-calling agents place stricter demands on the model server than chat-only use.
+The model server must return structured `tool_calls`, not a JSON-shaped string inside normal assistant text.
 
 Use this page when the TUI shows raw JSON such as:
 
@@ -67,7 +67,7 @@ vllm serve /models/Hermes-3-Llama-3.1-8B \
   --port 8000
 ```
 
-For a Docker Compose setup:
+For a Docker Compose setup, use:
 
 ```yaml
 services:
@@ -114,8 +114,7 @@ If the endpoint does not require authentication, set `COMPATIBLE_API_KEY` to any
 NemoClaw-managed sandboxes normally block direct `openclaw config set` writes inside the sandbox because those edits do not survive rebuilds.
 Prefer rerunning `nemoclaw onboard` for a persistent provider change.
 
-If you are intentionally testing a mutable OpenClaw config, prepare a batch file
-like this:
+If you are intentionally testing a mutable OpenClaw config, prepare a batch file like this:
 
 ```json
 {
@@ -148,7 +147,8 @@ After testing, persist the working provider through `nemoclaw onboard` so the sa
 
 ## Verify the Fix
 
-After switching to vLLM, ask for an action that should use a tool. Good signs:
+After switching to vLLM, ask for an action that should use a tool.
+Look for these signs:
 
 - The TUI does not show JSON blobs as assistant text.
 - The gateway log shows tool dispatch and a follow-up answer.

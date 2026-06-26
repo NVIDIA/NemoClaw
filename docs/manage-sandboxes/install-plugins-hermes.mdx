@@ -25,7 +25,7 @@ Do not replace or remove `/sandbox/.hermes/plugins/nemoclaw` when you add your o
 
 ## Choose an Install Path
 
-Today, the supported path for custom Hermes plugins is to bake the plugin into a custom sandbox image and onboard from that Dockerfile.
+The supported path for custom Hermes plugins is to bake the plugin into a custom sandbox image and onboard from that Dockerfile.
 Use this path when the plugin adds Python code, runtime hooks, or dependencies that Hermes must see at gateway startup.
 
 `nemohermes <name> skill install <path>` is only for `SKILL.md` agent skills.
@@ -33,7 +33,7 @@ It uploads skill instructions and refreshes skill discovery, but it does not ins
 
 ## Prepare a Build Directory
 
-Put the custom Dockerfile and everything it needs to `COPY` in one directory.
+Put the custom Dockerfile and every file it needs to `COPY` in one directory.
 `nemohermes onboard --from <Dockerfile>` sends the Dockerfile's parent directory as the Docker build context.
 Add a `.dockerignore` next to the Dockerfile to keep local caches, generated artifacts, model files, or other unneeded paths out of the staged context.
 NemoClaw still excludes credential-like paths such as `.env*`, `.ssh/`, `.aws/`, `.npmrc`, `secrets/`, `*.pem`, and `*.key`, even if `.dockerignore` tries to include them.
@@ -51,7 +51,8 @@ The image must still include the generated Hermes config, NemoClaw Hermes plugin
 
 <Warning>
   A custom `--from` Dockerfile replaces the normal NemoClaw Hermes Dockerfile.
-  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough unless your Dockerfile also preserves the NemoClaw Hermes layers from `agents/hermes/Dockerfile`.
+  Starting from `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest` alone is not enough.
+  Your Dockerfile must also preserve the NemoClaw Hermes layers from `agents/hermes/Dockerfile`.
 </Warning>
 
 ## Install the Plugin in the Image
@@ -107,12 +108,12 @@ If a plugin calls an external API at runtime, add a policy preset for the requir
 Hermes uses Python for plugin execution, so policy entries usually need to allow the Hermes Python runtime, such as `/opt/hermes/.venv/bin/python`, in addition to any command-line wrapper your plugin starts.
 For package downloads during sandbox runtime, use the `pypi` preset or a custom preset that allows the package hosts you need.
 
-For policy concepts, refer to [Network Policies](../reference/network-policies).
-For custom preset workflows, refer to [Customize Network Policy](../network-policy/customize-network-policy).
+Refer to [Network Policies](../reference/network-policies) for policy concepts.
+Refer to [Customize Network Policy](../network-policy/customize-network-policy) for custom preset workflows.
 
 ## Common Mistakes
 
-These are the most common places where Hermes plugin installation gets mixed up with other NemoClaw extension paths.
+The following places commonly mix Hermes plugin installation with other NemoClaw extension paths.
 
 - Do not use `skill install` for Hermes runtime plugins.
 - Do not install Hermes plugins into `/sandbox/.openclaw/extensions`; that path is for OpenClaw plugins.
