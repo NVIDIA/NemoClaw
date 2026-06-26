@@ -8,6 +8,7 @@ import { upsertStickyComment } from "../advisors/github.mts";
 import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 const MARKER = "<!-- nemoclaw-pr-review-advisor -->";
+const COMMENT_TITLE = "PR Review Advisor";
 
 type ReviewAdvisorResult = {
   headSha?: string;
@@ -100,6 +101,9 @@ async function main(): Promise<void> {
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
   const resultPath =
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
+  const marker = args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER;
+  const title = args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE;
+  const label = args.label || process.env.PR_REVIEW_ADVISOR_COMMENT_LABEL || "PR review advisor";
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   const runUrl =
     process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
@@ -128,7 +132,8 @@ async function main(): Promise<void> {
     summary,
     result,
     runUrl,
-    marker: MARKER,
+    marker,
+    title,
     metadata: baseMetadata,
   });
 
@@ -136,15 +141,16 @@ async function main(): Promise<void> {
     repo,
     pr,
     token,
-    marker: MARKER,
+    marker,
     body,
-    label: "PR review advisor",
+    label,
     bodyForComment: (comment) =>
       buildComment({
         summary,
         result,
         runUrl,
-        marker: MARKER,
+        marker,
+        title,
         metadata: { ...baseMetadata, commentId: String(comment.id) },
       }),
   });
@@ -155,12 +161,14 @@ export function buildComment({
   result,
   runUrl,
   marker,
+  title,
   metadata,
 }: {
   summary: string;
   result?: ReviewAdvisorResult;
   runUrl?: string;
   marker?: string;
+  title?: string;
   metadata?: CommentMetadata;
 }): string {
   const findingRecords = collectFindingRecords(result);
@@ -185,8 +193,9 @@ export function buildComment({
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(result?.summary?.recommendation);
   const headline = reviewHeadline(result?.summary?.recommendation);
+  const heading = title || COMMENT_TITLE;
   return `${marker || MARKER}
-${hiddenMetadata}## PR Review Advisor — ${headline}
+${hiddenMetadata}## ${heading} — ${headline}
 
 **Merge posture:** ${posture}
 **Primary next action:** ${primaryNextAction(findingRecords, testingFollowups)}

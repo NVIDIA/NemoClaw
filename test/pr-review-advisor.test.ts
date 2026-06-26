@@ -10,6 +10,7 @@ import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import {
@@ -164,11 +165,13 @@ describe("PR review advisor", () => {
 
     expect(DEFAULT_ADVISOR_PROVIDER).toBe("openai");
     expect(DEFAULT_ADVISOR_MODEL).toBe("openai/openai/gpt-5.5");
+    expect(NEMOTRON_ULTRA_ADVISOR_MODEL).toBe("nvidia/nvidia/nemotron-3-ultra");
     expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
     expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
-    expect(config.models[0]?.id).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(config.models[0]?.reasoning).toBe(false);
-    expect(config.models[0]?.compat).toMatchObject({
+    const defaultModel = config.models.find((model) => model.id === DEFAULT_ADVISOR_MODEL);
+    const nemotronModel = config.models.find((model) => model.id === NEMOTRON_ULTRA_ADVISOR_MODEL);
+    expect(defaultModel?.reasoning).toBe(false);
+    expect(defaultModel?.compat).toMatchObject({
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       supportsStore: false,
@@ -176,6 +179,8 @@ describe("PR review advisor", () => {
       supportsUsageInStreaming: false,
       maxTokensField: "max_tokens",
     });
+    expect(nemotronModel?.reasoning).toBe(false);
+    expect(nemotronModel?.compat).toMatchObject(defaultModel?.compat || {});
   });
 
   it("normalizes advisor output into the schema-owned metadata", () => {
@@ -653,6 +658,32 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(previous).toMatchObject({ headSha: "abc1234" });
   });
 
+  it("keeps parallel advisor previous-review markers isolated", () => {
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ndefault",
+        },
+        {
+          id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->\n<!-- head_sha: def5678; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nnemotron",
+        },
+      ],
+      new Set(["1", "2"]),
+      { marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" },
+    );
+
+    expect(previous).toMatchObject({
+      headSha: "def5678",
+      body: expect.stringContaining("nemotron"),
+    });
+  });
+
   it("ignores spoofed previous advisor comments from untrusted authors", () => {
     const previous = extractPreviousAdvisorReview(
       [
@@ -1044,6 +1075,14 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain("comment builder test");
     expect(comment).toContain("<!-- head_sha: abc123def456; recommendation: merge_after_fixes -->");
     expect(comment).toContain("## PR Review Advisor — Changes requested");
+    expect(
+      buildComment({
+        summary,
+        result,
+        marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
+        title: "PR Review Advisor (Nemotron Ultra)",
+      }),
+    ).toContain("## PR Review Advisor (Nemotron Ultra) — Changes requested");
     expect(comment).toContain("**Merge posture:** Do not merge yet");
     expect(comment).toContain("**Primary next action:** Fix `PRA-1`: trusted-code boundary");
     expect(comment).toContain("### 🚨 Required before merge");

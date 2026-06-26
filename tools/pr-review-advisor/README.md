@@ -31,10 +31,11 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Waits for repository-required status checks, plus the E2E Advisor recommendation, to leave the pending/in-progress state.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
-7. Opens one Pi session and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
-8. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
-9. Writes artifacts under `artifacts/pr-review-advisor/`.
-10. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
+7. Runs the same advisor conversation in parallel for each configured model variant: the primary GPT-5.5 lane and the Nemotron Ultra lane.
+8. Opens one Pi session per model variant and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
+9. Retries synthesis once when the model output is malformed or contains low-quality placeholder fields.
+10. Writes artifacts under the model-specific artifact directory, for example `artifacts/pr-review-advisor/` and `artifacts/pr-review-advisor-nemotron-ultra/`.
+11. Posts or updates model-specific sticky PR comments marked by `<!-- nemoclaw-pr-review-advisor -->` and `<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->` plus hidden head-SHA, run, and comment-id metadata for follow-up reviews.
 
 The workflow is advisory and must not be configured as a required status check. Making it required can
 create circular wait behavior and defeats the goal of letting it observe settled required-check state.
@@ -61,8 +62,10 @@ Configure this repository secret for review analysis:
 
 - `PR_REVIEW_ADVISOR_API_KEY`
 
-The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model through the
-OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
+The analyzer uses the OpenAI-compatible `https://inference-api.nvidia.com/v1` service.
+The primary lane uses `openai/openai/gpt-5.5`; the parallel Nemotron lane sets
+`PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra` and reuses the same analyzer,
+prompts, schema, safety boundary, and credential secret.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
@@ -99,6 +102,10 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 - `pr-review-advisor-detailed-review.md` — expanded acceptance, security, and source-of-truth review details.
 - `pr-review-advisor-session.html` — exported advisor session transcript.
 
+The parallel Nemotron Ultra lane writes the same filenames under
+`artifacts/pr-review-advisor-nemotron-ultra/` and uploads them as the
+`pr-review-advisor-nemotron-ultra` artifact.
+
 ## Manual run
 
 ```bash
@@ -110,7 +117,8 @@ node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
 ```
 
 Set `PR_REVIEW_ADVISOR_API_KEY` locally, or configure the repository
-`PR_REVIEW_ADVISOR_API_KEY` secret. Run `npm install` first so the Pi SDK dependency is
+`PR_REVIEW_ADVISOR_API_KEY` secret. Add `PR_REVIEW_ADVISOR_MODEL=nvidia/nvidia/nemotron-3-ultra`
+to exercise the Nemotron Ultra lane locally. Run `npm install` first so the Pi SDK dependency is
 available.
 
 ## Output contract
