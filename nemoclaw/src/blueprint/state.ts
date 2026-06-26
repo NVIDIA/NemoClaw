@@ -21,6 +21,7 @@ export interface NemoClawState {
   lastRebuildBackupPath: string | null;
 
   // Shields state (RFC: Sandbox Management Commands, Phase 1)
+  shieldsConfigured?: boolean;
   shieldsDown: boolean;
   shieldsDownAt: string | null;
   shieldsDownTimeout: number | null;
@@ -45,6 +46,10 @@ function readString(value: unknown): string | undefined {
 
 function readBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function hasStringMap(value: unknown): boolean {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 function readNullableNumber(value: unknown): number | null | undefined {
@@ -77,8 +82,13 @@ function readStatePatch(value: unknown): Partial<NemoClawState> {
     patch.lastRebuildAt = readNullableString(value.lastRebuildAt);
   if (readNullableString(value.lastRebuildBackupPath) !== undefined)
     patch.lastRebuildBackupPath = readNullableString(value.lastRebuildBackupPath);
-  if (readBoolean(value.shieldsDown) !== undefined)
-    patch.shieldsDown = readBoolean(value.shieldsDown);
+  if (readBoolean(value.shieldsConfigured) !== undefined)
+    patch.shieldsConfigured = readBoolean(value.shieldsConfigured);
+  const shieldsDown = readBoolean(value.shieldsDown);
+  if (shieldsDown !== undefined) {
+    patch.shieldsDown = shieldsDown;
+    if (shieldsDown) patch.shieldsConfigured = true;
+  }
   if (readNullableString(value.shieldsDownAt) !== undefined)
     patch.shieldsDownAt = readNullableString(value.shieldsDownAt);
   if (readNullableNumber(value.shieldsDownTimeout) !== undefined)
@@ -89,6 +99,13 @@ function readStatePatch(value: unknown): Partial<NemoClawState> {
     patch.shieldsDownPolicy = readNullableString(value.shieldsDownPolicy);
   if (readNullableString(value.shieldsPolicySnapshotPath) !== undefined)
     patch.shieldsPolicySnapshotPath = readNullableString(value.shieldsPolicySnapshotPath);
+  if (
+    hasStringMap(value.fileHashes) ||
+    readBoolean(value.chattrApplied) !== undefined ||
+    typeof value.shieldsPolicySnapshotPath === "string"
+  ) {
+    patch.shieldsConfigured = true;
+  }
 
   return patch;
 }

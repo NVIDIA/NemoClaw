@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NemoClawState } from "../blueprint/state.js";
 
 vi.mock("../blueprint/state.js", () => ({
   loadState: vi.fn(),
 }));
 
-import { slashShieldsStatus } from "./shields-status.js";
 import { loadState } from "../blueprint/state.js";
+import { slashShieldsStatus } from "./shields-status.js";
 
 const mockedLoadState = vi.mocked(loadState);
 
@@ -40,7 +40,20 @@ describe("commands/shields-status", () => {
     mockedLoadState.mockReturnValue(blankState());
   });
 
-  it("reports shields UP when not down", () => {
+  it("reports shields NOT CONFIGURED for the default mutable state", () => {
+    const result = slashShieldsStatus();
+    expect(result.text).toContain("Shields: NOT CONFIGURED");
+    expect(result.text).toContain("default mutable state");
+    expect(result.text).toContain("shields up");
+    expect(result.text).not.toContain("normal security level");
+  });
+
+  it("reports shields UP when explicitly configured and not down", () => {
+    mockedLoadState.mockReturnValue({
+      ...blankState(),
+      shieldsConfigured: true,
+      shieldsDown: false,
+    });
     const result = slashShieldsStatus();
     expect(result.text).toContain("Shields: UP");
     expect(result.text).toContain("normal security level");
@@ -49,6 +62,7 @@ describe("commands/shields-status", () => {
   it("shows last-lowered info when UP with a previous snapshot", () => {
     mockedLoadState.mockReturnValue({
       ...blankState(),
+      shieldsConfigured: true,
       shieldsDown: false,
       shieldsPolicySnapshotPath: "/home/user/.nemoclaw/state/policy-snapshot-123.yaml",
     });
@@ -134,17 +148,17 @@ describe("commands/shields-status", () => {
 
   it("treats an empty string argument as a read-only status request", () => {
     const result = slashShieldsStatus("");
-    expect(result.text).toContain("Shields: UP");
+    expect(result.text).toContain("Shields: NOT CONFIGURED");
   });
 
   it("treats whitespace-only argument as a read-only status request", () => {
     const result = slashShieldsStatus("   ");
-    expect(result.text).toContain("Shields: UP");
+    expect(result.text).toContain("Shields: NOT CONFIGURED");
   });
 
   it("treats explicit `status` argument as a read-only status request", () => {
     const result = slashShieldsStatus("status");
-    expect(result.text).toContain("Shields: UP");
+    expect(result.text).toContain("Shields: NOT CONFIGURED");
   });
 
   it("returns a host-only guidance message for `down`", () => {

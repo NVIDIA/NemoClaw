@@ -12,8 +12,8 @@
  * Shields can only be lowered or raised from the host CLI (security invariant).
  */
 
-import type { PluginCommandResult } from "../index.js";
 import { loadState } from "../blueprint/state.js";
+import type { PluginCommandResult } from "../index.js";
 
 const MAX_ARG_DISPLAY_LEN = 32;
 
@@ -57,7 +57,7 @@ export function slashShieldsStatus(arg?: string): PluginCommandResult {
 
   const state = loadState();
 
-  if (!state.shieldsDown) {
+  if (!state.shieldsDown && state.shieldsConfigured) {
     const lines = ["**Shields: UP**", "", "Sandbox policy is at normal security level."];
 
     if (state.shieldsPolicySnapshotPath) {
@@ -65,6 +65,16 @@ export function slashShieldsStatus(arg?: string): PluginCommandResult {
     }
 
     return { text: lines.join("\n") };
+  }
+
+  if (!state.shieldsDown) {
+    return {
+      text: [
+        "**Shields: NOT CONFIGURED (default mutable state)**",
+        "",
+        "Sandbox policy is mutable. Run `nemoclaw <name> shields up` from the host to opt into lockdown.",
+      ].join("\n"),
+    };
   }
 
   const downSince = state.shieldsDownAt ? new Date(state.shieldsDownAt) : null;

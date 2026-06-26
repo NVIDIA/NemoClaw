@@ -140,6 +140,45 @@ describe("blueprint/state", () => {
       expect(loaded.shieldsDownTimeout).toBeNull();
       expect(loaded.shieldsDownReason).toBeNull();
     });
+
+    it("does not treat legacy shieldsDown false as configured lockdown", () => {
+      store.set(
+        STATE_PATH,
+        JSON.stringify({
+          sandboxName: "sb",
+          shieldsDown: false,
+          updatedAt: "2026-03-01T12:00:00.000Z",
+        }),
+      );
+      const loaded = loadState();
+      expect(loaded.shieldsDown).toBe(false);
+      expect(loaded.shieldsConfigured).toBeUndefined();
+    });
+
+    it("marks shields configured when persisted state has lock evidence", () => {
+      store.set(
+        STATE_PATH,
+        JSON.stringify({
+          sandboxName: "sb",
+          shieldsDown: false,
+          fileHashes: { "/sandbox/.openclaw/openclaw.json": "abc123" },
+          updatedAt: "2026-03-01T12:00:00.000Z",
+        }),
+      );
+      expect(loadState().shieldsConfigured).toBe(true);
+    });
+
+    it("marks shields configured when persisted state is temporarily unlocked", () => {
+      store.set(
+        STATE_PATH,
+        JSON.stringify({
+          sandboxName: "sb",
+          shieldsDown: true,
+          updatedAt: "2026-03-01T12:00:00.000Z",
+        }),
+      );
+      expect(loadState().shieldsConfigured).toBe(true);
+    });
   });
 
   describe("saveState", () => {
