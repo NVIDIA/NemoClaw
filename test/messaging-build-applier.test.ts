@@ -344,6 +344,39 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("skips runtime plan artifact output when messaging is not configured", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "runtime-setup",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: process.env.PATH || "/usr/bin:/bin",
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(artifactPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("preserves Hermes runtime env aliases in the reduced runtime plan artifact", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-plan-artifact-"));
     const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
