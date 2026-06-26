@@ -49,6 +49,7 @@ const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.ta
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+const APT_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9+.-]*$/;
 
 function timingSummary(
   phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
@@ -370,8 +371,7 @@ function collectLegacyE2eShellScriptRefs(value: unknown): string[] {
 }
 
 describe("E2E reusable workflow contract", () => {
-  const { runnerWorkflow, nightlyWorkflow, action, installAptAction } =
-    loadE2eWorkflowContract();
+  const { runnerWorkflow, nightlyWorkflow, action, installAptAction } = loadE2eWorkflowContract();
 
   it("does not persist checkout credentials in the reusable runner", () => {
     const checkoutSteps = runnerWorkflow.jobs.run.steps.filter((step) =>
@@ -983,9 +983,7 @@ describe("E2E reusable workflow contract", () => {
 
   it("installs apt packages before scripts that need host tools start", () => {
     const callInputs =
-      runnerWorkflow.on?.workflow_call?.inputs ??
-      runnerWorkflow.true?.workflow_call?.inputs ??
-      {};
+      runnerWorkflow.on?.workflow_call?.inputs ?? runnerWorkflow.true?.workflow_call?.inputs ?? {};
     const vitestScenarioWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
       ".github/workflows/e2e-vitest-scenarios.yaml",
     );
@@ -1028,12 +1026,25 @@ describe("E2E reusable workflow contract", () => {
     expect(installActionStep?.env?.APT_PACKAGES).toBe("${{ inputs.packages }}");
     expect(installActionStep?.run).toContain('read -r -a packages <<< "$APT_PACKAGES"');
     expect(installActionStep?.run).toContain('"${#packages[@]}" -eq 0');
-    expect(installActionStep?.run).toContain(
-      '[[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]',
-    );
+    expect(installActionStep?.run).toContain('[[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]');
+    expect(installActionStep?.run).toContain("Multi-arch qualifiers");
+    expect(installActionStep?.run).toContain("for attempt in 1 2 3");
+    expect(installActionStep?.run).toContain("sudo apt-get update");
+    expect(installActionStep?.run).toContain("apt-get update failed after 3 attempts");
+    expect(installActionStep?.run).toContain("apt-get update attempt ${attempt} failed");
     expect(installActionStep?.run).toContain(
       'sudo apt-get install -y --no-install-recommends "${packages[@]}"',
     );
+  });
+
+  it("keeps the apt package validator scoped to simple host tool packages", () => {
+    for (const packageName of ["expect", "iptables", "libssl3", "pkg-config", "python3.12"]) {
+      expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(true);
+    }
+
+    for (const packageName of ["", "-bad", "pkg:amd64", "bad name", "pkg;rm", "pkg/name"]) {
+      expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(false);
+    }
   });
 
   it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {

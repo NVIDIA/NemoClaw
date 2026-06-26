@@ -26,11 +26,24 @@ runs:
           exit 1
         fi
         for package in "${packages[@]}"; do
+          # Matches standard Debian package names. Multi-arch qualifiers such as
+          # :amd64 are intentionally excluded because this action installs host
+          # tools for GitHub-hosted Ubuntu runners.
           if [[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]; then
             echo "::error::Invalid apt package name: $package" >&2
             exit 1
           fi
         done
 
-        sudo apt-get update
+        for attempt in 1 2 3; do
+          if sudo apt-get update; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "::error::apt-get update failed after 3 attempts." >&2
+            exit 1
+          fi
+          echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+          sleep $((attempt * 5))
+        done
         sudo apt-get install -y --no-install-recommends "${packages[@]}"
