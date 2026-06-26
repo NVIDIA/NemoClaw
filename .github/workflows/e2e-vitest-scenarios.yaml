@@ -1203,6 +1203,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: "Install issue #4434 host dependencies"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect iptables
+
       - name: Authenticate to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1237,11 +1254,6 @@ jobs:
 
       - name: Install root dependencies
         run: npm ci --ignore-scripts
-
-      - name: "Install issue #4434 host dependencies"
-        uses: ./.github/actions/install-apt-packages
-        with:
-          packages: expect iptables
 
       - name: Build CLI
         run: npm run build:cli

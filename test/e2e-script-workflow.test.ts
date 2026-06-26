@@ -1024,11 +1024,24 @@ describe("E2E reusable workflow contract", () => {
         (step) => step.name === "Install GPU E2E host dependencies",
       )?.with?.packages,
     ).toBe("expect");
-    expect(
-      vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps?.find(
-        (step) => step.name === "Install issue #4434 host dependencies",
-      )?.with?.packages,
-    ).toBe("expect iptables");
+    const issue4434VitestSteps =
+      vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps ?? [];
+    const issue4434VitestStepIndex = (name: string) =>
+      issue4434VitestSteps.findIndex((step) => step.name === name);
+    const issue4434VitestInstallStep = issue4434VitestSteps.find(
+      (step) => step.name === "Install issue #4434 host dependencies",
+    );
+
+    expect(issue4434VitestInstallStep?.uses).toBeUndefined();
+    expect(issue4434VitestInstallStep?.run).toContain("for attempt in 1 2 3");
+    expect(issue4434VitestInstallStep?.run).toContain("sudo apt-get update");
+    expect(issue4434VitestInstallStep?.run).toContain("apt-get update failed after 3 attempts");
+    expect(issue4434VitestInstallStep?.run).toContain(
+      "sudo apt-get install -y --no-install-recommends expect iptables",
+    );
+    expect(issue4434VitestStepIndex("Install issue #4434 host dependencies")).toBeLessThan(
+      issue4434VitestStepIndex("Authenticate to Docker Hub"),
+    );
 
     expect(installActionStep?.env?.APT_PACKAGES).toBe("${{ inputs.packages }}");
     expect(installActionStep?.run).toContain('read -r -a packages <<< "$APT_PACKAGES"');
