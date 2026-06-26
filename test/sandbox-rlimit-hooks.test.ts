@@ -76,8 +76,7 @@ function rlimitShim(rlimitLib: string): string {
   return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
 }
 
-type ProbeKey = "nproc" | "nofile" | "raise_nproc" | "raise_nofile" | "shadow";
-type ProbeValues = Partial<Record<ProbeKey | "fork_error" | "fork_status" | "spawned", string>>;
+type ProbeValues = Record<string, string | undefined>;
 
 function parseProbeOutput(stdout: string): ProbeValues {
   return Object.fromEntries(
