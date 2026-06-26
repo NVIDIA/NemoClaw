@@ -75,6 +75,13 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, recreate = false):
   });
 }
 
+function staleRebuildEnv(sandboxName: string): NodeJS.ProcessEnv {
+  return {
+    ...onboardEnv(sandboxName, "http://127.0.0.1:9/v1"),
+    NEMOCLAW_MODEL: "ambient-wrong-model",
+  };
+}
+
 async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
   try {
     await run();
@@ -317,35 +324,58 @@ function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
-function registryHas(sandboxName: string): boolean {
-  if (!fs.existsSync(REGISTRY_FILE)) return false;
+function registryEntry(sandboxName: string): Record<string, unknown> | null {
+  if (!fs.existsSync(REGISTRY_FILE)) return null;
   try {
     const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
-    if (!registry || typeof registry !== "object") return false;
+    if (!registry || typeof registry !== "object") return null;
 
     if (Array.isArray(registry)) {
-      return registry.some(
+      const found = registry.find(
         (entry) =>
           entry === sandboxName ||
           (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
       );
+      return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
     }
 
-    if (hasOwn(registry, sandboxName)) return true;
-    if (!hasOwn(registry, "sandboxes")) return false;
+    if (hasOwn(registry, sandboxName)) {
+      const entry = (registry as Record<string, unknown>)[sandboxName];
+      return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
+    }
+    if (!hasOwn(registry, "sandboxes")) return null;
 
     const sandboxes = (registry as { sandboxes?: unknown }).sandboxes;
     if (Array.isArray(sandboxes)) {
-      return sandboxes.some(
+      const found = sandboxes.find(
         (entry) =>
           entry === sandboxName ||
           (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
       );
+      return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
     }
-    return !!sandboxes && typeof sandboxes === "object" && hasOwn(sandboxes, sandboxName);
+    if (!sandboxes || typeof sandboxes !== "object" || !hasOwn(sandboxes, sandboxName)) return null;
+    const entry = (sandboxes as Record<string, unknown>)[sandboxName];
+    return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+function registryHas(sandboxName: string): boolean {
+  return registryEntry(sandboxName) !== null;
+}
+
+function assertRegistryInferenceMetadata(sandboxName: string, endpointUrl: string): void {
+  const entry = registryEntry(sandboxName);
+  expect(entry, `${REGISTRY_FILE} missing ${sandboxName}`).toBeTruthy();
+  expect(entry).toMatchObject({
+    provider: "compatible-endpoint",
+    model: "test-model",
+    endpointUrl,
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
+  });
 }
 
 async function waitOpenshellSandboxAbsent(
@@ -471,6 +501,7 @@ liveTest(
     });
     expect(sandboxAAfterFirst.exitCode, resultText(sandboxAAfterFirst)).toBe(0);
     expect(registryHas(SANDBOX_A), `${REGISTRY_FILE} missing ${SANDBOX_A}`).toBe(true);
+    assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
 
     // Phase 3: second onboard with the same name must reuse the healthy gateway.
     const gatewayBeforeSecond = await gatewayRuntimeId(host, "phase-3-gateway-id-before");
@@ -548,6 +579,8 @@ liveTest(
       timeoutMs: 30_000,
     });
     expect(sandboxAAfterThird.exitCode, resultText(sandboxAAfterThird)).toBe(0);
+    assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
+    assertRegistryInferenceMetadata(SANDBOX_B, fake.baseUrl);
 
     const list = await command(host, ["list"], {
       artifactName: "phase-4-nemoclaw-list",
@@ -603,6 +636,7 @@ liveTest(
     });
     expect(await waitOpenshellSandboxAbsent(sandbox, SANDBOX_A, 60_000)).toBe(true);
     expect(registryHas(SANDBOX_A), "registry should still contain stale sandbox A").toBe(true);
+    assertRegistryInferenceMetadata(SANDBOX_A, fake.baseUrl);
 
     const staleStatus = await command(host, [SANDBOX_A, "status"], {
       artifactName: "phase-5-stale-status",
@@ -627,7 +661,7 @@ liveTest(
 
     const rebuild = await command(host, [SANDBOX_A, "rebuild", "--yes"], {
       artifactName: "phase-5-stale-rebuild-recovery",
-      env: onboardEnv(SANDBOX_A, fake.baseUrl),
+      env: staleRebuildEnv(SANDBOX_A),
       timeoutMs: PHASE_TIMEOUT_MS,
     });
     const rebuildText = resultText(rebuild);
