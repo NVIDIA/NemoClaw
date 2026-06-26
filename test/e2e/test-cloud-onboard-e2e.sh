@@ -150,6 +150,17 @@ else
   skip "Host is not Linux — test nominally targets Ubuntu (continuing)"
 fi
 
+if ! command -v expect >/dev/null 2>&1; then
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get install -y -q expect >/dev/null 2>&1
+  fi
+fi
+if command -v expect >/dev/null 2>&1; then
+  pass "expect is available"
+else
+  skip "expect not available — 10-deepagents-code-tui-startup check will be skipped"
+fi
+
 # ══════════════════════════════════════════════════════════════════════
 # Phase 3: Install via public URL
 # ══════════════════════════════════════════════════════════════════════
