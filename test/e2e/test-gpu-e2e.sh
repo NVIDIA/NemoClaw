@@ -660,12 +660,14 @@ else
 fi
 
 # 5.5b: Drive the real OpenClaw TUI first turn and assert preemptive
-# auto-compaction does not block the reply. Requires `expect`, which the CI
-# workflow installs before this script starts. Local GPU developer images/runners
-# must provide it up front too: missing `expect` is intentionally fail-closed so
-# this interactive guard cannot become a silent skip. Keep the guard until this
-# TUI harness no longer depends on expect. The harness waits for the gateway to
-# connect before sending (so a slow host cannot drop the keystroke), treats a
+# auto-compaction does not block the reply. Source boundary: CI installs expect
+# through trusted workflow setup before this script starts; the GPU runner image
+# and any local GPU developer image must provide it up front too. Missing
+# `expect` is intentionally fail-closed so this interactive guard cannot become
+# a silent skip. TODO: remove this guard only after this TUI harness no longer
+# depends on expect, or after the GPU runner image becomes an enforced CI-tested
+# source boundary that always includes expect. The harness waits for the gateway
+# to connect before sending (so a slow host cannot drop the keystroke), treats a
 # healthy reply ("streaming") as success, and fails on a dropped turn, an early
 # EOF/crash, or an inconclusive timeout, so a turn that never ran can never be
 # scored as a pass.

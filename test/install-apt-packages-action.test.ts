@@ -66,11 +66,10 @@ function runInstallAptActionScript(
       { mode: 0o755 },
     );
 
-    const testPath = [binDir, process.env.PATH ?? ""].filter(Boolean).join(":");
     const result = spawnSync("bash", ["-c", script], {
       encoding: "utf8",
       env: {
-        PATH: testPath,
+        PATH: [binDir, process.env.PATH ?? ""].filter(Boolean).join(":"),
         APT_PACKAGES: aptPackages,
         SLEEP_LOG: sleepLog,
         SUDO_LOG: sudoLog,
@@ -110,6 +109,17 @@ describe("install-apt-packages action", () => {
       expect(result.stderr, aptPackages).toContain(expectedError);
       expect(result.sudoLog, aptPackages).toBe("");
     }
+  });
+
+  it("accepts valid Debian package names with digit prefixes", () => {
+    const result = runInstallAptActionScript(installScript, "7zip");
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("::error::Invalid apt package name");
+    expect(result.sudoLog.trim().split("\n")).toEqual([
+      "apt-get update",
+      "apt-get install -y --no-install-recommends 7zip",
+    ]);
   });
 
   it("installs validated packages and retries apt metadata refresh at runtime", () => {

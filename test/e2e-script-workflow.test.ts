@@ -1001,6 +1001,7 @@ describe("E2E reusable workflow contract", () => {
     const installStepIndex = stepIndex("Install requested apt packages");
 
     expect(callInputs.apt_packages?.default).toBe("");
+    expect(workflowActionsCheckout?.with?.ref).toBe("${{ github.sha }}");
     expect(workflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
       ".github/actions/install-apt-packages",
     );
@@ -1058,7 +1059,14 @@ describe("E2E reusable workflow contract", () => {
   });
 
   it("keeps the apt package validator scoped to simple host tool packages", () => {
-    for (const packageName of ["expect", "iptables", "libssl3", "pkg-config", "python3.12"]) {
+    for (const packageName of [
+      "expect",
+      "iptables",
+      "libssl3",
+      "pkg-config",
+      "python3.12",
+      "7zip",
+    ]) {
       expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(true);
     }
 

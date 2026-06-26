@@ -114,11 +114,13 @@ preflight() {
   fi
   log "Docker is running"
   install_nemoclaw
-  # CI installs expect through the install-apt-packages action before this
-  # script starts. Local developer images/runners must provide it up front too:
-  # this coverage is intentionally fail-closed so a missing host tool cannot
-  # become a silent skip. Keep the guard until interactive policy-add coverage
-  # no longer depends on expect.
+  # Source boundary: CI installs expect through the trusted workflow action
+  # before this script starts; local developer base images/runners must provide
+  # it up front too. This coverage is intentionally fail-closed so a missing
+  # host tool cannot become a silent skip. TODO: remove this guard only after
+  # interactive policy-add coverage no longer depends on expect, or after the
+  # local development base image becomes an enforced CI-tested source boundary
+  # that always includes expect.
   if ! command -v expect >/dev/null 2>&1; then
     log "ERROR: expect is required for interactive network policy coverage"
     exit 1
