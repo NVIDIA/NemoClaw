@@ -643,11 +643,15 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
     expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox-vitest");
+    expect(inventory.allowedJobs).toContain("sandbox-rlimits-connect-vitest");
     expect(inventory.scenarioToJob.get("openshell-version-pin")).toBe(
       "openshell-version-pin-vitest",
     );
     expect(inventory.scenarioToJob.get("upgrade-stale-sandbox")).toBe(
       "upgrade-stale-sandbox-vitest",
+    );
+    expect(inventory.scenarioToJob.get("sandbox-rlimits-connect")).toBe(
+      "sandbox-rlimits-connect-vitest",
     );
     expect(inventory.scenarioToJob.get("credential-migration")).toBeUndefined();
     expect(
@@ -1001,6 +1005,29 @@ jobs:
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("routes the rlimit connect acceptance selector to an explicit free-standing job", () => {
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: "sandbox-rlimits-connect" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sandbox-rlimits-connect-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "sandbox-rlimits-connect-vitest" }),
+    ).toMatchObject({
+      valid: true,
+      liveScenariosRuns: false,
+      selectedFreeStandingJobs: ["sandbox-rlimits-connect-vitest"],
+      registryScenarios: [],
+    });
+    expect(
+      evaluateE2eVitestWorkflowDispatchSelectors({ jobs: "", scenarios: "" })
+        .selectedFreeStandingJobs,
+    ).not.toContain("sandbox-rlimits-connect-vitest");
   });
 
   it("rejects workflow selector drift from the free-standing inventory", () => {
