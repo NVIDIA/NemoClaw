@@ -11,12 +11,13 @@ content:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-This page gives field teams and enterprise evaluators a single reference for what NemoClaw supports today, what an operator must handle manually, what the OpenShell platform or the inference provider owns, and what is roadmap-only.
-Use it to answer enterprise readiness and support-boundary questions consistently instead of inferring an answer from individual bug fixes.
+This page helps field teams and enterprise evaluators distinguish what NemoClaw supports today, what an operator must handle manually, what the OpenShell platform or inference provider owns, and what remains roadmap-only.
+Use it to answer enterprise readiness and support-boundary questions consistently instead of inferring answers from individual bug fixes.
 
 NemoClaw is an open-source reference stack for running sandboxed agents more safely inside OpenShell.
 It is in active development, and interfaces can change between releases.
-NemoClaw is not a hardened, multi-tenant enterprise control plane, and several admin and control-plane expectations are platform-owned or roadmap-only.
+NemoClaw is not a hardened, multi-tenant enterprise control plane.
+Several admin and control-plane expectations are platform-owned or roadmap-only.
 This page states where each capability stands so evaluators do not treat roadmap items as current commitments.
 
 <Warning title="Confirm before you commit">
@@ -44,8 +45,8 @@ For validated platform, inference, and launch claims, pair it with the launch cl
 
 ## Support Boundaries
 
-NemoClaw orchestrates several components that it does not all own.
-Knowing who enforces each boundary prevents misattributing a limitation to NemoClaw when the owner is OpenShell, the agent runtime, or the provider.
+NemoClaw orchestrates several components with different owners.
+Knowing who enforces each boundary prevents misattributing a limitation to NemoClaw when OpenShell, the agent runtime, or the provider owns it.
 
 | Component | Owner | Responsibility |
 |---|---|---|
@@ -61,7 +62,7 @@ For the architecture behind these boundaries, refer to [How It Works](../about/h
 ## Enterprise Readiness by Capability Area
 
 The following matrix answers the most common enterprise evaluation questions.
-Each row links to the deeper documentation and, where a concrete fix is in progress, to the tracked issue.
+Each row links to deeper documentation and, when a concrete fix is in progress, the tracked issue.
 
 | Capability area | Status | Notes, workaround, and tracked work |
 |---|---|---|
@@ -109,7 +110,7 @@ The following table classifies each admin and control-plane expectation by curre
 
 ## Known Limitations and Workarounds
 
-These limitations are most likely to surface during an enterprise evaluation.
+The following limitations are most likely to surface during an enterprise evaluation.
 Each one includes the current workaround or next step.
 
 | Limitation | Impact | Workaround or next step |

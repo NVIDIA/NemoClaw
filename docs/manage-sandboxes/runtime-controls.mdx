@@ -17,8 +17,8 @@ This page explains which parts of a running NemoClaw sandbox can change immediat
 
 ## What You Can Change at Runtime
 
-NemoClaw applies its security posture in three layers: what onboarding bakes into the sandbox image, what the running sandbox can hot-reload, and what requires a rebuild or re-onboard.
-The table below maps each commonly changed item to the layer that owns it and the command that changes it.
+NemoClaw applies its security posture in three layers: what onboarding writes into the sandbox image, what the running sandbox can hot-reload, and what requires a rebuild or re-onboard.
+This table maps each commonly changed item to the layer that owns it and the command that changes it.
 
 <AgentOnly variant="openclaw">
 
@@ -61,16 +61,14 @@ If a row above conflicts with what you observe, the runtime source of truth insi
 | GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
 | Hermes `config.yaml` keys | Mixed. Inference keys can be patched by `$$nemoclaw inference set`; image, policy, and channel changes still require rebuild. | Prefer NemoClaw host commands so the host registry and rebuilt image stay aligned |
 
-If a row above conflicts with what you observe, the runtime source of truth for
-Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host
-registry caches metadata but the image and Hermes runtime read from the
-in-sandbox files.
+If a row above conflicts with what you observe, the runtime source of truth for Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`.
+The host registry caches metadata, but the image and Hermes runtime read from the in-sandbox files.
 
 </AgentOnly>
 
 ## See Also
 
-The mutability table above is a consolidated index of information that lives in more detail on per-topic pages:
+The table above consolidates details from these topic pages:
 
 <AgentOnly variant="openclaw">
 

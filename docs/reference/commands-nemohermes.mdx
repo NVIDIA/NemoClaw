@@ -1766,7 +1766,7 @@ Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` only when you want Hermes' optional in-bro
 
 ### Onboarding Configuration
 
-These variables let you tune onboarding without editing the Dockerfile or passing repeated flags.
+The following variables let you tune onboarding without editing the Dockerfile or passing repeated flags.
 Set them before running `nemohermes onboard`.
 
 | Variable | Format | Effect |
@@ -1845,7 +1845,8 @@ The run exits with an actionable diagnostic instead.
 
 ### Onboarding Behavior Flags
 
-These flags toggle optional behaviors during onboarding; set them before running `nemohermes onboard`.
+The following flags toggle optional behaviors during onboarding.
+Set them before running `nemohermes onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
@@ -1912,7 +1913,7 @@ For a remote collector, create a custom preset for the collector host and port i
 
 ### Probe Timeouts
 
-These tune how long internal probes wait before giving up.
+The following variables tune how long internal probes wait before giving up.
 Defaults are sized for typical hardware; override only if you see false-positive timeouts.
 
 | Variable | Default | Effect |
@@ -1943,7 +1944,7 @@ The readiness wait deletes the orphaned sandbox first so the next `nemohermes on
 
 ### Lifecycle Behavior Flags
 
-These flags change defaults for commands that manage existing sandboxes.
+The following flags change defaults for commands that manage existing sandboxes.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
