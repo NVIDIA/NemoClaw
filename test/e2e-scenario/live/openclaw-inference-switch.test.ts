@@ -661,9 +661,15 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
 }
 
 function agentReplyContainsToken(reply: string, expected: string): boolean {
-  const compactReply = reply.replace(/\s+/gu, "").toUpperCase();
-  const compactExpected = expected.replace(/\s+/gu, "").toUpperCase();
-  return compactExpected.length > 0 && compactReply.includes(compactExpected);
+  const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
+  if (!normalizedExpected) return false;
+  const tokenPattern = normalizedExpected
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .split("")
+    .join("\\s*");
+  return new RegExp(String.raw`(^|[^\p{L}\p{N}_])${tokenPattern}(?=$|[^\p{L}\p{N}_])`, "u").test(
+    reply.toUpperCase(),
+  );
 }
 
 function parseOpenClawAgentText(raw: string): string {
@@ -765,6 +771,8 @@ test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", ()
   expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
   expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(true);
   expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
+  expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
+  expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
 });
 
 function isTransientInferenceSetFailure(text: string): boolean {

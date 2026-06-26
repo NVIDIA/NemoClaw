@@ -116,19 +116,21 @@ describe("Kimi inference compatibility mode selection", () => {
     });
   });
 
-  it("rejects combined shell commands in both mock and public Kimi trajectory summaries", () => {
-    expect(() =>
-      assertKimiTrajectorySummary({
-        errors: [],
-        finalStatus: "success",
-        finalTextCount: 1,
-        roles: ["assistant", "toolResult", "assistant"],
-        sourceCommands: ["hostname; date; uptime"],
-        strictMockExpectations: false,
-        toolMetaCommandSet: ["hostname; date; uptime"],
-        toolMetaInvalidValues: [],
-        toolMetasCount: 1,
-      }),
-    ).toThrow();
+  it("rejects unsafe or malformed source commands in both mock and public trajectory summaries", () => {
+    for (const sourceCommands of [["hostname; date; uptime"], ["hostname | date"], [null]]) {
+      expect(() =>
+        assertKimiTrajectorySummary({
+          errors: [],
+          finalStatus: "success",
+          finalTextCount: 1,
+          roles: ["assistant", "toolResult", "assistant"],
+          sourceCommands,
+          strictMockExpectations: false,
+          toolMetaCommandSet: ["hostname"],
+          toolMetaInvalidValues: [],
+          toolMetasCount: 1,
+        }),
+      ).toThrow();
+    }
   });
 });

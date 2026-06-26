@@ -466,6 +466,8 @@ source=[]
 for m in assistant_tool_messages:
     source.extend(b.get('arguments',{}).get('command') for b in m.get('content',[]) if b.get('type')=='toolCall')
 if not source: errors.append('source assistant did not record any exec commands')
+invalid_source_commands=[c for c in source if not isinstance(c,str)]
+if invalid_source_commands: errors.append(f'source commands are not all strings: {invalid_source_commands!r}')
 if strict_mock:
     if invalid_meta_commands:
         errors.append(f'toolMeta meta values are not all strings: {invalid_meta_commands!r}')
@@ -478,7 +480,7 @@ if strict_mock:
             if source[offset:offset + len(expected_round)] != expected_round:
                 errors.append(f'source commands={source!r}')
                 break
-combined=[c for c in source if isinstance(c,str) and re.search(r';|&&|\|\||[\r\n]', c)]
+combined=[c for c in source if isinstance(c,str) and re.search(r';|&&?|\|\|?|[\r\n]', c)]
 if combined: errors.append(f'combined shell command remains: {combined!r}')
 raw=session.read_text()+trajectory.read_text()
 for token in ['abandoned','want me to continue']:
@@ -518,8 +520,9 @@ export function assertKimiTrajectorySummary(summary: KimiTrajectorySummary): voi
   expect(summary.roles).toContain("toolResult");
   expect(summary.roles.at(-1)).toBe("assistant");
   expect(summary.sourceCommands.length).toBeGreaterThan(0);
+  expect(summary.sourceCommands.every((command) => typeof command === "string")).toBe(true);
   expect(summary.sourceCommands).not.toEqual(
-    expect.arrayContaining([expect.stringMatching(/;|&&|\|\||[\r\n]/)]),
+    expect.arrayContaining([expect.stringMatching(/;|&&?|\|\|?|[\r\n]/)]),
   );
   expect(summary.toolMetasCount).toBeGreaterThanOrEqual(summary.strictMockExpectations ? 3 : 1);
   if (summary.strictMockExpectations) {
