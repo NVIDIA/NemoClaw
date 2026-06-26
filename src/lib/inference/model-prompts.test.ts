@@ -33,14 +33,14 @@ describe("model prompt helpers", () => {
     expect(result).toBe("llama");
   });
 
-  it("returns DeepSeek V4 Pro from the default cloud model menu", async () => {
-    const promptFn = promptSequence(["8"]);
+  it("returns Minimax M2.7 from the default cloud model menu", async () => {
+    const promptFn = promptSequence(["5"]);
     const result = await promptCloudModel({
       promptFn,
       writeLine: vi.fn(),
     });
 
-    expect(result).toBe("deepseek-ai/deepseek-v4-pro");
+    expect(result).toBe("minimaxai/minimax-m2.7");
   });
 
   it("validates manual cloud model ids against the saved NVIDIA key", async () => {

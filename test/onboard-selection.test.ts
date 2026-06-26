@@ -421,7 +421,7 @@ const { setupNim } = require(${onboardPath});
     expect(result.stdout.trim()).not.toBe("");
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3-ultra-550b-a55b");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.equal(payload.promptCalls, 2);
     assert.match(payload.messages[0], /Choose \[/);
@@ -508,14 +508,12 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("selects DeepSeek V4 Pro from the NVIDIA Endpoints model list", () => {
+  it("selects Kimi K2.6 from the NVIDIA Endpoints model list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "nemoclaw-onboard-build-deepseek-selection-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-build-kimi-selection-"));
     const fakeBin = path.join(tmpDir, "bin");
-    const scriptPath = path.join(tmpDir, "build-deepseek-selection-check.js");
-    const curlArgsLog = path.join(tmpDir, "deepseek-curl-args.log");
+    const scriptPath = path.join(tmpDir, "build-kimi-selection-check.js");
+    const curlArgsLog = path.join(tmpDir, "kimi-curl-args.log");
     const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
       path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
@@ -553,7 +551,7 @@ printf '%s' "$status"
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 
-const answers = ["1", "8"];
+const answers = ["1", "4"];
 const messages = [];
 
 credentials.prompt = async (message) => {
@@ -604,16 +602,16 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "deepseek-ai/deepseek-v4-pro");
+    assert.equal(payload.result.model, "moonshotai/kimi-k2.6");
     assert.equal(payload.result.preferredInferenceApi, "openai-completions");
     assert.match(payload.messages[1], /Choose model \[1\]/);
-    assert.ok(payload.lines.some((line: string) => line.includes("DeepSeek V4 Pro")));
+    assert.ok(payload.lines.some((line: string) => line.includes("Kimi K2.6")));
     assert.ok(
       payload.lines.some((line: string) => line.includes("Chat Completions API available")),
     );
     const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
     assert.match(curlInvocations, /chat\/completions/);
-    assert.match(curlInvocations, /(^|\s)-N(\s|$)/);
+    assert.doesNotMatch(curlInvocations, /(^|\s)-N(\s|$)/);
   });
 
   it("accepts a manually entered NVIDIA Endpoints model after validating it against /models", () => {
@@ -3318,7 +3316,7 @@ const { setupNim } = require(${onboardPath});
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.result.provider, "nvidia-prod");
-    assert.equal(payload.result.model, "nvidia/nemotron-3-super-120b-a12b");
+    assert.equal(payload.result.model, "nvidia/nemotron-3-ultra-550b-a55b");
     assert.ok(
       payload.lines.some((line: string) =>
         line.includes("Endpoint URL is required for Other OpenAI-compatible endpoint."),

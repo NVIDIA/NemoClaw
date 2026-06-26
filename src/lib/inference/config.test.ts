@@ -25,15 +25,12 @@ import {
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {
-    expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b",
-      "nvidia/nemotron-3-ultra-550b-a55b",
-      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "z-ai/glm-5.1",
-      "minimaxai/minimax-m2.7",
-      "moonshotai/kimi-k2.6",
-      "openai/gpt-oss-120b",
-      "deepseek-ai/deepseek-v4-pro",
+    expect(CLOUD_MODEL_OPTIONS).toEqual([
+      { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
+      { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
+      { id: "z-ai/glm-5.1", label: "GLM 5.1" },
+      { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
+      { id: "minimaxai/minimax-m2.7", label: "Minimax M2.7" },
     ]);
   });
 
