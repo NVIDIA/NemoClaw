@@ -29,11 +29,22 @@ function createDeps(overrides: Partial<OnboardEntryOptionsDeps> = {}): OnboardEn
   };
 }
 
+function expectExitOne(run: () => unknown): void {
+  let thrown: unknown;
+  try {
+    run();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ExitError);
+  expect(thrown).toMatchObject({ code: 1 });
+}
+
 describe("Package D onboard create-plan guard parity", () => {
   it("preserves the legacy --from missing-name guard when prompts are unavailable", () => {
     const deps = createDeps();
 
-    expect(() =>
+    expectExitOne(() =>
       resolveOnboardEntryOptions(
         {
           opts: { fromDockerfile: "Dockerfile.custom" },
@@ -43,7 +54,7 @@ describe("Package D onboard create-plan guard parity", () => {
         },
         deps,
       ),
-    ).toThrow(ExitError);
+    );
     expect(deps.error).toHaveBeenCalledWith(
       "  --from <Dockerfile> requires --name <sandbox> (or NEMOCLAW_SANDBOX_NAME) when running without a TTY or with --non-interactive.",
     );
@@ -59,7 +70,7 @@ describe("Package D onboard create-plan guard parity", () => {
       }),
     });
 
-    expect(() =>
+    expectExitOne(() =>
       resolveOnboardEntryOptions(
         {
           opts: { fromDockerfile: "Dockerfile.custom" },
@@ -69,7 +80,7 @@ describe("Package D onboard create-plan guard parity", () => {
         },
         deps,
       ),
-    ).toThrow(ExitError);
+    );
     expect(deps.validateName).toHaveBeenCalledWith("bad name", "sandbox name");
     expect(deps.error).toHaveBeenCalledWith("  Invalid sandbox name");
     expect(deps.error).not.toHaveBeenCalledWith(
