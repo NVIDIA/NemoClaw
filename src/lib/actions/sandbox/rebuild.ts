@@ -221,7 +221,7 @@ function printMissingRebuildGatewayProvider(provider: string, credentialEnv: str
   console.error("  The sandbox registry still points at this upstream provider,");
   console.error("  so rebuild will not recreate it before destroying the sandbox.");
   if (credentialEnv) {
-    console.error(`  ${credentialEnv} may be present, but the OpenShell provider is missing.`);
+    console.error(`  Rebuild cannot rely on ${credentialEnv} while that provider is missing.`);
   }
   console.error("");
   console.error("  Re-register the provider in OpenShell or rerun onboard, then retry rebuild.");
@@ -517,20 +517,20 @@ function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (credentialValue) {
-    if (shouldVerifyGatewayProvider && !gatewayProviderExists()) {
+  if (shouldVerifyGatewayProvider) {
+    if (!gatewayProviderExists()) {
       printMissingRebuildGatewayProvider(rebuildProvider, rebuildCredentialEnv);
       bail(`Missing gateway provider: ${rebuildProvider}`);
       return false;
     }
-    return true;
+    if (!credentialValue) {
+      log(
+        `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
+      );
+      return true;
+    }
   }
-  if (shouldVerifyGatewayProvider && gatewayProviderExists()) {
-    log(
-      `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
-    );
-    return true;
-  }
+  if (credentialValue) return true;
 
   console.error("");
   console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);

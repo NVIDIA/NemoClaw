@@ -657,7 +657,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(registryHasSandbox(f)).toBe(true);
@@ -682,7 +683,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(registryHasSandbox(f)).toBe(true);
@@ -708,7 +710,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("GH #2519");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
@@ -812,7 +815,9 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
       expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
       expect(output).toContain("untouched");
       expect(registryHasSandbox(f)).toBe(true);
     });
