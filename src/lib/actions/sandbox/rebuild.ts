@@ -228,6 +228,37 @@ function printMissingRebuildGatewayProvider(provider: string, credentialEnv: str
   console.error("  Sandbox is untouched — no data was lost.");
 }
 
+function shouldVerifyRebuildGatewayProvider(
+  provider: string | null | undefined,
+): provider is string {
+  return Boolean(
+    provider &&
+      !isLocalInferenceProvider(provider) &&
+      provider !== hermesProviderAuth.HERMES_PROVIDER_NAME,
+  );
+}
+
+function checkRebuildGatewayProviderOrBail(
+  provider: string | null | undefined,
+  credentialEnv: string | null,
+  log: (msg: string) => void,
+  bail: (msg: string, code?: number) => never,
+): boolean {
+  if (!shouldVerifyRebuildGatewayProvider(provider)) return true;
+
+  const providerRegisteredInGateway = providerExistsInGateway(provider, runOpenshell);
+  log(
+    `Preflight gateway provider check: provider '${provider}' is ${
+      providerRegisteredInGateway ? "registered" : "missing"
+    } in OpenShell`,
+  );
+  if (providerRegisteredInGateway) return true;
+
+  printMissingRebuildGatewayProvider(provider, credentialEnv);
+  bail(`Missing gateway provider: ${provider}`);
+  return false;
+}
+
 export async function stageMessagingManifestPlanForRebuild(
   sandboxName: string,
   sandboxEntry: registry.SandboxEntry,
@@ -449,23 +480,6 @@ function preflightRebuildCredentials(
   }
 
   const rebuildProvider = sb.provider;
-  const shouldVerifyGatewayProvider =
-    rebuildProvider &&
-    !isLocalInferenceProvider(rebuildProvider) &&
-    rebuildProvider !== hermesProviderAuth.HERMES_PROVIDER_NAME;
-  let rebuildProviderRegisteredInGateway: boolean | null = null;
-  const gatewayProviderExists = (): boolean => {
-    if (!shouldVerifyGatewayProvider) return false;
-    if (rebuildProviderRegisteredInGateway === null) {
-      rebuildProviderRegisteredInGateway = providerExistsInGateway(rebuildProvider, runOpenshell);
-      log(
-        `Preflight gateway provider check: provider '${rebuildProvider}' is ${
-          rebuildProviderRegisteredInGateway ? "registered" : "missing"
-        } in OpenShell`,
-      );
-    }
-    return rebuildProviderRegisteredInGateway;
-  };
 
   // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
   // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
@@ -502,9 +516,7 @@ function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
-    if (shouldVerifyGatewayProvider && !gatewayProviderExists()) {
-      printMissingRebuildGatewayProvider(rebuildProvider, rebuildCredentialEnv);
-      bail(`Missing gateway provider: ${rebuildProvider}`);
+    if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
       return false;
     }
     log(
@@ -517,18 +529,14 @@ function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (shouldVerifyGatewayProvider) {
-    if (!gatewayProviderExists()) {
-      printMissingRebuildGatewayProvider(rebuildProvider, rebuildCredentialEnv);
-      bail(`Missing gateway provider: ${rebuildProvider}`);
-      return false;
-    }
-    if (!credentialValue) {
-      log(
-        `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
-      );
-      return true;
-    }
+  if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+    return false;
+  }
+  if (!credentialValue && shouldVerifyRebuildGatewayProvider(rebuildProvider)) {
+    log(
+      `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
+    );
+    return true;
   }
   if (credentialValue) return true;
 
