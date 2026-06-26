@@ -117,10 +117,12 @@ preflight() {
   # Source boundary: CI installs expect through the trusted workflow action
   # before this script starts; local developer base images/runners must provide
   # it up front too. This coverage is intentionally fail-closed so a missing
-  # host tool cannot become a silent skip. TODO: remove this guard only after
-  # interactive policy-add coverage no longer depends on expect, or after the
-  # local development base image becomes an enforced CI-tested source boundary
-  # that always includes expect.
+  # host tool cannot become a silent skip. Regression coverage lives in
+  # test/e2e-script-workflow.test.ts (CI installs expect before this script) and
+  # test/e2e-expect-fail-closed.test.ts (missing expect fails). TODO: remove this
+  # guard only after interactive policy-add no longer depends on expect, or
+  # after a repo-owned local development image is added with CI coverage that
+  # runs `command -v expect` against that image.
   if ! command -v expect >/dev/null 2>&1; then
     log "ERROR: expect is required for interactive network policy coverage"
     exit 1

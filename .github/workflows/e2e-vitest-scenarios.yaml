@@ -1203,12 +1203,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # This free-standing job checks out and executes the PR target ref.
-      # Keep privileged host dependency setup inline in trusted workflow YAML:
-      # using a repo-local composite action here would load that action from
-      # the target ref after checkout. The contract tests pin this retry/install
-      # behavior to the shared install-apt-packages action so the intentional
-      # inline copy cannot drift silently.
+      # This free-standing job checks out and executes the PR target ref. It
+      # intentionally avoids `uses: ./workflow-actions/.github/actions/install-apt-packages`
+      # because that would load a repo-local action from the target ref after
+      # checkout. Keep privileged host dependency setup inline in trusted
+      # workflow YAML instead; the reusable e2e-script workflow can use the
+      # composite action safely because it pins a separate helper checkout to
+      # github.sha. Contract tests compare this retry/install behavior with the
+      # shared install-apt-packages action so the inline copy cannot drift
+      # silently.
       - name: "Install issue #4434 host dependencies"
         shell: bash
         run: |

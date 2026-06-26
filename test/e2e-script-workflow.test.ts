@@ -1032,12 +1032,11 @@ describe("E2E reusable workflow contract", () => {
     const issue4434VitestInstallStep = issue4434VitestSteps.find(
       (step) => step.name === "Install issue #4434 host dependencies",
     );
+    const issue4434VitestInstallRun = issue4434VitestInstallStep?.run ?? "";
+    const installActionRun = installActionStep?.run ?? "";
 
     expect(issue4434VitestInstallStep?.uses).toBeUndefined();
-    expect(issue4434VitestInstallStep?.run).toContain("for attempt in 1 2 3");
-    expect(issue4434VitestInstallStep?.run).toContain("sudo apt-get update");
-    expect(issue4434VitestInstallStep?.run).toContain("apt-get update failed after 3 attempts");
-    expect(issue4434VitestInstallStep?.run).toContain(
+    expect(issue4434VitestInstallRun).toContain(
       "sudo apt-get install -y --no-install-recommends expect iptables",
     );
     expect(issue4434VitestStepIndex("Install issue #4434 host dependencies")).toBeLessThan(
@@ -1049,13 +1048,21 @@ describe("E2E reusable workflow contract", () => {
     expect(installActionStep?.run).toContain('"${#packages[@]}" -eq 0');
     expect(installActionStep?.run).toContain('[[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]');
     expect(installActionStep?.run).toContain("Multi-arch qualifiers");
-    expect(installActionStep?.run).toContain("for attempt in 1 2 3");
-    expect(installActionStep?.run).toContain("sudo apt-get update");
-    expect(installActionStep?.run).toContain("apt-get update failed after 3 attempts");
-    expect(installActionStep?.run).toContain("apt-get update attempt ${attempt} failed");
     expect(installActionStep?.run).toContain(
       'sudo apt-get install -y --no-install-recommends "${packages[@]}"',
     );
+    for (const fragment of [
+      "for attempt in 1 2 3",
+      "sudo apt-get update",
+      'if [ "$attempt" -eq 3 ]; then',
+      "apt-get update failed after 3 attempts",
+      "apt-get update attempt ${attempt} failed",
+      "sleep $((attempt * 5))",
+      "sudo apt-get install -y --no-install-recommends",
+    ]) {
+      expect(issue4434VitestInstallRun, fragment).toContain(fragment);
+      expect(installActionRun, fragment).toContain(fragment);
+    }
   });
 
   it("keeps the apt package validator scoped to simple host tool packages", () => {
@@ -1066,6 +1073,8 @@ describe("E2E reusable workflow contract", () => {
       "pkg-config",
       "python3.12",
       "7zip",
+      "c++",
+      "libfoo-bar-dev",
     ]) {
       expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(true);
     }

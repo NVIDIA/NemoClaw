@@ -111,15 +111,17 @@ describe("install-apt-packages action", () => {
     }
   });
 
-  it("accepts valid Debian package names with digit prefixes", () => {
-    const result = runInstallAptActionScript(installScript, "7zip");
+  it("accepts valid Debian package name forms", () => {
+    for (const packageName of ["7zip", "libssl3", "c++", "libfoo-bar-dev"]) {
+      const result = runInstallAptActionScript(installScript, packageName);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).not.toContain("::error::Invalid apt package name");
-    expect(result.sudoLog.trim().split("\n")).toEqual([
-      "apt-get update",
-      "apt-get install -y --no-install-recommends 7zip",
-    ]);
+      expect(result.status, packageName).toBe(0);
+      expect(result.stderr, packageName).not.toContain("::error::Invalid apt package name");
+      expect(result.sudoLog.trim().split("\n"), packageName).toEqual([
+        "apt-get update",
+        `apt-get install -y --no-install-recommends ${packageName}`,
+      ]);
+    }
   });
 
   it("installs validated packages and retries apt metadata refresh at runtime", () => {

@@ -151,9 +151,11 @@ jobs:
       - name: Checkout workflow actions
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          # Keep privileged workflow helper actions pinned to the caller
-          # workflow commit. The E2E target under test is checked out
-          # separately in repo/ from inputs.ref.
+          # Two-checkout boundary: the E2E target under test is checked out
+          # separately in repo/ from inputs.ref, while privileged workflow
+          # helper actions are pinned to the caller workflow commit. The
+          # free-standing Vitest job uses a different inline boundary model
+          # because it checks out and executes the target ref directly.
           ref: ${{ github.sha }}
           sparse-checkout: |
             .github/actions/install-apt-packages

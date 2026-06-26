@@ -664,9 +664,12 @@ fi
 # through trusted workflow setup before this script starts; the GPU runner image
 # and any local GPU developer image must provide it up front too. Missing
 # `expect` is intentionally fail-closed so this interactive guard cannot become
-# a silent skip. TODO: remove this guard only after this TUI harness no longer
-# depends on expect, or after the GPU runner image becomes an enforced CI-tested
-# source boundary that always includes expect. The harness waits for the gateway
+# a silent skip. Regression coverage lives in test/e2e-script-workflow.test.ts
+# (gpu-e2e installs expect before this script) and
+# test/e2e-expect-fail-closed.test.ts (missing expect records a failure). TODO:
+# remove this guard only after this TUI harness no longer depends on expect, or
+# after the linux-amd64-gpu-rtxpro6000-latest-1 runner image has CI coverage
+# that runs `command -v expect` on that image. The harness waits for the gateway
 # to connect before sending (so a slow host cannot drop the keystroke), treats a
 # healthy reply ("streaming") as success, and fails on a dropped turn, an early
 # EOF/crash, or an inconclusive timeout, so a turn that never ran can never be

@@ -46,7 +46,9 @@ runs:
           echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
           sleep $((attempt * 5))
         done
-        # Keep runner setup small and predictable: minimize attack surface,
-        # reduce install time, avoid pulling unnecessary recommended packages,
-        # and make callers request every host tool they need explicitly.
+        # Keep runner setup small and predictable. The explicit package list
+        # plus --no-install-recommends intentionally: (1) minimizes attack
+        # surface, (2) reduces install time, (3) avoids pulling unnecessary
+        # recommended packages, and (4) makes callers request every additional
+        # host tool explicitly.
         sudo apt-get install -y --no-install-recommends "${packages[@]}"
