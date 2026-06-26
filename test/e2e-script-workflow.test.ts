@@ -1246,6 +1246,27 @@ describe("E2E reusable workflow contract", () => {
     expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
     expect(helper).toContain("FAKE_OPENAI_REQUIRE_AUTH=1");
     expect(helper).not.toContain('FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"');
+
+    const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const vitestJob = vitestWorkflow.jobs["onboard-resume-vitest"];
+    const vitestInstallOpenShellStep = vitestJob.steps?.find(
+      (step) => step.name === "Install OpenShell CLI",
+    );
+    const vitestRunStep = vitestJob.steps?.find(
+      (step) => step.name === "Run onboard-resume live Vitest test",
+    );
+    expect(vitestJob.env?.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(vitestJob.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(vitestJob.env?.NEMOCLAW_MODEL).toBeUndefined();
+    expect(vitestJob.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(vitestJob.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(vitestJob.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(vitestInstallOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
+    expect(vitestInstallOpenShellStep?.run).toContain("-u COMPATIBLE_API_KEY");
+    expect(vitestRunStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(vitestRunStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

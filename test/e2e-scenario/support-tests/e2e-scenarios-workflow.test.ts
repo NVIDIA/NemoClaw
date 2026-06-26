@@ -642,12 +642,10 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
-    expect(inventory.allowedJobs).toContain("onboard-resume-vitest");
     expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox-vitest");
     expect(inventory.scenarioToJob.get("openshell-version-pin")).toBe(
       "openshell-version-pin-vitest",
     );
-    expect(inventory.scenarioToJob.get("onboard-resume")).toBe("onboard-resume-vitest");
     expect(inventory.scenarioToJob.get("upgrade-stale-sandbox")).toBe(
       "upgrade-stale-sandbox-vitest",
     );
@@ -1366,37 +1364,6 @@ jobs:
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
-  });
-
-  it("keeps onboard-resume hermetic and off hosted inference secrets", () => {
-    const workflow = readWorkflow() as {
-      jobs: Record<
-        string,
-        { env?: Record<string, string>; steps?: Array<Record<string, unknown>> }
-      >;
-    };
-    const job = workflow.jobs["onboard-resume-vitest"];
-    expect(job).toBeDefined();
-    expect(job.env?.FREE_STANDING_VITEST_JOB).toBe("1");
-    expect(job.env?.FREE_STANDING_SCENARIO_ID).toBe("onboard-resume");
-    expect(job.env?.NEMOCLAW_PROVIDER).toBeUndefined();
-    expect(job.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
-    expect(job.env?.NEMOCLAW_MODEL).toBeUndefined();
-    expect(job.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
-    expect(job.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
-    expect(job.env?.COMPATIBLE_API_KEY).toBeUndefined();
-
-    const installOpenShellStep = job.steps?.find((step) => step.name === "Install OpenShell CLI");
-    const runStep = job.steps?.find((step) => step.name === "Run onboard-resume live Vitest test");
-    expect(installOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
-    expect(installOpenShellStep?.run).toContain("-u COMPATIBLE_API_KEY");
-    expect(
-      (runStep?.env as Record<string, string> | undefined)?.NVIDIA_INFERENCE_API_KEY,
-    ).toBeUndefined();
-    expect(
-      (runStep?.env as Record<string, string> | undefined)?.COMPATIBLE_API_KEY,
-    ).toBeUndefined();
-    expect(runStep?.run).toContain("test/e2e-scenario/live/onboard-resume.test.ts");
   });
 
   it("rejects diagnostics workflow-boundary drift for secret and Docker auth handling", () => {
