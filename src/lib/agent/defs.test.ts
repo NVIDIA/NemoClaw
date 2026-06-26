@@ -11,6 +11,7 @@ import {
   getAgentChoices,
   loadAgent,
   resolveAgentName,
+  resolveAgentNameAlias,
 } from "../../../dist/lib/agent/defs";
 
 const tempAgentDirs: string[] = [];
@@ -142,6 +143,27 @@ describe("agent definitions", () => {
     process.env.NEMOCLAW_AGENT = "hermes";
 
     expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
+  });
+
+  it("resolves common user-facing agent aliases to canonical manifest names", () => {
+    const available = ["openclaw", "hermes", "langchain-deepagents-code"];
+
+    expect(resolveAgentNameAlias("nemohermes", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("NEMO_HERMES", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("dcode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagent", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagents", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deep agents code", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagentscode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("langchain", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("nemoclaw", available)).toBe("openclaw");
+  });
+
+  it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {
+    expect(resolveAgentName({ agentFlag: "dcode" })).toBe("langchain-deepagents-code");
+
+    vi.stubEnv("NEMOCLAW_AGENT", "nemohermes");
+    expect(resolveAgentName()).toBe("hermes");
   });
 
   it("rejects non-object manifest payloads", () => {

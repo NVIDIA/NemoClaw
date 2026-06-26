@@ -367,15 +367,19 @@ $$nemoclaw my-assistant policy-list
 Use OpenShell when you need an editable copy of the live policy:
 
 ```bash
+tmp_policy=$(mktemp)
 openshell policy get my-assistant --full \
   | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
-  > current-policy.yaml
+  > "$tmp_policy" \
+  && grep -q '^version:' "$tmp_policy" \
+  && grep -q '^network_policies:' "$tmp_policy" \
+  && mv "$tmp_policy" current-policy.yaml
 ```
 
 If you must replace the live policy, edit the policy file and apply it back to the sandbox:
 
 ```bash
-openshell policy set my-assistant --policy current-policy.yaml --wait
+openshell policy set --policy current-policy.yaml --wait my-assistant
 ```
 
 `openshell policy set` replaces the live policy with the file you provide.

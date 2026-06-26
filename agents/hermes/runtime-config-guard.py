@@ -21,8 +21,23 @@ from dataclasses import dataclass
 
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
+# Restrictive compatibility fallback for provider placeholders persisted before
+# Hermes messaging runtime-plan metadata existed. New channels must flow through
+# runtime-plan credentialBindings/envAliases; do not broaden this set without a
+# migration plan and source-of-truth review.
+LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
+    {
+        "TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN",
+        "WECHAT_BOT_TOKEN",
+        "MSTEAMS_APP_PASSWORD",
+    }
+)
 
 
 class UnsafePathError(RuntimeError):
@@ -327,6 +342,72 @@ def _parse_env_assignment(line: str) -> tuple[str, str, str] | None:
     return prefix, key, value
 
 
+def _upsert_env_assignments(text: str, assignments: dict[str, str]) -> tuple[str, bool, set[str]]:
+    if not assignments:
+        return text, False, set()
+
+    seen: set[str] = set()
+    changed = False
+    changed_keys: set[str] = set()
+    updated: list[str] = []
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            updated.append(line)
+            continue
+        prefix, key, _value = parsed
+        if key not in assignments:
+            updated.append(line)
+            continue
+        if key in seen:
+            changed = True
+            changed_keys.add(key)
+            continue
+        seen.add(key)
+        new_line = f"{prefix}{key}={assignments[key]}\n"
+        updated.append(new_line)
+        if new_line != line:
+            changed = True
+            changed_keys.add(key)
+
+    for key, value in assignments.items():
+        if key in seen:
+            continue
+        if updated and not updated[-1].endswith("\n"):
+            updated[-1] = updated[-1] + "\n"
+            changed = True
+        # Appended provider placeholders use standard dotenv syntax; existing
+        # export-prefixed assignments preserve their export prefix above.
+        updated.append(f"{key}={value}\n")
+        changed = True
+        changed_keys.add(key)
+
+    updated_text = "".join(updated)
+    return updated_text, changed or updated_text != text, changed_keys
+
+
+def _first_env_assignment_value(text: str, env_key: str) -> str | None:
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            continue
+        _prefix, key, value = parsed
+        if key == env_key:
+            return value
+    return None
+
+
+def _env_assignment_keys(text: str) -> set[str]:
+    keys: set[str] = set()
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None:
+            continue
+        _prefix, key, _value = parsed
+        keys.add(key)
+    return keys
+
+
 def _is_generated_api_server_key(value: str) -> bool:
     candidate = value.strip()
     if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in ("'", '"'):
@@ -352,6 +433,12 @@ def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str
 
 def _has_env_control_chars(value: str) -> bool:
     return "\x00" in value or "\r" in value or "\n" in value
+
+
+def _validate_runtime_plan_env_key(value: object, label: str) -> str:
+    if not isinstance(value, str) or not ENV_KEY_RE.fullmatch(value):
+        raise UnsafePathError(f"messaging runtime plan {label} is invalid")
+    return value
 
 
 def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | None) -> None:
@@ -386,13 +473,15 @@ def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | N
             pass
 
 
-def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str, tuple[str, str]]:
+def _runtime_plan_replacements_and_provider_keys(
+    runtime_plan_path: str | None,
+) -> tuple[dict[str, tuple[str, str]], set[str], bool]:
     if not runtime_plan_path:
-        return {}
+        return {}, set(), False
     try:
         runtime_plan_text, _runtime_plan_snapshot = _read_text(runtime_plan_path)
     except FileNotFoundError:
-        return {}
+        return {}, set(), False
     try:
         plan = json.loads(runtime_plan_text)
     except Exception as exc:
@@ -418,6 +507,20 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
         ):
             active_channel_ids.add(channel_id)
 
+    provider_env_keys: set[str] = set()
+    bindings = plan.get("credentialBindings", [])
+    if not isinstance(bindings, list):
+        raise UnsafePathError("messaging runtime plan credentialBindings must be a list")
+    for binding in bindings:
+        if not isinstance(binding, dict):
+            raise UnsafePathError("messaging runtime plan credentialBindings entries must be objects")
+        channel_id = binding.get("channelId")
+        provider_env_key = binding.get("providerEnvKey")
+        if isinstance(channel_id, str) and channel_id in active_channel_ids:
+            provider_env_keys.add(
+                _validate_runtime_plan_env_key(provider_env_key, "credentialBindings.providerEnvKey")
+            )
+
     runtime_setup = plan.get("runtimeSetup") or {}
     if not isinstance(runtime_setup, dict):
         raise UnsafePathError("messaging runtime plan runtimeSetup must be an object")
@@ -436,13 +539,10 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
         pattern = alias.get("match")
         value = alias.get("value")
         message = alias.get("message") or ""
-        if (
-            not isinstance(env_key, str)
-            or not isinstance(pattern, str)
-            or not isinstance(value, str)
-            or not isinstance(message, str)
-            or env_key in replacements
-        ):
+        if not isinstance(pattern, str) or not isinstance(value, str) or not isinstance(message, str):
+            continue
+        env_key = _validate_runtime_plan_env_key(env_key, "runtimeSetup.envAliases.envKey")
+        if env_key in replacements:
             continue
         if _has_env_control_chars(value) or _has_env_control_chars(message):
             raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")
@@ -452,7 +552,7 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
             raise UnsafePathError(f"messaging runtime plan env alias regex is invalid: {exc}") from exc
         if compiled.search(os.environ.get(env_key, "")):
             replacements[env_key] = (value, message)
-    return replacements
+    return replacements, provider_env_keys, True
 
 
 def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
@@ -460,42 +560,18 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     if not os.path.exists(env_path):
         return
     text, snapshot = _read_text(env_path)
-    lines = text.splitlines(keepends=True)
-    changed = False
-    seen = False
-    updated: list[str] = []
-    for line in lines:
-        parsed = _parse_env_assignment(line)
-        if parsed is None:
-            updated.append(line)
-            continue
-        prefix, key, value = parsed
-        if key != "API_SERVER_KEY":
-            updated.append(line)
-            continue
-        if seen:
-            changed = True
-            continue
-        seen = True
-        if _is_generated_api_server_key(value):
-            updated.append(line)
-            continue
-        updated.append(f"{prefix}API_SERVER_KEY={secrets.token_hex(32)}\n")
-        changed = True
-
-    if not seen:
-        if updated and not updated[-1].endswith("\n"):
-            updated[-1] = updated[-1] + "\n"
-        updated.append(f"API_SERVER_KEY={secrets.token_hex(32)}\n")
-        changed = True
+    existing_value = _first_env_assignment_value(text, "API_SERVER_KEY")
+    minted = existing_value is None or not _is_generated_api_server_key(existing_value)
+    api_server_key = secrets.token_hex(32) if minted else existing_value
+    updated_text, changed, _changed_keys = _upsert_env_assignments(text, {"API_SERVER_KEY": api_server_key})
 
     if not changed:
         print("minted=0")
         return
 
-    _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
+    _write_existing(env_path, updated_text, snapshot, mode=0o640)
     refresh_hashes(hermes_dir, hash_file, mode)
-    print("minted=1")
+    print("minted=1" if minted else "updated=1")
 
 
 def provider_placeholders(
@@ -509,39 +585,34 @@ def provider_placeholders(
     if not os.path.exists(env_path):
         return
 
-    replacements = _runtime_plan_alias_replacements(runtime_plan_path)
+    replacements, runtime_plan_provider_keys, runtime_plan_loaded = _runtime_plan_replacements_and_provider_keys(
+        runtime_plan_path
+    )
     text, snapshot = _read_text(env_path)
-    changed = False
-    refreshed_messages: set[str] = set()
-    updated: list[str] = []
-    for line in text.splitlines(keepends=True):
-        parsed = _parse_env_assignment(line)
-        if parsed is None:
-            updated.append(line)
-            continue
-        prefix, key, _value = parsed
-        if key not in replacements:
-            normalized = _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key)
-            if normalized:
-                replacements[key] = (normalized, "")
+    allowed_fallback_keys = (
+        runtime_plan_provider_keys
+        if runtime_plan_loaded
+        else set(LEGACY_PROVIDER_PLACEHOLDER_KEYS).intersection(_env_assignment_keys(text))
+    )
+    for key in allowed_fallback_keys:
         if key in replacements:
-            replacement, message = replacements[key]
-            new_line = f"{prefix}{key}={replacement}\n"
-            updated.append(new_line)
-            if new_line != line:
-                changed = True
-                if message:
-                    refreshed_messages.add(message)
             continue
-        updated.append(line)
+        normalized = _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key)
+        if normalized:
+            replacements[key] = (normalized, "")
+    if not replacements:
+        return
+
+    assignment_values = {key: replacement for key, (replacement, _message) in replacements.items()}
+    updated_text, changed, changed_keys = _upsert_env_assignments(text, assignment_values)
 
     if not changed:
         return
 
-    _validate_env_text_with_boundary("".join(updated), boundary_validator_path)
+    _validate_env_text_with_boundary(updated_text, boundary_validator_path)
 
     try:
-        _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
+        _write_existing(env_path, updated_text, snapshot, mode=0o640)
         refresh_hashes(hermes_dir, hash_file, mode)
     except PermissionError:
         if os.geteuid() != 0:
@@ -552,6 +623,11 @@ def provider_placeholders(
             )
             return
         raise
+    refreshed_messages = {
+        message
+        for key, (_replacement, message) in replacements.items()
+        if key in changed_keys and message
+    }
     for message in sorted(refreshed_messages):
         print(message, file=sys.stderr)
     print("[config] Refreshed Hermes provider placeholders from OpenShell runtime env", file=sys.stderr)

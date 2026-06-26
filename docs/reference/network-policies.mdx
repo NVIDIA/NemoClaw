@@ -138,6 +138,12 @@ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-o
 To replace the live policy with a complete raw policy file, start from the live policy and use `openshell policy set`:
 
 ```bash
-openshell policy get <sandbox-name> --full | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' > current-policy.yaml
-openshell policy set <sandbox-name> --policy current-policy.yaml --wait
+tmp_policy=$(mktemp)
+openshell policy get <sandbox-name> --full \
+  | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
+  > "$tmp_policy" \
+  && grep -q '^version:' "$tmp_policy" \
+  && grep -q '^network_policies:' "$tmp_policy" \
+  && mv "$tmp_policy" current-policy.yaml
+openshell policy set --policy current-policy.yaml --wait <sandbox-name>
 ```

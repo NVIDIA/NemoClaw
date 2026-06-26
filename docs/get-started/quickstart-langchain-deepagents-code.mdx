@@ -19,10 +19,16 @@ Use this guide to build an OpenShell sandbox with the `dcode` terminal coding ag
 
 ## Onboard
 
-Run onboarding with the canonical agent ID.
+Run onboarding with the Deep Agents alias, or use `nemoclaw --agent` with either the canonical agent ID or a short alias.
 
 ```bash
+nemo-deepagents onboard
+# Equivalent:
 nemoclaw onboard --agent langchain-deepagents-code
+# Also accepted:
+nemoclaw onboard --agent dcode
+nemoclaw onboard --agent deepagents
+nemoclaw onboard --agent langchain
 ```
 
 The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
@@ -71,9 +77,9 @@ To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may
 
 ```bash
 # Preview the endpoints the preset opens:
-nemoclaw <sandbox-name> policy-add tavily --dry-run
+nemo-deepagents <sandbox-name> policy-add tavily --dry-run
 # Apply it:
-nemoclaw <sandbox-name> policy-add tavily --yes
+nemo-deepagents <sandbox-name> policy-add tavily --yes
 ```
 
 The `tavily` preset only opens egress to `api.tavily.com:443`.
@@ -83,7 +89,7 @@ Because OpenShell attributes the harness's calls to the sandbox `python3` interp
 Remove the access again when it is no longer needed.
 
 ```bash
-nemoclaw <sandbox-name> policy-remove tavily --yes
+nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ```
 
 ### Optional Tracing (LangSmith)
@@ -95,13 +101,13 @@ Treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
 
 ## Troubleshooting
 
-Use normal sandbox lifecycle commands.
+Use normal sandbox lifecycle commands through either `nemo-deepagents` or `nemoclaw`:
 
 ```bash
-nemoclaw <sandbox-name> status
-nemoclaw <sandbox-name> logs --follow
-nemoclaw <sandbox-name> rebuild
-nemoclaw <sandbox-name> snapshot create --name before-change
+nemo-deepagents <sandbox-name> status
+nemo-deepagents <sandbox-name> logs --follow
+nemo-deepagents <sandbox-name> rebuild
+nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.

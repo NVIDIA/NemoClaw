@@ -748,6 +748,11 @@ run_with_timeout "$PHASE_TIMEOUT" \
   "${NEMOCLAW_CMD[@]}" "$SANDBOX_A" rebuild --yes >"$REBUILD_LOG" 2>&1 || rebuild_exit=$?
 rebuild_output="$(cat "$REBUILD_LOG")"
 rm -f "$REBUILD_LOG"
+# Keep the shared diagnostic hook pointed at the command under test. Without
+# this, stale-rebuild failures dump the previous onboard output and hide the
+# actual recovery failure signature (#4497/#5869).
+RUN_ONBOARD_OUTPUT="$rebuild_output"
+RUN_ONBOARD_EXIT="$rebuild_exit"
 
 # A timeout (124 from `timeout`/`gtimeout`) must fail, not silently pass.
 if [ "$rebuild_exit" -eq 124 ]; then

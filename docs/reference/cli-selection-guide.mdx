@@ -110,12 +110,23 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell sandbox exec -n <sandbox-name> -- env | grep '^HOME='
   ```
 
+- Merge a single endpoint into the live OpenShell policy:
+
+  ```bash
+  openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+  ```
+
 - Inspect or replace raw OpenShell policy:
 
   ```bash
-  openshell policy get <sandbox-name> --full | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' > current-policy.yaml
-  openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
-  openshell policy set <sandbox-name> --policy current-policy.yaml --wait
+  tmp_policy=$(mktemp)
+  openshell policy get <sandbox-name> --full \
+    | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
+    > "$tmp_policy" \
+    && grep -q '^version:' "$tmp_policy" \
+    && grep -q '^network_policies:' "$tmp_policy" \
+    && mv "$tmp_policy" current-policy.yaml
+  openshell policy set --policy current-policy.yaml --wait <sandbox-name>
   ```
 
 `openshell policy update` merges specific endpoint and rule changes into the live sandbox policy.
@@ -203,7 +214,7 @@ Use `$$nemoclaw <name> policy-add` or `policy-remove` for NemoClaw presets and c
 NemoClaw merges the new policy with the live policy and reapplies presets during rebuilds.
 
 Use `openshell policy update` for precise live endpoint or REST rule changes.
-Use `openshell policy get <name> --full` and `openshell policy set <name> --policy <file>` only when you need to edit and replace the raw policy file.
+Use `openshell policy get <name> --full` and `openshell policy set --policy <file> --wait <name>` only when you need to edit and replace the raw policy file.
 
 ### Move Workspace Files
 

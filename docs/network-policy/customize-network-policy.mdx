@@ -150,19 +150,23 @@ The preset file under `presets/` also persists across sandbox recreations.
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
 Start from the current live policy so the presets layered on at onboarding stay in the file you apply.
-Strip the OpenShell metadata header before editing the file.
+Strip the OpenShell metadata header before editing the file, then validate the raw policy shape before replacing your editable copy.
+The `policy set --policy <file> --wait <sandbox-name>` order matches OpenShell 0.0.44 and the command NemoClaw emits internally.
 
 ```bash
+tmp_policy=$(mktemp)
 openshell policy get my-assistant --full \
   | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
-  > current-policy.yaml
-grep -q '^version:' current-policy.yaml
+  > "$tmp_policy" \
+  && grep -q '^version:' "$tmp_policy" \
+  && grep -q '^network_policies:' "$tmp_policy" \
+  && mv "$tmp_policy" current-policy.yaml
 ```
 
 Edit `current-policy.yaml` to add your entries under `network_policies:`, keeping the existing `version` field intact, then apply:
 
 ```bash
-openshell policy set my-assistant --policy current-policy.yaml --wait
+openshell policy set --policy current-policy.yaml --wait my-assistant
 ```
 
 ### Scope of Dynamic Changes
@@ -243,7 +247,7 @@ To include a preset in the baseline, merge its entries into the Hermes policy ad
 </AgentOnly>
 
 <Note>
-The `openshell policy set <sandbox-name> --policy <file>` command operates on raw policy files and does not accept the `preset:` metadata block used in preset YAML files.
+The `openshell policy set --policy <file> --wait <sandbox-name>` command operates on raw policy files and does not accept the `preset:` metadata block used in preset YAML files.
 Use `$$nemoclaw <name> policy-add` for presets.
 </Note>
 

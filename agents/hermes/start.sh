@@ -1191,7 +1191,7 @@ refresh_hermes_provider_placeholders() {
     --boundary-validator "$_HERMES_BOUNDARY_VALIDATOR"
     --mode "$mode"
   )
-  if [ -e "$runtime_plan" ] || [ -L "$runtime_plan" ]; then
+  if [ -f "$runtime_plan" ]; then
     args+=(--runtime-plan "$runtime_plan")
   fi
   "$_HERMES_PYTHON" "${args[@]}"
@@ -1228,6 +1228,12 @@ ensure_hermes_runtime_api_server_key() {
 
   case "$result" in
     minted=0) return 0 ;;
+    updated=1)
+      if [ "$mode" = "strict" ]; then
+        refresh_hermes_runtime_config_hashes compat
+      fi
+      return 0
+      ;;
     minted=1) ;;
     *)
       echo "[config] Unexpected Hermes API key mint result: ${result}" >&2

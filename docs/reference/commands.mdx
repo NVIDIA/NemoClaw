@@ -144,6 +144,9 @@ nemoclaw onboard --agent hermes [options]
 
 </AgentOnly>
 
+`--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
+For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
+
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
