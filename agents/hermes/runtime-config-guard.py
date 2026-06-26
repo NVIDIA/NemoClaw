@@ -378,6 +378,7 @@ def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | N
         try:
             os.unlink(temp_path)
         except FileNotFoundError:
+            # Temp file may already be removed; cleanup should remain best-effort.
             pass
 
 
