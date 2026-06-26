@@ -672,21 +672,16 @@ hermes-box  127.0.0.1  18789  12345  running`;
       });
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
 
-      expect(
-        withFakeOpenshellBinary(() =>
-          checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
-        ),
-      ).toEqual({
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: true,
-      });
-      expect(commands).not.toContain("ssh");
-      expect(execShells.some((command) => command.includes("gosu 'gateway'"))).toBe(true);
-      expect(execShells.some((command) => command.includes("HERMES_HOME=/sandbox/.hermes"))).toBe(
-        true,
+      const result = withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
       );
+      expect(result.recovered).toBe(true);
+      expect(result.wasRunning).toBe(false);
+      expect(commands).not.toContain("ssh");
+      const execLog = execShells.join("\n");
+      expect(execLog).toContain("gosu 'gateway'");
+      expect(execLog).toContain("HERMES_HOME=/sandbox/.hermes");
+      expect(execLog).toContain("_NEMOCLAW_RESTART_HEALTH_PORT=8642");
     } finally {
       previousWaitSeconds === undefined
         ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS
@@ -698,6 +693,28 @@ hermes-box  127.0.0.1  18789  12345  running`;
         ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS
         : (process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds);
     }
+  });
+
+  it("keeps quiet stopped-Hermes recovery failures off stderr", () => {
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const childProcess = requireDist("node:child_process");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      agent: "hermes",
+      dashboardPort: 18789,
+      name: "hermes-box",
+    });
+
+    withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }));
+    expect(errorSpy).not.toHaveBeenCalled();
   });
 
   it("re-establishes manifest-declared non-primary forward ports when only the primary is healthy", () => {

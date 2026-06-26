@@ -29,6 +29,7 @@ import { hydrateDerivedSandboxMessagingPlanFields } from "../../messaging/persis
 import { parseSandboxMessagingPlan } from "../../messaging/plan-validation";
 import { ROOT, shellQuote } from "../../runner";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
+import { redactFull } from "../../security/redact";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
 import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
@@ -380,7 +381,10 @@ export async function probeSandboxInferenceGatewayHealth(
  * Cleans stale lock/temp files, sources proxy config, and launches the gateway
  * in the background. Returns true on success.
  */
-function recoverSandboxProcesses(sandboxName: string): boolean {
+function recoverSandboxProcesses(
+  sandboxName: string,
+  { quiet = false }: { quiet?: boolean } = {},
+): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   const persistedAgent = sandboxAgentName(sandboxName, registry.getSandbox);
@@ -395,14 +399,17 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   if (persistedAgent === "hermes") {
     if (!isHermesAgent(agent)) {
       const detail = "Hermes agent definition could not be loaded.";
-      printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
+      if (!quiet) printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
       return false;
     }
-    const script = agentRuntime.buildHermesGatewayRestartScript(agent, dashboardPort);
+    const restartPort = isValidPort(agent.healthProbe?.port)
+      ? agent.healthProbe.port
+      : dashboardPort;
+    const script = agentRuntime.buildHermesGatewayRestartScript(agent, restartPort);
     const execResult = executeSandboxExecCommand(sandboxName, script, 30000);
     if (hasRecoveryMarker(execResult)) return true;
     const failure = classifyGatewayRestartFailure(execResult);
-    printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
+    if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
     return false;
   }
 
@@ -477,6 +484,13 @@ function gatewayRestartOutput(result: SandboxCommandResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
+const ANSI_CONTROL_RE =
+  /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])|[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g;
+
+function sanitizeGatewayRestartFailureLine(line: string): string {
+  return redactFull(line.replace(ANSI_CONTROL_RE, ""));
+}
+
 function classifyGatewayRestartFailure(result: SandboxCommandResult | null): {
   layer: GatewayRestartFailureLayer;
   detail: string;
@@ -528,7 +542,7 @@ function printGatewayRestartFailure(
   if (!detail.trim()) return;
   const lines = detail
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line) => sanitizeGatewayRestartFailureLine(line.trim()))
     .filter(Boolean)
     .slice(-12);
   for (const line of lines) {
@@ -1100,7 +1114,7 @@ export function checkAndRecoverSandboxProcesses(
     console.log("  Recovering...");
   }
 
-  const recovered = recoverSandboxProcesses(sandboxName);
+  const recovered = recoverSandboxProcesses(sandboxName, { quiet });
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.

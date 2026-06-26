@@ -372,7 +372,10 @@ describe("buildHermesGatewayRestartScript (#2426)", () => {
     expect(script).toContain('[ "$(id -u)" = "0" ] || { echo ROOT_EXEC_UNAVAILABLE; exit 1; };');
     expect(script).toContain("gosu 'gateway' env HERMES_HOME=/sandbox/.hermes");
     expect(script).toContain('"$AGENT_BIN" gateway run');
+    expect(script).toContain("AGENT_BIN='/usr/local/bin/hermes';");
+    expect(script).toContain('if [ ! -x "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;');
     expect(script).toContain("export HERMES_HOME=/sandbox/.hermes");
+    expect(script).not.toContain("command -v 'hermes'");
     expect(script).not.toContain("--port 8642");
     expect(script).not.toContain("ALREADY_RUNNING");
   });

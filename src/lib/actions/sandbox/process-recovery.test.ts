@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist for parity with the other CLI tests in this project.
 import {
@@ -260,6 +260,29 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       const result = restartSandboxGateway("alpha", { deps });
 
       expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
+    } finally {
+      restore();
+    }
+  });
+
+  it("redacts and strips restart failure detail before printing it", () => {
+    const restore = silenceConsole();
+    try {
+      const deps = baseDeps({
+        executeSandboxExecCommand: vi.fn(() => ({
+          status: 1,
+          stdout: "GATEWAY_FAILED",
+          stderr: "\u001b[31mOPENAI_API_KEY=sk-review-secret\u001b[0m",
+        })),
+      });
+      const result = restartSandboxGateway("alpha", { deps });
+
+      expect(result).toMatchObject({ ok: false, failureLayer: "launch failure" });
+      const errorOutput = vi.mocked(console.error).mock.calls.join("\n");
+      expect(errorOutput).toContain("Failure layer: launch failure");
+      expect(errorOutput).toContain("OPENAI_API_KEY=<REDACTED>");
+      expect(errorOutput).not.toContain("\u001b");
+      expect(errorOutput).not.toContain("sk-review-secret");
     } finally {
       restore();
     }

@@ -360,10 +360,9 @@ function buildHermesApiSocatRecoveryLines(): string[] {
  */
 export function buildHermesGatewayRestartScript(agent: AgentDefinition, port: number): string {
   const binaryPath = agent.binary_path || "/usr/local/bin/hermes";
-  const binaryName = binaryPath.split("/").pop() ?? "hermes";
   const validationSteps = [
-    `AGENT_BIN=${shellQuote(binaryPath)}; if [ ! -x "$AGENT_BIN" ]; then AGENT_BIN="$(command -v ${shellQuote(binaryName)})"; fi;`,
-    'if [ -z "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
+    `AGENT_BIN=${shellQuote(binaryPath)};`,
+    'if [ ! -x "$AGENT_BIN" ]; then echo AGENT_MISSING; exit 1; fi;',
   ];
   const launchCommand = gatewayRootGosuLaunchCommand(
     `env ${hermesGatewayEnvPrefix()} "$AGENT_BIN" gateway run`,
