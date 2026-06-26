@@ -20,6 +20,12 @@ export type WipeSandboxStateDeps = {
   getSandbox?: typeof registry.getSandbox;
   loadAgent?: (name: string) => AgentStateInfo;
   runOpenshell?: RunOpenshell;
+  /**
+   * Optional warning sink. Defaults to `console.warn`. Matches the
+   * `removeShieldsState` pattern so tests can capture warnings without
+   * spying on the console global (#5455 Ultra PRA-2).
+   */
+  warn?: (message: string) => void;
 };
 
 /**
@@ -74,6 +80,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
       (require("../../agent/defs") as { loadAgent: (n: string) => AgentStateInfo }).loadAgent(
         name,
       ));
+  const warn = deps.warn ?? ((message: string) => console.warn(message));
   const runOpenshell =
     deps.runOpenshell ??
     ((args: string[], opts?: Record<string, unknown>) => {
@@ -87,7 +94,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     agent = loadAgentDef(agentName);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(
+    warn(
       `  ${YW}⚠${R} Could not resolve agent '${agentName}' to wipe workspace state: ${message}`,
     );
     return;
@@ -117,16 +124,20 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
   // for the existing fleet, not a behavior change.
   const SANDBOX_ROOT = "/sandbox/";
   const normalizedDir = path.posix.resolve(dir);
-  const unsafeDir =
-    !path.posix.isAbsolute(dir) ||
-    normalizedDir !== dir ||
+  // Distinguish the two failure modes for Ultra PRA-8: the un-normalized form
+  // (contains `..`, `.`, `//`, or is a relative path) vs the resolved form
+  // escaping `/sandbox/`.
+  const notAbsoluteOrNormalized = !path.posix.isAbsolute(dir) || normalizedDir !== dir;
+  const escapesSandboxRoot =
     !normalizedDir.startsWith(SANDBOX_ROOT) ||
     normalizedDir === SANDBOX_ROOT.replace(/\/$/, "");
-  if (unsafeDir) {
-    console.warn(
+  if (notAbsoluteOrNormalized || escapesSandboxRoot) {
+    const reason = notAbsoluteOrNormalized
+      ? `was not a normalized absolute path (contains '..', '.', '//', or is relative)`
+      : `resolves outside ${SANDBOX_ROOT}<agent-name>`;
+    warn(
       `  ${YW}⚠${R} Refusing to wipe workspace state for '${sandboxName}': ` +
-        `agent '${agentName}' declared config dir '${dir}' which is not a normalized ` +
-        `absolute path under ${SANDBOX_ROOT}<agent-name>`,
+        `agent '${agentName}' declared config dir '${dir}' which ${reason}`,
     );
     return;
   }
@@ -148,7 +159,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     // says state targets must be relative names under the agent config dir
     // (#5455 PRA-1 / CodeRabbit security). Defense-in-depth.
     if (path.posix.isAbsolute(p) || p.split("/").includes("..")) {
-      console.warn(
+      warn(
         `  ${YW}⚠${R} Skipping state path '${p}' from agent '${agentName}' manifest: ` +
           `must be relative and contain no '..' segments`,
       );
@@ -159,7 +170,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     // model explicitly.
     const resolved = path.posix.resolve(resolvedDir, p);
     if (resolved !== resolvedDir && !resolved.startsWith(`${resolvedDir}/`)) {
-      console.warn(
+      warn(
         `  ${YW}⚠${R} Skipping state path '${p}' from agent '${agentName}' manifest: ` +
           `resolves outside ${dir}`,
       );
@@ -209,7 +220,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     // E2E concern -- the helper-level test below pins the warning and the
     // CLI-level lifecycle test in test/cli/destroy-gateway-cleanup.test.ts
     // pins the gateway-select-then-exec-then-delete order.
-    console.warn(
+    warn(
       `  ${YW}⚠${R} Could not wipe workspace state for '${sandboxName}' (sandbox not live?); ` +
         "re-onboarding with the same name may resurface old files.",
     );
