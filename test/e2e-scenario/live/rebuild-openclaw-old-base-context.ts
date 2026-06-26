@@ -20,11 +20,17 @@ export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE
 
   for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
     const line = rawLine.trim();
-    if (!line || line.startsWith("#") || !line.startsWith("COPY ")) continue;
+    if (!line || line.startsWith("#")) continue;
 
-    const tokens = line.split(/\s+/).slice(1);
+    const instructionMatch = /^(\S+)\b([\s\S]*)$/.exec(line);
+    if (!instructionMatch || instructionMatch[1].toUpperCase() !== "COPY") continue;
+
+    const tokens = instructionMatch[2].trim().split(/\s+/).filter(Boolean);
+    const normalizedTokens = tokens.map((token) => token.toLowerCase());
     const nonFlagTokens = tokens.filter((token) => !token.startsWith("--"));
-    const hasStageSource = tokens.some((token) => token === "--from" || token.startsWith("--from="));
+    const hasStageSource = normalizedTokens.some(
+      (token) => token === "--from" || token.startsWith("--from="),
+    );
     if (hasStageSource) continue;
 
     if (nonFlagTokens.length !== 2 || nonFlagTokens[0]?.startsWith("[")) {
