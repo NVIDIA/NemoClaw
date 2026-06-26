@@ -67,6 +67,15 @@ _nemoclaw_verify_resource_limit() {
   _nemoclaw_limit_status=0
 
   if ! _nemoclaw_supports_resource_limit "$_nemoclaw_limit_flag"; then
+    # POSIX profile hooks can be sourced by /bin/sh (dash on Ubuntu), which
+    # supports nofile (-n) but not nproc (-u). Treat an unsupported flag as
+    # not enforceable in this shell rather than as drift; otherwise ordinary
+    # `openshell sandbox exec ... sh -lc ...` probes emit false security
+    # warnings before user code runs. Supported limits are still set and
+    # verified independently by verify_resource_limits. Remove or escalate this
+    # compatibility path if OpenShell guarantees profile hooks run under a shell
+    # with nproc support, or if a currently supported flag such as nofile
+    # becomes unsupported.
     unset _nemoclaw_limit_flag _nemoclaw_limit_value _nemoclaw_limit_label _nemoclaw_limit_quiet
     return 0
   fi
