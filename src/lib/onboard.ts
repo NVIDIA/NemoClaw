@@ -3192,10 +3192,10 @@ async function createSandbox(
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const inferenceSelection = sandboxRegistration.selection;
   sandboxRegistration.registerCreatedSandbox({
     sandboxName,
-    model,
-    provider,
+    inferenceSelection: inferenceSelection(sandboxName, provider, model, preferredInferenceApi),
     runtimeFields: sandboxRuntimeFields,
     agent,
     agentVersionKnown: !fromDockerfile,
