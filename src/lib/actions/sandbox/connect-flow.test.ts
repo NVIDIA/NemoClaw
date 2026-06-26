@@ -156,14 +156,10 @@ describe("connectSandbox flow", () => {
         value: originalStdoutIsTty,
       });
     }
-    if (originalStdinIsTty === undefined) {
-      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
-    } else {
-      Object.defineProperty(process.stdin, "isTTY", {
-        configurable: true,
-        value: originalStdinIsTty,
-      });
-    }
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: originalStdinIsTty,
+    });
     Object.defineProperty(process.stdin, "setRawMode", {
       configurable: true,
       value: originalStdinSetRawMode,
