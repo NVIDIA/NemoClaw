@@ -13,10 +13,13 @@
 //      an in-sandbox binary that does not exist (or exists with incompatible
 //      flags), and would silently bypass the host-side guard intended to
 //      redirect Hermes callers to the OpenAI-compatible API on port 8642.
-//    - Source boundary: the registry is NemoClaw-owned; the in-sandbox agent
-//      invocation, its argv contract, and its streaming behaviour are owned
-//      by upstream OpenClaw. NemoClaw does not rewrite OpenClaw flags here;
-//      it forwards them verbatim.
+//    - Source boundary: the registry and agent manifest allowlist are
+//      NemoClaw-owned. The in-sandbox invocation, its argv contract, and its
+//      streaming behaviour are owned by the selected upstream agent command.
+//      NemoClaw does not rewrite agent flags here; it forwards them verbatim.
+//      Terminal-runtime dispatch uses the manifest command only when it can
+//      be represented as simple whitespace-delimited argv tokens; shell
+//      quoting/escaping fails closed until manifests expose argv natively.
 //    - Source-fix constraint: NemoClaw cannot prove agent type from anywhere
 //      except the registry, because the OpenShell exec transport has no
 //      pre-execution probe that reveals the sandbox's configured agent. A
@@ -65,10 +68,13 @@
 //      the in-sandbox binary.
 //
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
-// registry-miss fallback to OpenClaw, the registry-error fail-closed path,
-// the enforced `--no-tty` argv shape, the non-Ready phase recovery path,
-// the unparseable phase fail-closed path, the no-selector and empty-args
-// rejection branches, and the `--flag=value` selector-acceptance branch.
+// forwarded argv, the registry-miss fallback to OpenClaw, registry and
+// manifest-resolution fail-closed paths, quoted manifest command rejection,
+// the enforced `--no-tty` argv shape, the non-Ready phase recovery path, the
+// unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
+// the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
+// captured transport path used to append failure provenance without polluting
+// machine-readable stdout.
 //
 // Removal conditions:
 //
@@ -78,17 +84,39 @@
 //     readiness or recovery guidance itself.
 //   - Drop the selector mirror when upstream `openclaw agent` rejects a
 //     missing selector with a clean exit 2 and an actionable message.
+//   - Drop the simple-token parser when terminal runtime manifests expose
+//     argv arrays natively.
 
+import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import * as registry from "../../../state/registry";
 import { parseSandboxPhase } from "../../../state/gateway";
+import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
+import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
+import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
 
 export {
   hasAgentPassthroughHelpToken,
   printAgentPassthroughHelp,
 } from "./passthrough-help";
+
+const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
+  "-a",
+  "--agent",
+  "-m",
+  "--message",
+  "--model",
+  "--provider",
+  "--reply-channel",
+  "--session-id",
+  "--session-key",
+  "--thinking",
+  "--timeout",
+  "--to",
+]);
+
+const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
@@ -98,8 +126,10 @@ export interface AgentPassthroughDeps {
   getSandbox?: typeof registry.getSandbox;
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
+  execJson?: typeof runAgentJsonPassthrough;
   process?: {
     exit(code: number): never;
+    stdout?: { write(s: string): unknown };
     stderr: { write(s: string): unknown };
   };
 }
@@ -108,6 +138,10 @@ type RegistryReadResult =
   | { kind: "missing" }
   | { kind: "agent"; agent: string | null }
   | { kind: "error"; message: string };
+type ResolvedRegistryReadResult = Exclude<RegistryReadResult, { kind: "error" }>;
+type TerminalCommandResult =
+  | { kind: "command"; argv: string[] }
+  | { kind: "unsupported"; message: string };
 
 function readSandboxAgentFromRegistry(
   sandboxName: string,
@@ -128,7 +162,7 @@ function rejectNonOpenclawAgent(
   proc: NonNullable<AgentPassthroughDeps["process"]>,
 ): never {
   proc.stderr.write(
-    `  Only OpenClaw sandboxes support the \`sandbox agent\` wrapper today (sandbox '${sandboxName}' runs '${agent}').\n`,
+    `  The \`sandbox agent\` wrapper cannot dispatch to sandbox '${sandboxName}' because it runs '${agent}'.\n`,
   );
   proc.stderr.write("  Hermes exposes an OpenAI-compatible API on port 8642 inside the sandbox;\n");
   proc.stderr.write(
@@ -136,6 +170,112 @@ function rejectNonOpenclawAgent(
   );
   proc.stderr.write("  and POST to http://127.0.0.1:8642/v1/chat/completions instead.\n");
   return proc.exit(2);
+}
+
+function rejectAgentResolutionError(
+  sandboxName: string,
+  agent: string,
+  message: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): never {
+  proc.stderr.write(
+    `  Could not resolve a passthrough command for registered agent '${agent}' in sandbox '${sandboxName}'.\n`,
+  );
+  proc.stderr.write(`  Agent resolution error: ${message}\n`);
+  proc.stderr.write("  Refusing to dispatch because the sandbox agent guard cannot fail closed.\n");
+  return proc.exit(2);
+}
+
+function ensureRegisteredAgentIsKnown(
+  sandboxName: string,
+  agent: string,
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): void {
+  let knownAgents: string[];
+  try {
+    knownAgents = listAgents();
+  } catch (error) {
+    rejectAgentResolutionError(
+      sandboxName,
+      agent,
+      `Could not read local agent manifest allowlist: ${(error as Error).message}`,
+      proc,
+    );
+  }
+  if (!knownAgents.includes(agent)) {
+    rejectAgentResolutionError(
+      sandboxName,
+      agent,
+      "Registered agent is not present in the local agent manifest allowlist",
+      proc,
+    );
+  }
+}
+
+function splitManifestCommand(command: string): TerminalCommandResult {
+  const trimmed = command.trim();
+  if (!trimmed) return { kind: "command", argv: [] };
+  if (/["'\\]/.test(trimmed)) {
+    return {
+      kind: "unsupported",
+      message:
+        "terminal runtime commands must be simple whitespace-delimited argv tokens; quoted or escaped shell syntax is not supported",
+    };
+  }
+  return { kind: "command", argv: trimmed.split(/\s+/).filter(Boolean) };
+}
+
+function getTerminalInteractiveCommand(agent: AgentDefinition): TerminalCommandResult {
+  const command = agent.runtime?.interactive_command ?? agent.runtime?.headless_command ?? "";
+  return splitManifestCommand(command);
+}
+
+function getPassthroughCommand(
+  sandboxName: string,
+  lookup: ResolvedRegistryReadResult,
+  extraArgs: readonly string[],
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+): string[] | null {
+  if (lookup.kind === "missing") {
+    if (hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
+    return ["openclaw", "agent", ...extraArgs];
+  }
+
+  const agentName = lookup.agent;
+  if (agentName === null || agentName === "openclaw") {
+    if (hasAgentPassthroughHelpToken(extraArgs)) {
+      printAgentPassthroughHelp();
+      return null;
+    }
+    return ["openclaw", "agent", ...extraArgs];
+  }
+
+  ensureRegisteredAgentIsKnown(sandboxName, agentName, proc);
+  let agent: AgentDefinition;
+  try {
+    agent = loadAgent(agentName);
+  } catch (error) {
+    rejectAgentResolutionError(sandboxName, agentName, (error as Error).message, proc);
+  }
+  if (!isTerminalAgent(agent)) {
+    rejectNonOpenclawAgent(sandboxName, agentName, proc);
+  }
+
+  const terminalCommand = getTerminalInteractiveCommand(agent);
+  if (terminalCommand.kind === "unsupported") {
+    rejectAgentResolutionError(sandboxName, agentName, terminalCommand.message, proc);
+  }
+  if (terminalCommand.argv.length === 0) {
+    rejectNonOpenclawAgent(sandboxName, agentName, proc);
+  }
+  return [...terminalCommand.argv, ...extraArgs];
+}
+
+function isOpenClawPassthroughCommand(command: readonly string[]): boolean {
+  return command[0] === "openclaw" && command[1] === "agent";
 }
 
 function rejectRegistryReadError(
@@ -151,6 +291,46 @@ function rejectRegistryReadError(
     "  Refusing to forward to `openclaw agent` because the agent guard cannot fail closed.\n",
   );
   return proc.exit(2);
+}
+
+function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
+  // Invalid state: the host wrapper must pick captured JSON transport only for
+  // the top-level OpenClaw output flag, not for a literal "--json" consumed as
+  // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
+  // the complete argv grammar; NemoClaw mirrors documented flags only to choose
+  // the host transport path. Unknown options fail conservative to normal
+  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
+  // documented value flag, documented equals-form value flags, documented
+  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
+  // special-casing the JSON transport path.
+  let skipNextValue = false;
+  for (const arg of extraArgs) {
+    if (skipNextValue) {
+      skipNextValue = false;
+      continue;
+    }
+    if (arg === "--") return false;
+    if (arg === "--json") return true;
+    if (arg.startsWith("--json=")) {
+      return !["0", "false", "no", "off"].includes(arg.slice("--json=".length).toLowerCase());
+    }
+    if (OPENCLAW_AGENT_VALUE_FLAGS.has(arg)) {
+      skipNextValue = true;
+      continue;
+    }
+    const equalsIndex = arg.indexOf("=");
+    if (
+      equalsIndex > 0 &&
+      arg.startsWith("--") &&
+      OPENCLAW_AGENT_VALUE_FLAGS.has(arg.slice(0, equalsIndex))
+    ) {
+      continue;
+    }
+    if (OPENCLAW_AGENT_BOOLEAN_FLAGS.has(arg)) continue;
+    if (arg.startsWith("-")) return false;
+  }
+  return false;
 }
 
 const TARGET_SELECTOR_FLAGS = ["--agent", "--session-id", "--session-key", "--to"] as const;
@@ -181,7 +361,7 @@ function rejectUnparseablePhase(
     `  Could not parse a 'Phase:' line from the live state of sandbox '${sandboxName}'.\n`,
   );
   proc.stderr.write(
-    "  Refusing to forward to `openclaw agent` because the readiness guard cannot fail closed.\n",
+    "  Refusing to dispatch the agent command because the readiness guard cannot fail closed.\n",
   );
   proc.stderr.write(
     `  Run \`${CLI_NAME} ${sandboxName} status\` to inspect the gateway-state output.\n`,
@@ -220,9 +400,8 @@ export async function runAgentPassthrough(
   if (lookup.kind === "error") {
     rejectRegistryReadError(sandboxName, lookup.message, proc);
   }
-  if (lookup.kind === "agent" && lookup.agent && lookup.agent !== "openclaw") {
-    rejectNonOpenclawAgent(sandboxName, lookup.agent, proc);
-  }
+  const command = getPassthroughCommand(sandboxName, lookup, extraArgs, proc);
+  if (!command) return;
   const ensureLive = deps.ensureLive ?? ensureLiveSandboxOrExit;
   const state = await ensureLive(sandboxName, { allowNonReadyPhase: true });
   const phase = parseSandboxPhase(state?.output ?? "");
@@ -232,10 +411,18 @@ export async function runAgentPassthrough(
   if (phase !== "Ready" && phase !== "Running") {
     rejectNotReadyForAgent(sandboxName, phase, proc);
   }
-  if (!hasTargetSelector(extraArgs)) {
+  if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
   }
-  const command = ["openclaw", "agent", ...extraArgs];
+  if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
+    const execJson = deps.execJson ?? runAgentJsonPassthrough;
+    execJson(sandboxName, command, {
+      exit: proc.exit.bind(proc),
+      stdout: proc.stdout ?? process.stdout,
+      stderr: proc.stderr,
+    } satisfies AgentJsonPassthroughProcess);
+    return;
+  }
   const exec = deps.exec ?? execSandbox;
   await exec(sandboxName, command, { tty: false });
 }

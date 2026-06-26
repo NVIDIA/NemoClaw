@@ -64,8 +64,32 @@ NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may
 ## Optional Web Search
 
 Deep Agents Code can use Tavily web search when you provide a Tavily credential in the runtime environment.
-NemoClaw does not enable Tavily or LangSmith by default for this harness.
-Before you provide those credentials, [add the required egress endpoints](../network-policy/customize-network-policy) to the sandbox policy so optional integrations stay explicit.
+NemoClaw does not enable Tavily or LangSmith by default for this harness. The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+
+To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, then supply the credential.
+
+```bash
+# Preview the endpoints the preset opens:
+nemoclaw <sandbox-name> policy-add tavily --dry-run
+# Apply it:
+nemoclaw <sandbox-name> policy-add tavily --yes
+```
+
+The `tavily` preset only opens egress to `api.tavily.com:443`.
+Provide the Tavily API key to the agent at runtime; NemoClaw does not bake `TAVILY_API_KEY` into the managed config or image.
+Because OpenShell attributes the harness's calls to the sandbox `python3` interpreter, this egress is process-wide for sandbox Python rather than a `dcode`-only boundary.
+
+Remove the access again when it is no longer needed.
+
+```bash
+nemoclaw <sandbox-name> policy-remove tavily --yes
+```
+
+### Optional Tracing (LangSmith)
+
+LangSmith tracing is **not a supported integration** for this managed harness yet.
+`start.sh` forwards the non-secret `LANGSMITH_TRACING`/`LANGSMITH_PROJECT` toggles if set, but no policy preset opens `api.smith.langchain.com` and no supported mechanism injects `LANGSMITH_API_KEY`.
+If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy); treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
 
 ## Troubleshooting
 

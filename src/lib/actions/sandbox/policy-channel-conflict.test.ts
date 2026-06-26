@@ -330,10 +330,9 @@ beforeEach(() => {
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
-  // Agent gate: support every channel.
+  // Agent gate: OpenClaw support is derived from channel manifests.
   vi.spyOn(defs, "loadAgent").mockReturnValue({
     name: "openclaw",
-    messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp", "teams"],
   });
 
   // Policy seam. addSandboxChannel gates on loadPreset()/parsePresetPolicyKeys()

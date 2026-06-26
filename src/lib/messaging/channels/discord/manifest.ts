@@ -179,31 +179,6 @@ export const discordManifest = {
         },
       },
     },
-    {
-      id: "discord-deepagents-env",
-      kind: "env-lines",
-      agent: "langchain-deepagents-code",
-      target: "~/.deepagents/.env",
-      lines: [
-        "DISCORD_BOT_TOKEN={{credential.discordBotToken.placeholder}}",
-        "NEMOCLAW_DISCORD_GUILD_IDS={{discord.guildIds.csv}}",
-        "DISCORD_ALLOWED_USERS={{discord.allowedUsers.csv}}",
-        "DISCORD_ALLOW_ALL_USERS={{discord.allowAllUsers}}",
-      ],
-    },
-    {
-      id: "discord-deepagents-channel",
-      kind: "json-fragment",
-      agent: "langchain-deepagents-code",
-      target: "~/.deepagents/messaging.json",
-      fragment: {
-        path: "channels.discord",
-        value: {
-          enabled: true,
-          requireMention: "{{discord.requireMention}}",
-        },
-      },
-    },
   ],
   runtime: {
     openclaw: {

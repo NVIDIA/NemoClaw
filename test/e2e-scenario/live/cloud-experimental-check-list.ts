@@ -5,7 +5,8 @@ export const DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS = [
   "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
   "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
   "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
-  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tui-startup.sh",
+  "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+  "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
 ] as const;
 
 export function cloudExperimentalChecksForOnboarding(
