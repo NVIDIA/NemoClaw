@@ -5,7 +5,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createOldBaseBuildContext } from "../live/rebuild-openclaw.test.ts";
+import {
+  createOldBaseBuildContext,
+  directDockerfileBaseCopySources,
+} from "../live/rebuild-openclaw-old-base-context.ts";
 
 const copiedContexts: string[] = [];
 
@@ -16,10 +19,15 @@ describe("rebuild-openclaw old-base build context", () => {
     }
   });
 
-  it("stages the Dockerfile.base rlimit helper dependency", () => {
+  it("stages every direct Dockerfile.base COPY dependency", () => {
     const buildContext = createOldBaseBuildContext();
     copiedContexts.push(buildContext);
 
-    expect(fs.existsSync(path.join(buildContext, "scripts/lib/sandbox-rlimits.sh"))).toBe(true);
+    const stagedSources = directDockerfileBaseCopySources().map((source) =>
+      path.join(buildContext, ...source.split("/")),
+    );
+
+    expect(stagedSources).not.toHaveLength(0);
+    expect(stagedSources.every((source) => fs.existsSync(source))).toBe(true);
   });
 });

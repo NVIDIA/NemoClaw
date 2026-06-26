@@ -1,0 +1,68 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
+const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
+const OLD_OPENCLAW_VERSION = "2026.3.11";
+const BLUEPRINT_RELPATH = "nemoclaw-blueprint/blueprint.yaml";
+
+export function oldBaseContextSources(): string[] {
+  return [BLUEPRINT_RELPATH, ...directDockerfileBaseCopySources()];
+}
+
+export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE): string[] {
+  const text = fs.readFileSync(dockerfilePath, "utf8");
+  const sources: string[] = [];
+
+  for (const [lineIndex, rawLine] of text.split(/\r?\n/).entries()) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#") || !line.startsWith("COPY ")) continue;
+
+    const tokens = line.split(/\s+/).slice(1);
+    const nonFlagTokens = tokens.filter((token) => !token.startsWith("--"));
+    const hasStageSource = tokens.some((token) => token === "--from" || token.startsWith("--from="));
+    if (hasStageSource) continue;
+
+    if (nonFlagTokens.length !== 2 || nonFlagTokens[0]?.startsWith("[")) {
+      throw new Error(
+        `Unsupported direct Dockerfile.base COPY form at line ${lineIndex + 1}: ${rawLine}`,
+      );
+    }
+
+    sources.push(nonFlagTokens[0]);
+  }
+
+  return sources;
+}
+
+function copyOldBaseContextFile(buildContext: string, relativePath: string): void {
+  const source = path.join(REPO_ROOT, ...relativePath.split("/"));
+  const target = path.join(buildContext, ...relativePath.split("/"));
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+}
+
+export function createOldBaseBuildContext(): string {
+  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-base-"));
+  // The legacy bash test builds Dockerfile.base with the full repository as
+  // context after temporarily lowering blueprint.yaml in-place. Keep the
+  // trusted checkout read-only while staging every current Dockerfile.base
+  // direct COPY dependency needed by that old-base build.
+  for (const relativePath of oldBaseContextSources()) {
+    copyOldBaseContextFile(buildContext, relativePath);
+  }
+
+  const stagedBlueprint = path.join(buildContext, ...BLUEPRINT_RELPATH.split("/"));
+  const original = fs.readFileSync(stagedBlueprint, "utf8");
+  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
+  if (!minOpenClawVersion.test(original)) {
+    throw new Error("blueprint min_openclaw_version line was not found");
+  }
+  const lowered = original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`);
+  fs.writeFileSync(stagedBlueprint, lowered, "utf8");
+  return buildContext;
+}

@@ -13,6 +13,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { createOldBaseBuildContext } from "./rebuild-openclaw-old-base-context.ts";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-openclaw.sh.
 // The contract stays intentionally local to this live test: build an older
@@ -26,11 +27,6 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
-const OLD_BASE_CONTEXT_RELPATHS = [
-  "nemoclaw-blueprint/blueprint.yaml",
-  "scripts/lib/sandbox-rlimits.sh",
-] as const;
-const BLUEPRINT_RELPATH = OLD_BASE_CONTEXT_RELPATHS[0];
 const OLD_OPENCLAW_VERSION = "2026.3.11";
 const MARKER_FILE = "/sandbox/.openclaw/workspace/rebuild-marker.txt";
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
@@ -165,34 +161,6 @@ function openshellBestEffort(
 function pythonExecArgs(script: string): string[] {
   const encoded = Buffer.from(script, "utf8").toString("base64");
   return ["python3", "-c", `import base64; exec(base64.b64decode('${encoded}'))`];
-}
-
-function copyOldBaseContextFile(buildContext: string, relativePath: string): void {
-  const source = path.join(REPO_ROOT, ...relativePath.split("/"));
-  const target = path.join(buildContext, ...relativePath.split("/"));
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.copyFileSync(source, target);
-}
-
-export function createOldBaseBuildContext(): string {
-  const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-base-"));
-  // The legacy bash test builds Dockerfile.base with the full repository as
-  // context after temporarily lowering blueprint.yaml in-place. Keep the
-  // trusted checkout read-only while staging every current Dockerfile.base
-  // context dependency needed by that old-base build.
-  for (const relativePath of OLD_BASE_CONTEXT_RELPATHS) {
-    copyOldBaseContextFile(buildContext, relativePath);
-  }
-  const stagedBlueprint = path.join(buildContext, ...BLUEPRINT_RELPATH.split("/"));
-  const original = fs.readFileSync(stagedBlueprint, "utf8");
-  const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
-  expect(
-    minOpenClawVersion.test(original),
-    "blueprint min_openclaw_version line was not found",
-  ).toBe(true);
-  const lowered = original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`);
-  fs.writeFileSync(stagedBlueprint, lowered, "utf8");
-  return buildContext;
 }
 
 async function waitForSandboxReady(sandbox: {
