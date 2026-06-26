@@ -17,6 +17,7 @@ SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
 PREFIX="10-deepagents-code-tui-startup"
 TUI_TIMEOUT="${DEEPAGENTS_TUI_TIMEOUT:-90}"
 SECRET_PATTERN='nvapi-[A-Za-z0-9_-]{10,}|nvcf-[A-Za-z0-9_-]{10,}|ghp_[A-Za-z0-9_-]{10,}|github_pat_[A-Za-z0-9_]{30,}|sk-proj-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9_-]{20,}|(xox[bpas]|xapp)-[A-Za-z0-9-]{10,}|A(K|S)IA[A-Z0-9]{16}|hf_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{10,}|gsk_[A-Za-z0-9]{10,}|pypi-[A-Za-z0-9_-]{10,}|bot[0-9]{8,10}:[A-Za-z0-9_-]{35}|[0-9]{8,10}:[A-Za-z0-9_-]{35}|[A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,}'
+SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
 info() { printf '%s\n' "${PREFIX}: $*"; }
@@ -45,6 +46,13 @@ strip_terminal_control_sequences() {
   perl -pe 's/\x1b\][^\a]*(?:\a|\x1b\\)//g; s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g; s/\r/\n/g'
 }
 
+cleanup_sensitive_captures() {
+  local artifact
+  for artifact in "${SENSITIVE_CAPTURE_FILES[@]}"; do
+    [ -n "$artifact" ] && rm -f -- "$artifact"
+  done
+}
+
 make_capture_dir() {
   if [ -n "${DEEPAGENTS_TUI_CAPTURE_DIR:-}" ]; then
     mkdir -p "$DEEPAGENTS_TUI_CAPTURE_DIR"
@@ -66,9 +74,10 @@ set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
 log_file -a $capture
 
-spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}
+set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
+spawn {*}$cmd
 expect {
-  -nocase -re {(deep agents|what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help|press enter)} {
+  -nocase -re {(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help|press enter)} {
     puts "\nNEMOCLAW_TUI_READY"
     send -- "\003"
   }
@@ -120,6 +129,8 @@ PASSED=0
 FAILED=0
 
 main() {
+  trap cleanup_sensitive_captures EXIT
+
   if ! is_positive_integer "$TUI_TIMEOUT"; then
     fail_test "DEEPAGENTS_TUI_TIMEOUT must be a positive integer"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -132,10 +143,24 @@ main() {
     exit 1
   fi
 
-  if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
-    info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
-    exit 0
+  local probe_output
+  if ! probe_output="$(sandbox_exec 'if test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1; then printf "NEMOCLAW_DCODE_PROBE:deepagents\n"; else printf "NEMOCLAW_DCODE_PROBE:other\n"; fi')"; then
+    fail_test "unable to probe sandbox '${SANDBOX_NAME}' for Deep Agents Code markers"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
   fi
+  case "$probe_output" in
+    *NEMOCLAW_DCODE_PROBE:deepagents*) ;;
+    *NEMOCLAW_DCODE_PROBE:other*)
+      info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
+      exit 0
+      ;;
+    *)
+      fail_test "unexpected sandbox probe output for '${SANDBOX_NAME}'"
+      printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+      exit 1
+      ;;
+  esac
 
   local capture_dir raw_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
@@ -143,6 +168,7 @@ main() {
   expect_log_file="${capture_dir}/${PREFIX}.expect.log"
   combined_capture_file="${capture_dir}/${PREFIX}.combined.log"
   plain_capture_file="${capture_dir}/${PREFIX}.sanitized.log"
+  SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")
   : >"$raw_capture_file"
   : >"$expect_log_file"
 
@@ -157,6 +183,7 @@ main() {
 
   cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"
   strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"
+  cleanup_sensitive_captures
 
   if [ "$expect_rc" -eq 0 ]; then
     pass "finite expect harness reached startup and observed exit"

@@ -117,12 +117,19 @@ function makeStartScriptFixture(tempDir: string): {
 } {
   const envFile = path.join(tempDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
-  const fixture = readAgentFile("start.sh")
+  const original = readAgentFile("start.sh");
+  expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
+  expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  const fixture = original
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
     );
+  expect(fixture).toContain(`local target="${envFile}"`);
+  expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
+  expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
+  expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
   return { envFile, scriptPath };
@@ -448,12 +455,22 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
     expect(tuiStartupCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(tuiStartupCheck).toContain("expect <<'EXPECT'");
-    expect(tuiStartupCheck).toContain("openshell sandbox exec --name $sandbox --tty");
+    expect(tuiStartupCheck).toContain(
+      "set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc",
+    );
+    expect(tuiStartupCheck).toContain("spawn {*}$cmd");
+    expect(tuiStartupCheck).not.toContain("-nocase -re {(deep agents|");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_DCODE_PROBE:deepagents");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_DCODE_PROBE:other");
+    expect(tuiStartupCheck).toContain("unable to probe sandbox");
+    expect(tuiStartupCheck).toContain("unexpected sandbox probe output");
     expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
     expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_READY");
     expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
     expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
     expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
+    expect(tuiStartupCheck).toContain("trap cleanup_sensitive_captures EXIT");
+    expect(tuiStartupCheck).toContain("cleanup_sensitive_captures");
     expect(tuiStartupCheck).toContain("${PREFIX}.sanitized.log");
     expect(tuiStartupCheck).toContain("secret-shaped value found in sanitized TUI capture");
     expect(tuiStartupCheck).toContain("nvapi-");
@@ -585,6 +602,48 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(detectsSecret("nvapi-" + "A".repeat(10))).toBe("secret");
     expect(detectsSecret("sk-" + "A".repeat(20))).toBe("secret");
     expect(detectsSecret("plain startup text")).toBe("clean");
+  });
+
+  it("removes raw TUI startup artifacts after writing the sanitized capture", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-"));
+    const rawCapture = path.join(tempDir, "raw.log");
+    const expectLog = path.join(tempDir, "expect.log");
+    const combinedCapture = path.join(tempDir, "combined.log");
+    const sanitizedCapture = path.join(tempDir, "sanitized.log");
+
+    try {
+      const output = runTuiStartupCheckHelper(
+        [
+          'raw_capture_file="$RAW_CAPTURE"',
+          'expect_log_file="$EXPECT_LOG"',
+          'combined_capture_file="$COMBINED_CAPTURE"',
+          'plain_capture_file="$SANITIZED_CAPTURE"',
+          'SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")',
+          'printf "%s\\n" "$SECRET_TOKEN" >"$raw_capture_file"',
+          'printf "%s\\n" "expect output" >"$expect_log_file"',
+          'cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"',
+          'strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"',
+          "cleanup_sensitive_captures",
+          'for artifact in "$raw_capture_file" "$expect_log_file" "$combined_capture_file"; do if [ -e "$artifact" ]; then printf "leaked:%s" "$artifact"; exit 1; fi; done',
+          'if [ -e "$plain_capture_file" ]; then printf sanitized; else printf missing; fi',
+        ].join("; "),
+        {
+          COMBINED_CAPTURE: combinedCapture,
+          EXPECT_LOG: expectLog,
+          RAW_CAPTURE: rawCapture,
+          SANITIZED_CAPTURE: sanitizedCapture,
+          SECRET_TOKEN: `sk-${"A".repeat(20)}`,
+        },
+      );
+
+      expect(output).toBe("sanitized");
+      expect(fs.existsSync(rawCapture)).toBe(false);
+      expect(fs.existsSync(expectLog)).toBe(false);
+      expect(fs.existsSync(combinedCapture)).toBe(false);
+      expect(fs.existsSync(sanitizedCapture)).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
   });
 
   it("detects representative secret families in headless inference artifacts", () => {
