@@ -7,8 +7,8 @@
 // running a task or dropping into the interactive TUI.
 //
 // Linux gated: the wrapper hardcodes `PATH=/usr/local/bin:...` and launches
-// `python3 -m deepagents_code`. CI runs on Linux where /usr/local/bin/python3 is
-// absent, so the wrapper resolves to the stubbed python3 planted below.
+// `python3 -m deepagents_code`. The test patches only the copied wrapper's
+// managed PATH so the launch reaches the stubbed python3 planted below.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -48,12 +48,30 @@ type WrapperRun = {
 function runWrapper(args: string[]): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
   try {
-    fs.copyFileSync(WRAPPER, path.join(dir, "dcode"));
-    fs.chmodSync(path.join(dir, "dcode"), 0o755);
-
     const marker = path.join(dir, "launched.txt");
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
+
+    const managedPath = [
+      bin,
+      "/usr/local/bin",
+      "/opt/venv/bin",
+      "/usr/local/sbin",
+      "/usr/sbin",
+      "/usr/bin",
+      "/sbin",
+      "/bin",
+    ].join(":");
+    const wrapperSource = fs.readFileSync(WRAPPER, "utf-8");
+    const wrapperWithStubbedPath = wrapperSource.replace(
+      'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
+      `export PATH=${JSON.stringify(managedPath)}`,
+    );
+    if (wrapperWithStubbedPath === wrapperSource) {
+      throw new Error("Unable to patch dcode wrapper managed PATH for test stub");
+    }
+    fs.writeFileSync(path.join(dir, "dcode"), wrapperWithStubbedPath, { mode: 0o755 });
+
     fs.writeFileSync(
       path.join(bin, "python3"),
       `#!/usr/bin/env bash\nprintf '%s' "$*" > ${JSON.stringify(marker)}\nexit 0\n`,
