@@ -135,6 +135,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
   });
 
+  it("prints NemoClaw setup output before idling as a terminal runtime", () => {
+    const startScript = readAgentFile("start.sh");
+
+    expect(startScript).toContain("Setting up NemoClaw Deep Agents Code runtime");
+    expect(startScript).toContain("exec tail -f /dev/null");
+    expect(startScript).not.toContain("exec sleep infinity");
+  });
+
   it("does not serialize provider or optional service secrets into the shell env file", () => {
     const startScript = readAgentFile("start.sh");
 

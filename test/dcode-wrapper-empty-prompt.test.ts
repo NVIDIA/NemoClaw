@@ -7,8 +7,8 @@
 // running a task or dropping into the interactive TUI.
 //
 // Linux gated: the wrapper hardcodes `PATH=/usr/local/bin:...` and launches
-// `python3 -m deepagents_code`. CI runs on Linux where /usr/local/bin/python3 is
-// absent, so the wrapper resolves to the stubbed python3 planted below.
+// `python3 -m deepagents_code`. The test patches only the copied wrapper's
+// managed PATH so the launch reaches the stubbed python3 planted below.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -51,12 +51,12 @@ function runWrapper(args: string[]): WrapperRun {
     const marker = path.join(dir, "launched.txt");
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
-    const wrapperFixture = fs
-      .readFileSync(WRAPPER, "utf8")
-      .replace(
-        'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
-        `export PATH="${bin}:/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"`,
-      );
+    const wrapperSource = fs.readFileSync(WRAPPER, "utf-8");
+    const wrapperFixture = wrapperSource.replace(
+      /export PATH="([^"]*)"/,
+      (_match, managedPath: string) => `export PATH=${JSON.stringify(`${bin}:${managedPath}`)}`,
+    );
+    expect(wrapperFixture).not.toBe(wrapperSource);
     fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
 
     fs.writeFileSync(
