@@ -105,24 +105,6 @@ function baseSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function expectInferenceRegistryUpdate(
-  updateSandbox: ReturnType<typeof vi.fn>,
-  sandboxName: string,
-  expected: { provider: string; model: string; preferredInferenceApi?: string | null },
-): void {
-  expect(updateSandbox).toHaveBeenCalledWith(
-    sandboxName,
-    expect.objectContaining({
-      provider: expected.provider,
-      model: expected.model,
-      endpointUrl: null,
-      credentialEnv: null,
-      preferredInferenceApi: expected.preferredInferenceApi ?? null,
-      nimContainer: null,
-    }),
-  );
-}
-
 function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;

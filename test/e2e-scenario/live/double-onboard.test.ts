@@ -324,15 +324,22 @@ function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function registryEntryMatches(entry: unknown, sandboxName: string): boolean {
+  return (
+    entry === sandboxName ||
+    Boolean(entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName)
+  );
+}
+
+function registryContainsEntry(entries: unknown[], sandboxName: string): boolean {
+  return entries.some((entry) => registryEntryMatches(entry, sandboxName));
+}
+
 function namedRegistryEntry(
   entries: unknown[],
   sandboxName: string,
 ): Record<string, unknown> | null {
-  const found = entries.find(
-    (entry) =>
-      entry === sandboxName ||
-      (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
-  );
+  const found = entries.find((entry) => registryEntryMatches(entry, sandboxName));
   return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
 }
 
@@ -364,7 +371,23 @@ function registryEntry(sandboxName: string): Record<string, unknown> | null {
 }
 
 function registryHas(sandboxName: string): boolean {
-  return registryEntry(sandboxName) !== null;
+  try {
+    const registry = fs.existsSync(REGISTRY_FILE)
+      ? (JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown)
+      : null;
+    const registryRecord =
+      registry && typeof registry === "object" && !Array.isArray(registry)
+        ? (registry as Record<string, unknown>)
+        : null;
+    const sandboxes = registryRecord?.sandboxes;
+    return (
+      (Array.isArray(registry) && registryContainsEntry(registry, sandboxName)) ||
+      (Array.isArray(sandboxes) && registryContainsEntry(sandboxes, sandboxName)) ||
+      registryEntry(sandboxName) !== null
+    );
+  } catch {
+    return false;
+  }
 }
 
 function assertRegistryInferenceMetadata(sandboxName: string, endpointUrl: string): void {

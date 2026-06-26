@@ -441,16 +441,17 @@ export async function runInferenceSet(
   });
   // Write the registry before the crash-prone in-sandbox sync so the gateway
   // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
+  const sameProvider = entry.provider === provider;
   if (
     !deps.updateSandbox(
       sandboxName,
       inferenceSelectionRegistryFields({
         provider,
         model,
-        endpointUrl: entry.provider === provider ? (entry.endpointUrl ?? null) : null,
-        credentialEnv: entry.credentialEnv ?? null,
+        endpointUrl: sameProvider ? (entry.endpointUrl ?? null) : null,
+        credentialEnv: sameProvider ? (entry.credentialEnv ?? null) : null,
         preferredInferenceApi,
-        nimContainer: entry.nimContainer ?? null,
+        nimContainer: sameProvider ? (entry.nimContainer ?? null) : null,
       }),
     )
   ) {
