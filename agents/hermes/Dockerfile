@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:60333c1982ad855d55887b4488e867eb343f3930a30aa8e0268e5397fc6f2926
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -36,19 +36,37 @@ RUN set -eu; \
             echo "ERROR: Hermes dashboard source missing at $hermes_web_dir" >&2; \
             exit 1; \
         fi; \
-        npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
-        npm run build --prefix "$hermes_web_dir"; \
-        rm -rf "$hermes_web_dir/node_modules"; \
+        if [ -f "$hermes_web_dir/package-lock.json" ]; then \
+            npm ci --prefix "$hermes_web_dir" --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix "$hermes_web_dir"; \
+            rm -rf "$hermes_web_dir/node_modules"; \
+        elif grep -q '"web"' /opt/hermes/package-lock.json; then \
+            npm ci --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix /opt/hermes --workspace web; \
+            npm ci --omit=dev --prefix /opt/hermes --prefer-offline --no-audit --no-fund; \
+        else \
+            echo "ERROR: Hermes dashboard at $hermes_web_dir is not covered by a pinned lockfile" >&2; \
+            exit 1; \
+        fi; \
     fi; \
     test -d "$hermes_web_dist"
 
 ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 
-# Harden: remove unnecessary build tools and network probes
-RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
-    && apt-get autoremove --purge -y \
-    && rm -rf /var/lib/apt/lists/*
+# Harden: remove unnecessary build tools and network probes. build-essential
+# comes from the base image for npm/node-gyp builds; the final image does not
+# compile anything, so strip the installed compiler packages and fail closed if
+# command shims survive.
+RUN set -eu; \
+    dpkg-query -W -f='${Package}\n' >/tmp/hermes-runtime-packages.txt; \
+    grep -E '^(build-essential|make|gcc|g\+\+|cpp|gcc-[0-9]+|g\+\+-[0-9]+|cpp-[0-9]+|[[:alnum:]_-]+-linux-gnu-(gcc|g\+\+|cpp)(-[0-9]+)?|netcat-openbsd|netcat-traditional|ncat)$' /tmp/hermes-runtime-packages.txt >/tmp/hermes-runtime-tool-packages.txt || true; \
+    if [ -s /tmp/hermes-runtime-tool-packages.txt ]; then xargs -r apt-get purge -y </tmp/hermes-runtime-tool-packages.txt; fi; \
+    rm -f /tmp/hermes-runtime-packages.txt /tmp/hermes-runtime-tool-packages.txt; \
+    apt-get autoremove --purge -y; \
+    rm -rf /var/lib/apt/lists/*; \
+    if command -v gcc >/dev/null 2>&1; then echo "ERROR: gcc survived runtime purge" >&2; exit 1; fi; \
+    if command -v g++ >/dev/null 2>&1; then echo "ERROR: g++ survived runtime purge" >&2; exit 1; fi; \
+    if command -v make >/dev/null 2>&1; then echo "ERROR: make survived runtime purge" >&2; exit 1; fi
 
 # Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
 # builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
@@ -93,9 +111,35 @@ RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 # gateway recovery script (src/lib/agent/runtime.ts) so `sandbox recover` enforces
 # the same boundary as the initial entrypoint.
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY agents/hermes/start.sh /usr/local/bin/nemoclaw-start
 COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
-RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py
+COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
+COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
+# Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
+# only repairs stale bases predating the v0.0.69 base layer, which may lack the
+# profile hook, bashrc hook, or root-owned helper mode. Remove it once the
+# minimum supported Hermes sandbox base tag guarantees those artifacts and
+# test/sandbox-rlimit-hooks.test.ts covers that base.
+RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py \
+    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && mkdir -p /etc/profile.d \
+    && printf '%s\n' \
+        '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+        > /etc/profile.d/nemoclaw-rlimits.sh \
+    && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
+    && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
+    && { printf '%s\n' \
+          '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+          ''; \
+        if [ -f /etc/bash.bashrc ]; then \
+          grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc || true; \
+        fi; \
+      } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
@@ -153,12 +197,16 @@ USER sandbox
 RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/
 
+# Run Hermes' upstream repair before NemoClaw writes the generated config.yaml
+# and .env that become the startup integrity trust anchor. Doctor-created
+# defaults are overwritten by the generator below.
 # Generate Hermes config.yaml and .env from build args.
 # Config is mutable by default (600 sandbox:sandbox). Immutability is opt-in
 # via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
-RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
+RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix \
+    && node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
 # Install NemoClaw plugin into Hermes
 # hadolint ignore=DL3059
@@ -193,6 +241,7 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 # 444 root:root + chattr +i.
 # hadolint ignore=DL3002
 USER root
+
 # Flatten stale published base images that still contain the old .hermes-data
 # symlink bridge. OpenShell starts the sandbox as the sandbox user, so runtime
 # migration cannot rely on root privileges inside the pod.
@@ -282,7 +331,8 @@ RUN set -eu; \
         "$config_dir/platforms/whatsapp/session" \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
-        "$config_dir/runtime"; \
+        "$config_dir/runtime" \
+        "$config_dir/dashboard-home"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -331,13 +381,18 @@ RUN set -eu; \
         /sandbox/.hermes/weixin \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
+        /sandbox/.hermes/dashboard-home \
     && chmod 2770 \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
+    && find -P /sandbox/.hermes/logs -type f -exec chown sandbox:sandbox {} + \
+    && find -P /sandbox/.hermes/logs -type f -exec chmod 660 {} + \
     && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \

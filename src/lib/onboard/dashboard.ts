@@ -10,6 +10,7 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
@@ -92,6 +93,7 @@ export interface OnboardDashboardHelpers {
   ): number;
   ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1],
@@ -375,6 +377,21 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return ensureFixedAgentForward(deps, sandboxName, port, label);
   }
 
+  /**
+   * Read a bearer_token agent's web-auth token (e.g. Hermes' API_SERVER_KEY)
+   * from its in-sandbox .env. The .env is 0640 root:sandbox and the gateway
+   * group can read it, so we grep it via `sandbox exec` as the sandbox user
+   * rather than `sandbox download` (which may not have read access). Prints
+   * only the value, never the key name, and returns null when the agent has
+   * no bearer token or the value is absent.
+   */
+  function fetchAgentWebAuthTokenFromSandbox(
+    sandboxName: string,
+    agent: AgentDefinition,
+  ): string | null {
+    return fetchAgentWebAuthToken(deps.runCaptureOpenshell, sandboxName, agent);
+  }
+
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
     try {
@@ -499,6 +516,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     ensureAgentDashboardForward,
     ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
+    fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
     getWslHostAddress,

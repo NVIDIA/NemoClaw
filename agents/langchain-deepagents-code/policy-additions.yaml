@@ -13,6 +13,7 @@ filesystem_policy:
   include_workdir: true
   read_only:
     - /usr
+    - /opt/venv
     - /lib
     - /proc
     - /dev/urandom
@@ -52,8 +53,8 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/dcode }
-      - { path: /usr/bin/python3* }
-      - { path: /usr/local/lib/python3.13/** }
+      - { path: /opt/venv/bin/python3* }
+      - { path: /opt/venv/lib/python3.13/** }
 
   github:
     name: github
@@ -71,7 +72,7 @@ network_policies:
       # interpreter, not only as the /usr/local/bin/dcode shell wrapper. Keep
       # this broad Python boundary limited to approved GitHub hosts; optional
       # Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent.
-      - { path: /usr/bin/python3* }
+      - { path: /opt/venv/bin/python3* }
 
   pypi:
     name: pypi
@@ -89,9 +90,12 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
-      - { path: /usr/local/bin/pip3 }
+      - { path: /opt/venv/bin/pip3 }
       # pip and dcode package-install traffic execute through Python. This is
       # intentionally process-wide only for the read-only PyPI hosts listed
-      # above; optional service egress must be added explicitly by policy.
-      - { path: /usr/bin/python3* }
+      # above, including project venvs under /sandbox; optional service egress
+      # must be added explicitly by policy.
+      - { path: /sandbox/**/bin/pip3 }
+      - { path: /opt/venv/bin/python3* }
+      - { path: /sandbox/**/bin/python3* }
       - { path: /usr/local/bin/dcode }

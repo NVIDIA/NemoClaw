@@ -25,6 +25,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       healthPath: "/health",
       auth: "none",
     },
+    webAuth: { method: "bearer_token", env: "API_SERVER_KEY" },
     configPaths: {
       dir: "/sandbox/.hermes",
       configFile: "config.yaml",
@@ -34,6 +35,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "hermes --version",
     expectedVersion: "2026.4.30",
     hasDevicePairing: false,

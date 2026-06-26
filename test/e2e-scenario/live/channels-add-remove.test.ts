@@ -171,7 +171,14 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
       : {};
   const networkEntries = planArray(networkPolicy, "entries");
   const networkPresets = stringArray(networkPolicy.presets);
-  const agentRender = planArray(plan, "agentRender");
+
+  expect(Object.hasOwn(plan, "agentRender"), "messaging.plan.agentRender should not persist").toBe(
+    false,
+  );
+  expect(
+    channels.some((entry) => Object.hasOwn(entry, "hooks")),
+    "messaging.plan.channels hooks should not persist",
+  ).toBe(false);
 
   if (expected === "active") {
     expect(
@@ -194,10 +201,6 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
       ),
       `telegram TELEGRAM_BOT_TOKEN credential binding missing ${context}`,
     ).toBe(true);
-    expect(
-      agentRender.some((entry) => entry.channelId === "telegram" && entry.agent === "openclaw"),
-      `telegram openclaw agent render entry missing ${context}`,
-    ).toBe(true);
     expect(disabledChannels, `telegram unexpectedly disabled ${context}`).not.toContain("telegram");
     return;
   }
@@ -217,10 +220,6 @@ function expectHostTelegramPlan(expected: "active" | "removed", context: string)
   expect(
     credentialBindings.some((entry) => entry.channelId === "telegram"),
     `telegram credential binding still present ${context}`,
-  ).toBe(false);
-  expect(
-    agentRender.some((entry) => entry.channelId === "telegram"),
-    `telegram agent render entry still present ${context}`,
   ).toBe(false);
 }
 

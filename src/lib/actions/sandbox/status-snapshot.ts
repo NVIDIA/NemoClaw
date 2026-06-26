@@ -25,6 +25,10 @@ import {
   type SandboxStatusFailureLayer,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
+import {
+  probeTerminalRuntimeCgroupOom,
+  type TerminalRuntimeOomProbeResult,
+} from "./terminal-runtime-health";
 
 type ProbeProviderHealth = (
   provider: string,
@@ -91,6 +95,7 @@ export interface SandboxStatusReport {
   openshellVersion: string;
   policies: string[];
   failureLayer: SandboxStatusFailureLayer | null;
+  terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
    * Whether the resolved docker-driver sandbox container is paused
    * (`docker pause`). `false` for non-docker-driver sandboxes or when no
@@ -107,6 +112,7 @@ export interface SandboxStatusSnapshot {
   currentModel: string;
   currentProvider: string;
   inferenceHealth: ProviderHealthStatus | null;
+  terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
 }
 
 export interface SandboxStatusAgentInfo {
@@ -143,10 +149,12 @@ export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatus
 }
 
 type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
+type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
 
 interface CollectSandboxStatusSnapshotDeps {
   getSandbox?: typeof registry.getSandbox;
   probeProviderHealthImpl?: ProbeProviderHealth;
+  probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   reconcile?: ReconcileSandboxGatewayState;
 }
 
@@ -192,6 +200,7 @@ export async function collectSandboxStatusSnapshot(
       currentModel: "unknown",
       currentProvider: "unknown",
       inferenceHealth: null,
+      terminalRuntimeHealth: null,
     };
   }
   const live =
@@ -230,7 +239,20 @@ export async function collectSandboxStatusSnapshot(
       inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
     }
   }
-  return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
+  const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const terminalRuntimeHealth =
+    lookup.state === "present" && statusAgent.agentRuntime === "terminal"
+      ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
+      : null;
+  return {
+    sb,
+    lookup,
+    rpcIssue,
+    currentModel,
+    currentProvider,
+    inferenceHealth,
+    terminalRuntimeHealth,
+  };
 }
 
 export async function getSandboxStatusReport(
@@ -255,7 +277,15 @@ async function buildSandboxStatusReport(
     suppressInferenceProbe: preflight.suppressInferenceProbe,
     deps,
   });
-  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
+  const {
+    sb,
+    lookup,
+    rpcIssue,
+    currentModel,
+    currentProvider,
+    inferenceHealth,
+    terminalRuntimeHealth,
+  } = snapshot;
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
   const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
@@ -288,6 +318,7 @@ async function buildSandboxStatusReport(
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
     failureLayer: effectivePreflight.failureLayer,
+    terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,
   };
 }

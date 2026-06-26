@@ -28,8 +28,17 @@ from typing import Iterable
 SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 KEY_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
 ENV_FILE_ALLOWED_NONSECRET_KEYS = frozenset({"API_SERVER_HOST", "API_SERVER_PORT"})
+# API_SERVER_KEY is the bearer token Hermes' own api_server (Hermes v0.16.0+)
+# reads for its loopback bind. NemoClaw mints it at sandbox startup; it is not
+# an external-service credential routed through the OpenShell resolver. It
+# authenticates clients reaching the 127.0.0.1 api_server (and the forwarded
+# port), so the gateway must read it raw and it legitimately lives in .env. This
+# mirrors the OPENCLAW_GATEWAY_TOKEN allowance below, but only for the generated
+# 32-byte lowercase-hex shape minted by the runtime config guard.
+ENV_FILE_ALLOWED_RAW_SECRET_KEYS = frozenset({"API_SERVER_KEY"})
 RUNTIME_ALLOWED_NONSECRET_KEYS = frozenset(
     {
         "API_SERVER_HOST",
@@ -57,6 +66,18 @@ def is_allowed_value(value: str) -> bool:
         return True
     if PLACEHOLDER_RE.fullmatch(value):
         return True
+    return False
+
+
+def is_generated_api_server_key(value: str) -> bool:
+    return API_SERVER_KEY_RE.fullmatch(unquote(value)) is not None
+
+
+def is_allowed_raw_secret_value(key: str, value: str) -> bool:
+    if key == "OPENCLAW_GATEWAY_TOKEN":
+        return True
+    if key == "API_SERVER_KEY":
+        return is_generated_api_server_key(value)
     return False
 
 
@@ -108,6 +129,8 @@ def validate_env_file(path: str) -> int:
                     continue
                 if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
                     continue
+                if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(key, value):
+                    continue
                 if not SECRET_KEY_RE.search(key):
                     continue
                 if is_allowed_value(unquote(value)):
@@ -141,7 +164,9 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     source = os.environ if env is None else env
     violations: list[str] = []
     for key, value in sorted(source.items()):
-        if key in RUNTIME_ALLOWED_RAW_SECRET_KEYS or key in RUNTIME_ALLOWED_NONSECRET_KEYS:
+        if key in RUNTIME_ALLOWED_NONSECRET_KEYS:
+            continue
+        if key in RUNTIME_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(key, value):
             continue
         if not KEY_NAME_RE.fullmatch(key):
             continue
