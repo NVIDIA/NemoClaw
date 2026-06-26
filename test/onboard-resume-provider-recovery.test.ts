@@ -452,9 +452,16 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const nonInteractive = await setupNim(null, "dcode-station", null, false);
+    process.env.NEMOCLAW_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.NEMOCLAW_MODEL = "gpt-5.4";
+    const explicitProvider = await setupNim(null, "dcode-station", null, false);
+    delete process.env.NEMOCLAW_PROVIDER;
+    delete process.env.OPENAI_API_KEY;
+    process.env.NEMOCLAW_MODEL = "nvidia/test-model";
     __setNonInteractive(false);
     const interactive = await setupNim(null, "dcode-station", null, false);
-    originalLog(JSON.stringify({ nonInteractive, interactive, prompts, lines }));
+    originalLog(JSON.stringify({ nonInteractive, explicitProvider, interactive, prompts, lines }));
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -482,6 +489,8 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     expect(payload.nonInteractive.provider).toBe("nvidia-prod");
     expect(payload.nonInteractive.model).toBe("nvidia/test-model");
     expect(payload.nonInteractive.preferredInferenceApi).toBe("openai-completions");
+    expect(payload.explicitProvider.provider).toBe("openai-api");
+    expect(payload.explicitProvider.model).toBe("gpt-5.4");
     expect(payload.interactive.provider).toBe("nvidia-prod");
     expect(payload.interactive.preferredInferenceApi).toBe("openai-completions");
     expect(payload.prompts[0]).toMatch(/^  Choose \[\d+\]: $/);
