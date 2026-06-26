@@ -429,12 +429,22 @@ function normalizeExplicitCredentialEnv(
   return normalized;
 }
 
-function normalizeExplicitInferenceApi(value: string | null | undefined): string | null {
+function allowedExplicitInferenceApis(provider: string): string[] {
+  return provider === "compatible-endpoint"
+    ? ["openai-completions", "openai-responses"]
+    : Array.from(INFERENCE_SET_APIS);
+}
+
+function normalizeExplicitInferenceApi(
+  provider: string,
+  value: string | null | undefined,
+): string | null {
   const normalized = typeof value === "string" ? value.trim() : "";
   if (!normalized) return null;
-  if (!INFERENCE_SET_APIS.has(normalized)) {
+  const allowed = allowedExplicitInferenceApis(provider);
+  if (!allowed.includes(normalized)) {
     throw new InferenceSetError(
-      `inference-api must be one of: ${Array.from(INFERENCE_SET_APIS).join(", ")}.`,
+      `inference-api for '${provider}' must be one of: ${allowed.join(", ")}.`,
       2,
     );
   }
@@ -461,7 +471,7 @@ function explicitCustomProviderMetadata(
   return {
     endpointUrl: normalizeCustomEndpointUrl(options.endpointUrl),
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
-    preferredInferenceApi: normalizeExplicitInferenceApi(options.inferenceApi),
+    preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
   };
 }

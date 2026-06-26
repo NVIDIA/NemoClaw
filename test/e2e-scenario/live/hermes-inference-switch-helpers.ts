@@ -235,15 +235,12 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
 export async function ensureCompatibleAnthropicSwitchProvider(
   host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
-): Promise<void> {
+): Promise<string | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
-    return;
+    return null;
   const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
-  if (endpointUrl && !process.env.NEMOCLAW_SWITCH_ENDPOINT_URL) {
-    process.env.NEMOCLAW_SWITCH_ENDPOINT_URL = endpointUrl;
-  }
   const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
   expect(
     endpointUrl,
@@ -271,6 +268,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
     timeoutMs: 120_000,
   });
   expect(result.exitCode).toBe(0);
+  return endpointUrl;
 }
 
 export async function installHermes(

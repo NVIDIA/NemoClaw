@@ -65,39 +65,40 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const install = await installHermes(host, apiKey);
     expect(install.exitCode, resultText(install)).toBe(0);
-    await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
+    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
-    const switchArgs = [
-      CLI,
-      "inference",
-      "set",
-      "--provider",
-      SWITCH_PROVIDER,
-      "--model",
-      SWITCH_MODEL,
-    ];
-    if (
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" &&
-      SWITCH_API === "anthropic-messages"
-    ) {
-      switchArgs.push(
-        "--endpoint-url",
-        process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? "",
-        "--credential-env",
-        "COMPATIBLE_ANTHROPIC_API_KEY",
-        "--inference-api",
-        SWITCH_API,
-      );
-    }
-    const switched = await host.command("node", switchArgs, {
-      artifactName: "hermes-inference-set",
-      env: env(apiKey),
-      redactionValues: [apiKey],
-      timeoutMs: 180_000,
-    });
+    const compatibleMetadataArgs = switchEndpointUrl
+      ? [
+          "--endpoint-url",
+          switchEndpointUrl,
+          "--credential-env",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+          "--inference-api",
+          SWITCH_API,
+        ]
+      : [];
+    const switched = await host.command(
+      "node",
+      [
+        CLI,
+        "inference",
+        "set",
+        "--provider",
+        SWITCH_PROVIDER,
+        "--model",
+        SWITCH_MODEL,
+        ...compatibleMetadataArgs,
+      ],
+      {
+        artifactName: "hermes-inference-set",
+        env: env(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 180_000,
+      },
+    );
     expect(switched.exitCode, resultText(switched)).toBe(0);
 
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");

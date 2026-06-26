@@ -381,9 +381,9 @@ async function ensureCompatibleAnthropicSwitchProvider(
   host: HostCliClient,
   home: string,
   mockProvider: MockAnthropicProvider | undefined,
-): Promise<void> {
-  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return;
-  if (SWITCH_INFERENCE_API !== "anthropic-messages") return;
+): Promise<string | null> {
+  if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint") return null;
+  if (SWITCH_INFERENCE_API !== "anthropic-messages") return null;
 
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mockProvider?.endpointUrl ?? "";
   const apiKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
@@ -414,6 +414,7 @@ async function ensureCompatibleAnthropicSwitchProvider(
     timeoutMs: COMMAND_TIMEOUT_MS,
   });
   expect(provider.exitCode, resultText(provider)).toBe(0);
+  return endpointUrl;
 }
 
 async function openclawGatewayPid(sandbox: SandboxClient, home: string): Promise<string> {
@@ -815,8 +816,19 @@ async function runInferenceSetWithRetry(
   host: HostCliClient,
   home: string,
   redactionValues: string[],
+  switchEndpointUrl: string | null,
 ): Promise<ShellProbeResult> {
   const attempts = parsePositiveIntEnv("NEMOCLAW_SWITCH_SET_ATTEMPTS", 3);
+  const compatibleMetadataArgs = switchEndpointUrl
+    ? [
+        "--endpoint-url",
+        switchEndpointUrl,
+        "--credential-env",
+        "COMPATIBLE_ANTHROPIC_API_KEY",
+        "--inference-api",
+        SWITCH_INFERENCE_API,
+      ]
+    : [];
   const args = [
     "inference",
     "set",
@@ -826,20 +838,8 @@ async function runInferenceSetWithRetry(
     SWITCH_MODEL,
     "--sandbox",
     SANDBOX_NAME,
+    ...compatibleMetadataArgs,
   ];
-  if (
-    SWITCH_PROVIDER === "compatible-anthropic-endpoint" &&
-    SWITCH_INFERENCE_API === "anthropic-messages"
-  ) {
-    args.push(
-      "--endpoint-url",
-      process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? "",
-      "--credential-env",
-      "COMPATIBLE_ANTHROPIC_API_KEY",
-      "--inference-api",
-      SWITCH_INFERENCE_API,
-    );
-  }
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const result = await runNemoclaw(host, home, args, {
@@ -956,17 +956,14 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         endpointUrl: mockProvider.endpointUrl,
       });
     }
-    await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
-    if (
-      SWITCH_PROVIDER === "compatible-anthropic-endpoint" &&
-      SWITCH_INFERENCE_API === "anthropic-messages"
-    ) {
-      process.env.NEMOCLAW_SWITCH_ENDPOINT_URL =
-        process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mockProvider?.endpointUrl;
-    }
+    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(
+      host,
+      home,
+      mockProvider,
+    );
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
-    const switchResult = await runInferenceSetWithRetry(host, home, [apiKey]);
+    const switchResult = await runInferenceSetWithRetry(host, home, [apiKey], switchEndpointUrl);
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);

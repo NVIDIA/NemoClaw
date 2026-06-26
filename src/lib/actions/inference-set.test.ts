@@ -693,6 +693,43 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("rejects Anthropic Messages metadata for OpenAI-compatible endpoint switches", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "mock-openai-model",
+          noVerify: true,
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /inference-api for 'compatible-endpoint' must be one of: openai-completions, openai-responses/,
+    );
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
   it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
