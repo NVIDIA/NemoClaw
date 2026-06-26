@@ -1181,23 +1181,21 @@ migrate_legacy_layout() {
 refresh_hermes_provider_placeholders() {
   local mode="${1:-strict}"
   local env_file="${HERMES_DIR}/.env"
+  local runtime_plan="/usr/local/share/nemoclaw/messaging-runtime-plan.json"
   [ -f "$env_file" ] || return 0
 
-  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN"
-  local has_scoped_placeholder=0
-  local key value
-  for key in $keys; do
-    value="${!key:-}"
-    case "$value" in
-      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
-    esac
-  done
-  [ "$has_scoped_placeholder" -eq 1 ] || return 0
-
-  "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" provider-placeholders \
-    --hermes-dir "$HERMES_DIR" \
-    --hash-file "$HERMES_HASH_FILE" \
+  local args=(
+    "$_HERMES_RUNTIME_CONFIG_GUARD" provider-placeholders
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$HERMES_HASH_FILE"
+    --boundary-validator "$_HERMES_BOUNDARY_VALIDATOR"
     --mode "$mode"
+  )
+  if [ -e "$runtime_plan" ] || [ -L "$runtime_plan" ]; then
+    args+=(--runtime-plan "$runtime_plan")
+  fi
+  "$_HERMES_PYTHON" "${args[@]}"
+  validate_hermes_env_secret_boundary
 }
 
 refresh_hermes_runtime_config_hashes() {
