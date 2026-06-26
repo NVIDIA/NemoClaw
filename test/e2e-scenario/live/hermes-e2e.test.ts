@@ -286,8 +286,12 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         timeoutMs: 30_000,
       },
     );
+    const reachabilityStatus = providerReachability.stdout.trim();
     expect(providerReachability.exitCode, resultText(providerReachability)).toBe(0);
-    expect(providerReachability.stdout.trim(), resultText(providerReachability)).not.toBe("000");
+    expect(["000", "401", "403"], resultText(providerReachability)).not.toContain(
+      reachabilityStatus,
+    );
+    expect(Number(reachabilityStatus), resultText(providerReachability)).toBeLessThan(500);
 
     // Phase 2: real installer + non-interactive Hermes onboard.
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {

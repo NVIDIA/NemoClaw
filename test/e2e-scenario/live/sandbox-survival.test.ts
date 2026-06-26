@@ -126,8 +126,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         timeoutMs: 25_000,
       },
     );
+    const reachabilityStatus = endpointReachable.stdout.trim();
     expect(endpointReachable.exitCode, resultText(endpointReachable)).toBe(0);
-    expect(endpointReachable.stdout.trim(), resultText(endpointReachable)).not.toBe("000");
+    expect(["000", "401", "403"], resultText(endpointReachable)).not.toContain(reachabilityStatus);
+    expect(Number(reachabilityStatus), resultText(endpointReachable)).toBeLessThan(500);
     expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
 
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
