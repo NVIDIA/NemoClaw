@@ -286,6 +286,12 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (versionCheck.isStale) {
         console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
         console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
+        for (const line of sandboxVersion.formatHermesDesktopCompatibilityWarning(
+          sandboxName,
+          versionCheck,
+        )) {
+          console.log(line);
+        }
       } else if (
         shouldProbeRuntimeVersion &&
         versionCheck.detectionMethod === "unavailable" &&

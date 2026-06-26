@@ -38,6 +38,8 @@ type ConnectHarnessOptions = {
   spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
   sttyThrows?: boolean;
+  versionCheck?: unknown;
+  versionWarningLines?: string[];
 };
 
 function throwSttyFailure(): never {
@@ -108,8 +110,12 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
     detected: true,
     sessions: [{ pid: 1 }, { pid: 2 }],
   });
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({ isStale: false });
-  vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue([]);
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue(
+    (options.versionCheck ?? { isStale: false }) as never,
+  );
+  vi.spyOn(sandboxVersion, "formatStalenessWarning").mockReturnValue(
+    options.versionWarningLines ?? [],
+  );
   const checkAndRecoverSpy = vi
     .spyOn(processRecovery, "checkAndRecoverSandboxProcesses")
     .mockReturnValue(options.processCheck ?? { checked: true, wasRunning: true, recovered: false });
@@ -371,6 +377,30 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("Inside the sandbox, run `dcode`");
     expect(output).not.toContain("Inside the sandbox, run `langchain-deepagents-code`");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("prints stale Hermes Desktop compatibility guidance before connecting", async () => {
+    const harness = createConnectHarness({
+      agentName: "hermes",
+      versionCheck: {
+        sandboxVersion: "2026.5.16",
+        expectedVersion: "2026.6.19",
+        isStale: true,
+        detectionMethod: "registry",
+      },
+      versionWarningLines: [
+        "",
+        "  Hermes Desktop requires Hermes Agent v2026.6.5+ (2026.5.16 lacks /api/profiles/sessions).",
+        "  Rebuild this sandbox before connecting it from Hermes Desktop.",
+      ],
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(0)");
+
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain("Hermes Desktop requires Hermes Agent v2026.6.5+");
+    expect(errorOutput).toContain("/api/profiles/sessions");
+    expect(errorOutput).toContain("Rebuild this sandbox");
   });
 
   it("stops before opening SSH when the sandbox list reports a terminal failure phase", async () => {

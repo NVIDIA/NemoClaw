@@ -55,7 +55,11 @@ import { spawnSync } from "child_process";
 import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import * as registry from "../state/registry.js";
-import { checkAgentVersion, formatStalenessWarning } from "./version.js";
+import {
+  checkAgentVersion,
+  formatHermesDesktopCompatibilityWarning,
+  formatStalenessWarning,
+} from "./version.js";
 
 describe("checkAgentVersion", () => {
   let tmpDir: string;
@@ -260,5 +264,43 @@ describe("formatStalenessWarning", () => {
     expect(joined).toContain("2026.3.11");
     expect(joined).toContain("2026.5.27");
     expect(joined).toContain("rebuild");
+  });
+
+  it("explains the Hermes Desktop API mismatch for old Hermes sandboxes", () => {
+    registry.registerSandbox({ name: "my-hermes", agent: "hermes" });
+
+    const lines = formatHermesDesktopCompatibilityWarning("my-hermes", {
+      sandboxVersion: "2026.5.16",
+      expectedVersion: "2026.6.19",
+      isStale: true,
+      detectionMethod: "registry",
+    });
+    const joined = lines.join("\n");
+
+    expect(joined).toContain("Hermes Desktop requires Hermes Agent v2026.6.5+");
+    expect(joined).toContain("/api/profiles/sessions");
+    expect(joined).toContain("Rebuild this sandbox");
+  });
+
+  it("does not show the Hermes Desktop warning for current Hermes or other agents", () => {
+    registry.registerSandbox({ name: "my-hermes", agent: "hermes" });
+
+    expect(
+      formatHermesDesktopCompatibilityWarning("my-hermes", {
+        sandboxVersion: "2026.6.19",
+        expectedVersion: "2026.6.19",
+        isStale: false,
+        detectionMethod: "registry",
+      }),
+    ).toEqual([]);
+
+    expect(
+      formatHermesDesktopCompatibilityWarning("my-sb", {
+        sandboxVersion: "2026.5.16",
+        expectedVersion: "2026.6.19",
+        isStale: true,
+        detectionMethod: "registry",
+      }),
+    ).toEqual([]);
   });
 });

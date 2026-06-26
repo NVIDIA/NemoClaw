@@ -234,6 +234,28 @@ describe("showSandboxStatus flow", () => {
     });
   });
 
+  it("prints Hermes Desktop compatibility guidance for stale Hermes backends", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        agent: "hermes",
+        agentVersion: "2026.5.16",
+      },
+    });
+    harness.checkAgentVersionSpy.mockReturnValue({
+      sandboxVersion: "2026.5.16",
+      expectedVersion: "2026.6.19",
+      isStale: true,
+      detectionMethod: "registry",
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Hermes Desktop requires Hermes Agent v2026.6.5+");
+    expect(output).toContain("/api/profiles/sessions");
+    expect(output).toContain("Rebuild this sandbox");
+  });
+
   it("preserves the registry entry and exits when the live gateway is missing the sandbox", async () => {
     const harness = createStatusFlowHarness({ lookupState: "missing" });
 

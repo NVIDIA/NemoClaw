@@ -18,8 +18,11 @@ import {
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { loadAgent } from "../agent/defs.js";
+import { D, R } from "../cli/terminal-style.js";
 import * as registry from "../state/registry.js";
 import { createTempSshConfig } from "./temp-ssh-config.js";
+
+const HERMES_DESKTOP_MIN_VERSION = "2026.6.5";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
@@ -170,6 +173,24 @@ export function formatStalenessWarning(sandboxName: string, result: VersionCheck
     "",
     `  \u26a0 Sandbox '${sandboxName}' is running ${agentName} ${result.sandboxVersion} (current: ${result.expectedVersion})`,
     `    Run: nemoclaw ${sandboxName} rebuild`,
+    ...formatHermesDesktopCompatibilityWarning(sandboxName, result),
     "",
+  ];
+}
+
+/**
+ * Explain the Hermes Desktop/backend API mismatch for old Hermes sandboxes.
+ */
+export function formatHermesDesktopCompatibilityWarning(
+  sandboxName: string,
+  result: VersionCheckResult,
+): string[] {
+  const agent = resolveAgentForSandbox(sandboxName);
+  if (agent.name !== "hermes") return [];
+  if (!result.sandboxVersion) return [];
+  if (versionGte(result.sandboxVersion, HERMES_DESKTOP_MIN_VERSION)) return [];
+  return [
+    `    ${D}Hermes Desktop requires Hermes Agent v${HERMES_DESKTOP_MIN_VERSION}+ (${result.sandboxVersion} lacks /api/profiles/sessions).${R}`,
+    "    Rebuild this sandbox before connecting it from Hermes Desktop.",
   ];
 }
