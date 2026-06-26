@@ -11,13 +11,12 @@ content:
 ---
 {/* markdownlint-disable MD014 */}
 
-# Troubleshooting
-
-This page covers common issues you may encounter when installing, onboarding, or running NemoClaw, along with their resolution steps.
+This page covers common installation, onboarding, and runtime issues, along with resolution steps.
 
 <Warning title="Get Help">
 
-If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community. You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
+If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community.
+You can also [file an issue on GitHub](https://github.com/NVIDIA/NemoClaw/issues/new).
 </Warning>
 
 ## Installation
@@ -61,7 +60,9 @@ Then re-run the installer.
 
 ### Image push fails with out-of-memory errors
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
+The sandbox image is approximately 2.4 GB compressed.
+During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline, which buffers decompressed layers in memory.
+On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer.
 
 If you cannot add memory, configure at least 8 GB of swap to work around the issue at the cost of slower performance.
 
@@ -154,7 +155,10 @@ If the Jetson setup step fails, verify that you have `sudo` access and that Dock
 
 For JetPack 6 (L4T 36.x), the setup switches iptables to legacy mode and adjusts the Docker daemon configuration.
 For JetPack 7 (L4T 38.x / Thor), only bridge netfilter and sysctl settings are applied.
-For JetPack 7 (L4T 39.x), bridge netfilter is loaded only when the host is missing it. Some R39 images already ship with `br_netfilter` configured and are left untouched. On affected R39 hosts, the installer prints `loading br_netfilter (required by k3s inside the OpenShell gateway)`. Without this fix, sandbox pods fail DNS resolution against the in-cluster service and the onboard `Setting up OpenClaw inside sandbox` step times out.
+For JetPack 7 (L4T 39.x), bridge netfilter is loaded only when the host is missing it.
+Some R39 images already ship with `br_netfilter` configured and are left untouched.
+On affected R39 hosts, the installer prints `loading br_netfilter (required by k3s inside the OpenShell gateway)`.
+Without this fix, sandbox pods fail DNS resolution against the in-cluster service and the onboard `Setting up OpenClaw inside sandbox` step times out.
 
 If the L4T version is not recognized, the setup step is skipped and the installer continues normally.
 
@@ -235,9 +239,7 @@ Or set the port directly:
 NEMOCLAW_DASHBOARD_PORT=19000 $$nemoclaw onboard
 ```
 
-For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free
-non-privileged port that does not overlap NemoClaw's dashboard, vLLM, Ollama,
-or Ollama proxy ports:
+For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free non-privileged port that does not overlap NemoClaw's dashboard, vLLM, Ollama, or Ollama proxy ports:
 
 ```bash
 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
@@ -249,10 +251,9 @@ Remote/headless hosts can bind the OpenShell gateway to all IPv4 interfaces:
 NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
-network should be able to reach the gateway.
+Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the network should be able to reach the gateway.
 
-See [Environment Variables](commands#environment-variables) for the full list of port overrides.
+Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -313,7 +314,7 @@ failed to mount overlay: ... err: invalid argument
 ```
 
 This is a Docker default-driver change, not a NemoClaw or OpenShell regression.
-The same hardware running Docker 25 or earlier — or any Docker version with the containerd image store disabled — uses the legacy `overlay2` driver and is unaffected.
+The same hardware uses the legacy `overlay2` driver and is unaffected when it runs Docker 25 or earlier, or any Docker version with the containerd image store disabled.
 
 NemoClaw detects the Docker 26+ containerd-snapshotter overlayfs configuration during onboarding and transparently builds a small drop-in replacement for the cluster image on the local Docker engine.
 The patched image installs `fuse-overlayfs` and selects it as the k3s snapshotter, bypassing the kernel-level nested-overlay limitation.
@@ -325,9 +326,9 @@ Hosts without the conflict (`Driver: overlay2` in `docker info`, macOS Docker De
 
 Override knobs:
 
-- `NEMOCLAW_DISABLE_OVERLAY_FIX=1` — skip the auto-fix and run against the unmodified upstream cluster image.
+- `NEMOCLAW_DISABLE_OVERLAY_FIX=1`: skip the auto-fix and run against the unmodified upstream cluster image.
   Useful for diagnosis or when you have already applied the manual workaround below.
-- `NEMOCLAW_OVERLAY_SNAPSHOTTER=native` — build the patched image with k3s's `native` snapshotter instead of `fuse-overlayfs`.
+- `NEMOCLAW_OVERLAY_SNAPSHOTTER=native`: build the patched image with k3s's `native` snapshotter instead of `fuse-overlayfs`.
   The `native` snapshotter copies image layers instead of overlaying them, so it uses more disk but does not depend on FUSE.
   Default is `fuse-overlayfs`.
 
@@ -341,7 +342,8 @@ If you prefer to disable the new Docker storage driver instead of running the pa
 ```
 
 Then restart Docker (`sudo systemctl restart docker`) and re-run `$$nemoclaw onboard`.
-This restores the legacy `overlay2` driver host-wide, which kills any other running containers — prefer the auto-fix unless you need the change for unrelated reasons.
+This restores the legacy `overlay2` driver host-wide, which kills any other running containers.
+Prefer the auto-fix unless you need the change for unrelated reasons.
 Switching storage drivers also rebuilds the entire local image graph: previously-pulled images become unusable and Docker re-pulls them on first reference, so expect a cold cache and additional disk usage right after the restart.
 
 ### OpenShell version above maximum
@@ -403,7 +405,8 @@ NemoClaw prevents and self-heals this:
 - The generated sandbox config pins `gateway.reload.mode` to `hot`, so configuration changes never make the gateway restart itself out from under the sandbox supervisor.
 - A serving watchdog inside the sandbox kills a gateway that stops listening after it has served, and the supervisor relaunches it (look for `[gateway-watchdog]` lines in `$$nemoclaw <name> logs`).
 
-Because of the `hot` pin, restart-class configuration changes made inside the sandbox — for example `openclaw plugins install` — log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts.
+Because of the `hot` pin, restart-class configuration changes made inside the sandbox log `config reload requires gateway restart; hot mode ignoring` and do not take effect until the gateway restarts.
+For example, `openclaw plugins install` logs that message until the gateway restarts.
 Apply them with a supervised restart:
 
 ```bash
@@ -478,15 +481,12 @@ To silence the warning when the host is intentionally small, set `NEMOCLAW_IGNOR
 
 ### Re-onboard fails because port 18789 is held by SSH
 
-After destroying a sandbox and gateway, the SSH port-forward process for the
-dashboard can be left running.
+After destroying a sandbox and gateway, the SSH port-forward process for the dashboard can be left running.
 Re-running onboard then fails preflight with `Port 18789 is not available.
 Blocked by: ssh`.
 
-Current NemoClaw detects this case and kills the orphaned SSH process
-automatically before retrying the port check.
-If you see the error on an older release, identify the SSH process and
-terminate it manually:
+Current NemoClaw detects this case and kills the orphaned SSH process automatically before retrying the port check.
+If you see the error on an older release, identify the SSH process and terminate it manually:
 
 ```bash
 sudo lsof -i :18789
@@ -497,17 +497,11 @@ Then re-run `$$nemoclaw onboard`.
 
 ### Updated messaging token is not picked up
 
-Re-running `$$nemoclaw onboard --non-interactive` with a new
-`TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously
-reported success while the sandbox kept polling with the old credential.
-Current NemoClaw stores SHA-256 hashes of messaging credentials in the
-sandbox registry at creation time and detects when a token has changed.
-When rotation is detected, NemoClaw automatically backs up workspace state,
-deletes the sandbox, recreates it with the new credential, and restores the
-backup.
+Re-running `$$nemoclaw onboard --non-interactive` with a new `TELEGRAM_BOT_TOKEN`, `DISCORD_BOT_TOKEN`, or `SLACK_BOT_TOKEN` previously reported success while the sandbox kept polling with the old credential.
+Current NemoClaw stores SHA-256 hashes of messaging credentials in the sandbox registry at creation time and detects when a token has changed.
+When rotation is detected, NemoClaw automatically backs up workspace state, deletes the sandbox, recreates it with the new credential, and restores the backup.
 
-If you suspect a sandbox is still using a stale token, re-run onboarding so
-the credential check runs:
+If you suspect a sandbox is still using a stale token, re-run onboarding so the credential check runs:
 
 ```bash
 $$nemoclaw onboard --non-interactive
@@ -744,7 +738,7 @@ If Ollama times out during a cold model load, NemoClaw retries once with a 300-s
 If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
-The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); see [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); refer to [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
 
 ### Sandbox onboard times out with "did not become ready within Ns"
 
@@ -755,7 +749,9 @@ Onboarding ends with:
   The orphaned sandbox has been removed — you can safely retry.
 ```
 
-This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` — it covers the readiness wait that follows sandbox creation (in-sandbox boot, OpenClaw start, policy load), not the inference probe.
+This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`.
+It covers the readiness wait that follows sandbox creation, including in-sandbox boot, OpenClaw start, and policy load.
+It does not cover the inference probe.
 The 180-second default fits typical workstations but can be exceeded when:
 
 - The host is building or uploading the sandbox image for the first time (cold caches, slow link).
@@ -801,9 +797,8 @@ Responses API, unset it before re-running onboard.
 When you enable Telegram messaging with an OpenAI-compatible endpoint, onboarding also checks `inference.local` from inside the sandbox.
 If that smoke check fails, fix the compatible-endpoint base URL, credentials, model, or network route before testing the Telegram bot again.
 
-Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone — it patches the config
-at container startup but does not update the Dockerfile ARG baked into the
-image.
+Do not rely on `NEMOCLAW_INFERENCE_API_OVERRIDE` alone.
+It patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 A fresh `$$nemoclaw onboard` is the reliable fix.
 
 ### `NEMOCLAW_DISABLE_DEVICE_AUTH=1` does not change an existing sandbox
@@ -1167,22 +1162,18 @@ Refer to [Customize the Network Policy](../network-policy/customize-network-poli
 
 ### Dashboard not reachable after setting a custom port
 
-If you ran `$$nemoclaw onboard` with a custom dashboard port and onboarding completed
-but the dashboard URL is unreachable (browser shows connection refused or the page fails
-to load), the sandbox was most likely created with an older NemoClaw version that did not
-pass the dashboard port into the sandbox at startup. The gateway inside the sandbox
-continued listening on the default port 18789 while the SSH tunnel forwarded the custom
-port — leaving nothing at the other end of the tunnel.
+If you ran `$$nemoclaw onboard` with a custom dashboard port and onboarding completed but the dashboard URL is unreachable, the sandbox was most likely created with an older NemoClaw version that did not pass the dashboard port into the sandbox at startup.
+The browser may show connection refused or fail to load the page.
+The gateway inside the sandbox continued listening on the default port 18789 while the SSH tunnel forwarded the custom port, leaving nothing at the other end of the tunnel.
 
-Re-run onboarding on the current NemoClaw release with the desired port. Current versions
-derive the dashboard port from `CHAT_UI_URL` automatically and inject it into the sandbox:
+Re-run onboarding on the current NemoClaw release with the desired port.
+Current versions derive the dashboard port from `CHAT_UI_URL` automatically and inject it into the sandbox:
 
 ```bash
 CHAT_UI_URL=http://127.0.0.1:19000 $$nemoclaw onboard
 ```
 
-If you need to run multiple sandboxes at different ports at the same time, see
-[Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
+If you need to run multiple sandboxes at different ports at the same time, refer to [Running multiple sandboxes simultaneously](#running-multiple-sandboxes-simultaneously).
 
 ### Control UI config endpoint returns 404 or non-JSON
 
@@ -1308,7 +1299,7 @@ http://host.openshell.internal:11435/v1
 `11435` there and forwards requests to `127.0.0.1:11434` on the host.
 If you need a different host service exposed to the sandbox, route it through
 the OpenShell gateway rather than relying on `host.docker.internal`.
-See issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
+Refer to issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
@@ -1413,7 +1404,8 @@ openshell sandbox delete <sandbox-name>
 Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
 If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
-On Docker Desktop WSL the patch is required for GPU passthrough — `NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.
+On Docker Desktop WSL, the patch is required for GPU passthrough.
+`NEMOCLAW_DOCKER_GPU_PATCH=0` is ignored on that runtime, and onboarding logs a warning when it is set there.
 To skip GPU passthrough entirely on Docker Desktop WSL, rerun with `--no-gpu` or set `NEMOCLAW_SANDBOX_GPU=0`.
 
 If sandbox creation fails with `CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`, the OpenShell gateway tried `docker create --device nvidia.com/gpu=all` and Docker could not resolve the CDI spec.
@@ -1448,7 +1440,7 @@ If you run other services on Spark that expect port 3000, bind them to a differe
 <a id="windows-wsl-2"></a>
 ## Windows Subsystem for Linux
 
-For environment setup steps, see [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
+For environment setup steps, refer to [Windows Prerequisites](../get-started/prerequisites/windows-preparation).
 
 ### `wsl --install --no-distribution` returns Forbidden (403)
 
@@ -1524,12 +1516,12 @@ sudo systemctl stop ollama
 OLLAMA_CONTEXT_LENGTH=16384 ollama serve
 ```
 
-For additional troubleshooting, see the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
+For additional troubleshooting, refer to the [Windows Setup](../get-started/prerequisites/windows-preparation) page.
 <AgentOnly variant="openclaw">
-For first-time OpenClaw setup, see the [Quickstart](../get-started/quickstart).
+For first-time OpenClaw setup, refer to the [Quickstart](../get-started/quickstart).
 </AgentOnly>
 <AgentOnly variant="hermes">
-For first-time Hermes setup, see [Quickstart with Hermes](../get-started/quickstart).
+For first-time Hermes setup, refer to [Quickstart with Hermes](../get-started/quickstart).
 </AgentOnly>
 
 ## Podman
@@ -1742,7 +1734,7 @@ Reset a specific provider's credentials with `nemohermes credentials reset <prov
 
 ### `Brave Search` policy preset has no effect under Hermes
 
-The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (refer to [Quickstart with Hermes](../../hermes/get-started/quickstart) and [Network Policies](network-policies)).
 If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
 Configure Hermes web search from the agent's own configuration inside the sandbox.
 

@@ -17,8 +17,8 @@ This page explains which parts of a running NemoClaw sandbox can change immediat
 
 ## What You Can Change at Runtime
 
-NemoClaw applies its security posture in three layers: what onboarding bakes into the sandbox image, what the running sandbox can hot-reload, and what requires a rebuild or re-onboard.
-The table below maps each commonly changed item to the layer that owns it and the command that changes it.
+NemoClaw applies its security posture in three layers: what onboarding writes into the sandbox image, what the running sandbox can hot-reload, and what requires a rebuild or re-onboard.
+The following table maps each commonly changed item to the layer that owns it and the command that changes it.
 
 <AgentOnly variant="openclaw">
 
@@ -30,9 +30,9 @@ The table below maps each commonly changed item to the layer that owns it and th
 | Network policy preset (slack, discord, telegram, brave, …) | Runtime. Applies on the next request; rebuild only required if the preset adds bind-mounted secrets | `$$nemoclaw <name> policy-add <preset>` / `policy-remove <preset>` |
 | Network allow-list (custom hosts) | Runtime. Picks up at next request | `openshell policy set` or interactive approval prompt at the gateway |
 | Channel tokens (Slack / Discord / Telegram bot credentials) | Rebuild required (tokens are baked into the sandbox image at onboard so they never leave the host clear-text) | `$$nemoclaw <name> channels add <channel>` then accept the rebuild prompt |
-| Channel enable/disable (turn a configured channel off without removing the token) | Rebuild required (`openclaw.json` is the source of truth at runtime, see #3453) | `$$nemoclaw <name> channels stop <channel>` then rebuild |
+| Channel enable/disable (turn a configured channel off without removing the token) | Rebuild required (`openclaw.json` is the source of truth at runtime, refer to #3453) | `$$nemoclaw <name> channels stop <channel>` then rebuild |
 | Dashboard forward port | Runtime. Port is re-resolved on next `connect` | `NEMOCLAW_DASHBOARD_PORT=<port> $$nemoclaw <name> connect` |
-| Dashboard bind address (loopback compared to all interfaces) | Runtime. Applies on next `connect` | `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw <name> connect` (see #3259) |
+| Dashboard bind address (loopback compared to all interfaces) | Runtime. Applies on next `connect` | `NEMOCLAW_DASHBOARD_BIND=0.0.0.0 $$nemoclaw <name> connect` (refer to #3259) |
 | Default OpenClaw workspace template seed (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`, `TOOLS.md`, `HEARTBEAT.md`) | Locked at first sandbox boot. Re-onboard required to change the bake-time choice. | Set `NEMOCLAW_MINIMAL_BOOTSTRAP=1` before `$$nemoclaw onboard` to skip default template seeding for new/pristine workspaces. **Does not delete files already present.** Partial mitigation for #2598 (cuts ~3k tokens of project-context overhead off OpenClaw's per-turn bootstrap injection). |
 | Web search backend (Brave, Tavily, and so on) | Runtime through `web.backend` config flag; rebuild only if `web.fetchEnabled` flips | `$$nemoclaw <name> config set --key web.backend --value tavily` |
 | Filesystem layout (Landlock zones, read-only mounts, container caps) | **Locked at creation**. No runtime change | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
@@ -61,16 +61,14 @@ If a row above conflicts with what you observe, the runtime source of truth insi
 | GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
 | Hermes `config.yaml` keys | Mixed. Inference keys can be patched by `$$nemoclaw inference set`; image, policy, and channel changes still require rebuild. | Prefer NemoClaw host commands so the host registry and rebuilt image stay aligned |
 
-If a row above conflicts with what you observe, the runtime source of truth for
-Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host
-registry caches metadata but the image and Hermes runtime read from the
-in-sandbox files.
+If a row above conflicts with what you observe, the runtime source of truth for Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`.
+The host registry caches metadata, but the image and Hermes runtime read from the in-sandbox files.
 
 </AgentOnly>
 
-## See Also
+## Related Topics
 
-The mutability table above is a consolidated index of information that lives in more detail on per-topic pages:
+The table above consolidates details from these topic pages:
 
 <AgentOnly variant="openclaw">
 

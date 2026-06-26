@@ -630,6 +630,12 @@ describe("detectMessagingChannelsFromEnv", () => {
     expect(detectMessagingChannelsFromEnv(null)).toContain("telegram");
   });
 
+  it("does not detect channels for unsupported named agents even when env inputs are complete", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv({ name: "custom-agent" } as never)).toEqual([]);
+  });
+
   it("does not select telegram from NEMOCLAW_POLICY_PRESETS alone", () => {
     process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
 

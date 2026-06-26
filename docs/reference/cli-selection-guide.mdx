@@ -11,7 +11,7 @@ content:
 ---
 NemoClaw uses two host-side CLIs.
 Use `$$nemoclaw` for NemoClaw-managed workflows.
-Use `openshell` when you need a lower-level OpenShell operation that NemoClaw intentionally exposes.
+Use `openshell` when you need a lower-level OpenShell operation that NemoClaw intentionally leaves available.
 
 ## Rule of Thumb
 
@@ -102,7 +102,7 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   openshell doctor check
   ```
 
-- Move files, or run raw one-off commands when you intentionally want to bypass NemoClaw's sandbox registry and wrappers:
+- Move files or run raw one-off commands when you intentionally want to bypass NemoClaw's sandbox registry and wrappers:
 
   ```bash
   openshell sandbox upload <sandbox-name> ./local-file /sandbox/
@@ -149,7 +149,7 @@ The command executes as the sandbox user with `HOME=/sandbox` inside the provisi
 $$nemoclaw my-assistant exec -- cat /tmp/gateway.log
 ```
 
-Use `openshell sandbox exec` for the raw OpenShell execution path, for example when addressing a sandbox by its gateway name or intentionally bypassing the NemoClaw CLI and registry.
+Use `openshell sandbox exec` for the raw OpenShell execution path, such as when you address a sandbox by its gateway name or intentionally bypass the NemoClaw CLI and registry.
 
 ```bash
 openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
