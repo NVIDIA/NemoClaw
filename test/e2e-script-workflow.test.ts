@@ -1020,11 +1020,30 @@ describe("E2E reusable workflow contract", () => {
         (step) => step.name === "Install issue #4434 test dependencies",
       )?.with?.packages,
     ).toBe("expect iptables");
-    expect(
-      nightlyWorkflow.jobs["gpu-e2e"].steps?.find(
-        (step) => step.name === "Install GPU E2E host dependencies",
-      )?.with?.packages,
-    ).toBe("expect");
+    const gpuE2eSteps = nightlyWorkflow.jobs["gpu-e2e"].steps ?? [];
+    const gpuE2eStepIndex = (name: string) => gpuE2eSteps.findIndex((step) => step.name === name);
+    const gpuWorkflowActionsCheckout = gpuE2eSteps.find(
+      (step) => step.name === "Checkout GPU E2E workflow actions",
+    );
+    const gpuInstallStep = gpuE2eSteps.find(
+      (step) => step.name === "Install GPU E2E host dependencies",
+    );
+    expect(gpuWorkflowActionsCheckout?.with?.ref).toBe("${{ github.sha }}");
+    expect(gpuWorkflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/install-apt-packages",
+    );
+    expect(gpuWorkflowActionsCheckout?.with?.path).toBe("workflow-actions");
+    expect(gpuInstallStep?.uses).toBe("./workflow-actions/.github/actions/install-apt-packages");
+    expect(gpuInstallStep?.with?.packages).toBe("expect");
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBe(
+      gpuE2eStepIndex("Checkout GPU E2E workflow actions") + 1,
+    );
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBeLessThan(
+      gpuE2eStepIndex("Authenticate to Docker Hub"),
+    );
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBeLessThan(
+      gpuE2eStepIndex("Run GPU E2E test (Ollama local inference)"),
+    );
     const issue4434VitestSteps =
       vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps ?? [];
     const issue4434VitestStepIndex = (name: string) =>

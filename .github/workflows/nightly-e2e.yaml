@@ -2253,6 +2253,23 @@ jobs:
     steps:
       - *target-ref-checkout
 
+      - name: Checkout GPU E2E workflow actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # The GPU script target remains checked out above. Privileged host
+          # dependency setup uses helper actions from the trusted workflow
+          # commit so target_ref cannot replace the local composite action.
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/install-apt-packages
+          path: workflow-actions
+          persist-credentials: false
+
+      - name: Install GPU E2E host dependencies
+        uses: ./workflow-actions/.github/actions/install-apt-packages
+        with:
+          packages: expect
+
       - *dockerhub-auth-step
 
       - name: Verify GPU availability
@@ -2265,11 +2282,6 @@ jobs:
           echo ""
           echo "=== Docker ==="
           docker info --format '{{.ServerVersion}}'
-
-      - name: Install GPU E2E host dependencies
-        uses: ./.github/actions/install-apt-packages
-        with:
-          packages: expect
 
       - name: Run GPU E2E test (Ollama local inference)
         run: bash test/e2e/test-gpu-e2e.sh
