@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -104,10 +105,67 @@ jobs:
     }
   });
 
+  it("writes low-confidence skip artifacts for unsupported trusted-main rollout skew", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-skip-"));
+    const outDir = path.join(tmp, "artifacts", "pr-review-advisor-nemotron-ultra");
+    const reason =
+      "Trusted main checkout does not yet support advisor model nvidia/nvidia/nemotron-3-ultra; this parallel advisor will run after the implementation lands on main.";
+
+    try {
+      execFileSync(
+        process.execPath,
+        [
+          "--experimental-strip-types",
+          path.join(ROOT, "tools", "pr-review-advisor", "analyze.mts"),
+          "--base",
+          "origin/main",
+          "--head",
+          "HEAD",
+          "--schema",
+          path.join(ROOT, "tools", "pr-review-advisor", "schema.json"),
+          "--out-dir",
+          outDir,
+        ],
+        {
+          cwd: ROOT,
+          env: {
+            ...process.env,
+            PR_REVIEW_ADVISOR_RUN_ANALYSIS: "0",
+            PR_REVIEW_ADVISOR_UNAVAILABLE_REASON: reason,
+            PR_NUMBER: "",
+            GH_TOKEN: "",
+            GITHUB_TOKEN: "",
+          },
+          stdio: "pipe",
+        },
+      );
+
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(outDir, "pr-review-advisor-result.json"), "utf-8"),
+      );
+      const final = JSON.parse(
+        fs.readFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), "utf-8"),
+      );
+      const summary = fs.readFileSync(path.join(outDir, "pr-review-advisor-summary.md"), "utf-8");
+      expect(raw).toMatchObject({ skipped: true, reason });
+      expect(final.summary).toMatchObject({ recommendation: "info_only", confidence: "low" });
+      expect(final.summary.oneLine).toContain(reason);
+      expect(summary).toContain("# PR Review Advisor");
+      expect(summary).toContain(reason);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("reports workflow parse failures through boundary errors", () => {
-    const missingPath = path.join(ROOT, ".tmp-pr-advisor-missing", "workflow.yaml");
-    expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([
-      `failed to read or parse workflow: ${missingPath}`,
-    ]);
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-missing-"));
+    const missingPath = path.join(tmp, "workflow.yaml");
+    try {
+      expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([
+        `failed to read or parse workflow: ${missingPath}`,
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
