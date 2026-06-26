@@ -17,6 +17,7 @@ type ConnectHarness = {
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
+  errorSpy: MockInstance;
   logSpy: MockInstance;
   runAutoPairSpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -41,7 +42,7 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
   delete require.cache[requireDist.resolve(connectModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   const spawnSyncSpy = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
@@ -122,6 +123,7 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
+    errorSpy,
     logSpy,
     runAutoPairSpy,
     spawnSyncSpy,
@@ -130,6 +132,10 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
 
 describe("connectSandbox flow", () => {
   let exitSpy: MockInstance;
+  const originalStdinIsTty = process.stdin.isTTY;
+  const originalStdinSetRawMode = (
+    process.stdin as typeof process.stdin & { setRawMode?: (mode: boolean) => unknown }
+  ).setRawMode;
   const originalStdoutIsTty = process.stdout.isTTY;
 
   beforeEach(() => {
@@ -150,6 +156,18 @@ describe("connectSandbox flow", () => {
         value: originalStdoutIsTty,
       });
     }
+    if (originalStdinIsTty === undefined) {
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: undefined });
+    } else {
+      Object.defineProperty(process.stdin, "isTTY", {
+        configurable: true,
+        value: originalStdinIsTty,
+      });
+    }
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: originalStdinSetRawMode,
+    });
     delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
@@ -175,6 +193,37 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
+    const setRawModeSpy = vi.fn();
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnStatus: 255,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
+
+    expect(setRawModeSpy).toHaveBeenCalledWith(false);
+    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+      "stty",
+      ["sane"],
+      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(255);
   });
 
   it("prints the terminal launch command in the connect hint for terminal agents", async () => {
