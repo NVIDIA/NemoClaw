@@ -8,7 +8,7 @@ import { describeAgentFlag } from "./agent-flag-help";
 describe("describeAgentFlag (#5779)", () => {
   it("lists the installed agent runtimes inline", () => {
     expect(describeAgentFlag(["openclaw", "hermes", "langchain-deepagents-code"])).toBe(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code; aliases: nemohermes → hermes; nemo-deepagents/dcode/deepagents/deepagents-code/langchain → langchain-deepagents-code)",
     );
   });
 

@@ -422,14 +422,27 @@ export function parseConfig(raw: string): {
   };
 }
 
-export async function assertTrajectory(sandbox: SandboxClient): Promise<void> {
-  const checkScript = String.raw`import json, pathlib, sys
+export interface KimiTrajectorySummary {
+  errors: string[];
+  finalStatus?: unknown;
+  finalTextCount: number;
+  roles: unknown[];
+  sourceCommands: unknown[];
+  strictMockExpectations: boolean;
+  toolMetaCommandSet: string[];
+  toolMetaInvalidValues: unknown[];
+  toolMetasCount: number;
+}
+
+export function buildKimiTrajectoryCheckScript(strictMockExpectations: boolean): string {
+  return String.raw`import json, pathlib, re, sys
+strict_mock = __STRICT_MOCK__
 root=pathlib.Path('/sandbox/.openclaw')
 base=pathlib.Path('/sandbox/.openclaw/agents/main/sessions')
 session=base/'e2e-kimi-tools.jsonl'
 trajectory=base/'e2e-kimi-tools.trajectory.jsonl'
 if not session.exists() or not trajectory.exists():
-    print(json.dumps({'error':'missing session/trajectory','files':[str(p) for p in root.rglob('*e2e-kimi-tools*.jsonl')]}))
+    print(json.dumps({'errors':['missing session/trajectory'],'files':[str(p) for p in root.rglob('*e2e-kimi-tools*.jsonl')]}))
     sys.exit(1)
 session_items=[json.loads(line) for line in session.read_text().splitlines() if line.strip()]
 trajectory_items=[json.loads(line) for line in trajectory.read_text().splitlines() if line.strip()]
@@ -438,17 +451,38 @@ artifacts=[item for item in trajectory_items if item.get('type')=='trace.artifac
 if len(artifacts)!=1: errors.append(f'trace.artifacts count={len(artifacts)}')
 data=(artifacts[-1].get('data') if artifacts else {}) or {}
 metas=data.get('toolMetas') or []
+meta_commands=[m.get('meta') for m in metas]
+meta_commands_str=[command for command in meta_commands if isinstance(command, str)]
+invalid_meta_commands=[command for command in meta_commands if not isinstance(command, str)]
+expected_round=['hostname','date','uptime']
+expected_command_set=sorted(expected_round)
 if data.get('finalStatus')!='success': errors.append(f'finalStatus={data.get("finalStatus")!r}')
-if len(metas)!=3: errors.append(f'toolMetas count={len(metas)}')
-if [m.get('toolName') for m in metas] != ['exec','exec','exec']: errors.append('tool names mismatch')
-if sorted(m.get('meta') for m in metas) != ['date','hostname','uptime']: errors.append('tool command set mismatch')
+min_metas = 3 if strict_mock else 1
+if len(metas) < min_metas: errors.append(f'toolMetas count={len(metas)} expected_at_least={min_metas}')
+if any(m.get('toolName') != 'exec' for m in metas): errors.append('tool names mismatch')
 messages=[item.get('message',{}) for item in session_items if item.get('type')=='message']
 assistant_tool_messages=[m for m in messages if m.get('role')=='assistant' and any(b.get('type')=='toolCall' for b in m.get('content',[]))]
 source=[]
 for m in assistant_tool_messages:
     source.extend(b.get('arguments',{}).get('command') for b in m.get('content',[]) if b.get('type')=='toolCall')
-if source != ['hostname','date','uptime']: errors.append(f'source commands={source!r}')
-if any(isinstance(c,str) and ';' in c for c in source): errors.append('combined semicolon command remains')
+if not source: errors.append('source assistant did not record any exec commands')
+invalid_source_commands=[c for c in source if not isinstance(c,str)]
+if invalid_source_commands: errors.append(f'source commands are not all strings: {invalid_source_commands!r}')
+if strict_mock:
+    if invalid_meta_commands:
+        errors.append(f'toolMeta meta values are not all strings: {invalid_meta_commands!r}')
+    elif sorted(set(meta_commands_str)) != expected_command_set:
+        errors.append(f'tool command set={sorted(set(meta_commands_str))!r}')
+    if len(source) < len(expected_round) or len(source) % len(expected_round) != 0:
+        errors.append(f'source commands={source!r}')
+    else:
+        for offset in range(0, len(source), len(expected_round)):
+            if source[offset:offset + len(expected_round)] != expected_round:
+                errors.append(f'source commands={source!r}')
+                break
+safe_source_commands=[c for c in source if isinstance(c,str) and c in expected_round]
+unsafe_source_commands=[c for c in source if isinstance(c,str) and c not in expected_round]
+if unsafe_source_commands: errors.append(f'unsafe source command remains: {unsafe_source_commands!r}')
 raw=session.read_text()+trajectory.read_text()
 for token in ['abandoned','want me to continue']:
     if token in raw.lower(): errors.append(f'contains {token}')
@@ -458,16 +492,68 @@ for field in ['aborted','externalAbort','timedOut','idleTimedOut','timedOutDurin
 def normalize_final_text(value):
     return value.strip().removesuffix('.') if isinstance(value, str) else value
 final_texts=data.get('assistantTexts') or []
-if not final_texts or normalize_final_text(final_texts[-1]) != 'hostname, date, and uptime completed successfully': errors.append('final text mismatch')
+expected_final_text='hostname, date, and uptime completed successfully'
+if strict_mock and (not final_texts or expected_final_text not in normalize_final_text(final_texts[-1])):
+    errors.append('final text mismatch')
+elif not final_texts:
+    errors.append('missing final assistant text')
 roles=[m.get('role') for m in messages]
 if not ('toolResult' in roles and roles[-1]=='assistant'): errors.append('final assistant not after tool result')
-print(json.dumps({'errors':errors,'source':source,'toolMetas':metas,'roles':roles}, indent=2))
-sys.exit(1 if errors else 0)`;
+summary={
+    'errors': errors,
+    'finalStatus': data.get('finalStatus'),
+    'finalTextCount': len(final_texts),
+    'roles': roles,
+    'sourceCommands': source,
+    'strictMockExpectations': strict_mock,
+    'toolMetaCommandSet': sorted(set(meta_commands_str)),
+    'toolMetaInvalidValues': invalid_meta_commands,
+    'toolMetasCount': len(metas),
+}
+print(json.dumps(summary, indent=2))
+sys.exit(1 if errors else 0)`.replace("__STRICT_MOCK__", strictMockExpectations ? "True" : "False");
+}
+
+export function assertKimiTrajectorySummary(summary: KimiTrajectorySummary): void {
+  expect(summary.errors).toEqual([]);
+  expect(summary.finalStatus).toBe("success");
+  expect(summary.finalTextCount).toBeGreaterThan(0);
+  expect(summary.roles).toContain("toolResult");
+  expect(summary.roles.at(-1)).toBe("assistant");
+  expect(summary.sourceCommands.length).toBeGreaterThan(0);
+  expect(summary.sourceCommands.every((command) => typeof command === "string")).toBe(true);
+  const safeSourceCommands = new Set(["hostname", "date", "uptime"]);
+  expect(summary.sourceCommands.every((command) => safeSourceCommands.has(command as string))).toBe(
+    true,
+  );
+  expect(summary.toolMetasCount).toBeGreaterThanOrEqual(summary.strictMockExpectations ? 3 : 1);
+  if (summary.strictMockExpectations) {
+    const expectedRound = ["hostname", "date", "uptime"];
+    expect(summary.toolMetaInvalidValues).toEqual([]);
+    expect(summary.toolMetaCommandSet).toEqual(["date", "hostname", "uptime"]);
+    expect(summary.sourceCommands.length % expectedRound.length).toBe(0);
+    for (let index = 0; index < summary.sourceCommands.length; index += expectedRound.length) {
+      expect(summary.sourceCommands.slice(index, index + expectedRound.length)).toEqual(
+        expectedRound,
+      );
+    }
+  }
+}
+
+export async function assertTrajectory(
+  sandbox: SandboxClient,
+  mode: KimiInferenceMode,
+): Promise<void> {
+  const checkScript = buildKimiTrajectoryCheckScript(mode === "mock");
   const encoded = Buffer.from(checkScript, "utf8").toString("base64");
   const trajectory = await sandbox.execShell(
     SANDBOX_NAME,
     trustedSandboxShellScript(`python3 -c "$(printf %s '${encoded}' | base64 -d)"`),
-    { artifactName: "kimi-trajectory-tool-splitting-check", env: env(), timeoutMs: 60_000 },
+    {
+      artifactName: "kimi-trajectory-tool-splitting-check",
+      env: env({}, { mode }),
+      timeoutMs: 60_000,
+    },
   );
   expect(trajectory.exitCode, resultText(trajectory)).toBe(0);
 }

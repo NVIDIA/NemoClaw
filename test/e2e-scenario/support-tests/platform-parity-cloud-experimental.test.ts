@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
   assertRequiredCloudExperimentalResult,
+  buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
 } from "../live/cloud-experimental-checks.ts";
 
@@ -60,6 +63,43 @@ describe("P0-E cloud-experimental parity guardrails", () => {
     expect(`${result.stdout}\n${result.stderr}`).toContain(
       "self-test Python probe for fixture host lacked denial evidence",
     );
+  });
+
+  it("registers executable Deep Agents cloud-experimental checks", () => {
+    expect(DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+      "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
+      "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+    ]);
+
+    for (const scriptPath of DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS) {
+      const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
+      expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
+    }
+  });
+
+  it("documents Deep Agents check scripts in generated launch/QA evidence", () => {
+    const evidence = buildCloudExperimentalChecksEvidence(
+      "cloud-langchain-deepagents-code",
+      "deepagents-sandbox",
+      DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+    );
+
+    expect(evidence).toMatchObject({
+      scenarioId: "cloud-langchain-deepagents-code",
+      sandboxName: "deepagents-sandbox",
+    });
+    expect(evidence.checkScripts).toContain(
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+    );
+    expect(evidence.terminalConnectHint).toEqual({
+      agent: "langchain-deepagents-code",
+      interactiveCommand: "dcode",
+      statusLine: "Interactive: dcode",
+      source: "agents/langchain-deepagents-code/manifest.yaml:runtime.interactive_command",
+    });
   });
 
   it("builds a minimal cloud-experimental child environment", () => {

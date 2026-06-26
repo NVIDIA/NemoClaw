@@ -428,6 +428,36 @@ describe("onboard command", () => {
     });
   });
 
+  it("canonicalizes known --agent aliases", () => {
+    expect(
+      parseOnboardArgs(
+        ["--agent", "dcode"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          error: () => {},
+          exit: exitWithCode,
+        },
+      ).agent,
+    ).toBe("langchain-deepagents-code");
+
+    expect(
+      parseOnboardArgs(
+        ["--agent", "nemohermes"],
+        "--yes-i-accept-third-party-software",
+        "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+        {
+          env: {},
+          listAgents: () => ["openclaw", "hermes", "langchain-deepagents-code"],
+          error: () => {},
+          exit: exitWithCode,
+        },
+      ).agent,
+    ).toBe("hermes");
+  });
+
   it("rejects unknown --agent values", () => {
     const errors: string[] = [];
     expect(() =>
@@ -444,6 +474,7 @@ describe("onboard command", () => {
       ),
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("Unknown agent 'bogus'");
+    expect(errors.join("\n")).toContain("aliases: nemohermes → hermes");
     expect(errors.join("\n")).toContain("Usage: nemoclaw onboard");
   });
 

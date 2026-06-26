@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -136,12 +137,16 @@ export function parseOnboardArgs(
       exit(1);
     }
     const knownAgents = deps.listAgents?.() ?? [];
-    if (knownAgents.length > 0 && !knownAgents.includes(agentValue)) {
-      error(`  Unknown agent '${agentValue}'. Available: ${knownAgents.join(", ")}`);
+    const resolvedAgent =
+      knownAgents.length > 0 ? resolveAgentNameAlias(agentValue, knownAgents) : agentValue;
+    if (knownAgents.length > 0 && !resolvedAgent) {
+      error(
+        `  Unknown agent '${agentValue}'. Available: ${knownAgents.join(", ")}${formatAgentAliasSuffix(knownAgents)}`,
+      );
       printOnboardUsage(error, noticeAcceptFlag);
       exit(1);
     }
-    agent = agentValue;
+    agent = resolvedAgent;
     parsedArgs.splice(agentIdx, 2);
   }
 

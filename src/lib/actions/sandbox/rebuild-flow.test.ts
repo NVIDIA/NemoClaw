@@ -552,11 +552,11 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("recreates a matching-session custom-endpoint sandbox from session, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
-    // be absent during recreate (so onboard --resume uses the session) and the
-    // session's own recorded endpoint must be preserved (not overwritten).
+    // be absent during recreate so onboard --resume uses the validated session
+    // endpoint selected by prepareRebuildResumeConfig.
     const restoreEnv = snapshotEnv([
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_PROVIDER",
@@ -581,8 +581,9 @@ describe("rebuildSandbox flow", () => {
           };
         },
       });
-      // The custom endpoint lives only in this sandbox's own (matching) session.
-      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1";
+      // The custom endpoint lives only in this sandbox's own matching session;
+      // it is canonicalized at the pre-delete rebuild boundary before rewrite.
+      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -594,7 +595,6 @@ describe("rebuildSandbox flow", () => {
         provider: undefined,
         model: undefined,
       });
-      // The matching session's own recorded endpoint is preserved (not pinned/overwritten).
       expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
       // Provider/model come from the registry entry, not the ambient values.
       expect(harness.session.provider).toBe("compatible-endpoint");

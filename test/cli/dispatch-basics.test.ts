@@ -147,8 +147,11 @@ describe("CLI dispatch", () => {
     const r = run("onboard --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
     );
+    expect(r.out).toContain("aliases: nemohermes → hermes;");
+    expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
+    expect(r.out).toContain("langchain-deepagents-code)");
   });
 
   it("agents parent shows command help instead of sandbox lookup", () => {
@@ -222,7 +225,9 @@ describe("CLI dispatch", () => {
     const policy = run("policy set");
     expect(policy.code).toBe(1);
     expect(policy.out).toContain("Unknown nemoclaw command: policy set");
-    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain(
+      "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+    );
     expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
     expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
 

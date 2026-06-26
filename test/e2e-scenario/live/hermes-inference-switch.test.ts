@@ -65,14 +65,33 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     const install = await installHermes(host, apiKey);
     expect(install.exitCode, resultText(install)).toBe(0);
-    await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
+    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(host, cleanup);
 
     const pidBefore = await hermesGatewayPid(sandbox, "pid-before");
     const envHashBefore = await envHash(sandbox, "env-hash-before");
 
+    const compatibleMetadataArgs = switchEndpointUrl
+      ? [
+          "--endpoint-url",
+          switchEndpointUrl,
+          "--credential-env",
+          "COMPATIBLE_ANTHROPIC_API_KEY",
+          "--inference-api",
+          SWITCH_API,
+        ]
+      : [];
     const switched = await host.command(
       "node",
-      [CLI, "inference", "set", "--provider", SWITCH_PROVIDER, "--model", SWITCH_MODEL],
+      [
+        CLI,
+        "inference",
+        "set",
+        "--provider",
+        SWITCH_PROVIDER,
+        "--model",
+        SWITCH_MODEL,
+        ...compatibleMetadataArgs,
+      ],
       {
         artifactName: "hermes-inference-set",
         env: env(apiKey),

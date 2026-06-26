@@ -9,12 +9,12 @@ keywords: ["nemoclaw sandbox hardening", "container security", "docker capabilit
 content:
   type: "reference"
 ---
-The NemoClaw sandbox image applies several security measures to reduce attack surface and limit the blast radius of untrusted workloads.
+The NemoClaw sandbox image applies several security measures to reduce the attack surface and limit damage from untrusted workloads.
 
 ## Removed Unnecessary Tools
 
 NemoClaw explicitly purges build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) from the runtime image.
-These tools are not needed at runtime and would unnecessarily widen the attack surface.
+These tools are not needed at runtime and would widen the attack surface.
 
 The runtime image keeps a small set of operational utilities for normal sandbox workflows, including `vi`, `jq`, and `dos2unix`.
 Use these utilities for lightweight inspection and file cleanup inside the sandbox, but make durable image or policy changes in the NemoClaw source tree and rebuild the sandbox.
@@ -33,36 +33,29 @@ Adjust the value with the `--ulimit nproc=512:512` flag if you launch with `dock
 
 ## Open File Descriptor Limits
 
-The same ENTRYPOINT also sets `ulimit -n 65536` to cap the number of open file
-descriptors a sandbox user can hold. Without this cap the sandbox inherits the
-Docker daemon default (`nofile` ~1048576), which can exceed the host runtime
-limit and lets a runaway process exhaust file descriptors. The startup script
-(`nemoclaw-start.sh`) applies the same limit.
+The same ENTRYPOINT also sets `ulimit -n 65536` to cap the number of open file descriptors a sandbox user can hold.
+Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576), which can exceed the host runtime limit and let a runaway process exhaust file descriptors.
+The startup script (`nemoclaw-start.sh`) applies the same limit.
 
-Adjust the value via the `--ulimit nofile=65536:65536` flag if launching with
-`docker run` directly.
+Adjust the value with the `--ulimit nofile=65536:65536` flag if you launch with `docker run` directly.
 
-Like the process limit, this is applied to the PID 1 entrypoint process tree
-(gateway + agent). `openshell sandbox connect` shells are spawned outside that
-tree and still inherit the runtime default (tracked upstream in
-NVIDIA/OpenShell#1452), so enforce both limits at the container runtime when
-that residual matters to you.
+Like the process limit, this limit applies to the PID 1 entrypoint process tree, which includes the gateway and agent.
+`openshell sandbox connect` shells spawn outside that tree and still inherit the runtime default (tracked upstream in NVIDIA/OpenShell#1452).
+Enforce both limits at the container runtime when that residual risk matters to you.
 
 ## Dropping Linux Capabilities
 
 The NemoClaw entrypoint drops dangerous capabilities from the process bounding set before it starts agent services.
-It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
-`CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`,
-`CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
+It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`, `CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`, `CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
 When `setpriv` is available, the entrypoint also removes the remaining privilege-separation capabilities during the switch from root to the `sandbox` and `gateway` users.
 
 The bounding-set drop is best effort: if `capsh` or `CAP_SETPCAP` is unavailable the entrypoint logs a warning and continues with the runtime-provided capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu`.
 To make the drop fail-closed instead, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment: the agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities.
-This is opt-in because hosts that cannot drop capabilities (no `CAP_SETPCAP` — many cloud VMs, Docker Desktop, WSL) are common, and the check covers the agent process tree only.
+This is opt-in because many hosts cannot drop capabilities, including cloud VMs, Docker Desktop, and WSL environments without `CAP_SETPCAP`.
+The check covers the agent process tree only.
 
-For defense-in-depth, also drop all Linux capabilities at the container runtime
-when you launch the image directly:
+For defense-in-depth, also drop all Linux capabilities at the container runtime when you launch the image directly:
 
 ```bash
 docker run --rm \
@@ -96,10 +89,11 @@ services:
       - /tmp:size=64m
 ```
 
-> **Note:** The `Dockerfile` itself cannot enforce `--cap-drop`. That is a
-> runtime concern controlled by the container orchestrator. Always configure
-> capability dropping in your `docker run` flags, Compose file, or Kubernetes
-> `securityContext`.
+<Note>
+The `Dockerfile` itself cannot enforce `--cap-drop`.
+The container orchestrator controls that runtime setting.
+Always configure capability dropping in your `docker run` flags, Compose file, or Kubernetes `securityContext`.
+</Note>
 
 ## Filesystem Layout
 
@@ -121,11 +115,11 @@ This writable default is intentional.
 Seeing the sandbox user create files under `/sandbox` or `/sandbox/.openclaw` in a fresh sandbox does not mean Landlock failed.
 Landlock still enforces the fixed read-only system paths below.
 
-System paths remain read-only to prevent agents from:
+System paths remain read-only for these protections:
 
-- Replacing system binaries with trojanized versions
-- Modifying DNS resolution or TLS trust stores
-- Tampering with libraries or shell configuration outside `/sandbox`
+- Agents cannot replace system binaries with trojanized versions.
+- Agents cannot modify DNS resolution or TLS trust stores.
+- Agents cannot tamper with libraries or shell configuration outside `/sandbox`.
 
 The image build pre-creates locked shell init files `.bashrc` and `.profile` without proxy entries.
 System-wide shell hooks that read `/tmp/nemoclaw-proxy-env.sh` source the runtime proxy configuration.
@@ -138,13 +132,13 @@ The NemoClaw sandbox policy uses `compatibility: best_effort`, which means Landl
 On such kernels, protection falls back to DAC (file ownership and permissions) only.
 Files outside the writable paths would be inaccessible to the agent regardless of DAC permissions.
 
-Operators should verify Landlock availability:
+Verify Landlock availability:
 
 ```bash
 ls /sys/kernel/security/landlock
 ```
 
-For production deployments, kernel 5.13+ with Landlock enabled is strongly recommended.
+For production deployments, use kernel 5.13+ with Landlock enabled.
 The `test/e2e/e2e-cloud-experimental/checks/04-landlock-readonly.sh` script validates enforcement at runtime.
 
 ## References
