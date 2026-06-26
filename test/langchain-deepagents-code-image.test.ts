@@ -369,6 +369,17 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ),
       "utf8",
     );
+    const secretBoundaryCheck = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        "test",
+        "e2e",
+        "e2e-cloud-experimental",
+        "checks",
+        "08-deepagents-code-secret-boundary.sh",
+      ),
+      "utf8",
+    );
 
     expect(landlockCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(landlockCheck).toContain("touch /sandbox/.deepagents/deepagents-landlock-test");
@@ -413,9 +424,17 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("https://modelcontextprotocol.io/");
     expect(pythonEgressCheck).toContain("https://example.com/");
     expect(pythonEgressCheck).toContain("${actor} cannot reach ${label} without explicit policy");
+    expect(secretBoundaryCheck).toContain("Case: Deep Agents Code dcode secret boundary");
+    expect(secretBoundaryCheck).toContain("env OPENAI_API_KEY=");
+    expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
+    expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
+    expect(secretBoundaryCheck).toContain("refusing to start");
+    expect(secretBoundaryCheck).toContain("NET:OPEN|inference\\\\.local|pypi\\\\.org");
+    expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+      "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
     ]);
   });
 
@@ -475,7 +494,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
     const fakeSecret = "sk-TEST-FAKE-DO-NOT-USE-0000000000000000000000";
-    fs.writeFileSync(envFile, `OPENAI_API_KEY=${fakeSecret}\n`, "utf8");
+    const envFileBefore = `OPENAI_API_KEY=${fakeSecret}\n`;
+    fs.writeFileSync(envFile, envFileBefore, "utf8");
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {});
 
@@ -485,6 +505,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.stderr).not.toContain(fakeSecret);
     expect(result.stderr).toContain("nemoclaw credentials");
     expect(result.stdout).not.toContain("dcode-stub-ran");
+    expect(fs.readFileSync(envFile, "utf8")).toBe(envFileBefore);
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
@@ -502,6 +523,44 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("dcode-stub-ran");
     expect(fs.existsSync(ranMarker)).toBe(true);
+  });
+
+  it("rejects managed Slack runtime env vars that wrap non-Slack secret values", () => {
+    const cases: Array<{ name: string; value: string }> = [
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-sk-abcdefghijklmnopqrstuvwx" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-ghp_abcdefghijklmnopqr" },
+    ];
+
+    for (const { name, value } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-slack-wrap-"));
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = runWrapper(wrapperPath, ["-n", "hi"], { [name]: value });
+
+      expect(result.status, `${name} wrapping non-Slack secret not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(name);
+      expect(result.stderr).not.toContain(value);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
+  });
+
+  it("rejects managed Slack env-file values that wrap non-Slack secret values", () => {
+    const cases: Array<{ name: string; value: string }> = [
+      { name: "SLACK_BOT_TOKEN", value: "xoxb-nvapi-abcdefghijklmnop" },
+      { name: "SLACK_APP_TOKEN", value: "xapp-pypi-abcdefghijklmnop" },
+    ];
+
+    for (const { name, value } of cases) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-slack-wrap-file-"));
+      const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+      fs.writeFileSync(envFile, `${name}=${value}\n`, "utf8");
+      const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+      expect(result.status, `${name} wrapping non-Slack secret not rejected`).not.toBe(0);
+      expect(result.stderr).toContain(name);
+      expect(result.stderr).toContain(envFile);
+      expect(result.stderr).not.toContain(value);
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    }
   });
 
   it("rejects unmanaged runtime env vars holding Telegram-shaped bot tokens", () => {
@@ -796,6 +855,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("openai_api_key");
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
+  it("rejects mixed-case credential-name-context env-file entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-namectx-file-case-"));
+    const { wrapperPath, ranMarker, envFile } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueMixedCaseCredentialMarker12345";
+    fs.writeFileSync(envFile, `LangSmith_Token=${opaque}\n`, "utf8");
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {});
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("LangSmith_Token");
+    expect(result.stderr).toContain(envFile);
     expect(result.stderr).not.toContain(opaque);
     expect(fs.existsSync(ranMarker)).toBe(false);
   });

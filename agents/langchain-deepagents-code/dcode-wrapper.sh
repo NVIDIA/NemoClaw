@@ -43,6 +43,38 @@ run_dcode() {
 #   rejects secret-shaped runtime/.env values, or (b) all dcode invocations
 #   route through a Node entrypoint that imports the canonical patterns directly.
 
+has_non_slack_secret_shape() {
+  local value="$1"
+  if [[ "$value" =~ (sk-proj-|sk-ant-)[A-Za-z0-9_-]{10,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ sk-[A-Za-z0-9_-]{20,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ (nvapi-|nvcf-|ghp_|hf_|glpat-|gsk_|pypi-)[A-Za-z0-9_-]{10,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ github_pat_[A-Za-z0-9_]{30,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ A(K|S)IA[A-Z0-9]{16} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ bot[0-9]{8,10}:[A-Za-z0-9_-]{35} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ [0-9]{8,10}:[A-Za-z0-9_-]{35} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ [A-Za-z0-9]{24}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{27,} ]]; then
+    return 0
+  fi
+  if [[ "$value" =~ [Bb]earer[[:space:]]+[A-Za-z0-9_.+/=-]{10,} ]]; then
+    return 0
+  fi
+  return 1
+}
+
 is_managed_token_value_for_name() {
   local name="$1"
   local value="$2"
@@ -54,14 +86,18 @@ is_managed_token_value_for_name() {
     SLACK_BOT_TOKEN)
       case "$value" in
         xoxb-*)
-          [ "$len" -ge 15 ] && return 0
+          if [ "$len" -ge 15 ] && ! has_non_slack_secret_shape "$value"; then
+            return 0
+          fi
           ;;
       esac
       ;;
     SLACK_APP_TOKEN)
       case "$value" in
         xapp-*)
-          [ "$len" -ge 15 ] && return 0
+          if [ "$len" -ge 15 ] && ! has_non_slack_secret_shape "$value"; then
+            return 0
+          fi
           ;;
       esac
       ;;
