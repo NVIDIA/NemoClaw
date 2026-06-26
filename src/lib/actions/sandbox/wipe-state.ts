@@ -94,9 +94,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
     agent = loadAgentDef(agentName);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    warn(
-      `  ${YW}⚠${R} Could not resolve agent '${agentName}' to wipe workspace state: ${message}`,
-    );
+    warn(`  ${YW}⚠${R} Could not resolve agent '${agentName}' to wipe workspace state: ${message}`);
     return;
   }
 
@@ -129,8 +127,7 @@ export function wipeSandboxState(sandboxName: string, deps: WipeSandboxStateDeps
   // escaping `/sandbox/`.
   const notAbsoluteOrNormalized = !path.posix.isAbsolute(dir) || normalizedDir !== dir;
   const escapesSandboxRoot =
-    !normalizedDir.startsWith(SANDBOX_ROOT) ||
-    normalizedDir === SANDBOX_ROOT.replace(/\/$/, "");
+    !normalizedDir.startsWith(SANDBOX_ROOT) || normalizedDir === SANDBOX_ROOT.replace(/\/$/, "");
   if (notAbsoluteOrNormalized || escapesSandboxRoot) {
     const reason = notAbsoluteOrNormalized
       ? `was not a normalized absolute path (contains '..', '.', '//', or is relative)`
