@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
@@ -158,6 +159,18 @@ describe("hosted inference E2E config", () => {
 
     expect(cfg.apiKey).toBe("sk-compatible-key");
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("preserves the hosted-compatible mode flag without passing source secrets by default", () => {
+    const env = buildAvailabilityProbeEnv({
+      HOME: "/tmp/home",
+      PATH: "/usr/bin",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+    });
+
+    expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
+    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
   });
 
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {

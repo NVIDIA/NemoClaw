@@ -44,6 +44,20 @@ is_positive_integer() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
 }
 
+ensure_expect_available() {
+  if command -v expect >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "${GITHUB_ACTIONS:-}" = "true" ] && command -v sudo >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    info "expect is not preinstalled; installing expect for the Deep Agents Code TUI PTY check"
+    if sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends expect; then
+      command -v expect >/dev/null 2>&1
+      return $?
+    fi
+  fi
+  return 1
+}
+
 contains_secret() {
   NEMOCLAW_TOKEN_SECRET_PATTERN="$SECRET_PATTERN" \
     NEMOCLAW_CONTEXT_SECRET_VALUE_PATTERN="$CONTEXT_SECRET_VALUE_PATTERN" \
@@ -194,11 +208,6 @@ main() {
     exit 1
   fi
 
-  if ! command -v expect >/dev/null 2>&1; then
-    fail_test "expect is required for the Deep Agents Code TUI startup check"
-    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
-    exit 1
-  fi
   if ! command -v perl >/dev/null 2>&1; then
     fail_test "perl is required to sanitize and redact Deep Agents Code TUI captures"
     printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
@@ -223,6 +232,12 @@ main() {
       exit 1
       ;;
   esac
+
+  if ! ensure_expect_available; then
+    fail_test "expect is required for the Deep Agents Code TUI startup check"
+    printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+    exit 1
+  fi
 
   local capture_dir raw_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"

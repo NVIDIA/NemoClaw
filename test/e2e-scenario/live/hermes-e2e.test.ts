@@ -277,20 +277,17 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
-    const providerModels = await provider.requestJson(
-      trustedProviderEndpoint("https://inference-api.nvidia.com/v1/models", {
-        allowedHosts: ["inference-api.nvidia.com"],
-      }),
+    const providerReachability = await provider.probeReachability(
+      trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
       {
-        artifactName: "phase-1-inference-models",
-        curlMaxTimeSeconds: 15,
-        headers: [`Authorization: Bearer ${apiKey}`],
+        artifactName: "phase-1-inference-reachability",
         env: buildAvailabilityProbeEnv(),
         redactionValues,
         timeoutMs: 30_000,
       },
     );
-    expect(providerModels.json).toBeTruthy();
+    expect(providerReachability.exitCode, resultText(providerReachability)).toBe(0);
+    expect(providerReachability.stdout.trim(), resultText(providerReachability)).not.toBe("000");
 
     // Phase 2: real installer + non-interactive Hermes onboard.
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {

@@ -108,9 +108,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     }
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    apiKey.startsWith("nvapi-") ||
+      skip("provider-routed Model Router E2E requires a public NVIDIA Endpoints nvapi-* key");
 
     await artifacts.writeJson("scenario.json", {
       id: "model-router-provider-routed-inference",
@@ -119,7 +118,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       legacySource: "test/e2e/test-model-router-provider-routed-inference.sh",
       contract: [
         "Docker is available before onboarding",
-        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is present and nvapi-prefixed when the public routed provider is exercised",
         "nemoclaw onboard --fresh completes with NEMOCLAW_PROVIDER=routed",
         "host model-router health reports at least one healthy endpoint",
         "sandbox inference.local returns model nvidia-routed with PONG content",
