@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 
 
 class UnsafePathError(RuntimeError):
@@ -365,7 +366,10 @@ def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | N
             result = subprocess.run(
                 [sys.executable, boundary_validator_path, "env-file", temp_path],
                 check=False,
+                timeout=BOUNDARY_VALIDATOR_TIMEOUT_SECONDS,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise UnsafePathError("Hermes secret-boundary validator timed out") from exc
         except OSError as exc:
             raise UnsafePathError(f"Hermes secret-boundary validator failed: {exc}") from exc
         if result.returncode != 0:
