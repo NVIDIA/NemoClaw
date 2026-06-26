@@ -46,9 +46,8 @@ All workspace files reside inside the sandbox filesystem:
 ## Multi-Agent Deployments
 
 A single NemoClaw sandbox can host more than one OpenClaw agent.
-When you configure OpenClaw with multiple named agents (for example, a shared `main` agent
-plus per-user agents for a Teams-integrated deployment), each agent gets its own
-workspace directory alongside the default `workspace/`:
+When you configure OpenClaw with multiple named agents, each agent gets its own workspace directory alongside the default `workspace/`.
+For example, a Teams-integrated deployment can use a shared `main` agent plus per-user agents.
 
 ```text
 /sandbox/.openclaw/
@@ -58,17 +57,16 @@ workspace directory alongside the default `workspace/`:
 └── workspace-ops/       # named agent "ops"
 ```
 
-Each per-agent workspace contains the same Markdown file structure as the default
-(`SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, `memory/`).
-Files are per-agent. Changes in `workspace-main/AGENTS.md` are not visible to
-`workspace-support/`.
+Each per-agent workspace contains the same Markdown file structure as the default workspace: `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, `MEMORY.md`, and `memory/`.
+Files are per-agent.
+Changes in `workspace-main/AGENTS.md` are not visible to `workspace-support/`.
 
-NemoClaw handles persistence and snapshots automatically for per-agent workspaces:
-the sandbox entrypoint provisions each `workspace-<name>/` directly under the writable `.openclaw/` tree so state survives sandbox restart, and `$$nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory and includes it in the snapshot bundle alongside the default `workspace/`.
+NemoClaw handles persistence and snapshots automatically for per-agent workspaces.
+The sandbox entrypoint provisions each `workspace-<name>/` directly under the writable `.openclaw/` tree so state survives sandbox restart.
+`$$nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory and includes it in the snapshot bundle alongside the default `workspace/`.
 
 <Note>
-Files that operators typically want consistent across every agent workspace
-(`AGENTS.md`, shared skills, common templates) are not synced automatically.
+Files that operators typically want consistent across every agent workspace, such as `AGENTS.md`, shared skills, and common templates, are not synced automatically.
 Each workspace is independent, and changes in one do not propagate.
 NVIDIA tracks shared-file tooling (shared mount, `workspaces list` command) in [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 </Note>
@@ -94,7 +92,7 @@ NemoClaw removes workspace files from the sandbox unless you created a snapshot 
 
 <Warning>
 Back up your workspace files before running `$$nemoclaw <name> destroy`.
-See [Backup and Restore](backup-restore) for instructions.
+Refer to [Backup and Restore](backup-restore) for instructions.
 </Warning>
 
 ## Editing Workspace Files
@@ -114,8 +112,10 @@ You can edit them in two ways:
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-Hermes stores durable agent state under `/sandbox/.hermes/` instead of the OpenClaw workspace directory.
-The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`, environment settings live in `/sandbox/.hermes/.env`, and runtime state such as logs, memory, platform sessions, and the SQLite state database lives under the same `.hermes` tree.
+Hermes stores durable agent state under `/sandbox/.hermes/`, not in the OpenClaw workspace directory.
+The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`.
+Environment settings live in `/sandbox/.hermes/.env`.
+Runtime state, such as logs, memory, platform sessions, and the SQLite state database, lives under the same `.hermes` tree.
 
 ## Important Hermes State
 
@@ -130,7 +130,7 @@ The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`, environme
 
 ## Persistence Behavior
 
-Hermes state lives in the sandbox's persistent state volume, not only in the container image.
+Hermes state lives in the sandbox's persistent state volume, not in the container image alone.
 Normal restarts preserve that state.
 Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md` and the SQLite database behind `.hermes/state.db`.
 

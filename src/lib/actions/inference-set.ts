@@ -12,6 +12,7 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
@@ -356,6 +357,71 @@ function getPreferredInferenceApi(config: ConfigObject): string | null {
   return typeof inferenceProvider.api === "string" ? inferenceProvider.api : null;
 }
 
+type RegistryInferenceMetadata = Pick<
+  SandboxEntry,
+  "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
+>;
+
+function isCustomCompatibleProvider(provider: string): boolean {
+  return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
+}
+
+function matchingSessionMetadata(options: {
+  session: onboardSession.Session | null;
+  sandboxName: string;
+  provider: string;
+  model: string;
+}): RegistryInferenceMetadata | null {
+  const { session, sandboxName, provider, model } = options;
+  if (
+    session?.sandboxName !== sandboxName ||
+    session.provider !== provider ||
+    session.model !== model ||
+    !session.endpointUrl
+  ) {
+    return null;
+  }
+  return {
+    endpointUrl: session.endpointUrl,
+    credentialEnv: session.credentialEnv ?? null,
+    preferredInferenceApi: session.preferredInferenceApi ?? null,
+    nimContainer: session.nimContainer ?? null,
+  };
+}
+
+function registryMetadataForProviderSwitch(options: {
+  entry: SandboxEntry;
+  provider: string;
+  model: string;
+  sandboxName: string;
+  session: onboardSession.Session | null;
+}): RegistryInferenceMetadata {
+  const { entry, provider, model, sandboxName, session } = options;
+  if (entry.provider === provider) {
+    return {
+      endpointUrl: entry.endpointUrl ?? null,
+      credentialEnv: entry.credentialEnv ?? null,
+      preferredInferenceApi: entry.preferredInferenceApi ?? null,
+      nimContainer: entry.nimContainer ?? null,
+    };
+  }
+  const sessionMetadata = matchingSessionMetadata({ session, sandboxName, provider, model });
+  if (sessionMetadata) return sessionMetadata;
+  if (isCustomCompatibleProvider(provider)) {
+    throw new InferenceSetError(
+      `Cannot switch sandbox '${sandboxName}' to '${provider}' without trusted durable endpoint metadata. ` +
+        `Re-run onboarding for this custom endpoint or restore a matching onboard session before using inference set.`,
+      2,
+    );
+  }
+  return {
+    endpointUrl: null,
+    credentialEnv: null,
+    preferredInferenceApi: null,
+    nimContainer: null,
+  };
+}
+
 export async function runInferenceSet(
   options: InferenceSetOptions,
   deps: InferenceSetDeps = defaultDeps(),
@@ -385,6 +451,14 @@ export async function runInferenceSet(
       2,
     );
   }
+  const session = deps.loadSession();
+  const registryMetadata = registryMetadataForProviderSwitch({
+    entry,
+    provider,
+    model,
+    sandboxName,
+    session,
+  });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
   // host.openshell.internal hostname, which the host-side `openshell inference set`
@@ -429,9 +503,20 @@ export async function runInferenceSet(
     );
   }
 
-  // Write the registry before the crash-prone in-sandbox sync so the gateway
-  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
-  if (!deps.updateSandbox(sandboxName, { provider, model })) {
+  // Write minimal registry state before any sandbox-facing config read so the
+  // gateway and registry cannot split if the in-sandbox layer is unavailable.
+  const registryFields = (preferredInferenceApi: string | null) =>
+    inferenceSelectionRegistryFields({
+      provider,
+      model,
+      endpointUrl: registryMetadata.endpointUrl ?? null,
+      credentialEnv: registryMetadata.credentialEnv ?? null,
+      preferredInferenceApi,
+      nimContainer: registryMetadata.nimContainer ?? null,
+    });
+  if (
+    !deps.updateSandbox(sandboxName, registryFields(registryMetadata.preferredInferenceApi ?? null))
+  ) {
     throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
   }
 
@@ -442,8 +527,14 @@ export async function runInferenceSet(
     currentProvider: entry.provider,
     provider,
     sandboxName,
-    session: deps.loadSession(),
+    session,
   });
+  // Refresh the registry with config-derived API-family metadata before the
+  // crash-prone in-sandbox sync (#3725/#3726).
+  if (!deps.updateSandbox(sandboxName, registryFields(preferredInferenceApi))) {
+    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  }
+
   let patched: { changed: boolean; route: SandboxInferenceConfig };
   if (agentName === "hermes") {
     patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);

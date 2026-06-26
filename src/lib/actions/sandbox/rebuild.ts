@@ -425,9 +425,11 @@ function preflightRebuildCredentials(
   // The target registry entry is authoritative when a matching legacy session
   // omitted credentialEnv; rebuild rewrites provider/model from this entry later,
   // so remote registry providers must still fail closed before backup/delete.
-  let rebuildCredentialEnv = sessionMatchesTarget
-    ? session?.credentialEnv || getRebuildCredentialEnvFromRegistry(sb.provider)
-    : getRebuildCredentialEnvFromRegistry(sb.provider);
+  const registryCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
+  let rebuildCredentialEnv = registryCredentialEnv;
+  if (sessionMatchesTarget && registryCredentialEnv === null) {
+    rebuildCredentialEnv = session?.credentialEnv || null;
+  }
   if (!sessionMatchesTarget && session?.sandboxName) {
     log(
       `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
@@ -781,6 +783,7 @@ export async function rebuildSandbox(
       s.model = resumeConfig.model;
       s.nimContainer = resumeConfig.nimContainer;
       s.credentialEnv = resumeConfig.credentialEnv;
+      s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
       if (resumeConfig.pinEndpoint) {
         s.endpointUrl = resumeConfig.endpointUrl;
       }

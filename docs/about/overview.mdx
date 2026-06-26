@@ -15,10 +15,11 @@ import { AgentCli, AgentOnly } from "../_components/AgentGuide";
 
 NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside OpenShell containers.
 NemoClaw provides onboarding, lifecycle management, and agent operations for supported runtimes in OpenShell sandboxes.
-It incorporates policy-based privacy and security guardrails, giving you control over your agents' behavior and data handling.
-These controls help self-evolving agents run more safely in clouds, on-premises environments, RTX PCs, and DGX Spark.
+It adds policy-based privacy and security controls for agent behavior and data handling.
+These controls help agents run in clouds, on-premises environments, RTX PCs, and DGX Spark.
 
-NemoClaw pairs hosted models on inference providers or local endpoints with a hardened sandbox, routed inference, and declarative egress policy so deployment stays safer and more repeatable.
+NemoClaw pairs hosted inference providers or local model endpoints with a hardened sandbox, routed inference, and declarative egress policy.
+This keeps deployments repeatable and easier to constrain.
 The sandbox runtime comes from [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 NemoClaw adds the blueprint, <AgentCli /> CLI, onboarding, and related tooling as the reference way to run supported agents there.
 
@@ -30,13 +31,13 @@ NemoClaw adds the blueprint, <AgentCli /> CLI, onboarding, and related tooling a
 
 ## Key Features
 
-NemoClaw provides the following product capabilities.
+NemoClaw provides these product capabilities.
 
 | Feature | Description |
 |---------|-------------|
 | Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
 | AI-agent docs | Publishes Markdown docs and a small routing skill so AI coding assistants can guide setup, inference configuration, policy management, monitoring, deployment, security review, and troubleshooting. |
-| Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
+| Hardened blueprint | A Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
 | Messaging channels | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
 | Routed inference | Provider-routed model calls through the OpenShell gateway, transparent to the agent. Supports NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, compatible endpoints, local Ollama, local vLLM, and the Model Router. |
@@ -44,9 +45,10 @@ NemoClaw provides the following product capabilities.
 
 ## Benefits of Using NemoClaw
 
-Autonomous AI agents can make arbitrary network requests, access the host filesystem, and call any inference endpoint. Without guardrails, this creates security, cost, and compliance risks that grow as agents run unattended.
+Autonomous AI agents can make arbitrary network requests, access the host filesystem, and call any inference endpoint.
+Without controls, this creates security, cost, and compliance risks that grow as agents run unattended.
 
-NemoClaw provides the following benefits to mitigate these risks.
+NemoClaw provides these benefits to mitigate those risks.
 
 | Benefit                    | Description                                                                                                            |
 |----------------------------|------------------------------------------------------------------------------------------------------------------------|
@@ -58,7 +60,7 @@ NemoClaw provides the following benefits to mitigate these risks.
 
 ## Use Cases
 
-You can use NemoClaw for use cases such as the following.
+Use NemoClaw for these use cases.
 
 | Use Case                  | Description                                                                                  |
 |---------------------------|----------------------------------------------------------------------------------------------|
@@ -68,25 +70,25 @@ You can use NemoClaw for use cases such as the following.
 
 ## Next Steps
 
-Navigate to the following topics to learn more about NemoClaw and how to install and use it.
+Use these topics to learn more about NemoClaw and how to install and use it.
 
 <AgentOnly variant="openclaw">
 
-- [Architecture Overview](how-it-works) to understand how NemoClaw works.
-- [Ecosystem](ecosystem) to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [Quickstart with OpenClaw](../get-started/quickstart) to install NemoClaw and run your first OpenClaw sandbox.
-- [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
-- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) to explore community-driven blueprint examples, showcases, and integrations.
-- [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
+- Read [Architecture Overview](how-it-works) to understand how NemoClaw works.
+- Read [Ecosystem](ecosystem) to understand how your agent, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- Follow [Quickstart with OpenClaw](../get-started/quickstart) to install NemoClaw and run your first OpenClaw sandbox.
+- Read [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
+- Explore [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) for community-driven blueprint examples, showcases, and integrations.
+- Read [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-- [Architecture Overview](how-it-works) to understand how NemoClaw works.
-- [Ecosystem](ecosystem) to understand how Hermes, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [Quickstart with Hermes](../get-started/quickstart) to install NemoClaw and run your first Hermes sandbox with `$$nemoclaw`.
-- [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
-- [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) to explore community-driven blueprint examples, showcases, and integrations.
-- [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
+- Read [Architecture Overview](how-it-works) to understand how NemoClaw works.
+- Read [Ecosystem](ecosystem) to understand how Hermes, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- Follow [Quickstart with Hermes](../get-started/quickstart) to install NemoClaw and run your first Hermes sandbox with `$$nemoclaw`.
+- Read [AI Agent Docs](../resources/agent-skills) to let your AI coding assistant fetch NemoClaw Markdown docs.
+- Explore [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community) for community-driven blueprint examples, showcases, and integrations.
+- Read [Inference Options](../inference/inference-options) to check the inference providers that NemoClaw supports and how inference routing works.
 
 </AgentOnly>
