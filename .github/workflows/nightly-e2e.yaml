@@ -2325,6 +2325,8 @@ jobs:
           echo "=== Docker ==="
           docker info --format '{{.ServerVersion}}'
 
+      # No expect install here: this double-onboard regression stays
+      # non-interactive and does not drive the OpenClaw TUI.
       - name: Run GPU double-onboard E2E test
         run: bash test/e2e/test-gpu-double-onboard.sh
 

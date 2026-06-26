@@ -46,4 +46,6 @@ runs:
           echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
           sleep $((attempt * 5))
         done
+        # Keep runner setup small and predictable; callers must request any
+        # packages they need explicitly.
         sudo apt-get install -y --no-install-recommends "${packages[@]}"
