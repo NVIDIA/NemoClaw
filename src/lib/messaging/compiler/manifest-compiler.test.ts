@@ -510,6 +510,8 @@ describe("ManifestCompiler", () => {
         TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
         MSTEAMS_PORT: undefined,
         TEAMS_PORT: undefined,
+        TEAMS_GROUP_POLICY: undefined,
+        TEAMS_GROUP_ALLOWED_USERS: undefined,
         TEAMS_REQUIRE_MENTION: undefined,
       },
       () =>
@@ -551,12 +553,42 @@ describe("ManifestCompiler", () => {
     expect(JSON.stringify(plan.agentRender)).toContain('"requireMention":true');
   });
 
+  it("renders Microsoft Teams OpenClaw group allowlist when configured", async () => {
+    const plan = await withEnv(
+      {
+        ...TEST_TEAMS_ENV,
+        TEAMS_GROUP_POLICY: "allowlist",
+        TEAMS_GROUP_ALLOWED_USERS:
+          "10000000-0000-0000-0000-000000000001,20000000-0000-0000-0000-000000000002",
+      },
+      () =>
+        compiler().compile({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "rebuild",
+          isInteractive: false,
+          configuredChannels: ["teams"],
+          credentialAvailability: {
+            MSTEAMS_APP_PASSWORD: true,
+          },
+        }),
+    );
+
+    const rendered = JSON.stringify(plan.agentRender);
+    expect(rendered).toContain('"groupPolicy":"allowlist"');
+    expect(rendered).toContain(
+      '"groupAllowFrom":["10000000-0000-0000-0000-000000000001","20000000-0000-0000-0000-000000000002"]',
+    );
+  });
+
   it("keeps Microsoft Teams active when no explicit user allowlist is provided", async () => {
     const plan = await withEnv(
       {
         MSTEAMS_APP_ID: "test-teams-app-id",
         MSTEAMS_TENANT_ID: "test-teams-tenant-id",
         TEAMS_ALLOWED_USERS: undefined,
+        TEAMS_GROUP_POLICY: undefined,
+        TEAMS_GROUP_ALLOWED_USERS: undefined,
       },
       () =>
         compiler().compile({
