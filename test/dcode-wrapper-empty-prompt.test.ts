@@ -67,9 +67,7 @@ function runWrapper(args: string[]): WrapperRun {
       'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
       `export PATH=${JSON.stringify(managedPath)}`,
     );
-    if (wrapperWithStubbedPath === wrapperSource) {
-      throw new Error("Unable to patch dcode wrapper managed PATH for test stub");
-    }
+    expect(wrapperWithStubbedPath).not.toBe(wrapperSource);
     fs.writeFileSync(path.join(dir, "dcode"), wrapperWithStubbedPath, { mode: 0o755 });
 
     fs.writeFileSync(
