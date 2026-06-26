@@ -36,6 +36,9 @@ The sandbox does not receive your API key.
 Local Ollama and local vLLM do not require your host `OPENAI_API_KEY`.
 NemoClaw uses provider-specific local tokens for those routes, and rebuilds of legacy local-inference sandboxes migrate away from stale OpenAI credential requirements.
 
+For `langchain-deepagents-code`, the generated `/sandbox/.deepagents/config.toml` points Deep Agents Code at `https://inference.local/v1` and references a NemoClaw-managed placeholder API key.
+Keep raw NVIDIA, OpenAI, compatible-endpoint, or local-provider credentials in the NemoClaw/OpenShell provider flow rather than in `/sandbox/.deepagents/.env` or project files.
+
 ## Provider Status
 
 {/* provider-status:begin */}

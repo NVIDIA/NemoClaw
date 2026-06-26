@@ -144,6 +144,19 @@ nemoclaw onboard --agent hermes [options]
 
 </AgentOnly>
 
+<AgentOnly variant="openclaw">
+
+For LangChain Deep Agents Code, pass the terminal runtime agent explicitly:
+
+```bash
+nemoclaw onboard --agent langchain-deepagents-code
+```
+
+After onboarding, connect and run `dcode` interactively, or drive one headless turn from the host with `nemoclaw <name> agent -n "..."`.
+This runtime does not expose an OpenClaw or Hermes dashboard, dashboard URL, gateway token, or long-running in-sandbox API service.
+
+</AgentOnly>
+
 #### `--resume` and `--fresh`
 
 NemoClaw records onboarding progress so interrupted runs can continue.
@@ -524,6 +537,9 @@ $$nemoclaw my-assistant connect [--probe-only]
 
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
 Use it for health checks and scripted readiness probes.
+<AgentOnly variant="openclaw">
+For LangChain Deep Agents Code sandboxes, `connect` drops you into the terminal runtime environment; run `dcode` for the interactive UI or `dcode -n "..."` for one headless task.
+</AgentOnly>
 
 ### `$$nemoclaw <name> exec`
 
@@ -690,6 +706,9 @@ The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `pr
 In that case, text output keeps OpenShell's authoritative phase but prints a `docker unpause <container>` recovery hint instead of sending you directly to rebuild.
 For terminal runtime sandboxes, the command also checks cgroup OOM kill counters.
 If the counter records an OOM kill, text output prints `Runtime health: degraded (... OOM kill recorded)` and points you to `$$nemoclaw <name> rebuild`; JSON output reports `terminalRuntimeHealth.kind: "degraded"` with the OOM kill count and source counter path.
+<AgentOnly variant="openclaw">
+For LangChain Deep Agents Code sandboxes, text status identifies the terminal runtime and its interactive/headless command shape instead of reporting an agent dashboard.
+</AgentOnly>
 The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), `failureLayer` is non-null, or a terminal runtime sandbox reports a recorded OOM kill.
 The alias form `$$nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `$$nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 

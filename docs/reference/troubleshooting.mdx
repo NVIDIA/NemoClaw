@@ -666,6 +666,18 @@ The status command detects the sandbox context and reports "active (inside sandb
 
 Run `openshell sandbox list` on the host to check the underlying sandbox state.
 
+### LangChain Deep Agents Code has no dashboard URL
+
+`langchain-deepagents-code` is a terminal runtime.
+Use `nemoclaw <name> connect` and then run `dcode`, or run one task from the host with `nemoclaw <name> agent -n "..."`.
+Commands and examples that expect an OpenClaw or Hermes dashboard, gateway token, forwarded API port, or long-running in-sandbox gateway do not apply to this agent.
+
+If `nemoclaw <name> status` reports terminal runtime degradation, such as an OOM kill counter, rebuild the sandbox:
+
+```bash
+nemoclaw <name> rebuild
+```
+
 ### Git clone fails with a certificate verification error
 
 In networks that inspect TLS, OpenShell injects a proxy CA bundle into the sandbox.

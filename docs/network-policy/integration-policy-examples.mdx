@@ -63,6 +63,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Public reference APIs | `public-reference` |
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
+| Tavily web search | `tavily` |
 | Telegram Bot API | `telegram` |
 | Weather and geocoding APIs | `weather` |
 | WeChat (personal) iLink Bot API (experimental) | `wechat` |
@@ -233,6 +234,26 @@ Remove access when the task is done:
 $$nemoclaw my-assistant policy-remove github --yes
 $$nemoclaw my-assistant policy-remove jira --yes
 ```
+
+## Tavily Web Search for Deep Agents Code
+
+Use `tavily` when a LangChain Deep Agents Code sandbox needs Tavily-backed web search.
+This preset opens `api.tavily.com:443` for the sandbox Python and Node runtimes that the `dcode` harness may use.
+It does not inject `TAVILY_API_KEY`; provide that credential at runtime and keep it out of policy YAML, snapshots, and committed project files.
+
+```bash
+$$nemoclaw my-assistant policy-add tavily --dry-run
+$$nemoclaw my-assistant policy-add tavily --yes
+```
+
+Remove the preset when web search is no longer needed:
+
+```bash
+$$nemoclaw my-assistant policy-remove tavily --yes
+```
+
+LangSmith and MCP are separate from Tavily.
+NemoClaw does not currently ship a maintained LangSmith preset for the Deep Agents Code harness, and the managed `dcode` wrapper disables MCP auto-loading and MCP config overrides.
 
 ## Brave Search
 

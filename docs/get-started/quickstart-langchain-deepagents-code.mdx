@@ -25,9 +25,16 @@ Run onboarding with the canonical agent ID.
 nemoclaw onboard --agent langchain-deepagents-code
 ```
 
+For scripted installs, pass the same agent ID to the non-interactive onboard flow:
+
+```bash
+NEMOCLAW_AGENT=langchain-deepagents-code nemoclaw onboard --non-interactive --yes-i-accept-third-party-software
+```
+
 The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
+Do not paste upstream provider keys into `/sandbox/.deepagents/.env`; use the NemoClaw provider prompts, provider environment variables, or `nemoclaw credentials` commands instead.
 
 ## Use the Harness
 
@@ -42,6 +49,12 @@ For a single headless task, run:
 
 ```bash
 dcode -n "Summarize this repository"
+```
+
+From the host, the `agent` wrapper forwards to the same manifest-declared command:
+
+```bash
+nemoclaw <sandbox-name> agent -n "Summarize this repository"
 ```
 
 The managed wrapper launches Deep Agents Code with `HOME=/sandbox`, update checks disabled, remote Deep Agents sandbox providers disabled, MCP auto-loading disabled, and shell allow-list overrides blocked.
@@ -64,7 +77,8 @@ NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may
 ## Optional Web Search
 
 Deep Agents Code can use Tavily web search when you provide a Tavily credential in the runtime environment.
-NemoClaw does not enable Tavily or LangSmith by default for this harness. The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+NemoClaw does not enable Tavily, LangSmith, MCP servers, or remote Deep Agents sandbox providers by default for this harness.
+The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
 To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, then supply the credential.
 
@@ -105,6 +119,7 @@ nemoclaw <sandbox-name> snapshot create --name before-change
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
 If `status` reports `Runtime health: degraded` with an OOM kill count, rebuild the sandbox to restore the terminal runtime.
 There is no dashboard port or long-running gateway process for this harness.
+Commands such as `dashboard-url`, `gateway-token`, and OpenClaw/Hermes API examples do not apply to `langchain-deepagents-code` sandboxes.
 
 ## Next Steps
 
