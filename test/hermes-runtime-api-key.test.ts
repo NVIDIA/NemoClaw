@@ -185,9 +185,9 @@ function runExtractedProviderPlaceholderRefresh(opts: { runtimePlanExists: boole
     path.join(hermesHome, ".env"),
     "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n",
   );
-  if (opts.runtimePlanExists) {
-    fs.writeFileSync(runtimePlanPath, JSON.stringify(baseMessagingRuntimePlan()));
-  }
+  opts.runtimePlanExists
+    ? fs.writeFileSync(runtimePlanPath, JSON.stringify(baseMessagingRuntimePlan()))
+    : undefined;
 
   const functionSource = extractShellFunctionFromSource(
     fs.readFileSync(START_SCRIPT, "utf-8"),
