@@ -26,10 +26,13 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const HERMES_MANIFEST = path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml");
-const OLD_HERMES_VERSION = "v2026.4.13";
+const OLD_HERMES_VERSION = "v2026.5.16";
 const OLD_HERMES_REGISTRY_VERSION = OLD_HERMES_VERSION.slice(1);
+const OLD_HERMES_SEMVER = "0.14.0";
 const OLD_HERMES_TARBALL_SHA256 =
-  "5e4529b8cb6e4821eb916b81517e48125109b1764d6d1e68a204a9f0ddf2d98c";
+  "c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143";
+const OLD_HERMES_NPM_INTEGRITY =
+  "sha512-kkHSw8iprp0JWAOf3ZZF0OHzRBj3E/BbG/QV0O4lwonxuY7AWhSepOhzSMlWo21VbQ/fTLwFkr/q3cIjDZDLBA==";
 const STALE_BASE_REBUILD = process.env.NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E === "1";
 const TEST_SANDBOX_PREFIX = STALE_BASE_REBUILD ? "e2e-rebuild-hermes-base" : "e2e-rebuild-hermes";
 const SANDBOX_NAME =
@@ -461,7 +464,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         "--build-arg",
         `HERMES_VERSION=${OLD_HERMES_VERSION}`,
         "--build-arg",
+        `HERMES_SEMVER=${OLD_HERMES_SEMVER}`,
+        "--build-arg",
         `HERMES_TARBALL_SHA256=${OLD_HERMES_TARBALL_SHA256}`,
+        "--build-arg",
+        `HERMES_NPM_INTEGRITY=${OLD_HERMES_NPM_INTEGRITY}`,
         "--build-arg",
         "HERMES_UV_EXTRAS=messaging",
         "-f",

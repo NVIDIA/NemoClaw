@@ -42,7 +42,7 @@ type TraceTimingAnalyzer = {
 };
 
 const require = createRequire(import.meta.url);
-const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
+const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.ts");
 
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
@@ -582,6 +582,20 @@ describe("E2E reusable workflow contract", () => {
     expect(script).not.toContain(
       "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
     );
+  });
+
+  it("uses NVIDIA_API_KEY for the live Kimi Vitest lane", () => {
+    const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const job = vitestWorkflow.jobs["kimi-inference-compat-vitest"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi compatibility live Vitest test",
+    );
+
+    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe("public-nvidia");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {

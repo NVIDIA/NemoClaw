@@ -57,6 +57,7 @@ export function createCoreOnboardFlowPhases<
     async run(context) {
       const providerInferenceResult = await handleProviderInferenceState({
         resume: context.resume,
+        fresh: context.fresh,
         session: context.session,
         gpu: context.gpu,
         sandboxName: context.sandboxName,

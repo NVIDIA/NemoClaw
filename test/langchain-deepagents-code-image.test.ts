@@ -6,13 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+import { cloudExperimentalChecksForOnboarding } from "./e2e-scenario/live/cloud-experimental-check-list.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
 }
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
+const DCODE_CANONICAL_PATH =
+  "/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
@@ -72,6 +77,17 @@ function runWrapper(
     env: { PATH: process.env.PATH ?? "/usr/bin:/bin", ...env },
     encoding: "utf8",
   });
+}
+
+function policyBinaryPaths(policyText: string, policyName: string): string[] {
+  const parsed = YAML.parse(policyText) as {
+    network_policies?: Record<string, { binaries?: Array<{ path?: unknown }> }>;
+  };
+  const binaries = parsed.network_policies?.[policyName]?.binaries;
+  expect(Array.isArray(binaries), `${policyName} policy must declare binary-scoped egress`).toBe(
+    true,
+  );
+  return (binaries ?? []).map((entry) => (typeof entry.path === "string" ? entry.path : ""));
 }
 
 function makeStartScriptFixture(tempDir: string): {
@@ -146,6 +162,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     });
 
     const envFileText = fs.readFileSync(envFile, "utf8");
+    expect(envFileText).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(envFileText.match(/\/usr\/local\/bin/g)).toHaveLength(1);
     expect(envFileText).toContain("export HTTP_PROXY=http://proxy.example:8080");
     expect(envFileText).toContain("export https_proxy=https://safe-proxy.example:8443");
   });
@@ -246,7 +264,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const wrapper = readAgentFile("dcode-wrapper.sh");
     const policy = readAgentFile("policy-additions.yaml");
 
-    expect(dockerfile).toContain("rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code");
+    expect(dockerfile).toContain(
+      "rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code",
+    );
     expect(dockerfile).toContain("patch-managed-deepagents-code.py");
     expect(dockerfile).not.toContain("NEMOCLAW_WEB_SEARCH_ENABLED");
     expect(wrapper).toContain("unset DEEPAGENTS_CODE_SHELL_ALLOW_LIST");
@@ -267,12 +287,30 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(policy).not.toContain("dcode.upstream");
   });
 
+  it("puts the managed Python venv before system Python in every dcode entry path", () => {
+    const baseDockerfile = readAgentFile("Dockerfile.base");
+    const dockerfile = readAgentFile("Dockerfile");
+    const startScript = readAgentFile("start.sh");
+    const wrapper = readAgentFile("dcode-wrapper.sh");
+    const pathContractFiles = [baseDockerfile, dockerfile, startScript, wrapper].join("\n");
+
+    expect(baseDockerfile).toContain("VIRTUAL_ENV=/opt/venv");
+    expect(dockerfile).toContain("VIRTUAL_ENV=/opt/venv");
+    expect(baseDockerfile).toContain(`PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(dockerfile).toContain(`PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(startScript).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(startScript).toContain(`printf '%s\\n' 'export PATH="${DCODE_CANONICAL_PATH}"'`);
+    expect(wrapper).toContain(`export PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(pathContractFiles).not.toContain('PATH="/usr/local/bin:${PATH}"');
+  });
+
   it("keeps optional service egress out of the default policy and requires Landlock", () => {
     const policy = readAgentFile("policy-additions.yaml");
 
     expect(policy).not.toContain("api.tavily.com");
     expect(policy).not.toContain("api.smith.langchain.com");
     expect(policy).toContain("    - /usr\n");
+    expect(policy).toContain("    - /opt/venv\n");
     expect(policy).toContain("    - /etc\n");
     expect(policy).toContain("compatibility: strict");
     expect(policy).not.toContain("compatibility: best_effort");
@@ -283,6 +321,29 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(policy).toContain(
       "Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent",
     );
+
+    const githubBinaries = policyBinaryPaths(policy, "github");
+    expect(githubBinaries).toEqual(
+      expect.arrayContaining(["/usr/bin/git", "/usr/local/bin/dcode", "/opt/venv/bin/python3*"]),
+    );
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+
+    const pypiBinaries = policyBinaryPaths(policy, "pypi");
+    expect(pypiBinaries).toEqual(
+      expect.arrayContaining([
+        "/opt/venv/bin/pip3",
+        "/sandbox/**/bin/pip3",
+        "/opt/venv/bin/python3*",
+        "/sandbox/**/bin/python3*",
+        "/usr/local/bin/dcode",
+      ]),
+    );
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/pip3"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
   });
 
   it("ships live policy behavior checks for Deep Agents Code", () => {
@@ -312,30 +373,68 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(landlockCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(landlockCheck).toContain("touch /sandbox/.deepagents/deepagents-landlock-test");
     expect(landlockCheck).toContain("touch /usr/deepagents-landlock-test");
+    expect(landlockCheck).toContain("touch /opt/venv/deepagents-landlock-test");
     expect(landlockCheck).toContain("touch /etc/deepagents-landlock-test");
     expect(landlockCheck).toContain("touch /tmp/deepagents-landlock-test");
     expect(landlockCheck).toContain("/usr is Landlock read-only for Deep Agents Code");
+    expect(landlockCheck).toContain("/opt/venv is Landlock read-only for Deep Agents Code");
     expect(landlockCheck).toContain("/etc is Landlock read-only for Deep Agents Code");
-    expect(pythonEgressCheck).toContain("python3 - ${url@Q} <<'PY'");
-    expect(pythonEgressCheck).toContain('expect_reached "GitHub" "https://api.github.com/"');
-    expect(pythonEgressCheck).toContain('expect_reached "PyPI" "https://pypi.org/"');
+    expect(pythonEgressCheck).toContain(`DCODE_CANONICAL_PATH="${DCODE_CANONICAL_PATH}"`);
+    expect(pythonEgressCheck).toContain('grep -Fxq "PATH=${DCODE_CANONICAL_PATH}"');
+    expect(pythonEgressCheck).toContain('printf "PYTHON_REAL=%s\\n"');
+    expect(pythonEgressCheck).toContain("^PYTHON=/opt/venv/bin/python3$");
+    expect(pythonEgressCheck).toContain("^PIP=/opt/venv/bin/pip3$");
+    expect(pythonEgressCheck).toContain("^USRLOCAL_COUNT=1$");
+    expect(pythonEgressCheck).toContain("import urllib.error");
+    expect(pythonEgressCheck).toContain("except urllib.error.HTTPError as exc:");
+    expect(pythonEgressCheck).toContain("except urllib.error.URLError as exc:");
+    expect(pythonEgressCheck).toContain("ERROR:URLError");
+    expect(pythonEgressCheck).toContain("lacked denial evidence");
+    expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "arbitrary Python" "PyPI" "https://pypi.org/"',
+    );
+    expect(pythonEgressCheck).toContain('PROJECT_VENV="/sandbox/.nemoclaw-e2e-project-venv"');
+    expect(pythonEgressCheck).toContain("python3 -m venv --copies");
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "project venv Python under /sandbox" "PyPI" "https://pypi.org/" "$PROJECT_PYTHON"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_reached "project venv Python under /sandbox" "files.pythonhosted.org" "https://files.pythonhosted.org/" "$PROJECT_PYTHON"',
+    );
+    expect(pythonEgressCheck).toContain(
+      'expect_blocked "project venv Python under /sandbox" "Tavily" "https://api.tavily.com/" "$PROJECT_PYTHON"',
+    );
     expect(pythonEgressCheck).toContain("https://api.tavily.com/");
     expect(pythonEgressCheck).toContain("https://api.smith.langchain.com/");
     expect(pythonEgressCheck).toContain("https://modelcontextprotocol.io/");
     expect(pythonEgressCheck).toContain("https://example.com/");
-    expect(pythonEgressCheck).toContain(
-      "arbitrary Python cannot reach ${label} without explicit policy",
-    );
+    expect(pythonEgressCheck).toContain("${actor} cannot reach ${label} without explicit policy");
+    expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+    ]);
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {
     const baseDockerfile = readAgentFile("Dockerfile.base");
+    const manifest = readAgentFile("manifest.yaml");
     const requirementsLock = readAgentFile("requirements.lock");
 
     expect(baseDockerfile).toContain("COPY agents/langchain-deepagents-code/requirements.lock");
+    expect(baseDockerfile).toContain('python3 -m venv --copies "$VIRTUAL_ENV"');
+    expect(baseDockerfile).toContain(
+      '"$VIRTUAL_ENV/bin/pip3" install --no-cache-dir --require-hashes',
+    );
     expect(baseDockerfile).toContain("--require-hashes");
-    expect(baseDockerfile).toContain("--ignore-installed");
     expect(baseDockerfile).toContain("-r /tmp/deepagents-code-requirements.lock");
+    expect(baseDockerfile).not.toContain("--break-system-packages");
+    expect(baseDockerfile).not.toContain("--ignore-installed");
+    expect(manifest).toContain("binary: /opt/venv/bin/pip3");
+    expect(manifest).not.toContain("binary: /usr/local/bin/pip3");
     expect(baseDockerfile).not.toContain(
       'pip3 install --no-cache-dir --break-system-packages \\"uv==',
     );

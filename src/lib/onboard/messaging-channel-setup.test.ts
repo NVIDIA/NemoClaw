@@ -568,4 +568,27 @@ describe("setupMessagingChannels", () => {
     expect(output).toContain("token_revoked");
     expect(output).toContain("slack — already configured");
   });
+
+  it("#5696 exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+    process.env.TELEGRAM_GROUP_POLICY = "lockdown";
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((message = "") => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(
+      setupMessagingChannels(null, null, { isNonInteractive: () => true }),
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errors.join("\n")).toContain("TELEGRAM_GROUP_POLICY");
+    expect(errors.join("\n")).toContain("lockdown");
+    expect(errors.join("\n")).toContain("open");
+    expect(errors.join("\n")).toContain("allowlist");
+    expect(errors.join("\n")).toContain("disabled");
+  });
 });

@@ -1382,6 +1382,7 @@ describe("Hermes sandbox provisioning", () => {
     const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
 
     const command = dockerRunCommandBetween(
@@ -1453,6 +1454,10 @@ describe("Hermes sandbox provisioning", () => {
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
+        expect((fs.statSync(path.join(hermesDir, "logs")).mode & 0o7777).toString(8)).toBe("2770");
+        expect(
+          (fs.statSync(path.join(hermesDir, "logs", "curator")).mode & 0o7777).toString(8),
+        ).toBe("2770");
         const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
         expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(

@@ -31,9 +31,13 @@ NemoClaw still applies its own secret-safety exclusions for credential-like path
 my-plugin-sandbox/
 ├── Dockerfile
 └── my-plugin/
+    ├── package-lock.json
     ├── package.json
     └── src/
 ```
+
+The example Dockerfile uses `npm ci`, so `my-plugin/` must include `package-lock.json`.
+If your plugin does not have a lockfile yet, create one in the plugin project with `npm install --package-lock-only`.
 
 ## Example Dockerfile
 
@@ -99,7 +103,7 @@ Order Dockerfile instructions from least-changing to most-changing so warm rebui
 
 1. Base image.
 2. System package installs.
-3. Dependency manifests such as `package.json`.
+3. Dependency manifests such as `package.json` and `package-lock.json`.
 4. Dependency install such as `npm ci`.
 5. Application source.
 

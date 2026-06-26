@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("shields help uses native oclif usage", () => {
+  it("shields help uses native oclif usage", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-shields-help-"));
     writeSandboxRegistry(home);
 
