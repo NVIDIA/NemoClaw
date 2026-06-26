@@ -90,6 +90,10 @@ state_files:
   - path: .hermes_history
   - path: runtime/state.db
     strategy: sqlite_backup
+user_managed_files:
+  # Relative to /sandbox, not config.dir. Hermes stores user-edited API-key
+  # values in /sandbox/.hermes/.env, and rebuild should warn before dropping it.
+  - .hermes/.env
 
 # ── Authentication ──────────────────────────────────────────────
 # Hermes does NOT have OpenClaw-style browser device pairing.

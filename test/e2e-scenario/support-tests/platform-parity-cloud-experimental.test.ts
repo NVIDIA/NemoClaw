@@ -1,13 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 
+import { describe, expect, it } from "vitest";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   assertRequiredCloudExperimentalResult,
   buildCloudExperimentalCommandEnv,
 } from "../live/cloud-experimental-checks.ts";
-import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 function shellResult(exitCode: number, stdout: string, stderr = ""): ShellProbeResult {
   return {
@@ -33,6 +35,31 @@ describe("P0-E cloud-experimental parity guardrails", () => {
         shellResult(0, "05-deepagents-code-landlock-readonly: SKIP: not a Deep Agents sandbox\n"),
       ),
     ).toThrow(/must not skip/);
+  });
+
+  it("fails Deep Agents Python egress blocked-host assertions without denial evidence", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        path.join(
+          process.cwd(),
+          "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+        ),
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST: "blocked-no-marker",
+          NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE: "OpenShell runtime error without denial marker",
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+        },
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain(
+      "self-test Python probe for fixture host lacked denial evidence",
+    );
   });
 
   it("builds a minimal cloud-experimental child environment", () => {

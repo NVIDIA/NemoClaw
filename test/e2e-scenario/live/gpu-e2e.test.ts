@@ -35,32 +35,60 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function modelIdentifier(value: Record<string, unknown>, key: string): string | undefined {
+  return typeof value[key] === "string" ? (value[key] as string) : undefined;
+}
+
 function assertSmallContextCompactionPolicy(configText: string): void {
   const config = asRecord(JSON.parse(configText));
   const agents = asRecord(config?.agents);
   const defaults = asRecord(agents?.defaults);
+  const modelDefaults = asRecord(defaults?.model);
+  const primary = modelIdentifier(modelDefaults ?? {}, "primary");
   const compaction = asRecord(defaults?.compaction);
   const modelsRoot = asRecord(config?.models);
   const providers = asRecord(modelsRoot?.providers);
+  const primaryWithoutProvider = primary?.startsWith("inference/")
+    ? primary.slice("inference/".length)
+    : primary;
   const model = Object.values(providers ?? {})
     .flatMap((provider) => {
       const models = asRecord(provider)?.models;
       return Array.isArray(models) ? models : [];
     })
     .map(asRecord)
-    .find(Boolean);
+    .find((candidate) => {
+      if (!candidate || !primary || !primaryWithoutProvider) {
+        return false;
+      }
+      const identifiers = ["id", "name", "label"].flatMap((key) => {
+        const value = modelIdentifier(candidate, key);
+        return value ? [value] : [];
+      });
+      return identifiers.some(
+        (identifier) =>
+          identifier === primary ||
+          identifier === primaryWithoutProvider ||
+          identifier === `inference/${primaryWithoutProvider}`,
+      );
+    });
 
+  expect(primary, "OpenClaw config must declare the active model").toBeTruthy();
+  expect(model, `OpenClaw config must include active Ollama model ${primary}`).toBeDefined();
   expect(typeof model?.contextWindow).toBe("number");
   expect(typeof model?.maxTokens).toBe("number");
   const contextWindow = model?.contextWindow as number;
   const maxTokens = model?.maxTokens as number;
+  expect(
+    contextWindow,
+    `active Ollama model ${primary} must stay on the small-context lane`,
+  ).toBeLessThanOrEqual(28_000);
   const expectedReserve = Math.min(maxTokens, Math.max(0, contextWindow - 8_000));
-  const expectedCompaction =
-    contextWindow <= 28_000
-      ? { reserveTokens: expectedReserve, reserveTokensFloor: expectedReserve }
-      : undefined;
 
-  expect(compaction).toEqual(expectedCompaction);
+  expect(compaction).toEqual({
+    reserveTokens: expectedReserve,
+    reserveTokensFloor: expectedReserve,
+  });
 }
 
 test.skipIf(!shouldRunLiveE2EScenarios())(

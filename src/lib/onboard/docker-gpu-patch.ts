@@ -496,7 +496,11 @@ export function buildDockerGpuMode(
 
 export function buildDockerGpuModeCandidates(
   device?: string | null,
-  options: { cdiAvailable?: boolean; backend?: DockerGpuPatchBackend } = {},
+  options: {
+    cdiAvailable?: boolean;
+    backend?: DockerGpuPatchBackend;
+    dockerDesktopWsl?: boolean;
+  } = {},
 ): DockerGpuPatchMode[] {
   if (options.backend === "jetson") {
     return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
@@ -510,8 +514,16 @@ export function buildDockerGpuModeCandidates(
   // gateway wiring and the supervisor never reconnects (#4948). Keep --gpus
   // and the NVIDIA runtime as fallbacks until OpenShell exposes an
   // authoritative GPU mode contract that can replace CDI-spec probing.
+  //
+  // #5512: Docker Desktop WSL advertises CDI spec directories (so cdiAvailable
+  // is true) while the WSL distro has no usable nvidia.com/gpu spec. There the
+  // CDI mode passes the create-only probe but fails the real recreate with
+  // "unresolvable CDI devices nvidia.com/gpu=all", so skip CDI and use the
+  // --gpus compatibility path that preflight already commits to on this runtime.
   const candidates: DockerGpuPatchMode[] = [];
-  if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
+  if (options.cdiAvailable && !options.dockerDesktopWsl) {
+    candidates.push(buildDockerGpuMode("cdi", device));
+  }
   candidates.push(buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device));
   return candidates;
 }
@@ -949,7 +961,12 @@ function probeDockerGpuMode(
 }
 
 export function selectDockerGpuPatchMode(
-  options: { image: string; device?: string | null; backend?: DockerGpuPatchBackend },
+  options: {
+    image: string;
+    device?: string | null;
+    backend?: DockerGpuPatchBackend;
+    dockerDesktopWsl?: boolean;
+  },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
   const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
@@ -957,6 +974,7 @@ export function selectDockerGpuPatchMode(
   for (const mode of buildDockerGpuModeCandidates(options.device, {
     cdiAvailable,
     backend: options.backend,
+    dockerDesktopWsl: options.dockerDesktopWsl,
   })) {
     const result = probeDockerGpuMode(mode, options.image, deps);
     const attempt = { mode, ok: result.ok, error: result.error };
@@ -1014,6 +1032,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
     backend?: DockerGpuPatchBackend;
+    dockerDesktopWsl?: boolean;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -1037,7 +1056,12 @@ export function recreateOpenShellDockerSandboxWithGpu(
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
     const selection = selectDockerGpuPatchMode(
-      { image, device: options.gpuDevice, backend: options.backend },
+      {
+        image,
+        device: options.gpuDevice,
+        backend: options.backend,
+        dockerDesktopWsl: options.dockerDesktopWsl,
+      },
       deps,
     );
     context.modeAttempts = selection.attempts;
@@ -1184,6 +1208,7 @@ export function applyDockerGpuPatchOrExit(
     // /dev/nvmap group access.
     backend?: DockerGpuPatchBackend;
     openshellSandboxCommand?: readonly string[] | null;
+    dockerDesktopWsl?: boolean;
   },
   deps: Pick<DockerGpuPatchDeps, "runOpenshell" | "runCaptureOpenshell" | "sleep">,
 ): DockerGpuPatchResult {

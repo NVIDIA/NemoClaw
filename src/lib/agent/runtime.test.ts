@@ -30,6 +30,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "test-agent --version",
     expectedVersion: null,
     hasDevicePairing: false,

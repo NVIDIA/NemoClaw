@@ -52,6 +52,9 @@ state_dirs:
 state_files:
   - path: config.toml
   - path: hooks.json
+user_managed_files:
+  - .env
+  - .mcp.json
 
 device_pairing: false
 
@@ -74,4 +77,4 @@ package_registry:
   hosts:
     - pypi.org
     - files.pythonhosted.org
-  binary: /usr/local/bin/pip3
+  binary: /opt/venv/bin/pip3
