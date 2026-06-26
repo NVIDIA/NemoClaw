@@ -69,7 +69,10 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
  */
 export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = null): string[] {
   const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const availabilityContext = getMessagingManifestAvailabilityContext(agent);
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
   return availableChannels
     .filter((manifest) => hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue))
