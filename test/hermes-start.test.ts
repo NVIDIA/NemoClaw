@@ -17,6 +17,9 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "hermes",
   "validate-env-secret-boundary.py",
 );
+const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
+  (index % 16).toString(16),
+).join("");
 
 function bashPrintfQ(value: string): string {
   const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
@@ -353,6 +356,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
 function runHermesRootStartupMutableRootPreflight() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-root-preflight-"));
   const hermesHome = path.join(tmpDir, ".hermes");
+  const chmodLog = path.join(tmpDir, "chmod.log");
   const scriptPath = path.join(tmpDir, "run.sh");
 
   fs.mkdirSync(hermesHome, { recursive: true });
@@ -368,7 +372,10 @@ function runHermesRootStartupMutableRootPreflight() {
       extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
-      'dir_mode() { python3 -c "import os,sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])" "$HERMES_DIR"; }',
+      `CHMOD_LOG=${shellQuote(chmodLog)}`,
+      "HERMES_DIR_MODE=750",
+      'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
+      'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
       'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
       'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
       "apply_shields_up_runtime_env() { :; }",
@@ -381,7 +388,7 @@ function runHermesRootStartupMutableRootPreflight() {
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
-      "STEP_DOWN_PREFIX_SANDBOX=()",
+      "STEP_DOWN_PREFIX_SANDBOX=(env)",
       "NEMOCLAW_CMD=(bash -c 'exit 0')",
       extractTirithDispatchBlock(src, "root"),
     ].join("\n"),
@@ -396,7 +403,9 @@ function runHermesRootStartupMutableRootPreflight() {
     });
     return {
       result,
-      hermesDirMode: (fs.statSync(hermesHome).mode & 0o7777).toString(8),
+      hermesDirMode: fs.existsSync(chmodLog)
+        ? fs.readFileSync(chmodLog, "utf-8").trim()
+        : (fs.statSync(hermesHome).mode & 0o7777).toString(8),
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -992,7 +1001,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
       envFile: [
         "API_SERVER_PORT=18642",
         "API_SERVER_HOST=127.0.0.1",
-        "API_SERVER_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        `API_SERVER_KEY=${GENERATED_API_SERVER_KEY}`,
         "",
       ].join("\n"),
     });
@@ -1063,7 +1072,7 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 
   it("rejects inherited API_SERVER_KEY process env values", () => {
-    const inheritedKey = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const inheritedKey = GENERATED_API_SERVER_KEY;
     const result = runHermesRuntimeEnvSecretBoundary({
       API_SERVER_HOST: "127.0.0.1",
       API_SERVER_PORT: "18642",

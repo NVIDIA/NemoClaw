@@ -95,19 +95,21 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
   expect(Array.isArray(binaries), `${policyName} policy must declare binary-scoped egress`).toBe(
     true,
   );
-  return (binaries ?? []).map((entry) => (typeof entry.path === "string" ? entry.path : ""));
+  return (binaries ?? []).map((entry, index) => {
+    expect(typeof entry.path, `${policyName} binary #${index} must declare a string path`).toBe(
+      "string",
+    );
+    return entry.path as string;
+  });
 }
 
 function makeStartScriptFixture(tempDir: string): {
   envFile: string;
-  messagingEnvFile: string;
   scriptPath: string;
 } {
   const envFile = path.join(tempDir, "proxy-env.sh");
-  const messagingEnvFile = path.join(tempDir, "messaging.env");
   const scriptPath = path.join(tempDir, "start.sh");
   const fixture = readAgentFile("start.sh")
-    .replace('local env_file="/sandbox/.deepagents/.env"', `local env_file="${messagingEnvFile}"`)
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
@@ -115,7 +117,7 @@ function makeStartScriptFixture(tempDir: string): {
     );
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
-  return { envFile, messagingEnvFile, scriptPath };
+  return { envFile, scriptPath };
 }
 
 function runHeadlessCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
@@ -140,14 +142,17 @@ describe("LangChain Deep Agents Code image contracts", () => {
     );
   });
 
-  it("declares the messaging plan build arg before the DeepAgents build applier runs", () => {
+  it("does not wire unsupported messaging artifacts into the DeepAgents image", () => {
     const dockerfile = readAgentFile("Dockerfile");
+    const startScript = readAgentFile("start.sh");
 
-    expect(dockerfile).toContain("ARG NEMOCLAW_MESSAGING_PLAN_B64=");
-    expect(dockerfile).toContain("NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64}");
-    expect(dockerfile.indexOf("ARG NEMOCLAW_MESSAGING_PLAN_B64=")).toBeLessThan(
-      dockerfile.indexOf("messaging-build-applier.mts --agent langchain-deepagents-code"),
-    );
+    expect(dockerfile).not.toContain("NEMOCLAW_MESSAGING_PLAN_B64");
+    expect(dockerfile).not.toContain("messaging-build-applier.mts");
+    expect(startScript).toContain("Setting up NemoClaw Deep Agents Code runtime");
+    expect(startScript).not.toContain("load_messaging_env");
+    expect(startScript).not.toContain("TELEGRAM_BOT_TOKEN");
+    expect(startScript).not.toContain("DISCORD_BOT_TOKEN");
+    expect(startScript).not.toContain("SLACK_BOT_TOKEN");
   });
 
   it("prints NemoClaw setup output before idling as a terminal runtime", () => {
@@ -189,49 +194,6 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(envFileText.match(/\/usr\/local\/bin/g)).toHaveLength(1);
     expect(envFileText).toContain("export HTTP_PROXY=http://proxy.example:8080");
     expect(envFileText).toContain("export https_proxy=https://safe-proxy.example:8443");
-  });
-
-  it("loads generated messaging env values literally without command execution", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-start-"));
-    const { envFile, messagingEnvFile, scriptPath } = makeStartScriptFixture(tempDir);
-    const marker = path.join(tempDir, "nemoclaw-pwned");
-    fs.writeFileSync(
-      messagingEnvFile,
-      [
-        `DISCORD_ALLOWED_USERS=$(touch ${marker})`,
-        `SLACK_ALLOWED_CHANNELS=C123;touch ${marker}`,
-        `UNTRUSTED_KEY=$(touch ${marker})`,
-      ].join("\n"),
-      "utf8",
-    );
-
-    const output = execFileSync(
-      "bash",
-      [
-        scriptPath,
-        "sh",
-        "-c",
-        [
-          'cat "$NEMOCLAW_TEST_PROXY_ENV"',
-          'printf "\\nENV_DISCORD_ALLOWED_USERS=%s\\n" "$DISCORD_ALLOWED_USERS"',
-          'printf "ENV_SLACK_ALLOWED_CHANNELS=%s\\n" "$SLACK_ALLOWED_CHANNELS"',
-          'test ! -e "$NEMOCLAW_PWNED"',
-        ].join("; "),
-      ],
-      {
-        env: {
-          NEMOCLAW_TEST_PROXY_ENV: envFile,
-          NEMOCLAW_PWNED: marker,
-          PATH: process.env.PATH ?? "/usr/bin:/bin",
-        },
-        encoding: "utf8",
-      },
-    );
-
-    expect(output).toContain(`ENV_DISCORD_ALLOWED_USERS=$(touch ${marker})`);
-    expect(output).toContain(`ENV_SLACK_ALLOWED_CHANNELS=C123;touch ${marker}`);
-    expect(output).not.toContain("UNTRUSTED_KEY");
-    expect(fs.existsSync(marker)).toBe(false);
   });
 
   it("omits and unsets credential-bearing proxy URLs", () => {

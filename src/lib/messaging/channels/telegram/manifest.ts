@@ -167,29 +167,6 @@ export const telegramManifest = {
         },
       },
     },
-    {
-      id: "telegram-deepagents-env",
-      kind: "env-lines",
-      agent: "langchain-deepagents-code",
-      target: "~/.deepagents/.env",
-      lines: [
-        "TELEGRAM_BOT_TOKEN={{credential.telegramBotToken.placeholder}}",
-        "TELEGRAM_ALLOWED_USERS={{allowedIds.telegram.csv}}",
-      ],
-    },
-    {
-      id: "telegram-deepagents-channel",
-      kind: "json-fragment",
-      agent: "langchain-deepagents-code",
-      target: "~/.deepagents/messaging.json",
-      fragment: {
-        path: "channels.telegram",
-        value: {
-          enabled: true,
-          requireMention: "{{telegramConfig.requireMention}}",
-        },
-      },
-    },
   ],
   runtime: {
     openclaw: {

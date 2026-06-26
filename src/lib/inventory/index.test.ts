@@ -7,6 +7,7 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  renderSandboxInventoryText,
   type SandboxEntry,
   showStatusCommand,
 } from "./index";
@@ -132,6 +133,65 @@ describe("inventory commands", () => {
       ],
     });
     expect(getLiveInference).not.toHaveBeenCalled();
+  });
+
+  it("shows agent as 'unknown' for a gateway-recovered sandbox (#5714), not the OpenClaw default", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "dcode-station", model: null, provider: null, recoveredFromGateway: true },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      name: "dcode-station",
+      agent: "unknown",
+      recoveredFromGateway: true,
+    });
+  });
+
+  it("renders a gateway-recovered row with the trusted live phase but unknown agent/GPU (#5714)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "dcode-station",
+            model: null,
+            provider: null,
+            recoveredFromGateway: true,
+            livePhase: "Ready",
+          },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const lines: string[] = [];
+    renderSandboxInventoryText(inventory, (m = "") => lines.push(m), null);
+    const body = lines.join("\n");
+    expect(body).toContain("Recovered 1 sandbox");
+    expect(body).toContain("agent: unknown");
+    expect(body).toContain("GPU: unknown");
+    // Trusted PHASE from `openshell sandbox list` is surfaced so list agrees
+    // with `nemoclaw <name> status` (the reporter's Ready expectation).
+    expect(body).toContain("phase: Ready");
+    expect(body).not.toContain("CPU sandbox");
+    expect(body).not.toContain("agent: openclaw");
   });
 
   it("normalizes invalid configured inference fields out of inventory rows", async () => {

@@ -546,34 +546,41 @@ The exit code is the remote command's exit code.
 
 <AgentOnly variant="openclaw">
 
-Run one OpenClaw agent turn non-interactively in a running sandbox.
-This command forwards every argument verbatim to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+Run one agent turn non-interactively in a running sandbox.
+For OpenClaw sandboxes, this command forwards arguments to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`, with `HOME=/sandbox` so the addressed agent profile resolves the same way as `connect`.
+For terminal-runtime sandboxes, NemoClaw forwards arguments to the manifest-declared interactive command; LangChain Deep Agents Code sandboxes run `dcode ...`.
 Use this when driving the sandbox programmatically from another process (CI job, multi-agent platform, evaluation harness) rather than from an interactive terminal.
 
-All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
+All flags accepted by the selected in-sandbox agent CLI are forwarded verbatim, so the upstream surface stays the single source of truth.
 
-Every invocation must include at least one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour. Conflict resolution between multiple selectors is delegated to the in-sandbox `openclaw agent` argv contract; the host-side guard only checks presence.
+OpenClaw invocations must include at least one target selector — `--agent`, `--session-id`, `--session-key`, or `--to` — so the wrapper never falls back to the unspecified default-session behaviour. Conflict resolution between multiple selectors is delegated to the in-sandbox `openclaw agent` argv contract; the host-side guard only checks presence.
 
 ```bash
 $$nemoclaw my-assistant agent --agent work -m "Summarise README.md"
 $$nemoclaw my-assistant agent --agent work -m "Status update?"
 $$nemoclaw my-assistant agent --session-id review-42 -m "Any new findings?"
 $$nemoclaw my-assistant agent --session-key intake-42 --json -m 'ping'
+$$nemoclaw dcode-sandbox agent --help
+$$nemoclaw dcode-sandbox agent -n "Summarize this repository"
 ```
 
-The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it. Streaming forwards whatever `openclaw agent` already emits on `stdout`; the wrapper adds no buffering.
+The wrapper inherits the remote command's exit code, so host-side pipelines can branch on it.
+Streaming forwards whatever the in-sandbox agent command emits on `stdout`; the wrapper adds no buffering.
 
-Common upstream flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`. Run `$$nemoclaw <name> agent --help` for the wrapper-level summary, or invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+Common OpenClaw flags include `-m <text>`, `--session-id <id>`, `--agent <id>`, `--model <id>`, `--thinking <level>`, `--json`, `--deliver`, `--reply-channel <channel>`, and `--timeout <seconds>`.
+For OpenClaw sandboxes and registry fallbacks, `$$nemoclaw <name> agent --help` prints the wrapper-level summary locally.
+Invoke `$$nemoclaw <name> exec -- openclaw agent --help` to view the upstream OpenClaw help text directly.
+For registered terminal-runtime sandboxes, bare invocations and `--help` are forwarded to the terminal command, so a LangChain Deep Agents Code sandbox receives `dcode` for `$$nemoclaw <name> agent` and `dcode --help` for `$$nemoclaw <name> agent --help`.
 
 Host-side validation runs before the sandbox dispatch:
 
-- At least one target selector flag — `--agent`, `--session-id`, `--session-key`, or `--to` (in either `--flag value` or `--flag=value` form) — must be present. Invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost.
+- OpenClaw sandboxes and registry fallbacks must include at least one target selector flag — `--agent`, `--session-id`, `--session-key`, or `--to` (in either `--flag value` or `--flag=value` form). OpenClaw invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost. Registered terminal-runtime sandboxes delegate bare invocations and help flags to the manifest command instead.
 - If the sandbox is registered but not in a `Ready` or `Running` phase, the wrapper exits `1` and prints the documented recovery commands (`$$nemoclaw <name> recover`, `$$nemoclaw <name> rebuild --yes`, `$$nemoclaw onboard --resume`) rather than deferring the readiness rejection to `openshell sandbox exec`.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
 
-The `agent` wrapper is an OpenClaw passthrough and rejects Hermes sandboxes with guidance for the Hermes HTTP API.
+The `agent` wrapper rejects Hermes sandboxes with guidance for the Hermes HTTP API.
 Hermes sandboxes expose an OpenAI-compatible API on port `8642` inside the sandbox, so non-interactive use does not need a wrapper command.
 
 Forward the port and POST chat completions directly:

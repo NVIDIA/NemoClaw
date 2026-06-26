@@ -23,7 +23,8 @@ NemoClaw v0.0.68 improves onboarding recovery, messaging setup, agent-specific C
   Scripted installs propagate onboarding exit codes, interrupted installer runs start fresh when no sandbox exists to resume, and resume behavior stays tied to onboarding sessions with a real sandbox.
   For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart) and [Troubleshooting](../reference/troubleshooting).
 - Messaging setup adds experimental Microsoft Teams channel onboarding for OpenClaw and Hermes, including Bot Framework credentials, webhook forwarding, the `teams` network policy preset, and local webhook port conflict checks.
-  NemoClaw also treats `messaging_platforms: []` as an explicit deny-all declaration and rejects `channels add` before policy, provider, registry, credential, or rebuild mutations when the selected agent does not support messaging.
+  NemoClaw also derives channel availability from each channel manifest's `supportedAgents` declaration and rejects `channels add` before policy, provider, registry, credential, or rebuild mutations when no channel manifest supports the selected agent.
+  LangChain Deep Agents Code therefore fails closed for messaging until a real channel bridge and matching manifest support land.
   For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Platform Support and Launch Claims](../reference/platform-support).
 - Agent-specific CLI commands now route more accurately and fail earlier with clearer local guidance.
   `sessions export` routes by sandbox agent kind, Hermes `gateway-token` points users to `dashboard-url`, bare OpenClaw `agent` invocations print wrapper help locally, and omitted extra-agent `workspace` and `agentDir` fields use canonical OpenClaw paths.

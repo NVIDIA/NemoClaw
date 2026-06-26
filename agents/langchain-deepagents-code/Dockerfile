@@ -25,10 +25,9 @@ COPY agents/langchain-deepagents-code/patch-managed-deepagents-code.py /opt/nemo
 COPY agents/langchain-deepagents-code/dcode-wrapper.sh /usr/local/lib/nemoclaw/dcode-wrapper.sh
 COPY agents/langchain-deepagents-code/start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-COPY src/lib/messaging/ /src/lib/messaging/
 RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh \
-    && chmod -R a+rX /opt/nemoclaw-blueprint /src/lib/messaging \
+    && chmod -R a+rX /opt/nemoclaw-blueprint \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
     && rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode \
@@ -44,7 +43,6 @@ ARG NEMOCLAW_UPSTREAM_PROVIDER=nvidia
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG NEMOCLAW_INFERENCE_API=openai-completions
 ARG NEMOCLAW_BUILD_ID=default
-ARG NEMOCLAW_MESSAGING_PLAN_B64=
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 ENV HOME=/sandbox \
@@ -56,7 +54,6 @@ ENV HOME=/sandbox \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     NEMOCLAW_INFERENCE_API=${NEMOCLAW_INFERENCE_API} \
     NEMOCLAW_BUILD_ID=${NEMOCLAW_BUILD_ID} \
-    NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1 \
     DEEPAGENTS_CODE_AUTO_UPDATE=0 \
     DEEPAGENTS_CODE_OPENAI_API_KEY=nemoclaw-managed-inference \
@@ -69,11 +66,6 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
     && cp -r /opt/nemoclaw-blueprint/* /sandbox/.nemoclaw/blueprints/0.1.0/ \
     && node --experimental-strip-types /opt/nemoclaw-deepagents-code/generate-config.ts \
     && chmod 660 /sandbox/.deepagents/config.toml
-
-# Apply messaging render and post-agent-install build-file hooks. DeepAgents has
-# no agent-install package step today, so only post-agent-install runs.
-# hadolint ignore=DL3059
-RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent langchain-deepagents-code --phase post-agent-install
 
 USER root
 RUN chown root:root /sandbox/.nemoclaw \

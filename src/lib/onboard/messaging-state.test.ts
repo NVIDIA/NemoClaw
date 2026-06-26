@@ -6,31 +6,33 @@ import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../agent/defs";
 import { filterEnabledChannelsByAgent, resolveQrSelectedChannels } from "./messaging-state";
 
-function agent(messagingPlatforms: string[] | undefined): AgentDefinition {
-  return { messagingPlatforms } as unknown as AgentDefinition;
+function agent(name: string): AgentDefinition {
+  return { name } as unknown as AgentDefinition;
 }
 
 describe("filterEnabledChannelsByAgent", () => {
-  it("drops channels not declared by the agent manifest", () => {
-    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent(["telegram"]))).toEqual([
-      "telegram",
-    ]);
-  });
-
-  it("drops every channel when the agent declares an explicit empty supported list", () => {
-    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent([]))).toEqual([]);
-  });
-
-  it("keeps every channel when the agent has no supported-list metadata", () => {
-    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent(undefined))).toEqual([
+  it("keeps channels listed by the channel manifests for the current agent", () => {
+    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent("openclaw"))).toEqual([
       "whatsapp",
       "telegram",
     ]);
   });
 
+  it("drops every channel when no channel manifest supports the agent", () => {
+    expect(
+      filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent("langchain-deepagents-code")),
+    ).toEqual([]);
+  });
+
+  it("drops every channel when the agent name is unknown", () => {
+    expect(filterEnabledChannelsByAgent(["whatsapp", "telegram"], agent("custom-agent"))).toEqual(
+      [],
+    );
+  });
+
   it("returns null/undefined inputs unchanged", () => {
-    expect(filterEnabledChannelsByAgent(null, agent(["telegram"]))).toBeNull();
-    expect(filterEnabledChannelsByAgent(undefined, agent(["telegram"]))).toBeUndefined();
+    expect(filterEnabledChannelsByAgent(null, agent("openclaw"))).toBeNull();
+    expect(filterEnabledChannelsByAgent(undefined, agent("openclaw"))).toBeUndefined();
   });
 
   it("preserves the list when the agent is null (no filter)", () => {

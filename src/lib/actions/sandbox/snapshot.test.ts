@@ -217,7 +217,7 @@ describe("runSandboxSnapshot", () => {
     fs.mkdirSync(homeDir);
     fs.writeFileSync(psPath, `#!/bin/sh\ncat <<'EOF'\n${processes}\nEOF\n`);
     fs.chmodSync(psPath, 0o755);
-    const result = spawnSync("sh", ["-lc", script], {
+    const result = spawnSync("sh", ["-c", script], {
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -475,6 +475,7 @@ describe("runSandboxSnapshot", () => {
     const shellCommandLine = probeScript.replace(/\s+/g, " ");
     for (const processLine of [
       "123 python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
+      "123 /opt/venv/bin/python3 -m deepagents_code --sandbox none --no-mcp -n work\n",
       "124 /usr/local/bin/dcode task\n",
       "125 /opt/bin/deepagents_code task\n",
       "126 /opt/bin/deepagents-code task\n",
@@ -490,6 +491,16 @@ describe("runSandboxSnapshot", () => {
       status: 0,
       output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
     });
+    for (const processLine of [
+      "127 cat /tmp/dcode\n",
+      "128 grep deepagents-code notes.txt\n",
+      "129 sh -lc python3 -m deepagents_code\n",
+    ]) {
+      expect(runProbeScriptWithProcesses(probeScript, processLine)).toMatchObject({
+        status: 0,
+        output: expect.stringContaining("NEMOCLAW_DCODE_PROBE=no-runtime"),
+      });
+    }
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
   });
 

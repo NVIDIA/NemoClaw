@@ -48,14 +48,6 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
     // OpenClaw uses device_pairing web auth — no fetchable bearer token.
     expect(openclaw.webAuth).toEqual({ method: "none", env: null });
@@ -93,14 +85,6 @@ describe("agent definitions", () => {
     expect(hermes.dashboardUi).toBeNull();
     // Hermes' OpenAI-compatible API uses a bearer token read from API_SERVER_KEY.
     expect(hermes.webAuth).toEqual({ method: "bearer_token", env: "API_SERVER_KEY" });
-    expect(hermes.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-      "teams",
-    ]);
     expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
   });
 

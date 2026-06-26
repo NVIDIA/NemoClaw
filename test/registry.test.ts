@@ -104,6 +104,23 @@ describe("registry", () => {
     expect(registry.getSandbox("first").gatewayPort).toBe(8080);
   });
 
+  it("registry serialization and update strip recoveredFromGateway display marker (#5714)", () => {
+    // The transient #5714 display markers must never reach sandboxes.json even
+    // if a caller force-passes one through updateSandbox(). They are not part of
+    // the durable SandboxEntry type; serializeSandboxEntryForDisk strips them.
+    registry.registerSandbox({ name: "alpha", model: "m", provider: "p" });
+    registry.updateSandbox("alpha", {
+      policies: ["npm"],
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.policies).toEqual(["npm"]);
+    expect(data.sandboxes.alpha.recoveredFromGateway).toBeUndefined();
+    expect(data.sandboxes.alpha.livePhase).toBeUndefined();
+  });
+
   it("normalizes configured inference fields into a discriminated view", () => {
     const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
     const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };

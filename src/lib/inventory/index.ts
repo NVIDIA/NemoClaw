@@ -23,6 +23,14 @@ export interface SandboxEntry {
   messaging?: SandboxMessagingState | null;
   agent?: string | null;
   dashboardPort?: number | null;
+  // #5714: display-only markers for a sandbox recovered directly from the live
+  // gateway. `recoveredFromGateway` flags that agent/GPU are genuinely unknown
+  // (the gateway sandbox list does not expose them) so the renderer shows
+  // "unknown" instead of the OpenClaw/CPU default; `livePhase` carries the
+  // trusted PHASE column (e.g. Ready) from `openshell sandbox list`. Neither is
+  // part of the durable registry type — they ride only on ephemeral list rows.
+  recoveredFromGateway?: boolean;
+  livePhase?: string | null;
 }
 
 export interface MessagingBridgeHealth {
@@ -71,6 +79,12 @@ export interface SandboxInventoryRow {
   isDefault: boolean;
   activeSessionCount: number | null;
   connected: boolean;
+  // #5714: row recovered display-only from the live gateway. Its agent/GPU/
+  // inference state is unknown (the gateway sandbox list does not expose it),
+  // so the renderer shows "unknown" rather than asserting OpenClaw/CPU defaults.
+  // `livePhase` is the trusted PHASE (e.g. Ready) carried from the sandbox list.
+  recoveredFromGateway?: boolean;
+  livePhase?: string | null;
 }
 
 export interface SandboxInventoryResult {
@@ -168,6 +182,11 @@ function safeStatusString(value: string | null | undefined): string | null {
   return redactFull(value);
 }
 
+/**
+ * Project a stored or recovered {@link SandboxEntry} into a display row,
+ * resolving inference/GPU fields and marking gateway-recovered rows so unknown
+ * agent/GPU state renders as "unknown" rather than OpenClaw/CPU defaults.
+ */
 function buildSandboxInventoryRow(
   sandbox: SandboxEntry,
   defaultSandbox: string | null,
@@ -192,11 +211,17 @@ function buildSandboxInventoryRow(
     openshellDriver: safeStatusString(sandbox.openshellDriver || null),
     openshellVersion: safeStatusString(sandbox.openshellVersion || null),
     policies: Array.isArray(sandbox.policies) ? sandbox.policies : [],
-    agent: sandbox.agent || null,
+    // #5714: a sandbox recovered display-only from the live gateway has an
+    // unknown agent (the gateway sandbox list does not expose it). Surface
+    // "unknown" instead of letting the renderer's `|| "openclaw"` default
+    // misrepresent a Deep Agents/Hermes sandbox as OpenClaw.
+    agent: sandbox.agent || (sandbox.recoveredFromGateway ? "unknown" : null),
     ...(sandbox.dashboardPort != null ? { dashboardPort: sandbox.dashboardPort } : {}),
     isDefault: sandbox.name === defaultSandbox,
     activeSessionCount,
     connected: activeSessionCount !== null && activeSessionCount > 0,
+    ...(sandbox.recoveredFromGateway ? { recoveredFromGateway: true } : {}),
+    ...(sandbox.recoveredFromGateway ? { livePhase: sandbox.livePhase ?? null } : {}),
   };
 }
 
@@ -289,13 +314,24 @@ export function renderSandboxInventoryText(
       liveInference.provider &&
       liveInference.provider !== sandbox.provider
     );
-    const gpu = sandbox.sandboxGpuEnabled ? "sandbox GPU" : "CPU sandbox";
+    // #5714: a gateway-recovered row's GPU state is unknown — the gateway
+    // sandbox list does not expose it — so don't assert "CPU sandbox" (which
+    // would mislead DGX users whose GPU sandbox's registry entry was lost).
+    const gpu = sandbox.recoveredFromGateway
+      ? "GPU: unknown"
+      : sandbox.sandboxGpuEnabled
+        ? "sandbox GPU"
+        : "CPU sandbox";
     const presets = sandbox.policies.length > 0 ? sandbox.policies.join(", ") : "none";
     const connected = sandbox.connected ? " ●" : "";
     const agent = sandbox.agent || "openclaw";
+    // #5714: for a gateway-recovered row, surface the trusted live PHASE
+    // (e.g. Ready) from `openshell sandbox list` so `list` agrees with
+    // `nemoclaw <name> status`; normal registry rows have no live phase.
+    const phase = sandbox.recoveredFromGateway ? `  phase: ${sandbox.livePhase || "unknown"}` : "";
     log(`    ${sandbox.name}${def}${connected}`);
     log(
-      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}  policies: ${presets}`,
+      `      agent: ${agent}  model: ${model}  provider: ${provider}  ${gpu}${phase}  policies: ${presets}`,
     );
     if (modelDrifted || providerDrifted) {
       const parts: string[] = [];
