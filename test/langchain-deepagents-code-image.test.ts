@@ -5,8 +5,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
+
+import { cloudExperimentalChecksForOnboarding } from "./e2e-scenario/live/cloud-experimental-check-list.ts";
 
 const agentDir = path.join(process.cwd(), "agents", "langchain-deepagents-code");
 const DCODE_CANONICAL_PATH =
@@ -14,6 +16,17 @@ const DCODE_CANONICAL_PATH =
 
 function readAgentFile(name: string): string {
   return fs.readFileSync(path.join(agentDir, name), "utf8");
+}
+
+function policyBinaryPaths(policyText: string, policyName: string): string[] {
+  const parsed = YAML.parse(policyText) as {
+    network_policies?: Record<string, { binaries?: Array<{ path?: unknown }> }>;
+  };
+  const binaries = parsed.network_policies?.[policyName]?.binaries;
+  expect(Array.isArray(binaries), `${policyName} policy must declare binary-scoped egress`).toBe(
+    true,
+  );
+  return (binaries ?? []).map((entry) => (typeof entry.path === "string" ? entry.path : ""));
 }
 
 function makeStartScriptFixture(tempDir: string): {
@@ -247,12 +260,29 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(policy).toContain(
       "Tavily, LangSmith, MCP, and arbitrary hosts are intentionally absent",
     );
-    expect(policy).toContain("- { path: /opt/venv/bin/python3* }");
-    expect(policy).toContain("- { path: /opt/venv/bin/pip3 }");
-    expect(policy).toContain("- { path: /sandbox/**/bin/python3* }");
-    expect(policy).toContain("- { path: /sandbox/**/bin/pip3 }");
-    expect(policy).not.toContain("- { path: /usr/bin/python3* }");
-    expect(policy).not.toContain("- { path: /usr/local/bin/pip3 }");
+
+    const githubBinaries = policyBinaryPaths(policy, "github");
+    expect(githubBinaries).toEqual(
+      expect.arrayContaining(["/usr/bin/git", "/usr/local/bin/dcode", "/opt/venv/bin/python3*"]),
+    );
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+    expect(githubBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
+
+    const pypiBinaries = policyBinaryPaths(policy, "pypi");
+    expect(pypiBinaries).toEqual(
+      expect.arrayContaining([
+        "/opt/venv/bin/pip3",
+        "/sandbox/**/bin/pip3",
+        "/opt/venv/bin/python3*",
+        "/sandbox/**/bin/python3*",
+        "/usr/local/bin/dcode",
+      ]),
+    );
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/bin/python3*"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/python3*"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/bin/pip3"]));
+    expect(pypiBinaries).not.toEqual(expect.arrayContaining(["/usr/local/lib/python3.13/**"]));
   });
 
   it("ships live policy behavior checks for Deep Agents Code", () => {
@@ -296,6 +326,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("^USRLOCAL_COUNT=1$");
     expect(pythonEgressCheck).toContain("import urllib.error");
     expect(pythonEgressCheck).toContain("except urllib.error.HTTPError as exc:");
+    expect(pythonEgressCheck).toContain("except urllib.error.URLError as exc:");
+    expect(pythonEgressCheck).toContain("ERROR:URLError");
+    expect(pythonEgressCheck).toContain("lacked denial evidence");
     expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
@@ -319,6 +352,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("https://modelcontextprotocol.io/");
     expect(pythonEgressCheck).toContain("https://example.com/");
     expect(pythonEgressCheck).toContain("${actor} cannot reach ${label} without explicit policy");
+    expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
+      "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
+      "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+    ]);
   });
 
   it("hash-locks Deep Agents Code base image PyPI installs", () => {

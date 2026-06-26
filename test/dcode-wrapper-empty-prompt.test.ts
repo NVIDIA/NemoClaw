@@ -51,24 +51,13 @@ function runWrapper(args: string[]): WrapperRun {
     const marker = path.join(dir, "launched.txt");
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
-
-    const managedPath = [
-      bin,
-      "/usr/local/bin",
-      "/opt/venv/bin",
-      "/usr/local/sbin",
-      "/usr/sbin",
-      "/usr/bin",
-      "/sbin",
-      "/bin",
-    ].join(":");
     const wrapperSource = fs.readFileSync(WRAPPER, "utf-8");
-    const wrapperWithStubbedPath = wrapperSource.replace(
-      'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
-      `export PATH=${JSON.stringify(managedPath)}`,
+    const wrapperFixture = wrapperSource.replace(
+      /export PATH="([^"]*)"/,
+      (_match, managedPath: string) => `export PATH=${JSON.stringify(`${bin}:${managedPath}`)}`,
     );
-    expect(wrapperWithStubbedPath).not.toBe(wrapperSource);
-    fs.writeFileSync(path.join(dir, "dcode"), wrapperWithStubbedPath, { mode: 0o755 });
+    expect(wrapperFixture).not.toBe(wrapperSource);
+    fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
 
     fs.writeFileSync(
       path.join(bin, "python3"),

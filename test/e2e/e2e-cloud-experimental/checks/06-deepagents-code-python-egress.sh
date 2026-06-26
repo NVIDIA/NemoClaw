@@ -37,18 +37,63 @@ sandbox_exec() {
 python_probe() {
   local python_bin="$1"
   local url="$2"
+  if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
+    return 0
+  fi
   sandbox_exec "${python_bin@Q} - ${url@Q} <<'PY'
 import sys
 import urllib.error
 import urllib.request
+
+DENIAL_MARKERS = (
+    'access denied',
+    'blocked by',
+    'connection forbidden',
+    'egress denied',
+    'network is unreachable',
+    'network policy',
+    'operation not permitted',
+    'permission denied',
+    'policy denied',
+    'tunnel connection failed',
+)
+
+
+def is_policy_denial(text):
+    lowered = text.lower()
+    return any(marker in lowered for marker in DENIAL_MARKERS)
+
+
 url = sys.argv[1]
 try:
     with urllib.request.urlopen(url, timeout=8) as response:
         print(f'REACHED:{response.status}')
 except urllib.error.HTTPError as exc:
-    print(f'REACHED:{exc.code}')
+    body = ''
+    try:
+        body = exc.read(512).decode('utf-8', 'replace')
+    except Exception:
+        body = ''
+    details = f'{exc} {body}'.strip()
+    if is_policy_denial(details):
+        print(f'BLOCKED:HTTPError:{details}')
+    else:
+        print(f'REACHED:{exc.code}')
+except urllib.error.URLError as exc:
+    details = str(exc.reason if getattr(exc, 'reason', None) is not None else exc)
+    if is_policy_denial(details):
+        print(f'BLOCKED:URLError:{details}')
+    else:
+        print(f'ERROR:URLError:{details}')
+except OSError as exc:
+    details = str(exc)
+    if is_policy_denial(details):
+        print(f'BLOCKED:{type(exc).__name__}:{details}')
+    else:
+        print(f'ERROR:{type(exc).__name__}:{details}')
 except Exception as exc:
-    print(f'BLOCKED:{type(exc).__name__}:{exc}')
+    print(f'ERROR:{type(exc).__name__}:{exc}')
 PY
 "
 }
@@ -76,17 +121,26 @@ expect_blocked() {
   output="$(python_probe "$python_bin" "$url")"
   if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "${actor} cannot reach ${label} without explicit policy"
-  else
+  elif echo "$output" | grep -q "REACHED:"; then
     fail_test "${actor} reached ${label} unexpectedly: $output"
+  else
+    fail_test "${actor} probe for ${label} lacked denial evidence: $output"
   fi
-}
-
-cleanup_project_venv() {
-  sandbox_exec "rm -rf ${PROJECT_VENV@Q}" >/dev/null || true
 }
 
 PASSED=0
 FAILED=0
+
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "blocked-no-marker" ]; then
+  expect_blocked "self-test Python" "fixture host" "https://blocked.example/"
+  printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
+  [ "$FAILED" -eq 0 ] || exit 1
+  exit 0
+fi
+
+cleanup_project_venv() {
+  sandbox_exec "rm -rf ${PROJECT_VENV@Q}" >/dev/null || true
+}
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
