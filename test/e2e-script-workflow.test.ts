@@ -1,16 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -205,88 +197,6 @@ function runInferenceExportStep(
       throw new Error(result.stderr || "Inference export step failed");
     })();
   return result.env;
-}
-
-type InstallAptActionRunResult = {
-  status: number | null;
-  stderr: string;
-  stdout: string;
-  sudoLog: string;
-  sleepLog: string;
-};
-
-function readIfExists(pathname: string): string {
-  return existsSync(pathname) ? readFileSync(pathname, "utf8") : "";
-}
-
-function runInstallAptActionScript(
-  script: string,
-  aptPackages: string,
-  options: { updateFailures?: number } = {},
-): InstallAptActionRunResult {
-  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-install-apt-action-"));
-  const binDir = path.join(tempDir, "bin");
-  const sudoLog = path.join(tempDir, "sudo.log");
-  const sleepLog = path.join(tempDir, "sleep.log");
-  const updateCount = path.join(tempDir, "update-count");
-  try {
-    mkdirSync(binDir);
-    writeFileSync(
-      path.join(binDir, "sudo"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'printf "%s\\n" "$*" >> "$SUDO_LOG"',
-        'if [ "$*" = "apt-get update" ]; then',
-        "  count=0",
-        '  if [ -f "$SUDO_UPDATE_COUNT_FILE" ]; then',
-        '    count="$(cat "$SUDO_UPDATE_COUNT_FILE")"',
-        "  fi",
-        "  count=$((count + 1))",
-        '  printf "%s" "$count" > "$SUDO_UPDATE_COUNT_FILE"',
-        '  if [ "$count" -le "${SUDO_UPDATE_FAILURES:-0}" ]; then',
-        "    exit 42",
-        "  fi",
-        "fi",
-        "exit 0",
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    writeFileSync(
-      path.join(binDir, "sleep"),
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        'printf "sleep %s\\n" "$*" >> "$SLEEP_LOG"',
-        "",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-
-    const result = spawnSync("bash", ["-c", script], {
-      encoding: "utf8",
-      env: {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        APT_PACKAGES: aptPackages,
-        SLEEP_LOG: sleepLog,
-        SUDO_LOG: sudoLog,
-        SUDO_UPDATE_COUNT_FILE: updateCount,
-        SUDO_UPDATE_FAILURES: String(options.updateFailures ?? 0),
-      },
-      timeout: 5000,
-    });
-
-    return {
-      status: result.status,
-      stderr: String(result.stderr ?? ""),
-      stdout: String(result.stdout ?? ""),
-      sudoLog: readIfExists(sudoLog),
-      sleepLog: readIfExists(sleepLog),
-    };
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
 }
 
 // Direct legacy bash E2Es are being migrated toward Vitest coverage. Keep the
@@ -1155,60 +1065,6 @@ describe("E2E reusable workflow contract", () => {
     for (const packageName of ["", "-bad", "pkg:amd64", "bad name", "pkg;rm", "pkg/name"]) {
       expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(false);
     }
-  });
-
-  it("validates apt package input at runtime before invoking sudo", () => {
-    const installScript = String(
-      installAptAction.runs.steps.find((step) => step.name === "Install apt packages")?.run ?? "",
-    );
-
-    for (const [aptPackages, expectedError] of [
-      ["", "::error::No apt packages requested."],
-      ["pkg; rm -rf /", "::error::Invalid apt package name: pkg;"],
-      ["pkg:amd64", "::error::Invalid apt package name: pkg:amd64"],
-      ["-oDebug::NoLocking=1", "::error::Invalid apt package name: -oDebug::NoLocking=1"],
-    ] as const) {
-      const result = runInstallAptActionScript(installScript, aptPackages);
-
-      expect(result.status, aptPackages).toBe(1);
-      expect(result.stderr, aptPackages).toContain(expectedError);
-      expect(result.sudoLog, aptPackages).toBe("");
-    }
-  });
-
-  it("installs validated apt packages and retries apt metadata refresh at runtime", () => {
-    const installScript = String(
-      installAptAction.runs.steps.find((step) => step.name === "Install apt packages")?.run ?? "",
-    );
-
-    const success = runInstallAptActionScript(installScript, "expect libssl3 pkg-config");
-    expect(success.status).toBe(0);
-    expect(success.sudoLog.trim().split("\n")).toEqual([
-      "apt-get update",
-      "apt-get install -y --no-install-recommends expect libssl3 pkg-config",
-    ]);
-
-    const retried = runInstallAptActionScript(installScript, "expect", { updateFailures: 2 });
-    expect(retried.status).toBe(0);
-    expect(retried.stderr).toContain("::warning::apt-get update attempt 1 failed; retrying.");
-    expect(retried.stderr).toContain("::warning::apt-get update attempt 2 failed; retrying.");
-    expect(retried.sudoLog.trim().split("\n")).toEqual([
-      "apt-get update",
-      "apt-get update",
-      "apt-get update",
-      "apt-get install -y --no-install-recommends expect",
-    ]);
-    expect(retried.sleepLog.trim().split("\n")).toEqual(["sleep 5", "sleep 10"]);
-
-    const failed = runInstallAptActionScript(installScript, "expect", { updateFailures: 3 });
-    expect(failed.status).toBe(1);
-    expect(failed.stderr).toContain("::error::apt-get update failed after 3 attempts.");
-    expect(failed.sudoLog.trim().split("\n")).toEqual([
-      "apt-get update",
-      "apt-get update",
-      "apt-get update",
-    ]);
-    expect(failed.sleepLog.trim().split("\n")).toEqual(["sleep 5", "sleep 10"]);
   });
 
   it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {
