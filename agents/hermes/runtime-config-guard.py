@@ -14,20 +14,14 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SECRET_BOUNDARY_ALIAS_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
-PROVIDER_PLACEHOLDER_KEYS = (
-    "TELEGRAM_BOT_TOKEN",
-    "DISCORD_BOT_TOKEN",
-    "SLACK_BOT_TOKEN",
-    "SLACK_APP_TOKEN",
-)
-PROVIDER_PLACEHOLDER_KEY_SET = set(PROVIDER_PLACEHOLDER_KEYS)
 
 
 class UnsafePathError(RuntimeError):
@@ -359,12 +353,32 @@ def _has_env_control_chars(value: str) -> bool:
     return "\x00" in value or "\r" in value or "\n" in value
 
 
-def _is_secret_boundary_placeholder_value(value: str) -> bool:
-    # Keep aligned with validate-env-secret-boundary.py:is_allowed_value.
-    return (
-        value.startswith(SCOPED_PLACEHOLDER_PREFIX)
-        or SECRET_BOUNDARY_ALIAS_RE.fullmatch(value) is not None
-    )
+def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | None) -> None:
+    if not boundary_validator_path:
+        raise UnsafePathError("Hermes provider placeholder refresh requires the secret-boundary validator")
+    fd, temp_path = tempfile.mkstemp(prefix="hermes-env-boundary-", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            handle.write(text)
+        try:
+            result = subprocess.run(
+                [sys.executable, boundary_validator_path, "env-file", temp_path],
+                check=False,
+            )
+        except OSError as exc:
+            raise UnsafePathError(f"Hermes secret-boundary validator failed: {exc}") from exc
+        if result.returncode != 0:
+            raise UnsafePathError(
+                "Hermes provider placeholder refresh would violate the secret boundary"
+            )
+    finally:
+        if fd != -1:
+            os.close(fd)
+        try:
+            os.unlink(temp_path)
+        except FileNotFoundError:
+            pass
 
 
 def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str, tuple[str, str]]:
@@ -419,7 +433,6 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
         message = alias.get("message") or ""
         if (
             not isinstance(env_key, str)
-            or env_key not in PROVIDER_PLACEHOLDER_KEY_SET
             or not isinstance(pattern, str)
             or not isinstance(value, str)
             or not isinstance(message, str)
@@ -428,8 +441,6 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
             continue
         if _has_env_control_chars(value) or _has_env_control_chars(message):
             raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")
-        if not _is_secret_boundary_placeholder_value(value):
-            raise UnsafePathError("messaging runtime plan env alias value violates the Hermes secret boundary")
         try:
             compiled = re.compile(pattern)
         except re.error as exc:
@@ -483,24 +494,17 @@ def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
 
 
 def provider_placeholders(
-    hermes_dir: str, hash_file: str, mode: str, runtime_plan_path: str | None
+    hermes_dir: str,
+    hash_file: str,
+    mode: str,
+    runtime_plan_path: str | None,
+    boundary_validator_path: str | None,
 ) -> None:
     env_path = os.path.join(hermes_dir, ".env")
     if not os.path.exists(env_path):
         return
 
-    runtime_aliases = _runtime_plan_alias_replacements(runtime_plan_path)
-    replacements: dict[str, tuple[str, str]] = {}
-    for key in PROVIDER_PLACEHOLDER_KEYS:
-        if key in runtime_aliases:
-            replacements[key] = runtime_aliases[key]
-            continue
-        normalized = _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key)
-        if normalized:
-            replacements[key] = (normalized, "")
-    if not replacements:
-        return
-
+    replacements = _runtime_plan_alias_replacements(runtime_plan_path)
     text, snapshot = _read_text(env_path)
     changed = False
     refreshed_messages: set[str] = set()
@@ -511,6 +515,10 @@ def provider_placeholders(
             updated.append(line)
             continue
         prefix, key, _value = parsed
+        if key not in replacements:
+            normalized = _normalize_provider_placeholder_for_env_key(os.environ.get(key, ""), key)
+            if normalized:
+                replacements[key] = (normalized, "")
         if key in replacements:
             replacement, message = replacements[key]
             new_line = f"{prefix}{key}={replacement}\n"
@@ -524,6 +532,8 @@ def provider_placeholders(
 
     if not changed:
         return
+
+    _validate_env_text_with_boundary("".join(updated), boundary_validator_path)
 
     try:
         _write_existing(env_path, "".join(updated), snapshot, mode=0o640)
@@ -548,6 +558,7 @@ def main() -> int:
     parser.add_argument("--hermes-dir", required=True)
     parser.add_argument("--hash-file", required=True)
     parser.add_argument("--runtime-plan", default="")
+    parser.add_argument("--boundary-validator", default="")
     parser.add_argument("--mode", choices=("strict", "compat"), default="strict")
     args = parser.parse_args()
 
@@ -557,7 +568,13 @@ def main() -> int:
         elif args.action == "refresh-hashes":
             refresh_hashes(args.hermes_dir, args.hash_file, args.mode)
         elif args.action == "provider-placeholders":
-            provider_placeholders(args.hermes_dir, args.hash_file, args.mode, args.runtime_plan)
+            provider_placeholders(
+                args.hermes_dir,
+                args.hash_file,
+                args.mode,
+                args.runtime_plan,
+                args.boundary_validator,
+            )
     except UnsafePathError as exc:
         _die(str(exc))
     except OSError as exc:

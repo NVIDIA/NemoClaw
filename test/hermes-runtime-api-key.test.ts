@@ -17,6 +17,13 @@ const RUNTIME_CONFIG_GUARD = path.join(
   "hermes",
   "runtime-config-guard.py",
 );
+const SECRET_BOUNDARY_VALIDATOR = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "validate-env-secret-boundary.py",
+);
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -177,6 +184,8 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
       hermesHome,
       "--hash-file",
       hashPath,
+      "--boundary-validator",
+      SECRET_BOUNDARY_VALIDATOR,
       "--mode",
       "strict",
       ...runtimePlanArgs,
