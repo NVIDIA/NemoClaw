@@ -170,16 +170,23 @@ function expectSystemRlimitHookBypassesShadowedUlimit(hookPath: string): void {
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
   const probe = [
+    "set -e",
     `. ${JSON.stringify(rlimitLib)}`,
     'current_nproc="$(command ulimit -u 2>/dev/null || printf "%s" 512)"',
     'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
     'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 256)"',
     'case "$current_nofile" in "" | *[!0-9]*) current_nofile=256 ;; esac',
+    'target_nofile="$current_nofile"',
+    'if [ "$current_nofile" -gt 64 ]; then target_nofile=$((current_nofile - 1)); fi',
     'NEMOCLAW_SANDBOX_NPROC_LIMIT="$current_nproc"',
-    'NEMOCLAW_SANDBOX_NOFILE_LIMIT="$current_nofile"',
+    'NEMOCLAW_SANDBOX_NOFILE_LIMIT="$target_nofile"',
     "harden_resource_limits --quiet",
     "verify_resource_limits",
-    'printf "ok\\n"',
+    'effective_nofile="$(command ulimit -n)"',
+    'printf "ok=true\\n"',
+    'printf "current_nofile=%s\\n" "$current_nofile"',
+    'printf "target_nofile=%s\\n" "$target_nofile"',
+    'printf "effective_nofile=%s\\n" "$effective_nofile"',
   ].join("\n");
   const result = spawnSync("sh", ["-c", probe], {
     encoding: "utf-8",
@@ -188,7 +195,47 @@ function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
 
   expect(result.status, result.stderr).toBe(0);
   expect(result.stderr).toBe("");
-  expect(result.stdout).toBe("ok\n");
+  const values = parseProbeOutput(result.stdout);
+  expect(values.ok).toBe("true");
+  expect(Number(values.effective_nofile)).toBeLessThanOrEqual(Number(values.target_nofile));
+  if (Number(values.current_nofile) > 64) {
+    expect(Number(values.effective_nofile)).toBeLessThan(Number(values.current_nofile));
+  }
+}
+
+function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
+  const probe = [
+    "set -e",
+    `. ${JSON.stringify(rlimitLib)}`,
+    'current_nproc="$(command ulimit -u 2>/dev/null || printf "%s" 512)"',
+    'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
+    'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 0)"',
+    'case "$current_nofile" in "" | *[!0-9]*) current_nofile=0 ;; esac',
+    'if [ "$current_nofile" -le 64 ]; then printf "skip=low-nofile\\n"; exit 0; fi',
+    "target_nofile=$((current_nofile - 1))",
+    'NEMOCLAW_SANDBOX_NPROC_LIMIT="$current_nproc"',
+    'NEMOCLAW_SANDBOX_NOFILE_LIMIT="$target_nofile"',
+    "set +e",
+    'verify_output="$(verify_resource_limits 2>&1)"',
+    'verify_status="$?"',
+    "set -e",
+    'printf "verify_status=%s\\n" "$verify_status"',
+    'printf "target_nofile=%s\\n" "$target_nofile"',
+    'printf "effective_nofile=%s\\n" "$(command ulimit -n)"',
+    'printf "verify_output=%s\\n" "$verify_output"',
+  ].join("\n");
+  const result = spawnSync("sh", ["-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+  expect(result.stderr).toBe("");
+  const values = parseProbeOutput(result.stdout);
+  expect(values.skip).toBeUndefined();
+  expect(values.verify_status).toBe("1");
+  expect(Number(values.effective_nofile)).toBeGreaterThan(Number(values.target_nofile));
+  expect(values.verify_output).toContain("Effective soft nofile limit is");
 }
 
 function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): void {
@@ -262,13 +309,14 @@ function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): 
 describe("sandbox rlimit system hooks (#2173)", () => {
   const forkStormIt = process.platform === "linux" ? it : it.skip;
 
-  it("rlimit helper is quiet and successful under POSIX sh", () => {
+  it("rlimit helper enforces supported nofile limits under POSIX sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-posix-sh-rlimit-"));
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
 
     try {
       copyRlimitFixture(rlimitLib);
       expectRlimitLibIsPosixShSafe(rlimitLib);
+      expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
