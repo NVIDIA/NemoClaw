@@ -51,6 +51,15 @@ const AGENT_PRODUCT_BRANDING: Record<string, ProductBranding> = {
     product: "Hermes",
     uninstallGoodbye: "Hermes has left the tidepool.",
   },
+  // langchain-deepagents-code runs under the nemoclaw CLI (no dedicated
+  // launcher), so the display stays "NemoClaw" while the product name reflects
+  // the agent — otherwise it falls back to the OpenClaw default and onboarding
+  // output mislabels the agent as "OpenClaw" (#5665).
+  "langchain-deepagents-code": {
+    display: "NemoClaw",
+    product: "LangChain Deep Agents Code",
+    uninstallGoodbye: "Deep Agents stood down. Until next time.",
+  },
 };
 
 const DEFAULT_AGENT = "openclaw";

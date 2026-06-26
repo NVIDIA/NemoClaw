@@ -10,9 +10,12 @@ type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 const {
   HOSTED_INFERENCE_ENDPOINT_URL,
   HOSTED_INFERENCE_MODEL,
+  NON_INTERACTIVE_PROVIDER_ALIASES,
+  NON_INTERACTIVE_PROVIDER_KEYS,
   buildProviderArgs,
   getRequestedModelHint,
   getRequestedProviderHint,
+  isProviderKeyCredentialCandidate,
   providerExistsInGateway,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
@@ -20,6 +23,8 @@ const {
 } = require("../../../dist/lib/onboard/providers") as {
   HOSTED_INFERENCE_ENDPOINT_URL: string;
   HOSTED_INFERENCE_MODEL: string;
+  NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;
+  NON_INTERACTIVE_PROVIDER_KEYS: Set<string>;
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -29,6 +34,7 @@ const {
   ) => string[];
   getRequestedModelHint: (nonInteractive: boolean) => string | null;
   getRequestedProviderHint: (nonInteractive: boolean) => string | null;
+  isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
@@ -55,6 +61,8 @@ const {
 function withProviderEnv(next: Record<string, string | undefined>, testBody: () => void): void {
   const keys = new Set([
     "NVIDIA_INFERENCE_API_KEY",
+    "NEMOCLAW_AGENT",
+    "NEMOCLAW_PROVIDER_KEY",
     "NEMOCLAW_PROVIDER",
     "NEMOCLAW_ENDPOINT_URL",
     "NEMOCLAW_MODEL",
@@ -306,6 +314,103 @@ describe("onboard provider helpers", () => {
         expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
         expect(process.env.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
         expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("stages Deep Agents NEMOCLAW_PROVIDER_KEY as hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "  repo-hosted-key  ",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(true);
+        expect(getRequestedProviderHint(true)).toBe("custom");
+        expect(process.env.NEMOCLAW_PROVIDER).toBe("custom");
+        expect(process.env.NEMOCLAW_ENDPOINT_URL).toBe(HOSTED_INFERENCE_ENDPOINT_URL);
+        expect(process.env.NEMOCLAW_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.NEMOCLAW_COMPAT_MODEL).toBe(HOSTED_INFERENCE_MODEL);
+        expect(process.env.COMPATIBLE_API_KEY).toBe("repo-hosted-key");
+      },
+    );
+  });
+
+  it("does not stage route-like Deep Agents NEMOCLAW_PROVIDER_KEY values as credentials", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: "inference",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it.each([
+    ["sk-fallback-key", true],
+    ["nvapi-fallback-key", true],
+    [" build ", false],
+    ["custom", false],
+    ["inference", false],
+    ["routed", false],
+  ])("classifies provider-key compatibility bridge value %s", (value, expected) => {
+    expect(isProviderKeyCredentialCandidate(value)).toBe(expected);
+  });
+
+  it("rejects every supported non-interactive provider selector and alias as a provider-key credential", () => {
+    const selectors = new Set([
+      "inference",
+      ...Object.keys(NON_INTERACTIVE_PROVIDER_ALIASES),
+      ...Array.from(NON_INTERACTIVE_PROVIDER_KEYS),
+    ]);
+
+    for (const selector of selectors) {
+      expect(isProviderKeyCredentialCandidate(selector)).toBe(false);
+    }
+  });
+
+  it.each([
+    "anthropic",
+    "build",
+    "cloud",
+    "custom",
+    "gemini",
+    "hermes-provider",
+    "inference",
+    "install-ollama",
+    "install-vllm",
+    "nim-local",
+    "ollama",
+    "openai",
+    "routed",
+    "vllm",
+  ])("keeps Deep Agents provider-key selector %s from being staged as a credential", (providerKey) => {
+    withProviderEnv(
+      {
+        NEMOCLAW_AGENT: "langchain-deepagents-code",
+        NEMOCLAW_PROVIDER_KEY: providerKey,
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
+      },
+    );
+  });
+
+  it("keeps generic NEMOCLAW_PROVIDER_KEY from implying hosted custom inference", () => {
+    withProviderEnv(
+      {
+        NEMOCLAW_PROVIDER_KEY: "repo-hosted-key",
+      },
+      () => {
+        expect(stageHostedInferenceSourceSecretEnv()).toBe(false);
+        expect(process.env.NEMOCLAW_PROVIDER).toBeUndefined();
+        expect(process.env.COMPATIBLE_API_KEY).toBeUndefined();
       },
     );
   });

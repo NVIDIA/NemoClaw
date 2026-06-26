@@ -9,7 +9,9 @@
 
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
 
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
@@ -46,26 +48,29 @@ RUN printf '%s\n' \
         '# Source runtime proxy + Deep Agents Code config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export HOME=/sandbox' \
-        'export PATH="/usr/local/bin:${PATH}"' \
+        'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
         '# Source runtime proxy + Deep Agents Code config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export HOME=/sandbox' \
-        'export PATH="/usr/local/bin:${PATH}"' \
+        'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
 
 COPY agents/langchain-deepagents-code/requirements.lock /tmp/deepagents-code-requirements.lock
 
-RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed --require-hashes \
+RUN python3 -m venv --copies "$VIRTUAL_ENV" \
+    && "$VIRTUAL_ENV/bin/pip3" install --no-cache-dir --require-hashes \
         -r /tmp/deepagents-code-requirements.lock \
+    && ln -sf "$VIRTUAL_ENV/bin/dcode" /usr/local/bin/dcode \
+    && ln -sf "$VIRTUAL_ENV/bin/deepagents-code" /usr/local/bin/deepagents-code \
     && rm -f /tmp/deepagents-code-requirements.lock \
     && /usr/local/bin/dcode --version
 
 ENV HOME=/sandbox \
-    PATH="/usr/local/bin:${PATH}" \
+    PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
     DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 
 WORKDIR /sandbox

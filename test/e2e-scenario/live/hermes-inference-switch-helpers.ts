@@ -22,8 +22,14 @@ export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
-export const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? "nvidia-prod";
-export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? "z-ai/glm-5.1";
+const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+export const SWITCH_PROVIDER =
+  process.env.NEMOCLAW_SWITCH_PROVIDER ??
+  (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
+export const SWITCH_MODEL =
+  process.env.NEMOCLAW_SWITCH_MODEL ??
+  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "z-ai/glm-5.1");
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
@@ -44,7 +50,17 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey, NVIDIA_API_KEY: apiKey });
+  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  USE_COMPATIBLE_HOSTED &&
+    apiKey &&
+    Object.assign(out, {
+      COMPATIBLE_API_KEY: apiKey,
+      NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+      NEMOCLAW_ENDPOINT_URL:
+        process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    });
   return { ...out, ...extra };
 }
 

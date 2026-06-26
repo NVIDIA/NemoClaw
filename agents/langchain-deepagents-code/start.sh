@@ -7,7 +7,7 @@
 set -euo pipefail
 
 export HOME=/sandbox
-export PATH="/usr/local/bin:${PATH}"
+export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
@@ -57,8 +57,7 @@ prepare_runtime_env() {
   tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"
   {
     printf '%s\n' 'export HOME=/sandbox'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'export PATH="/usr/local/bin:${PATH}"'
+    printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
     # shellcheck disable=SC2016
@@ -82,8 +81,17 @@ prepare_runtime_env() {
 
 prepare_runtime_env
 
+# With no command, this invocation IS the sandbox's long-running entrypoint.
+# Deep Agents Code is a terminal-runtime agent invoked on demand via
+# `openshell sandbox exec`, so the entrypoint has no daemon to run and must
+# stay alive as a stable foreground process. A bare `/bin/bash` exits
+# immediately in a non-interactive sandbox (no TTY, EOF on stdin), leaving the
+# sandbox with no persistent process: OpenShell then flaps it into the Error
+# phase, which breaks the Docker GPU-patch supervisor reconnect and leaves GPU
+# posture unreliable (#5717). Idle forever instead so the sandbox stays Ready.
 if [ "$#" -eq 0 ]; then
-  set -- /bin/bash
+  printf '%s\n' 'Setting up NemoClaw Deep Agents Code runtime...'
+  exec tail -f /dev/null
 fi
 
 exec "$@"

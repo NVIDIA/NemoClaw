@@ -23,7 +23,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack Bot Token",
         help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
-        placeholder: "xoxb-...",
       },
     },
     {
@@ -37,7 +36,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
-        placeholder: "xapp-...",
       },
     },
     {

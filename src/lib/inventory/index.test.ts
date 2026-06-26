@@ -7,6 +7,7 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  renderSandboxInventoryText,
   type SandboxEntry,
   showStatusCommand,
 } from "./index";
@@ -132,6 +133,65 @@ describe("inventory commands", () => {
       ],
     });
     expect(getLiveInference).not.toHaveBeenCalled();
+  });
+
+  it("shows agent as 'unknown' for a gateway-recovered sandbox (#5714), not the OpenClaw default", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "dcode-station", model: null, provider: null, recoveredFromGateway: true },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      name: "dcode-station",
+      agent: "unknown",
+      recoveredFromGateway: true,
+    });
+  });
+
+  it("renders a gateway-recovered row with the trusted live phase but unknown agent/GPU (#5714)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "dcode-station",
+            model: null,
+            provider: null,
+            recoveredFromGateway: true,
+            livePhase: "Ready",
+          },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const lines: string[] = [];
+    renderSandboxInventoryText(inventory, (m = "") => lines.push(m), null);
+    const body = lines.join("\n");
+    expect(body).toContain("Recovered 1 sandbox");
+    expect(body).toContain("agent: unknown");
+    expect(body).toContain("GPU: unknown");
+    // Trusted PHASE from `openshell sandbox list` is surfaced so list agrees
+    // with `nemoclaw <name> status` (the reporter's Ready expectation).
+    expect(body).toContain("phase: Ready");
+    expect(body).not.toContain("CPU sandbox");
+    expect(body).not.toContain("agent: openclaw");
   });
 
   it("normalizes invalid configured inference fields out of inventory rows", async () => {
@@ -569,6 +629,41 @@ describe("inventory commands", () => {
     expect(
       lines.some((l) =>
         l.includes("'alice' and 'bob' both have Slack Socket Mode enabled on the same gateway"),
+      ),
+    ).toBe(true);
+  });
+
+  it("prints a Teams webhook port overlap warning with the port", () => {
+    const lines: string[] = [];
+    const findMessagingOverlaps = vi.fn().mockReturnValue([
+      {
+        channel: "teams",
+        sandboxes: ["alice", "bob"],
+        reason: "host-forward-port",
+        port: 3978,
+        message:
+          "'{first}' and '{second}' both use Microsoft Teams webhook port {port}; no two active Teams sandboxes can share that local forward.",
+      },
+    ]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messaging: messagingState("alice", ["teams"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["teams"]) },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((line) =>
+        line.includes(
+          "'alice' and 'bob' both use Microsoft Teams webhook port 3978; no two active Teams sandboxes can share that local forward.",
+        ),
       ),
     ).toBe(true);
   });

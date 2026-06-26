@@ -10,6 +10,7 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
@@ -32,6 +33,10 @@ import {
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
+import {
+  ensureMessagingHostForwardForSandbox,
+  resolveMessagingHostForwardForSandbox,
+} from "./messaging-host-forward";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -88,6 +93,7 @@ export interface OnboardDashboardHelpers {
   ): number;
   ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
+  fetchAgentWebAuthTokenFromSandbox(sandboxName: string, agent: AgentDefinition): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
     options?: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1],
@@ -239,6 +245,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure, preservedPorts, allowPortReallocation } =
       normalizeDashboardForwardOptions(options);
+    const messagingForward = resolveMessagingHostForwardForSandbox(sandboxName);
+    if (messagingForward) preservedPorts.add(String(messagingForward.port));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
     const stopForwardForSandbox = createSandboxForwardStopper({
       runOpenshell: deps.runOpenshell,
@@ -338,6 +346,19 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
         );
       }
     }
+    if (fwdOk && rollbackSandboxOnFailure) {
+      ensureMessagingHostForwardForSandbox({
+        sandboxName,
+        ensureForward: ensureAgentFixedForward,
+        note: deps.note,
+        rollbackOnFailure: {
+          runOpenshell: deps.runOpenshell,
+          buildRollbackMessage: buildOrphanedSandboxRollbackMessage,
+          cliName: deps.cliName,
+          forwardPortsToStop: [actualPort],
+        },
+      });
+    }
     return actualPort;
   }
 
@@ -345,11 +366,30 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     sandboxName: string,
     agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
-    return ensureAgentDashboardForwardForAgent({ sandboxName, agent, ensureDashboardForward });
+    return ensureAgentDashboardForwardForAgent({
+      sandboxName,
+      agent,
+      ensureDashboardForward,
+    });
   }
 
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
     return ensureFixedAgentForward(deps, sandboxName, port, label);
+  }
+
+  /**
+   * Read a bearer_token agent's web-auth token (e.g. Hermes' API_SERVER_KEY)
+   * from its in-sandbox .env. The .env is 0640 root:sandbox and the gateway
+   * group can read it, so we grep it via `sandbox exec` as the sandbox user
+   * rather than `sandbox download` (which may not have read access). Prints
+   * only the value, never the key name, and returns null when the agent has
+   * no bearer token or the value is absent.
+   */
+  function fetchAgentWebAuthTokenFromSandbox(
+    sandboxName: string,
+    agent: AgentDefinition,
+  ): string | null {
+    return fetchAgentWebAuthToken(deps.runCaptureOpenshell, sandboxName, agent);
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
@@ -476,6 +516,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     ensureAgentDashboardForward,
     ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
+    fetchAgentWebAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,
     getWslHostAddress,

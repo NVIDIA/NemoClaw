@@ -316,7 +316,7 @@ export function listMessagingPackageInstallSpecs(
 }
 
 function selectManifests(options: MessagingManifestMetadataOptions): ChannelManifest[] {
-  const manifests = options.manifests ?? BUILT_IN_CHANNEL_MANIFESTS;
+  const manifests: readonly ChannelManifest[] = options.manifests ?? BUILT_IN_CHANNEL_MANIFESTS;
   const agent = options.agent;
   const selected = agent
     ? manifests.filter((manifest) => manifest.supportedAgents.includes(agent))

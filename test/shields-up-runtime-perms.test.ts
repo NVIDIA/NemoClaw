@@ -163,7 +163,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(stateDirLockShell).toBeDefined();
     expect(stateDirLockShell).toEqual(expect.arrayContaining(["root:sandbox", "go-w", "755"]));
     expect(stateDirLockShell).toEqual(
-      expect.arrayContaining(["agents", "extensions", "skills", "hooks"]),
+      expect.arrayContaining(["agents", "agent", "extensions", "skills", "hooks"]),
     );
   });
 
@@ -208,6 +208,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const script = preflightShell?.[2] ?? "";
     expect(script).toContain('if [ -L "$path" ]; then printf');
     expect(script).toContain('if [ -L "$dir" ]; then printf');
+    expect(preflightShell).toEqual(expect.arrayContaining(["agent"]));
   });
 
   // A symlinked state-dir root must abort shields-up; otherwise the lock
@@ -219,6 +220,14 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(result.stderr).toContain("Config not locked");
     expect(result.stderr).toContain("state dir root is a symlink");
     expect(result.stderr).toContain("/sandbox/.openclaw/extensions");
+  });
+
+  it("throws when shields-up encounters a symlinked Deep Agents agent dir", () => {
+    const result = runLockAgentConfigProbeExpectingThrow("/sandbox/.openclaw/agent");
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Config not locked");
+    expect(result.stderr).toContain("state dir root is a symlink");
+    expect(result.stderr).toContain("/sandbox/.openclaw/agent");
   });
 
   // Atomicity: when the preflight detects a symlinked state-dir root,
