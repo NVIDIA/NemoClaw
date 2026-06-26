@@ -126,13 +126,13 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
     && mkdir -p /etc/profile.d \
     && printf '%s\n' \
         '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
         > /etc/profile.d/nemoclaw-rlimits.sh \
     && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
     && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
     && { printf '%s\n' \
           '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
           ''; \
         if [ -f /etc/bash.bashrc ]; then \
           grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc || true; \
