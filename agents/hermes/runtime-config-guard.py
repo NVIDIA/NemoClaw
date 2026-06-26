@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
+ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
@@ -417,6 +418,12 @@ def _has_env_control_chars(value: str) -> bool:
     return "\x00" in value or "\r" in value or "\n" in value
 
 
+def _validate_runtime_plan_env_key(value: object, label: str) -> str:
+    if not isinstance(value, str) or not ENV_KEY_RE.fullmatch(value):
+        raise UnsafePathError(f"messaging runtime plan {label} is invalid")
+    return value
+
+
 def _validate_env_text_with_boundary(text: str, boundary_validator_path: str | None) -> None:
     if not boundary_validator_path:
         raise UnsafePathError("Hermes provider placeholder refresh requires the secret-boundary validator")
@@ -492,8 +499,10 @@ def _runtime_plan_replacements_and_provider_keys(
             raise UnsafePathError("messaging runtime plan credentialBindings entries must be objects")
         channel_id = binding.get("channelId")
         provider_env_key = binding.get("providerEnvKey")
-        if isinstance(channel_id, str) and channel_id in active_channel_ids and isinstance(provider_env_key, str):
-            provider_env_keys.add(provider_env_key)
+        if isinstance(channel_id, str) and channel_id in active_channel_ids:
+            provider_env_keys.add(
+                _validate_runtime_plan_env_key(provider_env_key, "credentialBindings.providerEnvKey")
+            )
 
     runtime_setup = plan.get("runtimeSetup") or {}
     if not isinstance(runtime_setup, dict):
@@ -513,13 +522,10 @@ def _runtime_plan_replacements_and_provider_keys(
         pattern = alias.get("match")
         value = alias.get("value")
         message = alias.get("message") or ""
-        if (
-            not isinstance(env_key, str)
-            or not isinstance(pattern, str)
-            or not isinstance(value, str)
-            or not isinstance(message, str)
-            or env_key in replacements
-        ):
+        if not isinstance(pattern, str) or not isinstance(value, str) or not isinstance(message, str):
+            continue
+        env_key = _validate_runtime_plan_env_key(env_key, "runtimeSetup.envAliases.envKey")
+        if env_key in replacements:
             continue
         if _has_env_control_chars(value) or _has_env_control_chars(message):
             raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")

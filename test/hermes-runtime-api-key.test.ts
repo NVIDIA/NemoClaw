@@ -601,6 +601,53 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
   it.each([
     {
+      name: "malformed providerEnvKey with newline",
+      runtimePlanPatch: {
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "BAD\nFORGED=1" }],
+      },
+      expectedError: "credentialBindings.providerEnvKey is invalid",
+    },
+    {
+      name: "malformed alias envKey with whitespace",
+      runtimePlanPatch: {
+        runtimeSetup: { envAliases: [{ ...slackBotAlias(), envKey: "BAD KEY" }] },
+      },
+      expectedError: "runtimeSetup.envAliases.envKey is invalid",
+    },
+    {
+      name: "malformed alias envKey with equals",
+      runtimePlanPatch: {
+        runtimeSetup: { envAliases: [{ ...slackBotAlias(), envKey: "BAD=KEY" }] },
+      },
+      expectedError: "runtimeSetup.envAliases.envKey is invalid",
+    },
+  ])("rejects runtime-plan $name before rewriting .env", ({ runtimePlanPatch, expectedError }) => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+      },
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "slack", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases: [slackBotAlias()], secretScans: [] },
+        ...runtimePlanPatch,
+      },
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(expectedError);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it.each([
+    {
       name: "raw secret values",
       envAliases: [{ ...slackBotAlias(), value: "xoxb-raw-secret-token" }],
       expectedError: "would violate the secret boundary",
