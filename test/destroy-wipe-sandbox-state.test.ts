@@ -390,27 +390,29 @@ describe("wipeSandboxState (#5449)", () => {
       stateFiles: [{ path: "config.toml" }, { path: "hooks.json" }],
       label: "langchain-deepagents-code",
     },
-  ])(
-    "wipes the shipped $label manifest shape under its own /sandbox/<agent> dir (#5455 Ultra PRA-2)",
-    ({ agent, configDir, stateDirs, stateFiles }) => {
-      const { deps, runOpenshell } = buildDeps({
-        getSandbox: vi.fn(() => ({ agent }) as never),
-        loadAgent: vi.fn(() => ({ configPaths: { dir: configDir }, stateDirs, stateFiles })),
-      });
+  ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir (#5455 Ultra PRA-2)", ({
+    agent,
+    configDir,
+    stateDirs,
+    stateFiles,
+  }) => {
+    const { deps, runOpenshell } = buildDeps({
+      getSandbox: vi.fn(() => ({ agent }) as never),
+      loadAgent: vi.fn(() => ({ configPaths: { dir: configDir }, stateDirs, stateFiles })),
+    });
 
-      destroy.wipeSandboxState("test-sb", deps as never);
+    destroy.wipeSandboxState("test-sb", deps as never);
 
-      const { script } = execCommand(runOpenshell);
-      expect(script).toContain(`cd '${configDir}'`);
-      expect(script).toContain("workspace-*");
-      for (const dir of stateDirs) {
-        expect(script).toContain(`'${dir}'`);
-      }
-      for (const file of stateFiles) {
-        expect(script).toContain(`'${file.path}'`);
-      }
-    },
-  );
+    const { script } = execCommand(runOpenshell);
+    expect(script).toContain(`cd '${configDir}'`);
+    expect(script).toContain("workspace-*");
+    for (const dir of stateDirs) {
+      expect(script).toContain(`'${dir}'`);
+    }
+    for (const file of stateFiles) {
+      expect(script).toContain(`'${file.path}'`);
+    }
+  });
 
   // Ultra advisor PRA-2 on #5455 (empty state dirs): a manifest with empty
   // state_dirs and state_files must still issue the wipe so the multi-agent
