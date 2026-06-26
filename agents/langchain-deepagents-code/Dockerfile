@@ -30,7 +30,7 @@ RUN chmod 444 /opt/nemoclaw-deepagents-code/generate-config.ts /opt/nemoclaw-dee
     && chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/dcode-wrapper.sh \
     && chmod -R a+rX /opt/nemoclaw-blueprint /src/lib/messaging \
     && python3 /opt/nemoclaw-deepagents-code/patch-managed-deepagents-code.py \
-    && rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code \
+    && rm -f /usr/local/bin/dcode /usr/local/bin/deepagents-code /opt/venv/bin/dcode /opt/venv/bin/deepagents-code \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/dcode.real \
     && install -m 0755 /usr/local/lib/nemoclaw/dcode-wrapper.sh /usr/local/bin/deepagents-code \
@@ -48,7 +48,8 @@ ARG NEMOCLAW_MESSAGING_PLAN_B64=
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 ENV HOME=/sandbox \
-    PATH="/usr/local/bin:${PATH}" \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin" \
     NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_UPSTREAM_PROVIDER=${NEMOCLAW_UPSTREAM_PROVIDER} \

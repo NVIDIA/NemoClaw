@@ -7,7 +7,7 @@
 set -euo pipefail
 
 export HOME=/sandbox
-export PATH="/usr/local/bin:${PATH}"
+export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1
 export DEEPAGENTS_CODE_AUTO_UPDATE=0
 export DEEPAGENTS_CODE_OPENAI_API_KEY="${DEEPAGENTS_CODE_OPENAI_API_KEY:-nemoclaw-managed-inference}"
@@ -84,8 +84,7 @@ prepare_runtime_env() {
   tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"
   {
     printf '%s\n' 'export HOME=/sandbox'
-    # shellcheck disable=SC2016
-    printf '%s\n' 'export PATH="/usr/local/bin:${PATH}"'
+    printf '%s\n' 'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"'
     printf '%s\n' 'export DEEPAGENTS_CODE_NO_UPDATE_CHECK=1'
     printf '%s\n' 'export DEEPAGENTS_CODE_AUTO_UPDATE=0'
     # shellcheck disable=SC2016

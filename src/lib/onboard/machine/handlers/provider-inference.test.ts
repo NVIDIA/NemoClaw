@@ -110,6 +110,7 @@ function baseOptions(
 ): ProviderInferenceStateOptions<Gpu, Agent, Host> {
   return {
     resume: false,
+    fresh: false,
     session,
     gpu: { type: "nvidia" },
     sandboxName: null,
@@ -143,7 +144,7 @@ describe("handleProviderInferenceState", () => {
     const result = await handleProviderInferenceState(baseOptions(deps));
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
-    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null);
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true);
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
       expect.objectContaining({ provider: "nvidia-prod" }),
@@ -189,6 +190,36 @@ describe("handleProviderInferenceState", () => {
       },
       result.stateResult,
     ]);
+  });
+
+  it("disables recorded provider recovery during fresh provider selection", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps),
+      fresh: true,
+      sandboxName: "dcode-station",
+    });
+
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
+  });
+
+  it("does not use resume shortcuts when fresh is also set", async () => {
+    const session = createSession({ provider: "ollama-local", model: "llama3.1" });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      fresh: true,
+      sandboxName: "dcode-station",
+    });
+
+    expect(calls.recoverProvider).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
+    expect(calls.setupInference).toHaveBeenCalled();
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {

@@ -77,4 +77,4 @@ package_registry:
   hosts:
     - pypi.org
     - files.pythonhosted.org
-  binary: /usr/local/bin/pip3
+  binary: /opt/venv/bin/pip3
