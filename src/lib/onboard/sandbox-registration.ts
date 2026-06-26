@@ -4,6 +4,7 @@
 import type { AgentDefinition } from "../agent/defs";
 import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
+import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
@@ -42,6 +43,22 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   registerSandbox?(entry: SandboxEntry): void;
+}
+
+export function selection(
+  provider: string,
+  model: string,
+  preferredInferenceApi: string | null,
+): InferenceSelection {
+  const session = onboardSession.loadSession();
+  return inferenceSelectionRegistryFields({
+    provider,
+    model,
+    endpointUrl: session?.endpointUrl ?? null,
+    credentialEnv: session?.credentialEnv ?? null,
+    preferredInferenceApi,
+    nimContainer: session?.nimContainer ?? null,
+  });
 }
 
 export function buildCreatedSandboxRegistryEntry(
