@@ -478,9 +478,12 @@ describe("Issue #2273: atomic rebuild", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      // Should mention preflight failure
+      // Should prefer the missing-provider abort over the generic missing-env fallback.
       expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
       expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).not.toContain("export NVIDIA_INFERENCE_API_KEY=<your-key>");
       // Should say sandbox is untouched
       expect(output).toContain("untouched");
       // Sandbox should still be in the registry (not destroyed)
