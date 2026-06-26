@@ -324,38 +324,39 @@ function hasOwn(object: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(object, key);
 }
 
+function namedRegistryEntry(
+  entries: unknown[],
+  sandboxName: string,
+): Record<string, unknown> | null {
+  const found = entries.find(
+    (entry) =>
+      entry === sandboxName ||
+      (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
+  );
+  return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
+}
+
 function registryEntry(sandboxName: string): Record<string, unknown> | null {
-  if (!fs.existsSync(REGISTRY_FILE)) return null;
   try {
-    const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
-    if (!registry || typeof registry !== "object") return null;
-
-    if (Array.isArray(registry)) {
-      const found = registry.find(
-        (entry) =>
-          entry === sandboxName ||
-          (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
-      );
-      return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
-    }
-
-    if (hasOwn(registry, sandboxName)) {
-      const entry = (registry as Record<string, unknown>)[sandboxName];
-      return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
-    }
-    if (!hasOwn(registry, "sandboxes")) return null;
-
-    const sandboxes = (registry as { sandboxes?: unknown }).sandboxes;
-    if (Array.isArray(sandboxes)) {
-      const found = sandboxes.find(
-        (entry) =>
-          entry === sandboxName ||
-          (entry && typeof entry === "object" && "name" in entry && entry.name === sandboxName),
-      );
-      return found && typeof found === "object" ? (found as Record<string, unknown>) : null;
-    }
-    if (!sandboxes || typeof sandboxes !== "object" || !hasOwn(sandboxes, sandboxName)) return null;
-    const entry = (sandboxes as Record<string, unknown>)[sandboxName];
+    const registry = fs.existsSync(REGISTRY_FILE)
+      ? (JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown)
+      : null;
+    const registryObject = registry && typeof registry === "object" ? registry : null;
+    const registryRecord =
+      registryObject && !Array.isArray(registryObject)
+        ? (registryObject as Record<string, unknown>)
+        : null;
+    const sandboxes = registryRecord?.sandboxes;
+    const directEntry = registryRecord?.[sandboxName] ?? null;
+    const arrayEntry = Array.isArray(registry) ? namedRegistryEntry(registry, sandboxName) : null;
+    const arraySandboxEntry = Array.isArray(sandboxes)
+      ? namedRegistryEntry(sandboxes, sandboxName)
+      : null;
+    const objectSandboxEntry =
+      sandboxes && typeof sandboxes === "object" && !Array.isArray(sandboxes)
+        ? (sandboxes as Record<string, unknown>)[sandboxName]
+        : null;
+    const entry = directEntry ?? arrayEntry ?? arraySandboxEntry ?? objectSandboxEntry ?? null;
     return entry && typeof entry === "object" ? (entry as Record<string, unknown>) : null;
   } catch {
     return null;

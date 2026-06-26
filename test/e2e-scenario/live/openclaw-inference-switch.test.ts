@@ -460,20 +460,23 @@ async function assertRegistryAndSession(
   expect(sandbox?.provider).toBe(SWITCH_PROVIDER);
   expect(sandbox?.model).toBe(SWITCH_MODEL);
   expect(sandbox?.nimContainer).toBeNull();
-  if (SWITCH_PROVIDER === "compatible-endpoint") {
-    expect(sandbox?.endpointUrl).toBe(options.hostedEndpointUrl);
-    expect(sandbox?.credentialEnv).toBe("COMPATIBLE_API_KEY");
-    expect(sandbox?.preferredInferenceApi).toBe("openai-completions");
-  } else if (SWITCH_PROVIDER === "compatible-anthropic-endpoint") {
-    expect(sandbox?.endpointUrl).toBe(
-      process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? options.mockProvider?.endpointUrl,
-    );
-    expect(sandbox?.credentialEnv).toBe("COMPATIBLE_ANTHROPIC_API_KEY");
-    expect(sandbox?.preferredInferenceApi).toBe("anthropic-messages");
-  } else {
-    expect(sandbox?.endpointUrl).toBeNull();
-    expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
-    expect(sandbox?.preferredInferenceApi).toBeNull();
+  switch (SWITCH_PROVIDER) {
+    case "compatible-endpoint":
+      expect(sandbox?.endpointUrl).toBe(options.hostedEndpointUrl);
+      expect(sandbox?.credentialEnv).toBe("COMPATIBLE_API_KEY");
+      expect(sandbox?.preferredInferenceApi).toBe("openai-completions");
+      break;
+    case "compatible-anthropic-endpoint":
+      expect(sandbox?.endpointUrl).toBe(
+        process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? options.mockProvider?.endpointUrl,
+      );
+      expect(sandbox?.credentialEnv).toBe("COMPATIBLE_ANTHROPIC_API_KEY");
+      expect(sandbox?.preferredInferenceApi).toBe("anthropic-messages");
+      break;
+    default:
+      expect(sandbox?.endpointUrl).toBeNull();
+      expect(sandbox?.credentialEnv).toBe(sandbox?.provider === SWITCH_PROVIDER ? null : undefined);
+      expect(sandbox?.preferredInferenceApi).toBeNull();
   }
 
   const sessionPath = path.join(home, ".nemoclaw", "onboard-session.json");
@@ -482,10 +485,13 @@ async function assertRegistryAndSession(
   expect(session.sandboxName).toBe(SANDBOX_NAME);
   expect(session.provider).toBe(SWITCH_PROVIDER);
   expect(session.model).toBe(SWITCH_MODEL);
-  if (SWITCH_PROVIDER === "compatible-endpoint") {
-    expect(session.preferredInferenceApi).toBe("openai-completions");
-  } else if (SWITCH_PROVIDER === "compatible-anthropic-endpoint") {
-    expect(session.preferredInferenceApi).toBe("anthropic-messages");
+  switch (SWITCH_PROVIDER) {
+    case "compatible-endpoint":
+      expect(session.preferredInferenceApi).toBe("openai-completions");
+      break;
+    case "compatible-anthropic-endpoint":
+      expect(session.preferredInferenceApi).toBe("anthropic-messages");
+      break;
   }
 }
 
