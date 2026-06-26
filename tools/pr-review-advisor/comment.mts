@@ -101,9 +101,11 @@ async function main(): Promise<void> {
   const summaryPath = args.summary || "artifacts/pr-review-advisor/pr-review-advisor-summary.md";
   const resultPath =
     args.result || "artifacts/pr-review-advisor/pr-review-advisor-final-result.json";
-  const marker = args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER;
-  const title = args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE;
-  const label = args.label || process.env.PR_REVIEW_ADVISOR_COMMENT_LABEL || "PR review advisor";
+  const { marker, title, label } = normalizeCommentOptions({
+    marker: args.marker || process.env.PR_REVIEW_ADVISOR_COMMENT_MARKER || MARKER,
+    title: args.title || process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || COMMENT_TITLE,
+    label: args.label || process.env.PR_REVIEW_ADVISOR_COMMENT_LABEL || "PR review advisor",
+  });
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   const runUrl =
     process.env.GITHUB_SERVER_URL && process.env.GITHUB_REPOSITORY && process.env.GITHUB_RUN_ID
@@ -119,11 +121,10 @@ async function main(): Promise<void> {
     return;
   }
 
-  const summary =
-    readIfExists(summaryPath) ||
-    readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
-  if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
-  const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
+  const { summary, result } = readCommentArtifacts(summaryPath, resultPath, {
+    summaryExplicit: Boolean(args.summary),
+    resultExplicit: Boolean(args.result),
+  });
   const baseMetadata = {
     runId: process.env.GITHUB_RUN_ID,
     runAttempt: process.env.GITHUB_RUN_ATTEMPT,
@@ -154,6 +155,57 @@ async function main(): Promise<void> {
         metadata: { ...baseMetadata, commentId: String(comment.id) },
       }),
   });
+}
+
+export function normalizeCommentOptions({
+  marker,
+  title,
+  label,
+}: {
+  marker: string;
+  title: string;
+  label: string;
+}): { marker: string; title: string; label: string } {
+  return {
+    marker: validateCommentMarker(marker),
+    title: validateSingleLineCommentField(title, "title"),
+    label: validateSingleLineCommentField(label, "label"),
+  };
+}
+
+function validateCommentMarker(marker: string): string {
+  const value = marker.trim();
+  if (!/^<!--\s+nemoclaw-pr-review-advisor(?:-[a-z0-9-]+)?\s+-->$/.test(value)) {
+    throw new Error(
+      "PR review advisor marker must be a safe nemoclaw-pr-review-advisor HTML comment",
+    );
+  }
+  return value;
+}
+
+function validateSingleLineCommentField(value: string, field: "title" | "label"): string {
+  const normalized = value.trim();
+  if (!normalized || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    throw new Error(`PR review advisor ${field} must be a non-empty single-line string`);
+  }
+  return normalized;
+}
+
+export function readCommentArtifacts(
+  summaryPath: string,
+  resultPath: string,
+  options: { summaryExplicit?: boolean; resultExplicit?: boolean } = {},
+): { summary: string; result?: ReviewAdvisorResult } {
+  const summary = options.summaryExplicit
+    ? readIfExists(summaryPath)
+    : readIfExists(summaryPath) ||
+      readIfExists("artifacts/pr-review-advisor/pr-review-advisor-summary.md");
+  if (!summary) throw new Error(`No PR review advisor summary found at ${summaryPath}`);
+  const result = readJsonIfExists<ReviewAdvisorResult>(resultPath);
+  if (options.resultExplicit && !result) {
+    throw new Error(`No PR review advisor result found at ${resultPath}`);
+  }
+  return { summary, result };
 }
 
 export function buildComment({
@@ -193,8 +245,9 @@ export function buildComment({
   const hiddenMetadata = renderHiddenMetadata(result, metadata);
   const posture = reviewPosture(result?.summary?.recommendation);
   const headline = reviewHeadline(result?.summary?.recommendation);
-  const heading = title || COMMENT_TITLE;
-  return `${marker || MARKER}
+  const heading = validateSingleLineCommentField(title || COMMENT_TITLE, "title");
+  const renderedMarker = validateCommentMarker(marker || MARKER);
+  return `${renderedMarker}
 ${hiddenMetadata}## ${heading} — ${headline}
 
 **Merge posture:** ${posture}

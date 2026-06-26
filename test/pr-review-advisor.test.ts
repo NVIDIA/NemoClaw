@@ -34,7 +34,11 @@ import {
   writeDeterministicContextArtifacts,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
+import {
+  buildComment,
+  normalizeCommentOptions,
+  readCommentArtifacts,
+} from "../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -1125,6 +1129,14 @@ diff --git a/test/example.test.ts b/test/example.test.ts
         title: "PR Review Advisor (Nemotron Ultra)",
       }),
     ).toContain("## PR Review Advisor (Nemotron Ultra) — Changes requested");
+    expect(() =>
+      buildComment({
+        summary,
+        result,
+        marker: "<!-- not-the-advisor -->",
+        title: "PR Review Advisor",
+      }),
+    ).toThrow(/marker must be a safe/);
     expect(comment).toContain("**Merge posture:** Do not merge yet");
     expect(comment).toContain("**Primary next action:** Fix `PRA-1`: trusted-code boundary");
     expect(comment).toContain("### 🚨 Required before merge");
@@ -1403,6 +1415,63 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain("\\`code\\` &lt;tag&gt;");
     expect(comment).not.toContain("</details> @team");
     expect(comment).not.toContain("### injected <script>");
+  });
+
+  it("validates configurable comment CLI fields and explicit artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
+    const defaultSummary = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor",
+      "pr-review-advisor-summary.md",
+    );
+    const laneSummary = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor-nemotron-ultra",
+      "pr-review-advisor-summary.md",
+    );
+    const laneResult = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor-nemotron-ultra",
+      "pr-review-advisor-final-result.json",
+    );
+    fs.mkdirSync(path.dirname(defaultSummary), { recursive: true });
+    fs.writeFileSync(defaultSummary, "# default lane\n");
+
+    try {
+      expect(
+        normalizeCommentOptions({
+          marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
+          title: "PR Review Advisor (Nemotron Ultra)",
+          label: "PR review advisor (Nemotron Ultra)",
+        }),
+      ).toMatchObject({ marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" });
+      expect(() =>
+        normalizeCommentOptions({ marker: "<!-- other -->", title: "ok", label: "ok" }),
+      ).toThrow(/marker must be a safe/);
+      expect(() =>
+        normalizeCommentOptions({
+          marker: "<!-- nemoclaw-pr-review-advisor -->",
+          title: "bad\nheading",
+          label: "ok",
+        }),
+      ).toThrow(/title must be a non-empty single-line string/);
+      expect(() =>
+        readCommentArtifacts(laneSummary, laneResult, { summaryExplicit: true }),
+      ).toThrow(`No PR review advisor summary found at ${laneSummary}`);
+      fs.mkdirSync(path.dirname(laneSummary), { recursive: true });
+      fs.writeFileSync(laneSummary, "# nemotron lane\n");
+      expect(() =>
+        readCommentArtifacts(laneSummary, laneResult, {
+          summaryExplicit: true,
+          resultExplicit: true,
+        }),
+      ).toThrow(`No PR review advisor result found at ${laneResult}`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("normalizes output that validates against the JSON schema", () => {

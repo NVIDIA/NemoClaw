@@ -81,6 +81,23 @@ function requireRunContains(
   }
 }
 
+function requireRunOrders(
+  errors: string[],
+  step: WorkflowStep | undefined,
+  before: string,
+  after: string,
+): void {
+  if (!step) return;
+  const run = stringValue(step.run);
+  const beforeIndex = run.indexOf(before);
+  const afterIndex = run.indexOf(after);
+  if (beforeIndex < 0 || afterIndex < 0 || beforeIndex > afterIndex) {
+    errors.push(
+      `step '${step.name ?? "<unnamed>"}' run script must check ${before} before ${after}`,
+    );
+  }
+}
+
 function requireJobEnvValue(
   errors: string[],
   job: WorkflowRecord,
@@ -234,6 +251,12 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const comment = requireStep(errors, steps, "Post PR review advisor comment");
   requireRunContains(errors, comment, "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts");
   requireRunContains(errors, comment, "PR_REVIEW_ADVISOR_SUPPORTED");
+  requireRunOrders(
+    errors,
+    comment,
+    'if [ "${PR_REVIEW_ADVISOR_SUPPORTED:-1}" = "0" ]',
+    "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts",
+  );
   requireRunContains(errors, comment, '--marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER"');
   requireRunContains(errors, comment, '--title "$PR_REVIEW_ADVISOR_COMMENT_TITLE"');
   requireRunContains(errors, comment, '--label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"');
