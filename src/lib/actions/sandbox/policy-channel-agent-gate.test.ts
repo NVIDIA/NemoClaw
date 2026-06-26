@@ -1,10 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Lifecycle-boundary regression: `addSandboxChannel` must refuse agents that
-// either fall outside the runtime allowlist or carry an explicit empty
-// `messagingPlatforms` allowlist BEFORE any preset load, policy mutation,
-// provider upsert, registry write, credential prompt, or rebuild trigger.
+// Lifecycle-boundary regression: `addSandboxChannel` must refuse channel/agent pairs
+// that fall outside the channel manifest `supportedAgents` set BEFORE any preset load,
+// policy mutation, provider upsert, registry write, credential prompt, or rebuild trigger.
 // Without this gate, a destructive sandbox rebuild can run and fail late at
 // Dockerfile patching.
 //
@@ -93,7 +92,6 @@ describe("addSandboxChannel agent gate", () => {
   it("rejects an unknown agent before any preset, mutation, provider, credential, or rebuild call", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "custom-agent",
-      messagingPlatforms: [],
     });
 
     let caught: unknown;
@@ -107,8 +105,9 @@ describe("addSandboxChannel agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).toMatch(/Agent 'custom-agent' does not support messaging channels/);
-    expect(errorText).toMatch(/Messaging-capable agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channel 'discord' does not support agent 'custom-agent'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
     expect(loadPresetMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
@@ -121,10 +120,9 @@ describe("addSandboxChannel agent gate", () => {
     expect(runOpenshellMock).not.toHaveBeenCalled();
   });
 
-  it("rejects any agent with an explicit empty messagingPlatforms allowlist before any mutation", async () => {
+  it("rejects an agent that is not listed by any channel manifest before any mutation", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-agent",
-      messagingPlatforms: [],
     });
 
     let caught: unknown;
@@ -145,7 +143,6 @@ describe("addSandboxChannel agent gate", () => {
   it("does not gate messaging-capable agents (openclaw flows past the agent check)", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
-      messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp"],
     });
 
     let caught: unknown;
@@ -158,7 +155,7 @@ describe("addSandboxChannel agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).not.toMatch(/does not support messaging channels/);
+    expect(errorText).not.toMatch(/does not support agent/);
     expect(loadPresetMock).toHaveBeenCalled();
     void caught;
     void exitMock;

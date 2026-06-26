@@ -380,6 +380,8 @@ describe("shields — unit logic", () => {
 
     it("shieldsStatus attempts inline recovery for expired marker when timer PID is dead", async () => {
       const sandboxName = "openclaw";
+      const configPath = "/sandbox/.openclaw/openclaw.json";
+      const hashPath = "/sandbox/.openclaw/.config-hash";
       const snapshotPath = path.join(stateDir(), "policy-snapshot-test.yaml");
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
@@ -417,20 +419,20 @@ describe("shields — unit logic", () => {
       >;
       dockerExecFileSync.mockImplementation((_file: string, argv?: readonly string[]) => {
         const cmd = Array.isArray(argv) ? argv.join(" ") : "";
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/.config-hash")) {
+        if (cmd.includes(` stat -c %a %U:%G ${hashPath}`)) {
           return "444 root:root";
         }
-        if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw/openclaw.json")) {
+        if (cmd.includes(` stat -c %a %U:%G ${configPath}`)) {
           return "444 root:root";
         }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/.config-hash")) {
-          return "----i---------e----- /sandbox/.openclaw/.config-hash";
+        if (cmd.includes(` lsattr -d ${hashPath}`)) {
+          return `----i---------e----- ${hashPath}`;
         }
         if (cmd.includes(" stat -c %a %U:%G /sandbox/.openclaw")) {
           return "755 root:root";
         }
-        if (cmd.includes(" lsattr -d /sandbox/.openclaw/openclaw.json")) {
-          return "----i---------e----- /sandbox/.openclaw/openclaw.json";
+        if (cmd.includes(` lsattr -d ${configPath}`)) {
+          return `----i---------e----- ${configPath}`;
         }
         return "";
       });
@@ -822,6 +824,39 @@ describe("shields — unit logic", () => {
 
       const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
       expect(allErrors).toContain("content drifted");
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
+    it("prints baseline-acceptance recovery when the verifier only reports missing seals", async () => {
+      const sandboxName = "openclaw";
+      writeSealedLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/.config-hash content drifted (no seal recorded; expected SHA-256)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain("no seal recorded");
+      expect(allErrors).toContain("Recovery: rebuild the sandbox for a known-good baseline");
+      expect(allErrors).toContain("NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1");
+      expect(allErrors).not.toContain("restore the original file content from a trusted source");
       expect(exitSpy).toHaveBeenCalledWith(2);
     });
 

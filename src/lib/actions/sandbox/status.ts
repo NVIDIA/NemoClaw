@@ -51,13 +51,16 @@ export {
 } from "./status-snapshot";
 
 /**
- * Returns true when status can validate a cached agent version against the running sandbox.
+ * Returns true when status can validate an agent version against the running sandbox.
  */
 function shouldProbeSandboxRuntimeVersion(
   lookup: SandboxGatewayState,
   sandbox: registry.SandboxEntry,
+  agentRuntimeKind: string,
 ): boolean {
-  return lookup.state === "present" && Boolean(sandbox.agentVersion);
+  return (
+    lookup.state === "present" && (Boolean(sandbox.agentVersion) || agentRuntimeKind === "terminal")
+  );
 }
 
 // True when sandbox GPU is enabled but no CUDA-usability proof has confirmed it
@@ -135,7 +138,15 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
   });
-  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
+  const {
+    sb,
+    lookup,
+    rpcIssue,
+    currentModel,
+    currentProvider,
+    inferenceHealth,
+    terminalRuntimeHealth,
+  } = snapshot;
   // Resolve the docker-driver container once: reused for the paused-container
   // recovery hint (#4495) and the Docker health line below (#3975).
   const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
@@ -211,6 +222,18 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (interactiveCommand) console.log(`    Interactive: ${interactiveCommand}`);
       if (headlessCommand) console.log(`    Headless: ${headlessCommand} "<prompt>"`);
       console.log("    Updates: managed by NemoClaw image rebuilds");
+      if (lookup.state === "present") {
+        if (terminalRuntimeHealth?.kind === "degraded") {
+          process.exitCode = process.exitCode && process.exitCode !== 0 ? process.exitCode : 1;
+          const countLabel =
+            terminalRuntimeHealth.oomKillCount === 1
+              ? "1 OOM kill"
+              : `${terminalRuntimeHealth.oomKillCount} OOM kills`;
+          console.log(`    Runtime health: ${YW}degraded${R} (${countLabel} recorded)`);
+          console.log("      Sandbox may be degraded after an OOM kill.");
+          console.log(`      Run \`${CLI_NAME} ${sandboxName} rebuild\` to restore.`);
+        }
+      }
     }
 
     // Active session indicator
@@ -243,7 +266,11 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
     // Agent version check
     try {
-      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(lookup, sb);
+      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(
+        lookup,
+        sb,
+        statusAgent.agentRuntime,
+      );
       const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
         forceProbe: shouldProbeRuntimeVersion,
         skipProbe: !shouldProbeRuntimeVersion,

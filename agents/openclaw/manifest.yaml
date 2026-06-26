@@ -67,20 +67,13 @@ state_dirs:
 # credentials.
 state_files:
   - path: openclaw.json
+user_managed_files:
+  - .env
+  - .mcp.json
 
 # ── Authentication ──────────────────────────────────────────────
 device_pairing: true
 web_auth_method: device_pairing
-
-# ── Messaging platforms ─────────────────────────────────────────
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-    - wechat
-    - whatsapp
-    - teams
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

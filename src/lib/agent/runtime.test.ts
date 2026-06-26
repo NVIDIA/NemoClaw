@@ -20,6 +20,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
     dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
+    webAuth: { method: "none", env: null },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
@@ -29,11 +30,11 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "test-agent --version",
     expectedVersion: null,
     hasDevicePairing: false,
     phoneHomeHosts: [],
-    messagingPlatforms: [],
     dockerfileBasePath: null,
     dockerfilePath: null,
     startScriptPath: null,
@@ -114,6 +115,11 @@ describe("buildRecoveryScript", () => {
       hermesDashboard: { publicPort: 9119, internalPort: 19119, tuiEnabled: true },
     });
     expect(script).toContain("/tmp/hermes-dashboard.log");
+    expect(script).toContain("_HERMES_DASHBOARD_HOME=/sandbox/.hermes/dashboard-home");
+    expect(script).toContain("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py");
+    expect(script).toContain("${_HERMES_DASHBOARD_HOME}/gateway_state.json");
+    expect(script).toContain('HERMES_HOME="$_HERMES_DASHBOARD_HOME"');
+    expect(script).not.toContain("HERMES_HOME=/sandbox/.hermes nohup");
     expect(script).toContain(
       '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open --tui',
     );
@@ -135,9 +141,13 @@ describe("buildRecoveryScript", () => {
     expect(sourceIndex).toBeGreaterThan(validationIndex);
     expect(script).toContain('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     expect(script).toContain("/usr/local/bin/hermes");
+    expect(script).toContain("_HERMES_DASHBOARD_HOME=/sandbox/.hermes/dashboard-home");
+    expect(script).toContain("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py");
+    expect(script).toContain('HERMES_HOME="$_HERMES_DASHBOARD_HOME"');
     expect(script).toContain(
       '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open',
     );
+    expect(script).not.toContain("HERMES_HOME=/sandbox/.hermes nohup");
     expect(script).not.toContain("--tui");
   });
 

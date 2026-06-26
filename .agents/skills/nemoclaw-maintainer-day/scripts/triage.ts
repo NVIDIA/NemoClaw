@@ -268,8 +268,10 @@ function classifyPr(pr: PrData): ClassifiedPr {
   const blocked = mergeState === "BLOCKED";
   if (blocked && !hasConflict) reasons.push("merge-blocked");
 
-  // Simple CodeRabbit heuristic: check labels for major findings
-  // (Full CodeRabbit check is in check-gates.ts via GraphQL)
+  // CodeRabbit and PR Review Advisor are not checked here — fetching per-PR
+  // comments/threads for every open PR would make triage too slow. Both are
+  // checked as hard gates in check-gates.ts. A PR may appear as merge-now
+  // here but still fail the gate — always run check-gates.ts before approving.
   const coderabbitMajor = false; // conservative — gate checker does the real check
 
   // Classify into buckets

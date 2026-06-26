@@ -12,8 +12,12 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  HOSTED_INFERENCE_PROVIDER_NAME,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -27,7 +31,9 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const LAUNCHABLE_SCRIPT = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
 const SENTINEL = "/var/run/nemoclaw-launchable-ready";
-const MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+const MODEL =
+  process.env.NEMOCLAW_MODEL ?? process.env.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
+const EXPECTED_ROUTE_PROVIDER = HOSTED_INFERENCE_PROVIDER_NAME;
 const DEFAULT_SANDBOX_NAME = `e2e-launchable-${randomUUID().slice(0, 8)}`;
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? DEFAULT_SANDBOX_NAME;
 const TEST_TIMEOUT_MS = 30 * 60_000;
@@ -256,9 +262,20 @@ runLaunchableSmokeTest(
     expectExitZero(dockerInfo, "Docker is running");
 
     const network = await host.command(
-      "curl",
-      ["-sf", "--max-time", "10", "https://inference-api.nvidia.com/v1/models"],
-      { artifactName: "prereq-inference-api-models", env: runEnv(), timeoutMs: 30_000 },
+      "bash",
+      [
+        "-lc",
+        'cfg=$(mktemp); trap \'rm -f "$cfg"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; curl -sf --max-time 10 --config "$cfg" "$HOSTED_ENDPOINT_URL/models"',
+      ],
+      {
+        artifactName: "prereq-inference-api-models",
+        env: runEnv({
+          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+        }),
+        redactionValues: [apiKey],
+        timeoutMs: 30_000,
+      },
     );
     expectExitZero(network, "inference-api.nvidia.com reachable");
 
@@ -387,7 +404,7 @@ runLaunchableSmokeTest(
       timeoutMs: 30_000,
     });
     expectExitZero(inferenceConfig, "openshell inference get");
-    expect(inferenceConfig.stdout).toMatch(/nvidia-prod/i);
+    expect(inferenceConfig.stdout).toMatch(new RegExp(EXPECTED_ROUTE_PROVIDER, "i"));
 
     const gatewayContainer = await runBash(
       host,
@@ -407,24 +424,19 @@ runLaunchableSmokeTest(
       max_tokens: 100,
     });
     const direct = await host.command(
-      "curl",
+      "bash",
       [
-        "-s",
-        "--max-time",
-        "30",
-        "-X",
-        "POST",
-        "https://inference-api.nvidia.com/v1/chat/completions",
-        "-H",
-        "Content-Type: application/json",
-        "-H",
-        `Authorization: Bearer ${apiKey}`,
-        "-d",
-        directPayload,
+        "-lc",
+        'cfg=$(mktemp); payload=$(mktemp); trap \'rm -f "$cfg" "$payload"\' EXIT; printf \'header = "Authorization: Bearer %s"\\n\' "$NVIDIA_INFERENCE_API_KEY" > "$cfg"; printf \'%s\' "$DIRECT_PAYLOAD" > "$payload"; curl -s --max-time 30 -X POST --config "$cfg" -H \'Content-Type: application/json\' -d @"$payload" "$HOSTED_ENDPOINT_URL/chat/completions"',
       ],
       {
         artifactName: "phase-6-direct-nvidia-chat",
-        env: pathEnv,
+        env: runEnv({
+          ...pathEnv,
+          DIRECT_PAYLOAD: directPayload,
+          HOSTED_ENDPOINT_URL: hosted.endpointUrl,
+          NVIDIA_INFERENCE_API_KEY: apiKey,
+        }),
         redactionValues: [apiKey],
         timeoutMs: INFERENCE_TIMEOUT_MS,
       },

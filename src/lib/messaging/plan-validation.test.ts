@@ -147,6 +147,87 @@ describe("parseSandboxMessagingPlan", () => {
     });
   });
 
+  it("keeps compact persisted plans free of derived workflow sections", () => {
+    const source = makePlan({
+      networkPolicy: {
+        presets: ["telegram"],
+        entries: [
+          {
+            channelId: "telegram",
+            presetName: "telegram",
+            policyKeys: ["telegram"],
+            source: "manifest",
+          },
+        ],
+      },
+      agentRender: [
+        {
+          channelId: "telegram",
+          agent: "openclaw",
+          target: "openclaw.json",
+          kind: "json-fragment",
+          path: "channels.telegram",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "package-install",
+          outputId: "telegram-openclaw-plugin",
+          required: true,
+          value: "npm:@openclaw/telegram",
+        },
+      ],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [],
+        secretScans: [
+          {
+            channelId: "telegram",
+            path: "/sandbox/.openclaw/openclaw.json",
+            pattern: "TELEGRAM_BOT_TOKEN",
+          },
+        ],
+      },
+      stateUpdates: [
+        {
+          channelId: "telegram",
+          kind: "persist-inputs",
+          stateKey: "allowedIds.telegram",
+          inputIds: ["allowedIds"],
+        },
+      ],
+      healthChecks: [
+        {
+          channelId: "telegram",
+          phase: "health-check",
+          requiredBefore: "lifecycle-success",
+          hookIds: ["telegram-openclaw-bridge-health"],
+        },
+      ],
+    });
+
+    const compact = compactSandboxMessagingPlanForPersistence(source);
+
+    expect(compact.networkPolicy).toEqual(source.networkPolicy);
+    expect(compact).not.toHaveProperty("agentRender");
+    expect(compact).not.toHaveProperty("buildSteps");
+    expect(compact).not.toHaveProperty("runtimeSetup");
+    expect(compact).not.toHaveProperty("stateUpdates");
+    expect(compact).not.toHaveProperty("healthChecks");
+    expect(compact.channels).toEqual([
+      {
+        channelId: "telegram",
+        active: true,
+        configured: true,
+        disabled: false,
+        inputs: [{ inputId: "allowedIds", value: "123" }],
+      },
+    ]);
+  });
+
   it("rejects mismatched selectors, duplicate channels, and unsupported channels", () => {
     expect(parseSandboxMessagingPlan(makePlan(), { sandboxName: "other" })).toBeNull();
     expect(parseSandboxMessagingPlan(makePlan(), { agent: "hermes" })).toBeNull();

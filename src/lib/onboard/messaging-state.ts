@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import {
+  createBuiltInChannelManifestRegistry,
+  getMessagingManifestAvailabilityContext,
+} from "../messaging";
 import { channelUsesInSandboxQrPairing, type ChannelDef } from "../sandbox/channels";
 
 export type MessagingChannel = { name: string } & ChannelDef;
@@ -25,8 +29,11 @@ export function filterEnabledChannelsByAgent<T extends string[] | null | undefin
 ): T {
   if (!Array.isArray(enabledChannels)) return enabledChannels;
   if (!agent) return enabledChannels;
-  const supported = agent.messagingPlatforms;
-  if (!Array.isArray(supported)) return enabledChannels;
-  if (supported.length === 0) return [] as unknown as T;
-  return enabledChannels.filter((n) => supported.includes(n)) as T;
+  const registry = createBuiltInChannelManifestRegistry();
+  const available = registry.listAvailable(
+    getMessagingManifestAvailabilityContext(agent, registry.list()),
+  );
+  if (available.length === 0) return [] as unknown as T;
+  const supported = new Set(available.map((manifest) => manifest.id));
+  return enabledChannels.filter((n) => supported.has(n)) as T;
 }

@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim (OpenShell needs Node), apt packages, gosu,
+# Contains: node:24-trixie-slim (OpenShell needs Node), apt packages, gosu,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -11,25 +11,36 @@
 # (Python-based) instead of OpenClaw (Node-based).
 #
 # ── When to rebuild ─────────────────────────────────────────────
-#   1. Hermes version bump      — change the HERMES_VERSION below
+#   1. Hermes version bump      — run scripts/update-hermes-agent.sh
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
-#   4. node:22-trixie-slim digest rot — update-docker-pin.sh updates all
+#   4. node:24-trixie-slim digest rot — update-docker-pin.sh updates all
 #   5. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
-FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
+FROM node:24-trixie-slim@sha256:05c08ce4291e9a58f59456a7985176defb12cdd42271f35ff81a3e167ea61d4c
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Hermes version pinned for reproducibility.
-# Calver tag v2026.5.16 = Hermes Agent v0.14.0.
-ARG HERMES_VERSION=v2026.5.16
-ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
+# Hermes version pinned for reproducibility. All four values below are
+# managed by scripts/update-hermes-agent.sh — HERMES_VERSION is the GitHub
+# calver tag, HERMES_SEMVER the matching package version from the release's
+# pyproject.toml, HERMES_TARBALL_SHA256 the GitHub tarball checksum, and
+# HERMES_NPM_INTEGRITY the `npm view hermes-agent@<semver> dist.integrity`
+# sha512 used as a registry cross-check at build time.
+# Calver tag v2026.6.19 = Hermes Agent v0.17.0.
+ARG HERMES_VERSION=v2026.6.19
+ARG HERMES_SEMVER=0.17.0
+ARG HERMES_TARBALL_SHA256=69b805ec0a7a7be880068ba8a3b17479d7ba29f0cac0a2e9c6692c02f346ba91
+ARG HERMES_NPM_INTEGRITY=sha512-PzSJiYqmwpTudmakYs2oCJ57OW3VwEJYf8buTuKvuRvcYEUf/KOTu2dD6pLf2XYgDKErpvcDaoSAJ1nGCyvzAA==
 ARG HERMES_UV_EXTRAS="anthropic messaging web pty"
 ARG UV_VERSION=0.11.8
 
+# build-essential: hermes-agent >= 0.16.0 ships npm dependencies that need a
+# node-gyp native build during `npm ci`; the runtime Dockerfile purges build
+# tools again after install.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential=12.12 \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
@@ -123,6 +134,8 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/runtime \
     && chmod 2770 \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
         /sandbox/.hermes/platforms/whatsapp/session \
@@ -184,10 +197,40 @@ RUN mkdir -p /opt/hermes \
     && sha256sum -c /tmp/hermes.tar.gz.sha256 \
     && tar -xzf /tmp/hermes.tar.gz -C /opt/hermes --strip-components=1 \
     && rm /tmp/hermes.tar.gz /tmp/hermes.tar.gz.sha256
+
+# Cross-check the pinned release against two independent sources before
+# installing anything from it: the extracted tarball must declare
+# HERMES_SEMVER in pyproject.toml (calver tag -> semver mapping), and the
+# hermes-agent package published on npm for that semver must still carry the
+# pinned sha512 integrity. Mirrors the OpenClaw npm integrity check in the
+# root Dockerfile.base.
+# hadolint ignore=DL4006
+RUN set -eu; \
+    tarball_semver=$(sed -n 's/^version = "\(.*\)"/\1/p' /opt/hermes/pyproject.toml | head -1); \
+    if [ "$tarball_semver" != "${HERMES_SEMVER}" ]; then \
+        echo "Error: Hermes ${HERMES_VERSION} tarball declares version ${tarball_semver}, expected ${HERMES_SEMVER}" >&2; \
+        exit 1; \
+    fi; \
+    registry_integrity=$(npm view "hermes-agent@${HERMES_SEMVER}" dist.integrity); \
+    if [ "$registry_integrity" != "${HERMES_NPM_INTEGRITY}" ]; then \
+        echo "Error: hermes-agent ${HERMES_SEMVER} npm integrity mismatch" >&2; \
+        echo "Expected: ${HERMES_NPM_INTEGRITY}" >&2; \
+        echo "Actual:   ${registry_integrity}" >&2; \
+        exit 1; \
+    fi
 WORKDIR /opt/hermes
 # ui-tui and web are part of the checksum-pinned Hermes release tarball.
-# npm ci uses the lockfiles from that pinned tree; re-review on every
-# HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
+# Releases up to v0.14 ship per-directory package-lock.json files; v0.16+
+# declares them as npm workspaces whose dependency tree lives in the root
+# package-lock.json, so the root `npm ci` installs their dependencies and
+# the build runs via `npm run --workspace` (which resolves nothing itself).
+# Either way every npm install is `npm ci` against a lockfile shipped in
+# the sha256-verified tarball — the workspace branch below additionally
+# requires the UI dir to appear in the pinned root lockfile before building.
+# Re-review the lockfiles on every HERMES_VERSION/HERMES_TARBALL_SHA256 bump.
+# The final `npm ci --omit=dev` drops the UI build toolchain (vite, tsc,
+# eslint) from node_modules again — the dashboard bundle is already in
+# hermes_cli/web_dist and the TUI keeps its runtime (non-dev) deps.
 # hadolint ignore=SC2086
 RUN set -eu; \
     set --; \
@@ -200,8 +243,10 @@ RUN set -eu; \
         if [ -f "${ui_dir}/package-lock.json" ]; then \
             npm ci --prefix "${ui_dir}" --prefer-offline --no-audit --no-fund; \
             npm run build --prefix "${ui_dir}"; \
+        elif [ -f "${ui_dir}/package.json" ] && grep -q "\"${ui_dir}\"" package-lock.json; then \
+            npm run build --workspace "${ui_dir}"; \
         else \
-            echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
+            echo "Skipping optional Hermes UI package ${ui_dir}: not covered by a pinned lockfile"; \
         fi; \
     done \
     && bridge_dir=scripts/whatsapp-bridge \
@@ -212,10 +257,38 @@ RUN set -eu; \
     else \
         echo "Skipping optional Hermes bridge ${bridge_dir}: no package manifest found"; \
     fi \
+    && npm ci --omit=dev --prefer-offline --no-audit --no-fund \
     && rm -rf ui-tui/node_modules web/node_modules /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
+
+# python-multipart: FastAPI's multipart/form-data parser. FastAPI imports it
+# lazily, only when a route declares Form/File/UploadFile, and treats it as an
+# optional dependency (bare `fastapi` does not require it — only fastapi[standard]
+# does). The bundled kanban dashboard plugin
+# (plugins/kanban/dashboard/plugin_api.py) registers a card-attachment upload
+# route that uses File/Form, so without python-multipart the plugin's API routes
+# fail to mount ("Form data requires python-multipart to be installed").
+#
+# It is NOT a dependency of hermes-agent core or any extra we enable; upstream
+# only pulls it transitively via the mcp/daytona/all extras. Rather than drag in
+# the MCP client (a new agent capability) or the Daytona cloud-provider SDK (an
+# unused, egress/telemetry-capable SDK) just to obtain a dependency-free form
+# parser, vendor python-multipart directly — pinned and hash-verified to the
+# exact version resolved in the checksum-pinned release's uv.lock, so it stays
+# tied to HERMES_VERSION/HERMES_TARBALL_SHA256 review like every other dep.
+# Re-review the version and both hashes on every Hermes version bump.
+# hadolint ignore=DL3059
+RUN printf '%s\n' \
+        "python-multipart==0.0.27 \\" \
+        "    --hash=sha256:6fccfad17a27334bd0193681b369f476eda3409f17381a2d65aa7df3f7275645 \\" \
+        "    --hash=sha256:9870a6a8c5a20a5bf4f07c017bd1489006ff8836cff097b6933355ee2b49b602" \
+        > /tmp/multipart-req.txt \
+    && uv pip install --python /opt/hermes/.venv/bin/python \
+        --no-deps --no-cache --require-hashes -r /tmp/multipart-req.txt \
+    && rm -f /tmp/multipart-req.txt \
+    && /opt/hermes/.venv/bin/python -c "import multipart; print('python-multipart', multipart.__version__)"
 
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}" \
     HERMES_TUI_DIR="/opt/hermes/ui-tui" \

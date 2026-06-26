@@ -17,6 +17,7 @@ type ConnectHarness = {
   checkAndRecoverSpy: MockInstance;
   connectSandbox: ConnectSandbox;
   ensureOllamaAuthProxySpy: MockInstance;
+  errorSpy: MockInstance;
   logSpy: MockInstance;
   runAutoPairSpy: MockInstance;
   spawnSyncSpy: MockInstance;
@@ -34,20 +35,35 @@ type ConnectHarnessOptions = {
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: "raw-secret" | "inconclusive";
   };
+  spawnSignal?: NodeJS.Signals | null;
   spawnStatus?: number | null;
+  sttyThrows?: boolean;
 };
+
+function throwSttyFailure(): never {
+  throw new Error("stty failed");
+}
+
+function spawnStatusFromOptions(options: ConnectHarnessOptions): number | null {
+  return Object.hasOwn(options, "spawnStatus") ? (options.spawnStatus ?? null) : 0;
+}
 
 function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarness {
   delete require.cache[requireDist.resolve(connectModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
-  const spawnSyncSpy = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
-    status: options.spawnStatus ?? 0,
-    signal: null,
-  } as never);
+  const spawnSyncSpy = vi.spyOn(childProcess, "spawnSync").mockImplementation(((
+    command: unknown,
+  ) =>
+    String(command) === "stty" && options.sttyThrows
+      ? throwSttyFailure()
+      : ({
+          status: spawnStatusFromOptions(options),
+          signal: options.spawnSignal ?? null,
+        } as never)) as never);
 
   const runtime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
   const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
@@ -115,6 +131,7 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
     .mockReturnValue({ reported: 0, approved: 0 });
 
   logSpy.mockClear();
+  errorSpy.mockClear();
   spawnSyncSpy.mockClear();
 
   return {
@@ -122,6 +139,7 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
     checkAndRecoverSpy,
     connectSandbox: requireDist(connectModulePath).connectSandbox,
     ensureOllamaAuthProxySpy,
+    errorSpy,
     logSpy,
     runAutoPairSpy,
     spawnSyncSpy,
@@ -130,6 +148,10 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
 
 describe("connectSandbox flow", () => {
   let exitSpy: MockInstance;
+  const originalStdinIsTty = process.stdin.isTTY;
+  const originalStdinSetRawMode = (
+    process.stdin as typeof process.stdin & { setRawMode?: (mode: boolean) => unknown }
+  ).setRawMode;
   const originalStdoutIsTty = process.stdout.isTTY;
 
   beforeEach(() => {
@@ -150,6 +172,14 @@ describe("connectSandbox flow", () => {
         value: originalStdoutIsTty,
       });
     }
+    Object.defineProperty(process.stdin, "isTTY", {
+      configurable: true,
+      value: originalStdinIsTty,
+    });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: originalStdinSetRawMode,
+    });
     delete process.env.NEMOCLAW_TEST_NO_SLEEP;
     delete require.cache[requireDist.resolve(connectModulePath)];
   });
@@ -175,6 +205,155 @@ describe("connectSandbox flow", () => {
     expect(output).toContain("existing SSH sessions");
     expect(output).toContain("Connecting to sandbox 'alpha'");
     expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("restores the terminal and prints reconnect guidance when SSH disconnects", async () => {
+    const setRawModeSpy = vi.fn();
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnStatus: 255,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
+
+    expect(setRawModeSpy).toHaveBeenCalledWith(false);
+    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+      "stty",
+      ["sane"],
+      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(255);
+  });
+
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGPIPE", 141],
+  ] as const)("restores the terminal and preserves the exit code when SSH ends with %s", async (signal, exitCode) => {
+    const setRawModeSpy = vi.fn();
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnSignal: signal,
+      spawnStatus: null,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow(`process.exit(${exitCode})`);
+
+    expect(setRawModeSpy).toHaveBeenCalledWith(false);
+    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+      "stty",
+      ["sane"],
+      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
+    );
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(exitCode);
+  });
+
+  it("prints reconnect guidance without terminal cleanup when stdin is not a TTY", async () => {
+    const setRawModeSpy = vi.fn();
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: false });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnStatus: 255,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
+
+    expect(setRawModeSpy).not.toHaveBeenCalled();
+    expect(harness.spawnSyncSpy).not.toHaveBeenCalledWith("stty", ["sane"], expect.any(Object));
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(255);
+  });
+
+  it("still runs stty cleanup when disabling raw mode throws", async () => {
+    const setRawModeSpy = vi.fn(() => {
+      throw new Error("raw mode failed");
+    });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnStatus: 255,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
+
+    expect(setRawModeSpy).toHaveBeenCalledWith(false);
+    expect(harness.spawnSyncSpy).toHaveBeenCalledWith(
+      "stty",
+      ["sane"],
+      expect.objectContaining({ stdio: ["inherit", "ignore", "ignore"] }),
+    );
+    expect(exitSpy).toHaveBeenCalledWith(255);
+  });
+
+  it("preserves the disconnect exit code when stty cleanup throws", async () => {
+    const setRawModeSpy = vi.fn();
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: true });
+    Object.defineProperty(process.stdin, "setRawMode", {
+      configurable: true,
+      value: setRawModeSpy,
+    });
+    const harness = createConnectHarness({
+      agentName: "langchain-deepagents-code",
+      sessionAgent: {
+        name: "langchain-deepagents-code",
+        runtime: { kind: "terminal", interactive_command: "dcode", headless_command: "dcode -n" },
+      },
+      spawnStatus: 255,
+      sttyThrows: true,
+    });
+
+    await expect(harness.connectSandbox("alpha")).rejects.toThrow("process.exit(255)");
+
+    expect(setRawModeSpy).toHaveBeenCalledWith(false);
+    const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
+    expect(errorOutput).toContain(
+      "Gateway connection lost. Reconnect with: nemoclaw alpha connect",
+    );
+    expect(exitSpy).toHaveBeenCalledWith(255);
   });
 
   it("prints the terminal launch command in the connect hint for terminal agents", async () => {

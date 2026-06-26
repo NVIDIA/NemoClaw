@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
+import {
+  runWithEnv,
+  testTimeoutOptions,
+  writeHealthyDockerStub,
+  writeSandboxRegistry,
+} from "./helpers";
 
 describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
   it("sandbox status --json emits structured per-sandbox report", () => {
@@ -379,6 +384,68 @@ describe("CLI sandbox status JSON output", testTimeoutOptions(20_000), () => {
     expect(parsed.failureLayer).toBe("sandbox_container_stopped");
     expect(parsed.phase).toBe("Error");
     expect(parsed.inferenceHealth).toBeNull();
+  });
+
+  it("sandbox status --json reports terminal runtime OOM degradation and exits 1 (#5796)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-json-dcode-oom-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      agent: "langchain-deepagents-code",
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    });
+    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        "  echo 'oom_kill=3'",
+        "  echo 'source=/sys/fs/cgroup/memory.oom_control'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    const parsed = JSON.parse(r.out);
+    expect(parsed.phase).toBe("Ready");
+    expect(parsed.agentRuntime).toBe("terminal");
+    expect(parsed.terminalRuntimeHealth).toEqual({
+      kind: "degraded",
+      oomKillCount: 3,
+      source: "/sys/fs/cgroup/memory.oom_control",
+    });
   });
 
   it("sandbox status --json sets failureLayer=sandbox_dashboard_port_conflict when the dashboard port is held by a foreign listener", async () => {

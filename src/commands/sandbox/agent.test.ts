@@ -31,11 +31,11 @@ describe("SandboxAgentCommand oclif parse path", () => {
     });
   });
 
-  it("does not call runAgentPassthrough when --help follows the sandbox name", async () => {
+  it("passes --help after the sandbox name to agent-aware dispatch (#5790)", async () => {
     await SandboxAgentCommand.run(["alpha", "--help"], rootDir);
-    expect(runAgentPassthroughMock).not.toHaveBeenCalled();
-    const help = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
-    expect(help).toMatch(/openclaw agent/);
+    expect(runAgentPassthroughMock).toHaveBeenCalledWith("alpha", {
+      extraArgs: ["--help"],
+    });
   });
 
   it("does not call runAgentPassthrough when no sandbox name is supplied", async () => {
@@ -50,13 +50,8 @@ describe("SandboxAgentCommand oclif parse path", () => {
     expect(runAgentPassthroughMock).not.toHaveBeenCalled();
   });
 
-  it("prints wrapper help and does not dispatch on a bare no-args invocation (#5658)", async () => {
-    // `nemoclaw <name> agent` with no further args cannot succeed in-sandbox
-    // (openclaw agent requires -m), so short-circuit to wrapper help locally
-    // instead of paying sandbox-exec latency to surface an upstream error.
+  it("passes a bare sandbox invocation to agent-aware dispatch (#5790)", async () => {
     await SandboxAgentCommand.run(["alpha"], rootDir);
-    expect(runAgentPassthroughMock).not.toHaveBeenCalled();
-    const help = logSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
-    expect(help).toMatch(/openclaw agent/);
+    expect(runAgentPassthroughMock).toHaveBeenCalledWith("alpha", { extraArgs: [] });
   });
 });

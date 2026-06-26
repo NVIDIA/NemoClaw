@@ -13,19 +13,31 @@ export function hasAgentPassthroughHelpToken(args: readonly string[]): boolean {
 
 export function printAgentPassthroughHelp(): void {
   console.log("");
-  console.log(`  Usage: ${CLI_NAME} <name> agent [openclaw-agent-flags...]`);
+  console.log(`  Usage: ${CLI_NAME} <name> agent [agent-flags...]`);
   console.log("");
   console.log(
-    "  Pass-through to `openclaw agent ...` inside the sandbox via `openshell sandbox exec`.",
+    "  Pass-through to the sandbox's registered agent command via `openshell sandbox exec`.",
   );
-  console.log("  All flags accepted by the in-sandbox OpenClaw CLI are forwarded verbatim.");
+  console.log("  OpenClaw sandboxes run `openclaw agent ...`; terminal-runtime sandboxes run");
   console.log(
-    "  Common flags: -m <text>, --session-id <id>, --agent <id>, --json, --thinking <level>.",
+    "  their manifest-declared interactive command, such as `dcode ...` for Deep Agents Code.",
+  );
+  console.log("  All flags accepted by the selected in-sandbox agent CLI are forwarded verbatim.");
+  console.log(
+    "  Common OpenClaw flags: -m <text>, --session-id <id>, --agent <id>, --json, --thinking <level>.",
   );
   console.log("");
+  console.log("  OpenClaw invocations must include at least one target selector — --agent,");
+  console.log("  --session-id, --session-key, or --to. On Ready/Running OpenClaw sandboxes,");
+  console.log("  invocations without a selector exit 2 with `No target session selected`; on a");
   console.log(
-    "  Currently supported on OpenClaw sandboxes only; Hermes sandboxes are rejected with a",
+    "  non-Ready sandbox the phase guard fires first and exits 1 with recovery commands.",
   );
+  console.log("");
+  console.log(`  For terminal-runtime help, run \`${CLI_NAME} <name> agent --help\` to view the`);
+  console.log("  upstream command help from inside the sandbox.");
+  console.log("");
+  console.log("  Hermes sandboxes are rejected with a");
   console.log("  redirect to the OpenAI-compatible API on port 8642 inside the sandbox.");
   console.log("");
 }

@@ -22,7 +22,10 @@ import * as registry from "../state/registry";
 
 export { MessagingHostStateApplier };
 
-import { resolveMessagingChannelConfigEnvValue } from "../messaging-channel-config";
+import {
+  detectInvalidMessagingChannelConfigEnvValues,
+  resolveMessagingChannelConfigEnvValue,
+} from "../messaging-channel-config";
 import {
   type MessagingSelectorInput,
   type MessagingSelectorOutput,
@@ -62,11 +65,22 @@ export async function setupMessagingChannels(
 ): Promise<string[]> {
   deps.step?.(5, 8, "Messaging channels");
 
+  const invalidConfigEnvValues = detectInvalidMessagingChannelConfigEnvValues();
+  for (const { key, rawValue, validValues } of invalidConfigEnvValues) {
+    console.error(
+      `  Invalid ${key} value '${rawValue}' (expected one of: ${validValues.join(", ")})`,
+    );
+  }
+  if (invalidConfigEnvValues.length > 0) process.exit(1);
+
   const note = deps.note ?? console.log;
   const isNonInteractive =
     deps.isNonInteractive ?? (() => process.env.NEMOCLAW_NON_INTERACTIVE === "1");
   const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const availabilityContext = getMessagingManifestAvailabilityContext(agent);
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
   const hasManifestRequiredInputs = (manifest: ChannelManifest) =>
     hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue);
@@ -158,7 +172,7 @@ export async function setupSelectedMessagingChannels(
     return null;
   }
 
-  const agent = toMessagingAgentId(options.agent);
+  const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
   const planner = new MessagingWorkflowPlanner(
     registry,

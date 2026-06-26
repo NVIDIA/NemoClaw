@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const HOSTED_INFERENCE_SECRET = "NVIDIA_INFERENCE_API_KEY";
-const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
-const HOSTED_INFERENCE_PROVIDER = "custom";
-const HOSTED_INFERENCE_PROVIDER_NAME = "compatible-endpoint";
-const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.com/v1";
-const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
+export const HOSTED_INFERENCE_SECRET = "NVIDIA_INFERENCE_API_KEY";
+export const HOSTED_INFERENCE_CREDENTIAL_ENV = "COMPATIBLE_API_KEY";
+export const HOSTED_INFERENCE_PROVIDER = "custom";
+export const HOSTED_INFERENCE_PROVIDER_NAME = "compatible-endpoint";
+export const DEFAULT_HOSTED_INFERENCE_BASE_URL = "https://inference-api.nvidia.com/v1";
+export const DEFAULT_HOSTED_INFERENCE_MODEL = "nvidia/nvidia/nemotron-3-ultra";
 
 export interface HostedInferenceSecrets {
   required(name: string): string;

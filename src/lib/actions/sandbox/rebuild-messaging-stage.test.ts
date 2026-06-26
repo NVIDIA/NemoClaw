@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Regression: stageMessagingManifestPlanForRebuild() must clear any stale
-// NEMOCLAW_MESSAGING_PLAN_B64 and skip planning for agents whose manifest
-// declares no messaging support, so a non-messaging sandbox rebuild cannot
+// NEMOCLAW_MESSAGING_PLAN_B64 and skip planning for agents unsupported by
+// channel manifests, so a non-messaging sandbox rebuild cannot
 // carry messaging-plan state into the Dockerfile patch step.
 //
 // Loaded from dist/ to match the rest of the rebuild test suite (runner.ts
@@ -50,10 +50,9 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     vi.restoreAllMocks();
   });
 
-  it("emits the unknown-runtime skip message for any agent whose name is not in the runtime allowlist", async () => {
+  it("emits the skip message for any agent whose name is not supported by channel manifests", async () => {
     const loadAgentSpy = vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-non-messaging-agent",
-      messagingPlatforms: [],
     });
     const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
 
@@ -68,18 +67,15 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     expect(loadAgentSpy).toHaveBeenCalledWith("future-non-messaging-agent");
     expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
     expect(messages).toContain(
-      "Messaging manifest rebuild plan skipped: agent 'future-non-messaging-agent' is not a messaging-capable runtime",
+      "Messaging manifest rebuild plan skipped: agent 'future-non-messaging-agent' is not supported by any channel manifest",
     );
-    expect(messages.some((msg) => msg.includes("declares no supported messaging channels"))).toBe(
-      false,
-    );
+    expect(messages.some((msg) => msg.includes("has no supported messaging channels"))).toBe(false);
     expect(result).toBeNull();
   });
 
   it("stages an explicit empty rebuild plan so token-backed channels are not rediscovered", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
-      messagingPlatforms: ["telegram"],
     });
     const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
     const writePlanEnvSpy = vi
@@ -108,10 +104,9 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
     expect(result).toMatchObject({ workflow: "rebuild", channels: [] });
   });
 
-  it("emits the empty-allowlist skip message for a known agent whose messagingPlatforms is an explicit empty allowlist", async () => {
+  it("stages a plan for a known agent using channel-manifest supported channels", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
-      messagingPlatforms: [],
     });
     const clearPlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "clearPlanEnv");
     const writePlanEnvSpy = vi.spyOn(messaging.MessagingSetupApplier, "writePlanToEnv");
@@ -157,12 +152,9 @@ describe("stageMessagingManifestPlanForRebuild non-messaging agent guard", () =>
       (msg) => messages.push(msg),
     );
 
-    expect(clearPlanEnvSpy).toHaveBeenCalledTimes(1);
-    expect(writePlanEnvSpy).not.toHaveBeenCalled();
-    expect(messages).toContain(
-      "Messaging manifest rebuild plan skipped: agent 'openclaw' declares no supported messaging channels",
-    );
-    expect(messages.some((msg) => msg.includes("is not a messaging-capable runtime"))).toBe(false);
-    expect(result).toBeNull();
+    expect(clearPlanEnvSpy).not.toHaveBeenCalled();
+    expect(writePlanEnvSpy).toHaveBeenCalledTimes(1);
+    expect(messages).toContain("Messaging manifest rebuild plan staged: telegram");
+    expect(result).not.toBeNull();
   });
 });

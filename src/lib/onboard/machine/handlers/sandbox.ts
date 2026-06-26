@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { isMessagingSupportedAgent, tryGetMessagingAgentId } from "../../../messaging";
+import {
+  createBuiltInChannelManifestRegistry,
+  listSupportedMessagingChannelIdsForAgent,
+  tryGetMessagingAgentId,
+} from "../../../messaging";
 import type { MessagingAgentId, SandboxMessagingPlan } from "../../../messaging/manifest";
 import { hashCredential } from "../../../security/credential-hash";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
@@ -158,8 +162,9 @@ function refreshCredentialHashesFromEnv(plan: SandboxMessagingPlan): {
 
 type MessagingAgentLike = {
   readonly name?: string;
-  readonly messagingPlatforms?: readonly string[] | null;
 };
+
+const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
 
 function resolveCurrentMessagingAgent(agent: unknown): {
   readonly agentId: MessagingAgentId | null;
@@ -168,15 +173,14 @@ function resolveCurrentMessagingAgent(agent: unknown): {
   const descriptor = (agent ?? {}) as MessagingAgentLike;
   const name = typeof descriptor.name === "string" ? descriptor.name.trim() : "";
   if (!name) return { agentId: null, supportedChannelIds: null };
-  const agentId = tryGetMessagingAgentId(descriptor);
-  if (agentId === null || !isMessagingSupportedAgent(descriptor)) {
+  const manifests = messagingManifestRegistry.list();
+  const agentId = tryGetMessagingAgentId(descriptor, manifests);
+  if (agentId === null) {
     return { agentId: null, supportedChannelIds: [] };
   }
   return {
     agentId,
-    supportedChannelIds: Array.isArray(descriptor.messagingPlatforms)
-      ? descriptor.messagingPlatforms
-      : null,
+    supportedChannelIds: listSupportedMessagingChannelIdsForAgent(manifests, agentId),
   };
 }
 

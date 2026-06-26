@@ -62,6 +62,12 @@ type DockerGpuSandboxCreatePatchOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   timeoutSecs: number;
   backend?: DockerGpuPatchBackend;
+  /**
+   * Whether the host is Docker Desktop WSL. Defaults to the cached
+   * `isDockerDesktopWslRuntime()` probe. When true, the GPU patch skips the CDI
+   * mode (unusable on this runtime) and uses `--gpus` instead (#5512).
+   */
+  dockerDesktopWsl?: boolean;
   deps: DockerGpuSandboxCreateDeps;
   /**
    * Test seams. The production composition uses the canonical
@@ -136,6 +142,7 @@ export function createDockerGpuSandboxCreatePatch(
     openshellSandboxCommand: options.openshellSandboxCommand ?? null,
     timeoutSecs: options.timeoutSecs,
     backend: options.backend,
+    dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
 
   return {

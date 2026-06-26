@@ -52,6 +52,7 @@ export function env(
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_MODEL: MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_FRESH: "1",
     NEMOCLAW_PROVIDER: PROVIDER,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: sandboxName,
@@ -222,7 +223,7 @@ export async function installSandbox(
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
     install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
       {
         artifactName: `${agent}-install-attempt-${attempt}`,
         cwd: REPO_ROOT,
@@ -327,21 +328,21 @@ export async function waitHermesHealth(sandbox: SandboxClient): Promise<ShellPro
 }
 
 export function openclawConfigCommand(): string {
-  return `node <<'NODE'
-const fs = require('node:fs');
-function redact(value) {
-  if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object') {
-    const out = {};
-    for (const [key, entry] of Object.entries(value)) {
-      out[key] = /api[_-]?key|token|secret|credential/i.test(key) ? '[REDACTED]' : redact(entry);
-    }
-    return out;
-  }
-  return value;
-}
-console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json', 'utf8'))), null, 2));
-NODE`;
+  const script =
+    "const fs=require('node:fs');" +
+    "function redact(value){" +
+    "if(Array.isArray(value))return value.map(redact);" +
+    "if(value&&typeof value==='object'){" +
+    "const out={};" +
+    "for(const [key,entry] of Object.entries(value)){" +
+    "out[key]=/api[_-]?key|token|secret|credential/i.test(key)?'[REDACTED]':redact(entry);" +
+    "}" +
+    "return out;" +
+    "}" +
+    "return value;" +
+    "}" +
+    "console.log(JSON.stringify(redact(JSON.parse(fs.readFileSync('/sandbox/.openclaw/openclaw.json','utf8'))),null,2));";
+  return `node -e ${JSON.stringify(script)}`;
 }
 
 export function assertNoOpenClawTransportErrors(output: string): void {
@@ -351,5 +352,5 @@ export function assertNoOpenClawTransportErrors(output: string): void {
 }
 
 export function hermesTurnCommand(payload: string): string {
-  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d '${payload.replace(/'/gu, `'\\''`)}'); else code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d '${payload.replace(/'/gu, `'\\''`)}'); fi; rc=$?; cat \"$tmp\"; rm -f \"$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"$rc\"`;
+  return `set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d '${payload.replace(/'/gu, `'\\''`)}'); else code=$(curl -sS -o \"$tmp\" -w '%{http_code}' --max-time ${MAX_TURN_SECONDS} http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d '${payload.replace(/'/gu, `'\\''`)}'); fi; rc=$?; cat \"$tmp\"; rm -f \"$tmp\"; printf '\\n__NEMOCLAW_HTTP_STATUS__=%s\\n' \"\${code:-000}\"; exit \"$rc\"`;
 }
