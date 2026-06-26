@@ -38,6 +38,7 @@ import { spawnSync } from "node:child_process";
 
 import { ROOT } from "../../state/paths";
 import { wrapSandboxShellScript } from "./auto-pair-approval";
+import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 
 // Outer spawnSync cap (ms) for the throwaway warm-up agent run. The `-m`
 // one-shot prompt ("ping") returns fast even when it falls back to embedded
@@ -65,12 +66,12 @@ export const WARMUP_POLL_LIST_TIMEOUT_S = 2;
 // the approval pass that runs immediately after could otherwise list devices
 // before the gateway has registered the upgrade. The poll bounds are
 // interpolated so the cap is asserted on real values, not source text.
-const WARMUP_SCRIPT = `
+export const WARMUP_SCRIPT = `
 PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
 [ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
 command -v openclaw >/dev/null 2>&1 || exit 0
 openclaw agent --agent main -m "ping" \\
-  --session-id "nemoclaw-onboard-warmup-$$-$(date +%s)" >/dev/null 2>&1 || true
+  --session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)" >/dev/null 2>&1 || true
 command -v python3 >/dev/null 2>&1 || exit 0
 OPENCLAW_BIN="$(command -v openclaw)"
 i=0

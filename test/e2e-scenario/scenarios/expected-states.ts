@@ -31,10 +31,14 @@ const cloudHermesReady: ExpectedState = {
   credentials: { expected: "present" },
 };
 
+// Deep Agents Code is a terminal-agent runtime, not an OpenClaw dashboard
+// runtime. The P0-E parity target is sandbox policy/egress behavior, so the
+// live typed scenario must not require a host dashboard forward on 18789 before
+// running the in-sandbox cloud-experimental checks.
 const cloudDeepAgentsCodeReady: ExpectedState = {
   id: "cloud-deepagents-code-ready",
   cli: { installed: true },
-  gateway: { expected: "present", health: "healthy" },
+  gateway: { expected: "optional", health: "optional" },
   sandbox: { expected: "present", status: "running", agent: "langchain-deepagents-code" },
   inference: { expected: "available", provider: "nvidia" },
   credentials: { expected: "present" },

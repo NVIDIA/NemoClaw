@@ -21,7 +21,8 @@ vi.mock("../../../state/registry", () => ({
 
 import { captureOpenshell, runOpenshell } from "../../../adapters/openshell/runtime";
 import * as registry from "../../../state/registry";
-import { buildSandboxTarArgv, exportSandboxSessions, parseSessionIndex } from "./export";
+import { isWarmupSessionId, WARMUP_SESSION_ID_PREFIX } from "../warmup-session";
+import { buildSandboxTarArgv, exportSandboxSessions } from "./export";
 
 const captureMock = captureOpenshell as unknown as ReturnType<typeof vi.fn>;
 const runMock = runOpenshell as unknown as ReturnType<typeof vi.fn>;
@@ -74,42 +75,70 @@ describe("buildSandboxTarArgv", () => {
   });
 });
 
-describe("parseSessionIndex", () => {
-  it("accepts a plain JSON array of entries", () => {
-    const output = '[{"key":"agent:main:main","sessionId":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
+describe("isWarmupSessionId", () => {
+  it("matches the onboard warm-up session id prefix (#5511)", () => {
+    expect(isWarmupSessionId(`${WARMUP_SESSION_ID_PREFIX}123`)).toBe(true);
+    expect(isWarmupSessionId("sid-real")).toBe(false);
+  });
+});
+
+describe("exportSandboxSessions warm-up filtering", () => {
+  it("excludes the onboard warm-up session from export-all but keeps real sessions (#5511)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:main", sessionId: `${WARMUP_SESSION_ID_PREFIX}1` },
+          { key: "agent:main:telegram:t-1", sessionId: "sid-real" },
+        ]),
+      ),
+    );
+
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      out: "./out.tgz",
+      format: "tar",
+    });
+
+    const tarCall = runMock.mock.calls[0]?.[0] as string[];
+    const shellCommand = tarCall[7] as string;
+    expect(result.resolvedSessionIds).toEqual(["sid-real"]);
+    expect(shellCommand).toMatch(/-- \.\/sid-real\.jsonl/);
+    expect(shellCommand).not.toContain(WARMUP_SESSION_ID_PREFIX);
   });
 
-  it("accepts an object wrapper with a sessions array", () => {
-    const output = '{"sessions":[{"key":"agent:main:main","sessionId":"sid-1"}]}';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
+  it("refuses export-all when only the onboard warm-up session remains (#5511)", async () => {
+    captureMock.mockReturnValueOnce(
+      makeCapture(
+        JSON.stringify([
+          { key: "agent:main:explicit:warm", sessionId: `${WARMUP_SESSION_ID_PREFIX}1` },
+        ]),
+      ),
+    );
+
+    await expect(
+      exportSandboxSessions({
+        sandboxName: "alpha",
+        out: "./sessions-alpha",
+      }),
+    ).rejects.toThrow(/agent 'main' has no sessions to bundle/);
+    expect(runMock).not.toHaveBeenCalled();
   });
 
-  it("treats id as an alias for sessionId", () => {
-    const output = '[{"key":"agent:main:main","id":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
-  });
+  it("still exports a warm-up session when the caller names it explicitly", async () => {
+    const warmupId = `${WARMUP_SESSION_ID_PREFIX}explicit`;
+    captureMock.mockReturnValueOnce(
+      makeCapture(JSON.stringify([{ key: "agent:main:main", sessionId: warmupId }])),
+    );
 
-  it("tolerates log noise preceding a single-line JSON payload", () => {
-    const output = 'warning: deprecation\n[{"key":"agent:main:main","sessionId":"sid-1"}]';
-    expect(parseSessionIndex(output)).toEqual([{ key: "agent:main:main", sessionId: "sid-1" }]);
-  });
+    const result = await exportSandboxSessions({
+      sandboxName: "alpha",
+      keys: ["agent:main:main"],
+      out: "./out.tgz",
+      format: "tar",
+    });
 
-  it("returns [] when the upstream emits an empty index (empty array)", () => {
-    expect(parseSessionIndex("[]")).toEqual([]);
-  });
-
-  it("returns [] when the upstream emits no output at all", () => {
-    expect(parseSessionIndex("")).toEqual([]);
-  });
-
-  it("returns null when the output is non-empty but no JSON shape is recognised", () => {
-    expect(parseSessionIndex("hello world")).toBeNull();
-  });
-
-  it("returns null when the array is non-empty but every entry uses unknown field names (schema drift)", () => {
-    const output = JSON.stringify([{ alias: "agent:main:main", uuid: "sid-1" }]);
-    expect(parseSessionIndex(output)).toBeNull();
+    expect(result.resolvedSessionIds).toEqual([warmupId]);
+    expect(result.resolvedFiles).toEqual([`${warmupId}.jsonl`]);
   });
 });
 

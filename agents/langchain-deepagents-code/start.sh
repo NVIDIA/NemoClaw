@@ -128,7 +128,8 @@ prepare_runtime_env
 # phase, which breaks the Docker GPU-patch supervisor reconnect and leaves GPU
 # posture unreliable (#5717). Idle forever instead so the sandbox stays Ready.
 if [ "$#" -eq 0 ]; then
-  exec sleep infinity
+  printf '%s\n' 'Setting up NemoClaw Deep Agents Code runtime...'
+  exec tail -f /dev/null
 fi
 
 exec "$@"
