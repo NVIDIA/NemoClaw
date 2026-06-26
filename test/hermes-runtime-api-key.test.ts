@@ -153,11 +153,9 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   fs.mkdirSync(hermesHome, { recursive: true });
   fs.writeFileSync(configPath, "model:\n  default: test-model\n");
   fs.writeFileSync(envPath, opts.envFile, { mode: 0o640 });
-  if (opts.hashFileContent === undefined) {
-    writeHermesHash(hashPath, configPath, envPath);
-  } else {
-    fs.writeFileSync(hashPath, opts.hashFileContent);
-  }
+  opts.hashFileContent === undefined
+    ? writeHermesHash(hashPath, configPath, envPath)
+    : fs.writeFileSync(hashPath, opts.hashFileContent);
 
   try {
     const result = spawnSync(
