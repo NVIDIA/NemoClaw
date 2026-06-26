@@ -27,8 +27,14 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
-      model: "llama",
-      provider: "openai-compatible",
+      inferenceSelection: {
+        model: "llama",
+        provider: "openai-compatible",
+        endpointUrl: "https://example.test/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+        nimContainer: null,
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: true,
@@ -49,6 +55,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       name: "demo",
       model: "llama",
       provider: "openai-compatible",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       policies: ["discord", "slack"],
       hermesToolGateways: ["filesystem"],
@@ -74,8 +83,14 @@ describe("buildCreatedSandboxRegistryEntry", () => {
   it("skips stale messaging plans without writing legacy messaging fields", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
-      model: "",
-      provider: "",
+      inferenceSelection: {
+        model: "",
+        provider: "",
+        endpointUrl: "",
+        credentialEnv: "",
+        preferredInferenceApi: "",
+        nimContainer: "",
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: false,
@@ -94,6 +109,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(entry.model).toBeNull();
     expect(entry.provider).toBeNull();
+    expect(entry.endpointUrl).toBeNull();
+    expect(entry.credentialEnv).toBeNull();
+    expect(entry.preferredInferenceApi).toBeNull();
+    expect(entry.nimContainer).toBeNull();
     const rawEntry = entry as unknown as Record<string, unknown>;
     expect(rawEntry.messagingChannels).toBeUndefined();
     expect(rawEntry.messagingChannelConfig).toBeUndefined();
@@ -113,8 +132,14 @@ describe("registerCreatedSandbox", () => {
 
     const entry = registerCreatedSandbox({
       sandboxName: "demo",
-      model: "llama",
-      provider: "openai-compatible",
+      inferenceSelection: {
+        model: "llama",
+        provider: "openai-compatible",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+      },
       runtimeFields,
       agent: null,
       agentVersionKnown: true,

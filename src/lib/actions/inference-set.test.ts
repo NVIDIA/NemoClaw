@@ -105,6 +105,24 @@ function baseSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
+function expectInferenceRegistryUpdate(
+  updateSandbox: ReturnType<typeof vi.fn>,
+  sandboxName: string,
+  expected: { provider: string; model: string; preferredInferenceApi?: string | null },
+): void {
+  expect(updateSandbox).toHaveBeenCalledWith(
+    sandboxName,
+    expect.objectContaining({
+      provider: expected.provider,
+      model: expected.model,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: expected.preferredInferenceApi ?? null,
+      nimContainer: null,
+    }),
+  );
+}
+
 function createDeps(options: {
   config: ConfigObject;
   entry?: SandboxEntry | null;
@@ -453,10 +471,13 @@ describe("runInferenceSet", () => {
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
@@ -545,10 +566,13 @@ describe("runInferenceSet", () => {
       "/sandbox/.hermes/config.yaml",
     );
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes", {
-      provider: "hermes-provider",
-      model: "openai/gpt-5.4-mini",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.getSession()).toMatchObject({
       provider: "hermes-provider",
       model: "openai/gpt-5.4-mini",
@@ -823,10 +847,13 @@ describe("runInferenceSet", () => {
     await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
 
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes-one", HERMES_TARGET, config);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes-one", {
-      provider: "hermes-provider",
-      model: "z-ai/glm-5.1",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes-one",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "z-ai/glm-5.1",
+      }),
+    );
   });
 
   it("requires --sandbox when the nemohermes alias cannot choose one Hermes sandbox", async () => {
@@ -899,10 +926,13 @@ describe("runInferenceSet", () => {
     );
 
     // Registry still updated despite the in-sandbox sync throwing (no stale registry → no revert).
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       provider: "nvidia-prod",
@@ -940,10 +970,13 @@ describe("runInferenceSet", () => {
 
     // Config write happened and registry is updated; the run resolves without aborting.
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(result).toMatchObject({ inSandboxConfigSynced: false });
 
     // Degraded: warns about the stale integrity hash, points at rebuild, no "synced".

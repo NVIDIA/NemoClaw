@@ -12,6 +12,7 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
@@ -429,12 +430,6 @@ export async function runInferenceSet(
     );
   }
 
-  // Write the registry before the crash-prone in-sandbox sync so the gateway
-  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
-  if (!deps.updateSandbox(sandboxName, { provider, model })) {
-    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
-  }
-
   const config = deps.readSandboxConfig(sandboxName, target);
   const preferredInferenceApi = resolveRuntimeInferenceApi({
     agentName,
@@ -444,6 +439,24 @@ export async function runInferenceSet(
     sandboxName,
     session: deps.loadSession(),
   });
+  // Write the registry before the crash-prone in-sandbox sync so the gateway
+  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
+  if (
+    !deps.updateSandbox(
+      sandboxName,
+      inferenceSelectionRegistryFields({
+        provider,
+        model,
+        endpointUrl: entry.provider === provider ? (entry.endpointUrl ?? null) : null,
+        credentialEnv: entry.credentialEnv ?? null,
+        preferredInferenceApi,
+        nimContainer: entry.nimContainer ?? null,
+      }),
+    )
+  ) {
+    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  }
+
   let patched: { changed: boolean; route: SandboxInferenceConfig };
   if (agentName === "hermes") {
     patched = patchHermesInferenceConfig(config, provider, model, preferredInferenceApi);

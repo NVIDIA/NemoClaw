@@ -66,8 +66,17 @@ describe("getRebuildEndpointFromRegistry", () => {
     expect(result.endpointUrl.length).toBeGreaterThan(0);
   });
 
-  it("marks a custom OpenAI-compatible provider as unknown (session-only URL)", () => {
+  it("marks a custom OpenAI-compatible provider as unknown without durable endpoint metadata", () => {
     expect(getRebuildEndpointFromRegistry("compatible-endpoint")).toEqual({ known: false });
+  });
+
+  it("uses durable custom endpoint metadata from the sandbox registry", () => {
+    expect(
+      getRebuildEndpointFromRegistry("compatible-endpoint", "http://127.0.0.1:19999/v1"),
+    ).toEqual({
+      known: true,
+      endpointUrl: "http://127.0.0.1:19999/v1",
+    });
   });
 });
 
@@ -102,7 +111,7 @@ describe("prepareRebuildResumeConfig", () => {
     expect(typeof config?.endpointUrl).toBe("string");
   });
 
-  it("fails closed for a custom endpoint with a non-matching session", () => {
+  it("fails closed for a custom endpoint with a non-matching session and no registry endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
     expect(() =>
       prepareRebuildResumeConfig(
@@ -113,6 +122,31 @@ describe("prepareRebuildResumeConfig", () => {
         throwingBail,
       ),
     ).toThrow("Cannot determine recreate endpoint");
+  });
+
+  it("recreates custom endpoints from durable registry metadata when the session is unrelated", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "http://127.0.0.1:19999/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "m",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      pinEndpoint: true,
+      endpointUrl: "http://127.0.0.1:19999/v1",
+    });
   });
 
   it("surfaces an ambient agent mismatch in the assessment", () => {

@@ -513,6 +513,8 @@ export async function handleSandboxState<
     deps.updateSandboxRegistry(sandboxName, {
       model,
       provider,
+      nimContainer,
+      preferredInferenceApi,
       ...agentRegistryFields,
     });
     // Default-marking is deferred to finalization so a cancelled onboard never

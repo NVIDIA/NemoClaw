@@ -3191,11 +3191,18 @@ async function createSandbox(
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
+  const sessionForRegistry = onboardSession.loadSession();
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   sandboxRegistration.registerCreatedSandbox({
     sandboxName,
-    model,
-    provider,
+    inferenceSelection: {
+      provider,
+      model,
+      endpointUrl: sessionForRegistry?.endpointUrl ?? null,
+      credentialEnv: sessionForRegistry?.credentialEnv ?? null,
+      preferredInferenceApi,
+      nimContainer: sessionForRegistry?.nimContainer ?? null,
+    },
     runtimeFields: sandboxRuntimeFields,
     agent,
     agentVersionKnown: !fromDockerfile,

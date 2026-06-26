@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { InferenceSelection } from "../inference/selection";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
@@ -24,8 +26,7 @@ export type CreatedSandboxRuntimeFields = Pick<
 
 export interface CreatedSandboxRegistryEntryInput {
   sandboxName: string;
-  model: string;
-  provider: string;
+  inferenceSelection: InferenceSelection;
   runtimeFields: CreatedSandboxRuntimeFields;
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
@@ -53,8 +54,7 @@ export function buildCreatedSandboxRegistryEntry(
 
   return {
     name: input.sandboxName,
-    model: input.model || null,
-    provider: input.provider || null,
+    ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
