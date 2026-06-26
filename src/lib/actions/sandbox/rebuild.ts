@@ -22,12 +22,9 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG, providerExistsInGateway } =
-  require("../../onboard/providers") as {
-    LOCAL_INFERENCE_PROVIDERS: string[];
-    REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
-    providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
-  };
+const { providerExistsInGateway } = require("../../onboard/providers") as {
+  providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
+};
 
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -48,11 +45,14 @@ import type {
 } from "../../messaging";
 import {
   createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+  isMessagingSupportedAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
-  toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
@@ -69,15 +69,22 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
-import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   backupSandboxStateForRebuild,
   ensureRebuildAgentBaseImage,
   openRebuildShieldsWindowForState,
-  resolveRebuildLiveState,
   type RebuildSandboxEntry,
+  resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
+import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import {
+  getRebuildCredentialEnvFromRegistry,
+  isLocalInferenceProvider,
+  prepareRebuildResumeConfig,
+} from "./rebuild-resume-config";
 import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 export function buildRefreshMutableOpenClawConfigHashCommand(
@@ -122,24 +129,6 @@ function refreshMutableOpenClawConfigHashAfterPostRestoreWrites(
  */
 function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(msg)}${R}`);
-}
-
-/**
- * Resolve the credential environment variable required to recreate a sandbox.
- */
-function isLocalInferenceProvider(provider: string | null | undefined): provider is string {
-  return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
-}
-
-function getRebuildCredentialEnvFromRegistry(provider: string | null | undefined): string | null {
-  if (!provider || isLocalInferenceProvider(provider)) {
-    return null;
-  }
-  const remoteConfig =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
-  return remoteConfig?.credentialEnv || null;
 }
 
 function normalizeHermesRebuildAuthMethod(value: unknown): "oauth" | "api_key" | null {
@@ -224,17 +213,36 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
-async function stageMessagingManifestPlanForRebuild(
+export async function stageMessagingManifestPlanForRebuild(
   sandboxName: string,
   sandboxEntry: registry.SandboxEntry,
   rebuildAgent: string | null,
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const planner = new MessagingWorkflowPlanner(createBuiltInChannelManifestRegistry());
+  const agentId = tryGetMessagingAgentId(agent);
+  if (agentId === null) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+    );
+    return null;
+  }
+  if (!isMessagingSupportedAgent(agent)) {
+    MessagingSetupApplier.clearPlanEnv();
+    log(
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
+    );
+    return null;
+  }
+  const planner = new MessagingWorkflowPlanner(
+    createBuiltInChannelManifestRegistry(),
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     sandboxEntry,
     supportedChannelIds: agent.messagingPlatforms,
   });
@@ -609,6 +617,14 @@ export async function rebuildSandbox(
   // the sandbox still intact. See #2273.
   if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
 
+  // #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
+  // provider, model, credential, endpoint — from the registry/session BEFORE any
+  // destructive backup/delete, and surface/neutralize ambient onboard-selection
+  // env that would otherwise steer the resume away from the recorded sandbox.
+  // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
+  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
+  if (!resumeConfig) return;
+
   const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
     sandboxName,
     sb,
@@ -741,9 +757,21 @@ export async function rebuildSandbox(
       // setupNim runs, leaving no recovery source. Assign explicitly (with a
       // null fallback) so a missing registry value doesn't silently leave a
       // stale session entry from an earlier sandbox in place.
-      s.provider = sb.provider ?? null;
-      s.model = sb.model ?? null;
-      s.nimContainer = sb.nimContainer ?? null;
+      // #5735: apply the recreate config resolved + validated BEFORE delete by
+      // prepareRebuildResumeConfig (provider/model/credential/endpoint derived
+      // from the about-to-be-removed registry entry, never from ambient env), so
+      // onboard --resume recreates the recorded sandbox in non-interactive mode.
+      // Assign explicitly so a missing value doesn't leave a stale entry from an
+      // earlier sandbox in place. `pinEndpoint` is false for a matching session
+      // (keep its own custom endpoint) and true for a non-matching session with a
+      // canonical/registry-derivable endpoint.
+      s.provider = resumeConfig.provider;
+      s.model = resumeConfig.model;
+      s.nimContainer = resumeConfig.nimContainer;
+      s.credentialEnv = resumeConfig.credentialEnv;
+      if (resumeConfig.pinEndpoint) {
+        s.endpointUrl = resumeConfig.endpointUrl;
+      }
       return s;
     });
     process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
@@ -805,6 +833,14 @@ export async function rebuildSandbox(
       storedFromDockerfile,
       autoYes: skipConfirm || rebuildConfirmed,
     });
+    // #5735: isolate ambient onboard-selection env only for the duration of the
+    // recreate. The session was just pinned to the registry agent/provider/
+    // model/credential above, so removing NEMOCLAW_AGENT/PROVIDER/PROVIDER_KEY/
+    // ENDPOINT_URL/MODEL forces onboard --resume to recreate from that pinned
+    // config (and the already-registered gateway provider) instead of an
+    // unrelated onboard's values. Restored in finally so a bulk rebuild loop
+    // and the caller's process env are left untouched.
+    const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
     try {
       await onboard(recreateOpts);
       log("onboard() returned successfully");
@@ -817,6 +853,7 @@ export async function rebuildSandbox(
       }
     } finally {
       process.exit = _savedExit;
+      restoreAmbientRecreateEnv();
     }
 
     if (!onboardFailed) {
@@ -835,10 +872,7 @@ export async function rebuildSandbox(
         /* best effort */
       }
       try {
-        const failedStep = onboardSession.loadSession()?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Rebuild recreate failed");
-        }
+        markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
       } catch {
         /* best effort */
       }
@@ -1001,6 +1035,7 @@ export async function rebuildSandbox(
     // gateway-side config writes, so the final result is downgraded below.
     let mutablePermsRepairUnverified = false;
     let mutableConfigHashRefreshUnverified = false;
+    let messagingHostForwardUnverified = false;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1093,9 +1128,17 @@ export async function rebuildSandbox(
     log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+    if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
+      messagingHostForwardUnverified = true;
+    }
 
     console.log("");
-    if (restoreSucceeded && !mutablePermsRepairUnverified && !mutableConfigHashRefreshUnverified) {
+    if (
+      restoreSucceeded &&
+      !mutablePermsRepairUnverified &&
+      !mutableConfigHashRefreshUnverified &&
+      !messagingHostForwardUnverified
+    ) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
       if (staleRecovery) {
         console.log(
@@ -1126,6 +1169,11 @@ export async function rebuildSandbox(
       if (mutableConfigHashRefreshUnverified) {
         console.log(
           `    Mutable OpenClaw config hash was not refreshed \u2014 restart the sandbox or re-run \`${CLI_NAME} ${sandboxName} rebuild\` before relying on config integrity checks`,
+        );
+      }
+      if (messagingHostForwardUnverified) {
+        console.log(
+          `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
         );
       }
     }

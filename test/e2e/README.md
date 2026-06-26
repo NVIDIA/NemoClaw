@@ -3,6 +3,22 @@
 
 # NemoClaw E2E CI
 
+## Hermetic Compatible Inference for Direct Bash Jobs
+
+Direct bash E2E jobs that need onboarding inference, but do not need the live NVIDIA hosted service, should use `test/e2e/lib/hermetic-compatible-inference.sh` instead of `test/e2e/lib/ci-compatible-inference.sh` or workflow-injected hosted inference secrets.
+
+This pattern supports issue #5747 conversions:
+
+1. Source `lib/hermetic-compatible-inference.sh` from the test script.
+2. Call `nemoclaw_e2e_start_hermetic_compatible_inference` during prerequisites.
+3. Run the onboarding behavior under test normally; the helper exports a fake `custom` OpenAI-compatible endpoint and fake `COMPATIBLE_API_KEY`.
+4. Assert the endpoint was actually used with `nemoclaw_e2e_assert_hermetic_compatible_inference_used`.
+5. Stop it from the test cleanup trap with `nemoclaw_e2e_stop_hermetic_compatible_inference`.
+6. In `.github/workflows/nightly-e2e.yaml`, install/build only the CLI and OpenShell needed by the script; do not inject `NVIDIA_INFERENCE_API_KEY`, `COMPATIBLE_API_KEY`, `NEMOCLAW_E2E_USE_HOSTED_INFERENCE`, or hosted model/env knobs into the converted job.
+7. Add/update workflow contract coverage in `test/e2e-script-workflow.test.ts` so the job cannot regress back to hosted inference secrets.
+
+Use the lower-level `openai-compatible-api-proof.sh` directly only when a test needs raw fake-server lifecycle control without NemoClaw onboarding environment exports.
+
 ## Nightly Onboard Trace Timing
 
 The GitHub Actions workflow `.github/workflows/nightly-e2e.yaml` enables NemoClaw tracing for the `cloud-onboard-e2e` lane.

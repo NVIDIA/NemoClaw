@@ -89,6 +89,24 @@ describe("openshell helpers", () => {
     expect(result).toEqual({ status: 1, output: "hello" });
   });
 
+  it("preserves separated sync streams when includeStreams is true while output honors ignoreError", () => {
+    const result = captureOpenshellCommand("openshell", ["status"], {
+      ignoreError: true,
+      includeStreams: true,
+      spawnSyncImpl: stubSpawnSync({
+        status: 1,
+        stdout: "hello\n",
+        stderr: "boom\n",
+      }),
+    });
+    expect(result).toEqual({
+      status: 1,
+      output: "hello",
+      stdout: "hello\n",
+      stderr: "boom\n",
+    });
+  });
+
   it("returns the spawn result when the command succeeds", () => {
     const result = runOpenshellCommand("openshell", ["status"], {
       spawnSyncImpl: stubSpawnSync({
@@ -238,6 +256,25 @@ describe("openshell helpers", () => {
     );
 
     expect(result).toEqual({ status: 1, output: "hello\nboom", signal: null });
+  });
+
+  it("preserves separated async streams when includeStreams is true", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write('hello\\n'); process.stderr.write('boom\\n'); process.exitCode = 1;",
+      ],
+      { ignoreError: true, includeStreams: true },
+    );
+
+    expect(result).toEqual({
+      status: 1,
+      output: "hello",
+      stdout: "hello\n",
+      stderr: "boom\n",
+      signal: null,
+    });
   });
 
   it("uses the injected exit handler on failure", () => {

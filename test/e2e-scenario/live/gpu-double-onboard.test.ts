@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
@@ -145,7 +146,7 @@ async function expectSandboxInference42(
     },
   );
   expect(response.exitCode, resultText(response)).toBe(0);
-  expect(response.stdout).toMatch(/(^|[^0-9])42([^0-9]|$)/);
+  expect(containsInteger42Answer(response.stdout), resultText(response)).toBe(true);
 }
 
 liveTest(

@@ -21,6 +21,8 @@ type RunnerOptions = {
   stdio?: StdioOptions;
   input?: string;
   ignoreError?: boolean;
+  includeStderr?: boolean;
+  includeStreams?: boolean;
   timeout?: number;
 };
 
@@ -55,6 +57,8 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
     cwd: ROOT,
     env: opts.env,
     ignoreError: opts.ignoreError,
+    includeStderr: opts.includeStderr,
+    includeStreams: opts.includeStreams,
     timeout: opts.timeout,
     errorLine: console.error,
     exit: (code: number) => process.exit(code),
@@ -83,6 +87,7 @@ export function captureOpenshellForStatus(args: CommandArgs, opts: RunnerOptions
     cwd: ROOT,
     env: opts.env,
     ignoreError: opts.ignoreError,
+    includeStreams: opts.includeStreams,
     timeout: opts.timeout ?? getStatusProbeTimeoutMs(),
     killGraceMs: 1000,
   });

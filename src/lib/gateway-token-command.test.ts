@@ -253,6 +253,22 @@ describe("runGatewayTokenCommand", () => {
     expect(thrown?.lines[0]).not.toMatch(/dashboard-url/);
   });
 
+  it("fetches and prints the token for a bearer_token agent that exposes one (e.g. hermes)", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "hermes-api-server-key");
+    const getSandboxAgent = vi.fn(() => "hermes");
+    const agentExposesToken = vi.fn(() => true);
+    runGatewayTokenCommand(
+      "hermes",
+      { quiet: true },
+      { fetchToken, getSandboxAgent, agentExposesToken, log: sinks.log, error: sinks.error },
+    );
+    expect(agentExposesToken).toHaveBeenCalledWith("hermes");
+    expect(fetchToken).toHaveBeenCalledWith("hermes");
+    expect(sinks.out).toEqual(["hermes-api-server-key"]);
+    expect(sinks.err).toEqual([]);
+  });
+
   it("falls back to fetchToken when the agent lookup throws", () => {
     const sinks = makeSinks();
     runGatewayTokenCommand(

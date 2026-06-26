@@ -573,6 +573,41 @@ describe("inventory commands", () => {
     ).toBe(true);
   });
 
+  it("prints a Teams webhook port overlap warning with the port", () => {
+    const lines: string[] = [];
+    const findMessagingOverlaps = vi.fn().mockReturnValue([
+      {
+        channel: "teams",
+        sandboxes: ["alice", "bob"],
+        reason: "host-forward-port",
+        port: 3978,
+        message:
+          "'{first}' and '{second}' both use Microsoft Teams webhook port {port}; no two active Teams sandboxes can share that local forward.",
+      },
+    ]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messaging: messagingState("alice", ["teams"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["teams"]) },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((line) =>
+        line.includes(
+          "'alice' and 'bob' both use Microsoft Teams webhook port 3978; no two active Teams sandboxes can share that local forward.",
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it("surfaces Hermes gateway log when messaging is degraded", () => {
     const lines: string[] = [];
     const checkMessagingBridgeHealth = vi

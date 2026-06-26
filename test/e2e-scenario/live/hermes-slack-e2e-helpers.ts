@@ -40,12 +40,11 @@ function hermesSlackEnv(apiKey?: string): NodeJS.ProcessEnv {
     apiKey,
     extra: {
       ...(apiKey ? { COMPATIBLE_API_KEY: apiKey } : {}),
-      NEMOCLAW_COMPAT_MODEL:
-        process.env.NEMOCLAW_COMPAT_MODEL ?? "nvidia/nvidia/nemotron-3-super-v3",
+      NEMOCLAW_COMPAT_MODEL: process.env.NEMOCLAW_COMPAT_MODEL ?? "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NEMOCLAW_ENDPOINT_URL:
         process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
-      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? "nvidia/nvidia/nemotron-3-super-v3",
+      NEMOCLAW_MODEL: process.env.NEMOCLAW_MODEL ?? "nvidia/nvidia/nemotron-3-ultra",
       NEMOCLAW_POLICY_TIER: process.env.NEMOCLAW_POLICY_TIER ?? "open",
       NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
       NEMOCLAW_PROVIDER: process.env.NEMOCLAW_PROVIDER ?? "custom",
@@ -372,6 +371,7 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 env_path = Path("/sandbox/.hermes/.env")
 
@@ -398,6 +398,8 @@ for lineno, raw_line in enumerate(env_path.read_text(encoding="utf-8").splitline
     key, value = stripped.split("=", 1)
     key = key.strip()
     if key in allowed_nonsecret_keys:
+        continue
+    if key in allowed_raw_secret_keys:
         continue
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
         continue

@@ -1074,7 +1074,7 @@ openclaw agent --agent main --json --session-id "$session_id" \
     last_agent_detail="agent exited ${final_rc}: ${final_output:0:500}"
   elif ! grep -q '^__URL_FOR_FINAL_AGENT__=ws://' <<<"$final_output"; then
     last_agent_detail="agent command did not preserve OPENCLAW_GATEWAY_URL: ${final_output:0:500}"
-  elif grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
+  elif e2e_text_contains_integer_42 "$reply"; then
     agent_ok=1
     pass "approved openclaw agent turn answered through gateway mode"
     break

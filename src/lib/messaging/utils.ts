@@ -16,21 +16,62 @@ export interface MessagingAgentDescriptor {
 
 export type MessagingInputResolver = (input: ChannelInputSpec) => string | null;
 
+const MESSAGING_AGENT_IDS = [
+  "openclaw",
+  "hermes",
+  "langchain-deepagents-code",
+] as const satisfies readonly MessagingAgentId[];
+
+export class MessagingAgentNotSupportedError extends Error {
+  readonly agentName: string;
+  constructor(agentName: string) {
+    super(
+      `Agent '${agentName}' does not support messaging. Supported agents: ${MESSAGING_AGENT_IDS.join(", ")}.`,
+    );
+    this.name = "MessagingAgentNotSupportedError";
+    this.agentName = agentName;
+  }
+}
+
+export function tryGetMessagingAgentId(
+  agent: MessagingAgentDescriptor | null | undefined,
+): MessagingAgentId | null {
+  const name = agent?.name;
+  return (MESSAGING_AGENT_IDS as readonly string[]).includes(name ?? "")
+    ? (name as MessagingAgentId)
+    : null;
+}
+
 export function toMessagingAgentId(
   agent: MessagingAgentDescriptor | null | undefined,
 ): MessagingAgentId {
-  return agent?.name === "hermes" ? "hermes" : "openclaw";
+  const name = agent?.name;
+  if (typeof name !== "string" || name.trim() === "") {
+    return "openclaw";
+  }
+  const id = tryGetMessagingAgentId(agent);
+  if (id === null) {
+    throw new MessagingAgentNotSupportedError(name);
+  }
+  return id;
+}
+
+export function isMessagingSupportedAgent(
+  agent: MessagingAgentDescriptor | null | undefined,
+): boolean {
+  if (tryGetMessagingAgentId(agent) === null) return false;
+  const platforms = agent?.messagingPlatforms;
+  return !Array.isArray(platforms) || platforms.length > 0;
 }
 
 export function getMessagingManifestAvailabilityContext(
   agent: MessagingAgentDescriptor | null | undefined,
 ): ChannelManifestAvailabilityContext {
+  const id = tryGetMessagingAgentId(agent);
+  const platforms = agent?.messagingPlatforms;
   return {
-    agent: toMessagingAgentId(agent),
-    supportedChannelIds:
-      agent?.messagingPlatforms && agent.messagingPlatforms.length > 0
-        ? agent.messagingPlatforms
-        : null,
+    agent: id,
+    supportedChannelIds: Array.isArray(platforms) ? platforms : null,
   };
 }
 

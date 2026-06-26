@@ -466,7 +466,7 @@ export function safeTarExtract(tarBuffer: Buffer, targetDir: string): SafeExtrac
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function getSshConfig(sandboxName: string): string | null {
+export function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
@@ -478,7 +478,7 @@ function getSshConfig(sandboxName: string): string | null {
   return result.output;
 }
 
-function sshArgs(configFile: string, sandboxName: string): string[] {
+export function sshArgs(configFile: string, sandboxName: string): string[] {
   return [
     "-F",
     configFile,

@@ -42,7 +42,7 @@ type TraceTimingAnalyzer = {
 };
 
 const require = createRequire(import.meta.url);
-const traceTiming = require("../scripts/scorecard/analyze-trace-timing.ts") as TraceTimingAnalyzer;
+const traceTiming: TraceTimingAnalyzer = require("../scripts/scorecard/analyze-trace-timing.ts");
 
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.target_ref == ''";
@@ -546,8 +546,8 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     expect(runStep?.env?.NEMOCLAW_PROVIDER).toBe("custom");
     expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBe("https://inference-api.nvidia.com/v1");
-    expect(runStep?.env?.NEMOCLAW_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
-    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nvidia/nemotron-3-super-v3");
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBe("nvidia/nvidia/nemotron-3-ultra");
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBe("nvidia/nvidia/nemotron-3-ultra");
     expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBe("openai-completions");
     expect(runStep?.env?.COMPATIBLE_API_KEY).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     expect(runStep?.env?.GITHUB_TOKEN).toBeUndefined();
@@ -582,6 +582,20 @@ describe("E2E reusable workflow contract", () => {
     expect(script).not.toContain(
       "NVIDIA_API_KEY or NVIDIA_INFERENCE_API_KEY must be a public NVIDIA Endpoints nvapi-* key",
     );
+  });
+
+  it("uses NVIDIA_API_KEY for the live Kimi Vitest lane", () => {
+    const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const job = vitestWorkflow.jobs["kimi-inference-compat-vitest"];
+    const runStep = job.steps?.find(
+      (step) => step.name === "Run Kimi compatibility live Vitest test",
+    );
+
+    expect(job.env?.NEMOCLAW_E2E_INFERENCE_MODE).toBe("public-nvidia");
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
   it("authenticates Docker Hub pulls in direct nightly E2E jobs", () => {
@@ -926,8 +940,8 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain("NEMOCLAW_E2E_USE_HOSTED_INFERENCE=1");
     expect(exportStep?.run).toContain("NEMOCLAW_PROVIDER=custom");
     expect(exportStep?.run).toContain("NEMOCLAW_ENDPOINT_URL=https://inference-api.nvidia.com/v1");
-    expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-super-v3");
-    expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-super-v3");
+    expect(exportStep?.run).toContain("NEMOCLAW_MODEL=nvidia/nvidia/nemotron-3-ultra");
+    expect(exportStep?.run).toContain("NEMOCLAW_COMPAT_MODEL=nvidia/nvidia/nemotron-3-ultra");
     expect(exportStep?.run).toContain("NEMOCLAW_PREFERRED_API=openai-completions");
     expect(exportStep?.run).toContain("COMPATIBLE_API_KEY=%s");
 
@@ -950,7 +964,7 @@ describe("E2E reusable workflow contract", () => {
       expect(body, fixture).toContain("if env_provider == 'custom'");
       expect(body, fixture).toContain("'provider': provider");
       expect(body, fixture).toContain("'model': model");
-      expect(body, fixture).toContain("nvidia/nvidia/nemotron-3-super-v3");
+      expect(body, fixture).toContain("nvidia/nvidia/nemotron-3-ultra");
       expect(body, fixture).not.toContain("'provider': 'nvidia-prod'");
       expect(body, fixture).not.toContain("'model': 'nvidia/nemotron-3-super-120b-a12b'");
     }
@@ -981,8 +995,6 @@ describe("E2E reusable workflow contract", () => {
         "credential-migration-e2e:Run credential migration Vitest test",
         "onboard-repair-e2e:Install NemoClaw",
         "onboard-repair-e2e:Run onboard repair E2E test",
-        "onboard-resume-e2e:Install NemoClaw",
-        "onboard-resume-e2e:Run onboard resume E2E test",
         "onboard-negative-paths-e2e:Install NemoClaw",
         "onboard-negative-paths-e2e:Run onboard negative-path E2E test",
         "runtime-overrides-e2e:Install NemoClaw",
@@ -993,7 +1005,7 @@ describe("E2E reusable workflow contract", () => {
       ]),
     );
 
-    expect(directSecretSteps.length).toBeGreaterThanOrEqual(17);
+    expect(directSecretSteps.length).toBeGreaterThanOrEqual(15);
     for (const { jobName, step } of directSecretSteps) {
       const stepKey = `${jobName}:${step.name ?? "<unnamed>"}`;
       expect(step.env?.NVIDIA_INFERENCE_API_KEY, stepKey).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
@@ -1003,8 +1015,8 @@ describe("E2E reusable workflow contract", () => {
       }
       expect(step.env?.NEMOCLAW_PROVIDER, jobName).toBe("custom");
       expect(step.env?.NEMOCLAW_ENDPOINT_URL, jobName).toBe("https://inference-api.nvidia.com/v1");
-      expect(step.env?.NEMOCLAW_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
-      expect(step.env?.NEMOCLAW_COMPAT_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-super-v3");
+      expect(step.env?.NEMOCLAW_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-ultra");
+      expect(step.env?.NEMOCLAW_COMPAT_MODEL, jobName).toBe("nvidia/nvidia/nemotron-3-ultra");
       expect(step.env?.NEMOCLAW_PREFERRED_API, jobName).toBe("openai-completions");
       expect(step.env?.COMPATIBLE_API_KEY, jobName).toBe(GUARDED_HOSTED_INFERENCE_SECRET);
     }
@@ -1018,6 +1030,50 @@ describe("E2E reusable workflow contract", () => {
     expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(script).toContain("lib/ci-compatible-inference.sh");
     expect(script).toContain("nemoclaw_e2e_configure_compatible_inference");
+  });
+
+  it("keeps onboard-resume hermetic and off hosted inference secrets", () => {
+    const job = nightlyWorkflow.jobs["onboard-resume-e2e"];
+    const setupNodeStep = job.steps?.find((step) =>
+      String(step.uses ?? "").startsWith("actions/setup-node@"),
+    );
+    const installDepsStep = job.steps?.find((step) => step.name === "Install root dependencies");
+    const buildStep = job.steps?.find((step) => step.name === "Build CLI");
+    const installOpenShellStep = job.steps?.find((step) => step.name === "Install OpenShell CLI");
+    const runStep = job.steps?.find((step) => step.name === "Run onboard resume E2E test");
+
+    expect(setupNodeStep?.uses).toMatch(/^actions\/setup-node@[0-9a-f]{40}$/);
+    expect(setupNodeStep?.with?.cache).toBe("npm");
+    expect(installDepsStep?.run).toBe("npm ci --ignore-scripts");
+    expect(buildStep?.run).toBe("npm run build:cli");
+    expect(installOpenShellStep?.run).toContain("scripts/install-openshell.sh");
+    expect(installOpenShellStep?.run).toContain("-u NVIDIA_INFERENCE_API_KEY");
+    expect(installOpenShellStep?.run).toContain("-u GITHUB_TOKEN");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.COMPATIBLE_API_KEY).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_ENDPOINT_URL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PROVIDER).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_COMPAT_MODEL).toBeUndefined();
+    expect(runStep?.env?.NEMOCLAW_PREFERRED_API).toBeUndefined();
+
+    const script = readFileSync(new URL("./e2e/test-onboard-resume.sh", import.meta.url), "utf8");
+    const helper = readFileSync(
+      new URL("./e2e/lib/hermetic-compatible-inference.sh", import.meta.url),
+      "utf8",
+    );
+    expect(script).toContain("lib/hermetic-compatible-inference.sh");
+    expect(script).toContain("nemoclaw_e2e_start_hermetic_compatible_inference");
+    expect(script).toContain("nemoclaw_e2e_assert_hermetic_compatible_inference_used");
+    expect(script).not.toContain("lib/ci-compatible-inference.sh");
+    expect(helper).toContain("openai-compatible-api-proof.sh");
+    expect(helper).toContain("NEMOCLAW_PROVIDER=custom");
+    expect(helper).toContain('NEMOCLAW_ENDPOINT_URL="$FAKE_OPENAI_BASE_URL"');
+    expect(helper).toContain("unset NVIDIA_INFERENCE_API_KEY NEMOCLAW_E2E_USE_HOSTED_INFERENCE");
+    expect(helper).toContain('COMPATIBLE_API_KEY="$fake_key"');
+    expect(helper).toContain("FAKE_OPENAI_REQUIRE_AUTH=1");
+    expect(helper).not.toContain('FAKE_OPENAI_REQUIRE_AUTH="${FAKE_OPENAI_REQUIRE_AUTH:-1}"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

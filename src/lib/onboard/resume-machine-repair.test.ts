@@ -112,7 +112,7 @@ async function runRecordOnlyResumeSequence(initial: Session): Promise<Session> {
     advanceTo("finalizing", { metadata: { state: "policies" } }),
   ];
   for (const result of results) {
-    await boundary.recordStateResultWithStepCompatibility(result);
+    await boundary.recordCompatibleStateResult(result);
   }
   await boundary.recordSessionComplete();
   return getSession();

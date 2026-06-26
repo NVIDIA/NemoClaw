@@ -1,7 +1,7 @@
 {
   "$comment": "Single source of truth for NemoClaw launch claims and platform support. Covers platforms, inference providers, supported agents, messaging integrations, and deployment paths. Scripts read this to generate README and docs tables. QA/CI update platform/provider rows; the engineering owner reviews other rows. Docs are derived.",
   "version": "1.1",
-  "updated": "2026-06-12",
+  "updated": "2026-06-25",
 
   "project_status": {
     "stage": "alpha",
@@ -47,7 +47,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": true,
-      "notes": "Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
+      "notes": "Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
     },
     {
       "name": "Windows WSL2",
@@ -129,7 +129,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1581`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1586`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",
@@ -248,7 +248,7 @@
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
       "status": "unsupported",
-      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1581`, called at `:1646`). NemoClaw does not install non-NVIDIA accelerator drivers."
+      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1586`, called at `:1651`). NemoClaw does not install non-NVIDIA accelerator drivers."
     },
     {
       "name": "Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses",
@@ -302,6 +302,11 @@
       "name": "WhatsApp",
       "status": "caveated",
       "notes": "Supported by both OpenClaw and Hermes (see `messaging_platforms` in `agents/openclaw/manifest.yaml` and `agents/hermes/manifest.yaml`). Pairing happens in the sandbox through WhatsApp Web by scanning a QR code at first run; the Hermes flow exposes this as `hermes whatsapp` and persists session credentials under `~/.hermes/platforms/whatsapp/session` (`agents/hermes/manifest.yaml:69-71`). Sandbox egress goes through the `whatsapp` policy preset, which carries the WebSocket / Noise / h1-ALPN caveats documented in `nemoclaw-blueprint/policies/presets/whatsapp.yaml`. No Meta Business API integration today; that path is out of scope for this matrix."
+    },
+    {
+      "name": "Microsoft Teams",
+      "status": "experimental",
+      "notes": "Supported by both OpenClaw and Hermes through the manifest-first messaging channel contract. Requires Bot Framework app credentials, a tenant ID, and a public HTTPS endpoint that reaches the sandbox webhook path `/api/messages`. Sandbox egress goes through the `teams` policy preset, and only one active Teams sandbox can use a given local `MSTEAMS_PORT` forward."
     }
   ],
 

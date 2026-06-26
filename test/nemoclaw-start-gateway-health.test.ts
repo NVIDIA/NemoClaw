@@ -328,6 +328,7 @@ describe("gateway serving watchdog (#4710)", () => {
         // then swap the pidfile to gateway B while refusals continue.
         `for _ in $(command seq 1 200); do [ -s ${JSON.stringify(probeLog)} ] && break; command sleep 0.02; done`,
         'record_gateway_pid "$GATEWAY_B"',
+        'printf "B_PID=%s\\n" "$GATEWAY_B"',
         "command sleep 0.6",
         'if kill -0 "$GATEWAY_B" 2>/dev/null; then printf "B_ALIVE=1\\n"; else printf "B_ALIVE=0\\n"; fi',
         "disown -a 2>/dev/null || true",
@@ -345,7 +346,11 @@ describe("gateway serving watchdog (#4710)", () => {
       // refused probes (threshold 2, 10ms cycles) well inside the 600ms
       // observation window.
       expect(stdout).toContain("B_ALIVE=1");
-      expect(result.stderr).not.toContain("dropped its HTTP listener on port 18789");
+      const bPid = stdout.match(/^B_PID=(\d+)$/m)?.[1];
+      expect(bPid).toBeDefined();
+      expect(result.stderr).not.toContain(
+        `gateway pid ${bPid} is alive but dropped its HTTP listener on port 18789`,
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
