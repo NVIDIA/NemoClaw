@@ -51,13 +51,16 @@ export {
 } from "./status-snapshot";
 
 /**
- * Returns true when status can validate a cached agent version against the running sandbox.
+ * Returns true when status can validate an agent version against the running sandbox.
  */
 function shouldProbeSandboxRuntimeVersion(
   lookup: SandboxGatewayState,
   sandbox: registry.SandboxEntry,
+  agentRuntimeKind: string,
 ): boolean {
-  return lookup.state === "present" && Boolean(sandbox.agentVersion);
+  return (
+    lookup.state === "present" && (Boolean(sandbox.agentVersion) || agentRuntimeKind === "terminal")
+  );
 }
 
 // True when sandbox GPU is enabled but no CUDA-usability proof has confirmed it
@@ -263,7 +266,11 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
     // Agent version check
     try {
-      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(lookup, sb);
+      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(
+        lookup,
+        sb,
+        statusAgent.agentRuntime,
+      );
       const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
         forceProbe: shouldProbeRuntimeVersion,
         skipProbe: !shouldProbeRuntimeVersion,
