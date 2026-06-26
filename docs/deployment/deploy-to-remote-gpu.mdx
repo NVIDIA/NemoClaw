@@ -30,7 +30,7 @@ For another cloud provider, replace the provisioning and SSH commands with that 
 
 ```bash
 # On your local machine
-brev start --name <instance-name> --gpu <gpu-type>
+brev create <instance-name>
 ```
 
 If `brev` is missing or unauthenticated, install or log in to the Brev CLI first, or provision the VM through your cloud console and connect with `ssh <user>@<host>`.
@@ -38,6 +38,12 @@ If `brev` is missing or unauthenticated, install or log in to the Brev CLI first
 For Brev, create a dashboard tunnel before you connect to the VM.
 Open the instance in the Brev console, go to the **Access** tab, and add a tunnel for port `18789`.
 Copy the generated tunnel URL.
+
+<Warning>
+Brev tunnel URLs are non-loopback origins.
+When `CHAT_UI_URL` points at one, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
+Avoid exposing the dashboard on internet-reachable or shared-network deployments unless you intend that access.
+</Warning>
 
 You can list instances from your local machine:
 
