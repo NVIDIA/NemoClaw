@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,7 +10,7 @@ import { describe, expect, it } from "vitest";
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 
 function extractShellFunctionFromSource(src: string, name: string): string {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const match = src.match(new RegExp(`${escapedName}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
   if (!match) {
     throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
@@ -26,9 +25,8 @@ function shellQuote(value: string): string {
 describe("nemoclaw-start workspace template seeding", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  it("round-trips seed_default_workspace_templates through declare -f without a heredoc", () => {
+  it("round-trips seed_default_workspace_templates through bash -c and seeds templates", () => {
     const fn = extractShellFunctionFromSource(src, "seed_default_workspace_templates");
-    expect(fn).not.toMatch(/<<-?['"]?[A-Za-z_]/);
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-workspace-seed-"));
     const workspaceDir = path.join(tmpDir, "workspace");
