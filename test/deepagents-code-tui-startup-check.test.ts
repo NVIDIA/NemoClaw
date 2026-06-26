@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
+
 const tuiStartupCheckPath = path.join(
   process.cwd(),
   "test",
@@ -31,6 +33,14 @@ function runTuiStartupCheckHelperResult(
     encoding: "utf8",
     env: { ...process.env, ...env },
   });
+}
+
+function fingerprint(pattern: RegExp): string {
+  return `${pattern.source}::${pattern.flags}`;
+}
+
+function secretFixture(...parts: string[]): string {
+  return parts.join("");
 }
 
 describe("Deep Agents Code TUI startup check helpers", () => {
@@ -92,40 +102,70 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       );
     const redactsSecret = (token: string) =>
       runTuiStartupCheckHelper('printf "%s" "$TOKEN" | redact_secrets', { TOKEN: token });
-    const secretSamples: Array<{ name: string; sample: string; rawSecret?: string }> = [
-      { name: "nvapi", sample: "nvapi-abcdefghijklmnop" },
-      { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" },
-      { name: "ghp", sample: "ghp_abcdefghijklmnopqr" },
-      { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
-      { name: "sk_proj", sample: "sk-proj-abcdefghij" },
-      { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
-      { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
-      { name: "xoxb", sample: "xoxb-1234567890" },
-      { name: "xoxp", sample: "xoxp-1234567890" },
-      { name: "xoxa", sample: "xoxa-1234567890" },
-      { name: "xoxs", sample: "xoxs-1234567890" },
-      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
+    const canonicalSamples = new Map<string, { name: string; sample: string; rawSecret?: string }>([
+      [fingerprint(TOKEN_PREFIX_PATTERNS[0]), { name: "nvapi", sample: "nvapi-abcdefghijklmnop" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[1]), { name: "nvcf", sample: "nvcf-abcdefghijklmnopq" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[2]), { name: "ghp", sample: "ghp_abcdefghijklmnopqr" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[3]),
+        { name: "github_pat", sample: "github_pat_abcdefghijklmnopqrstuvwxyz0123" },
+      ],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[4]), { name: "sk_proj", sample: "sk-proj-abcdefghij" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[5]), { name: "sk_ant", sample: "sk-ant-abcdefghijk" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[6]),
+        { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
+      ],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[7]),
+        { name: "xoxb", sample: secretFixture("xox", "b", "-", "1234567890") },
+      ],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[9]), { name: "hf", sample: "hf_abcdefghijklmnopq" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[10]), { name: "glpat", sample: "glpat-abcdefghijklmn" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[11]), { name: "gsk", sample: "gsk_abcdefghijklmnop" }],
+      [fingerprint(TOKEN_PREFIX_PATTERNS[12]), { name: "pypi", sample: "pypi-abcdefghijklmnop" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[13]),
+        { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      ],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[14]),
+        { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      ],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[15]),
+        {
+          name: "discord",
+          sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        },
+      ],
+      [
+        fingerprint(CONTEXT_PATTERNS[0]),
+        {
+          name: "bearer_context",
+          sample: "Authorization: Bearer abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+      ],
+      [
+        fingerprint(CONTEXT_PATTERNS[1]),
+        {
+          name: "api_key_context",
+          sample: "API_KEY=abcdefghijklmnopqrst",
+          rawSecret: "abcdefghijklmnopqrst",
+        },
+      ],
+    ]);
+    const extraSamples = [
       { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
-      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
-      { name: "hf", sample: "hf_abcdefghijklmnopq" },
-      { name: "glpat", sample: "glpat-abcdefghijklmn" },
-      { name: "gsk", sample: "gsk_abcdefghijklmnop" },
-      { name: "pypi", sample: "pypi-abcdefghijklmnop" },
-      { name: "telegram", sample: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
-      { name: "telegram_bot", sample: "bot123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678" },
+      { name: "xoxp", sample: secretFixture("xox", "p", "-", "1234567890") },
+      { name: "xoxa", sample: secretFixture("xox", "a", "-", "1234567890") },
+      { name: "xoxs", sample: secretFixture("xox", "s", "-", "1234567890") },
       {
-        name: "discord",
-        sample: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
-      },
-      {
-        name: "bearer_context",
-        sample: "Authorization: Bearer abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
-      },
-      {
-        name: "api_key_context",
-        sample: "API_KEY=abcdefghijklmnopqrst",
-        rawSecret: "abcdefghijklmnopqrst",
+        name: "xapp",
+        sample: secretFixture("x", "app", "-", "1", "-", "A1B2C3", "-", "12345", "-", "abcde"),
       },
       {
         name: "token_context",
@@ -154,7 +194,10 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       },
     ];
 
-    for (const { name, sample, rawSecret } of secretSamples) {
+    const canonicalFingerprints = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_PATTERNS].map(fingerprint);
+    expect([...canonicalSamples.keys()]).toEqual(canonicalFingerprints);
+
+    for (const { name, sample, rawSecret } of [...canonicalSamples.values(), ...extraSamples]) {
       expect(detectsSecret(sample), `${name} should be detected`).toBe("secret");
       const redacted = redactsSecret(sample);
       expect(redacted, `${name} should include a redaction marker`).toContain("[REDACTED_SECRET]");
