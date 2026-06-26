@@ -10,6 +10,13 @@ import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-met
 
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  "agents:list": [
+    {
+      group: "Getting Started",
+      order: 1.5,
+      description: "List available agent runtimes for onboard --agent",
+    },
+  ],
   ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
@@ -80,6 +87,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Getting Started",
       order: 0,
+      description: "Configure inference endpoint and credentials (--agent to choose runtime)",
     },
     {
       group: "Getting Started",

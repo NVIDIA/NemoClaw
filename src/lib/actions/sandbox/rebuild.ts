@@ -22,9 +22,6 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { providerExistsInGateway } = require("../../onboard/providers") as {
-  providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
-};
 
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -47,6 +44,7 @@ import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
   isMessagingSupportedAgent,
+  listSupportedMessagingChannelIdsForAgent,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
@@ -80,6 +78,10 @@ import {
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import {
+  checkRebuildGatewayProviderOrBail,
+  shouldVerifyRebuildGatewayProvider,
+} from "./rebuild-provider-preflight";
 import {
   getRebuildCredentialEnvFromRegistry,
   isLocalInferenceProvider,
@@ -220,23 +222,26 @@ export async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const agentId = tryGetMessagingAgentId(agent);
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifests = manifestRegistry.list();
+  const agentId = tryGetMessagingAgentId(agent, manifests);
   if (agentId === null) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not a messaging-capable runtime`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' is not supported by any channel manifest`,
     );
     return null;
   }
-  if (!isMessagingSupportedAgent(agent)) {
+  if (!isMessagingSupportedAgent(agent, manifests)) {
     MessagingSetupApplier.clearPlanEnv();
     log(
-      `Messaging manifest rebuild plan skipped: agent '${agent.name}' declares no supported messaging channels`,
+      `Messaging manifest rebuild plan skipped: agent '${agent.name}' has no supported messaging channels`,
     );
     return null;
   }
+  const supportedChannelIds = listSupportedMessagingChannelIdsForAgent(manifests, agentId);
   const planner = new MessagingWorkflowPlanner(
-    createBuiltInChannelManifestRegistry(),
+    manifestRegistry,
     undefined,
     createBuiltInRenderTemplateResolver(),
   );
@@ -244,7 +249,7 @@ export async function stageMessagingManifestPlanForRebuild(
     sandboxName,
     agent: agentId,
     sandboxEntry,
-    supportedChannelIds: agent.messagingPlatforms,
+    supportedChannelIds,
   });
   if (!plan) {
     MessagingSetupApplier.clearPlanEnv();
@@ -392,10 +397,10 @@ async function stageRebuildMessagingPlanOrBail(
   try {
     return await stageMessagingManifestPlanForRebuild(sandboxName, sb, rebuildAgent, log);
   } catch (err) {
-    // Source boundary: registry messaging plans and agent manifests are durable
-    // host-side inputs from prior onboarding. If they drift or become invalid,
-    // rebuild must fail here before backup/delete; remove this boundary only if
-    // manifest staging becomes total over all persisted registry states.
+    // Source boundary: persisted registry messaging plans and current channel
+    // manifests are host-side inputs. If they drift or become invalid, rebuild
+    // must fail here before backup/delete; remove this boundary only if manifest
+    // staging becomes total over all persisted registry states.
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
     console.error(
@@ -434,6 +439,7 @@ function preflightRebuildCredentials(
   }
 
   const rebuildProvider = sb.provider;
+
   // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
   // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
   // write paths persist null. Only a session for this sandbox plus a local
@@ -469,6 +475,9 @@ function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
+    if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+      return false;
+    }
     log(
       "Preflight credential check: no credentialEnv in session (local inference or missing session)",
     );
@@ -479,13 +488,16 @@ function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (credentialValue) return true;
-  if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+  if (!checkRebuildGatewayProviderOrBail(rebuildProvider, rebuildCredentialEnv, log, bail)) {
+    return false;
+  }
+  if (!credentialValue && shouldVerifyRebuildGatewayProvider(rebuildProvider)) {
     log(
       `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
     );
     return true;
   }
+  if (credentialValue) return true;
 
   console.error("");
   console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);

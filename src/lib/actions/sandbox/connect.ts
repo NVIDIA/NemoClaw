@@ -842,6 +842,42 @@ function exitWithSpawnResult(result: SpawnLikeResult): void {
   process.exit(1);
 }
 
+function restoreInteractiveTerminal(): void {
+  if (!process.stdin.isTTY) return;
+
+  try {
+    const stdin = process.stdin as typeof process.stdin & {
+      setRawMode?: (mode: boolean) => unknown;
+    };
+    stdin.setRawMode?.(false);
+  } catch {
+    // Best-effort: still try `stty sane` below.
+  }
+
+  try {
+    spawnSync("stty", ["sane"], {
+      stdio: ["inherit", "ignore", "ignore"],
+      cwd: ROOT,
+      env: process.env,
+    });
+  } catch {
+    // Terminal cleanup must never mask the original connect failure.
+  }
+}
+
+function isLikelySshDisconnect(result: SpawnLikeResult): boolean {
+  return result.status === 255 || result.signal === "SIGHUP" || result.signal === "SIGPIPE";
+}
+
+function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult): void {
+  if (isLikelySshDisconnect(result)) {
+    restoreInteractiveTerminal();
+    console.error("");
+    console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
+  }
+  exitWithSpawnResult(result);
+}
+
 export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
@@ -1074,5 +1110,5 @@ export async function connectSandbox(
     cwd: ROOT,
     env: process.env,
   });
-  exitWithSpawnResult(result);
+  exitWithConnectSpawnResult(sandboxName, result);
 }

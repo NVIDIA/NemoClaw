@@ -77,7 +77,7 @@ async function withEnv<T>(key: string, value: string, run: () => Promise<T>): Pr
 }
 
 type Gpu = { type: string } | null;
-type Agent = { displayName?: string; name?: string; messagingPlatforms?: string[] } | null;
+type Agent = { displayName?: string; name?: string } | null;
 type WebSearchConfig = { fetchEnabled: true };
 type MessagingChannelConfig = Record<string, string>;
 type SandboxGpuConfig = { sandboxGpuEnabled: boolean; mode: string };
@@ -614,7 +614,7 @@ describe("handleSandboxState", () => {
     expect(getSession().messagingPlan).toEqual(emptyRebuildPlan);
   });
 
-  it("clears env-staged messaging plans when the current agent declares an empty allowlist", async () => {
+  it("clears env-staged messaging plans when the current agent has no channel manifest support", async () => {
     const stalePlan = makeMinimalPlan("my-assistant", "openclaw", ["telegram"]);
     const session = createSession({ sandboxName: "my-assistant", messagingPlan: stalePlan });
     const getRecordedMessagingChannelsForResume = vi.fn(() => ["telegram"]);
@@ -629,7 +629,7 @@ describe("handleSandboxState", () => {
       ...baseOptions(deps, session),
       resume: true,
       sandboxName: "my-assistant",
-      agent: { name: "openclaw", messagingPlatforms: [] },
+      agent: { name: "langchain-deepagents-code" },
     });
 
     expect(calls.clearPlanEnv).toHaveBeenCalledTimes(1);
@@ -655,7 +655,7 @@ describe("handleSandboxState", () => {
       ...baseOptions(deps, session),
       resume: true,
       sandboxName: "my-assistant",
-      agent: { name: "custom-agent", messagingPlatforms: ["discord"] },
+      agent: { name: "custom-agent" },
     });
 
     expect(calls.clearPlanEnv).toHaveBeenCalledTimes(1);

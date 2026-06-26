@@ -148,6 +148,17 @@ type AgentConfigTarget = {
   sensitiveFiles?: string[];
 };
 
+function configHashPath(configDir: string): string {
+  return `${configDir.replace(/\/+$/, "")}/.config-hash`;
+}
+
+function ensureConfigHashSensitiveFile<T extends AgentConfigTarget>(target: T): T {
+  const hashPath = configHashPath(target.configDir);
+  const sensitiveFiles = target.sensitiveFiles || [];
+  if (sensitiveFiles.includes(hashPath)) return target;
+  return { ...target, sensitiveFiles: [...sensitiveFiles, hashPath] } as T;
+}
+
 function failShieldsCommand(message: string, shouldThrow?: boolean): never {
   if (shouldThrow) throw new Error(message);
   process.exit(1);
@@ -528,7 +539,8 @@ function assertNoLegacyStateLayout(sandboxName: string, configDir: string): void
 // read_only) + chown/chmod below.
 // ---------------------------------------------------------------------------
 
-function unlockAgentConfig(sandboxName: string, target: AgentConfigTarget): void {
+function unlockAgentConfig(sandboxName: string, rawTarget: AgentConfigTarget): void {
+  const target = ensureConfigHashSensitiveFile(rawTarget);
   const errors: string[] = [];
   const filesToUnlock = [target.configPath, ...(target.sensitiveFiles || [])];
   // Mutable-default mode for OpenClaw: group-writable + setgid on the
@@ -622,7 +634,7 @@ function unlockAgentConfig(sandboxName: string, target: AgentConfigTarget): void
 
 function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspection {
   validateName(sandboxName, "sandbox name");
-  const target = resolveAgentConfig(sandboxName);
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
   return inspectMutableConfigPermsCore(target, getShieldsPosture(sandboxName, true).mode, (p) =>
     privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
   );
@@ -630,7 +642,7 @@ function inspectMutableConfigPerms(sandboxName: string): MutableConfigPermsInspe
 
 function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResult {
   validateName(sandboxName, "sandbox name");
-  const target = resolveAgentConfig(sandboxName);
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
   return repairMutableConfigPermsCore(target, getShieldsPosture(sandboxName, true).mode, () =>
     unlockAgentConfig(sandboxName, target),
   );
@@ -675,8 +687,9 @@ function captureSealHashes(sandboxName: string, filesToHash: string[]): { [path:
 
 function lockAgentConfig(
   sandboxName: string,
-  target: AgentConfigTarget,
+  rawTarget: AgentConfigTarget,
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
+  const target = ensureConfigHashSensitiveFile(rawTarget);
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
 
@@ -856,7 +869,7 @@ function activateLockdownFromSnapshot(
     };
   }
 
-  const target = resolveAgentConfig(sandboxName);
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
   // Re-confirm the lock after a settle window. This restore feeds the
   // auto-restore inline recovery and the `shields up` snapshot path, both of
   // which mark shields UP on this result — so a reconciler revert here would
@@ -1054,7 +1067,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
   //     is a member of the sandbox group, can mutate runtime config.
-  const target = resolveAgentConfig(sandboxName);
+  const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
   console.log(`  Unlocking ${target.agentName} config (${target.configPath})...`);
   try {
     unlockAgentConfig(sandboxName, target);
@@ -1179,7 +1192,7 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
     // host-root tamper has reverted protected perms or rewritten file
     // content (even when the mode/owner is restored), re-apply the lock
     // so the recovery hint surfaced by `shields status` actually works.
-    const target = resolveAgentConfig(sandboxName);
+    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
     const { issues } = verifyShieldsLockState(sandboxName, target, {
       verifyChattr: state.chattrApplied === true,
       exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
@@ -1340,7 +1353,7 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
     //     Uses kubectl exec to bypass Landlock (same as shields down).
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
-    const target = resolveAgentConfig(sandboxName);
+    const target = ensureConfigHashSensitiveFile(resolveAgentConfig(sandboxName));
     console.log(`  Locking ${target.agentName} config (${target.configPath})...`);
     let lockResult: { chattrApplied: boolean; fileHashes: { [path: string]: string } };
     try {
@@ -1449,7 +1462,7 @@ function shieldsStatus(
       // instead of reported as a clean lockdown.
       let driftIssues: string[] = [];
       try {
-        const target = resolveConfig(sandboxName);
+        const target = ensureConfigHashSensitiveFile(resolveConfig(sandboxName));
         driftIssues = verify(sandboxName, target, {
           verifyChattr: state.chattrApplied === true,
           exec: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
@@ -1475,13 +1488,22 @@ function shieldsStatus(
         // would just seal the tampered or unverifiable content. Perm
         // drift (mode/owner/chattr/legacy-layout) is launderable by
         // re-up. Surface the right recovery for the failure mode.
-        const hasHashTrouble = driftIssues.some(isHashVerificationIssue);
-        if (hasHashTrouble) {
-          console.error(
-            `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
-          );
-        } else {
-          console.error(`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`);
+        const hashIssues = driftIssues.filter(isHashVerificationIssue);
+        const realHashDrift = hashIssues.filter((entry) => !entry.includes("no seal recorded"));
+        const hasMissingSeals = hashIssues.length > realHashDrift.length;
+        const recoveryLines =
+          realHashDrift.length > 0
+            ? [
+                `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
+              ]
+            : hasMissingSeals
+              ? [
+                  "  Recovery: rebuild the sandbox for a known-good baseline,",
+                  `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+                ]
+              : [`  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`];
+        for (const line of recoveryLines) {
+          console.error(line);
         }
         process.exit(2);
       }

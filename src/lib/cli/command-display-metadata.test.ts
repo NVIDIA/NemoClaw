@@ -14,6 +14,7 @@ describe("public command display metadata", () => {
     ).toEqual(
       expect.arrayContaining([
         { commandId: "onboard", usage: "nemoclaw onboard" },
+        { commandId: "agents:list", usage: "nemoclaw agents list" },
         { commandId: "sandbox:status", usage: "nemoclaw <name> status" },
         { commandId: "inference:get", usage: "nemoclaw inference get" },
       ]),

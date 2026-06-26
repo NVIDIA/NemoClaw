@@ -30,6 +30,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
 const CONFIG_DIR = path.dirname(CONFIG_PATH);
+const CONFIG_HASH_PATH = `${CONFIG_DIR}/.config-hash`;
 const AUDIT_FILE = path.join(os.homedir(), ".nemoclaw", "state", "shields-audit.jsonl");
 const STATE_FILE = (sandboxName: string) =>
   path.join(os.homedir(), ".nemoclaw", "state", `shields-${sandboxName}.json`);
@@ -49,6 +50,10 @@ validateSandboxName(SANDBOX_NAME);
 
 function resultText(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -213,6 +218,14 @@ function readAuditEntries(): unknown[] {
     .map((line) => JSON.parse(line));
 }
 
+function readTimerMarker(sandboxName: string): {
+  pid: number;
+  restoreAt: string;
+  snapshotPath: string;
+} {
+  return JSON.parse(fs.readFileSync(TIMER_FILE(sandboxName), "utf8"));
+}
+
 RUN_SHIELDS_TEST(
   "shields-config: live shields up/down locks config and detects drift",
   { timeout: TEST_TIMEOUT_MS },
@@ -228,7 +241,7 @@ RUN_SHIELDS_TEST(
         "shields up locks config/workspace and config get redacts secrets",
         "host-root chmod-write-chmod tamper is detected as content drift",
         "shields down restores mutable modes and records audit JSONL",
-        "auto-restore timer re-locks shields",
+        "dead auto-restore timer inline recovery re-locks config and .config-hash",
         "double shields-up/down operations are rejected",
       ],
     });
@@ -497,6 +510,8 @@ RUN_SHIELDS_TEST(
       { artifactName: "phase-9-shields-down-timer" },
     );
     expect(timerDown.exitCode, resultText(timerDown)).toBe(0);
+    const timerMarker = readTimerMarker(SANDBOX_NAME);
+    process.kill(timerMarker.pid, "SIGKILL");
     const statusTimer = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
       artifactName: "phase-9-status-down-before-auto-restore",
     });
@@ -506,9 +521,10 @@ RUN_SHIELDS_TEST(
     let restored = false;
     let lastTimerStatus = "";
     for (let attempt = 1; Date.now() < deadline; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, TIMER_POLL_INTERVAL_MS));
+      const waitForRestoreAt = Math.max(0, new Date(timerMarker.restoreAt).getTime() - Date.now());
+      await delay(Math.max(TIMER_POLL_INTERVAL_MS, waitForRestoreAt + 1_000));
       const poll = await runNemoclaw(host, [SANDBOX_NAME, "shields", "status"], {
-        artifactName: `phase-9-status-auto-restore-poll-${attempt}`,
+        artifactName: `phase-9-status-dead-timer-inline-restore-poll-${attempt}`,
       });
       lastTimerStatus = resultText(poll);
       if (lastTimerStatus.includes("Shields: UP")) {
@@ -517,10 +533,37 @@ RUN_SHIELDS_TEST(
       }
     }
     expect(restored, lastTimerStatus).toBe(true);
-    const configTimer = await sandboxShell(sandbox, `stat -c '%a' ${CONFIG_PATH}`, {
-      artifactName: "phase-9-config-perms-after-auto-restore",
+    const dirTimer = await statPath(
+      sandbox,
+      CONFIG_DIR,
+      "phase-9-config-dir-perms-after-dead-timer-inline-restore",
+    );
+    expect(dirTimer).toMatchObject({ mode: "755", owner: "root:root" });
+    const configTimer = await statPath(
+      sandbox,
+      CONFIG_PATH,
+      "phase-9-config-perms-after-dead-timer-inline-restore",
+    );
+    expect(configTimer).toMatchObject({ mode: "444", owner: "root:root" });
+    const hashTimer = await statPath(
+      sandbox,
+      CONFIG_HASH_PATH,
+      "phase-9-config-hash-perms-after-dead-timer-inline-restore",
+    );
+    expect(hashTimer).toMatchObject({ mode: "444", owner: "root:root" });
+    const stateAfterTimer = JSON.parse(fs.readFileSync(STATE_FILE(SANDBOX_NAME), "utf8"));
+    expect(stateAfterTimer.fileHashes).toMatchObject({
+      [CONFIG_PATH]: expect.any(String),
+      [CONFIG_HASH_PATH]: expect.any(String),
     });
-    expect(configTimer.stdout.trim()).toMatch(/^4[0-4][0-4]$/);
+    expect(readAuditEntries()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "shields_auto_restore",
+          policy_snapshot: timerMarker.snapshotPath,
+        }),
+      ]),
+    );
 
     const doubleUp = await runNemoclaw(host, [SANDBOX_NAME, "shields", "up"], {
       artifactName: "phase-10-double-shields-up",
@@ -554,7 +597,7 @@ RUN_SHIELDS_TEST(
         contentDriftDetection: true,
         shieldsDownMutableRestore: true,
         auditTrail: true,
-        autoRestore: true,
+        deadTimerInlineAutoRestore: true,
         doubleOperationRejection: true,
       },
       shellDeletion: "deferred to #5098 Phase 11 cleanup",

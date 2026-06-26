@@ -103,7 +103,6 @@ rebuild.rebuildSandbox = async (name, args, opts) => { rebuildCalls.push({ name,
 const agentDefs = require(${d("agent/defs.js")});
 agentDefs.loadAgent = () => ({
   name: ${JSON.stringify(agentName)},
-  messagingPlatforms: [],
 });
 
 const channelModule = require(${d("actions/sandbox/policy-channel.js")});
@@ -130,8 +129,8 @@ module.exports = {
 `;
 }
 
-describe("addSandboxChannel agent gate (behaviour)", () => {
-  it("DeepAgents channels add discord exits non-mutatingly with the unsupported-agent message", () => {
+describe("addSandboxChannel channel/agent gate (behaviour)", () => {
+  it("DeepAgents channels add discord exits non-mutatingly with the unsupported channel-agent message", () => {
     const script = `${buildPreamble("langchain-deepagents-code")}
 const ctx = module.exports;
 (async () => {
@@ -178,13 +177,19 @@ const ctx = module.exports;
     assert.equal(payload.exitCode, 1, "expected addSandboxChannel to exit with code 1");
     assert.ok(
       payload.errors.some((msg) =>
-        /Agent 'langchain-deepagents-code' does not support messaging channels/.test(msg),
+        /Channel 'discord' does not support agent 'langchain-deepagents-code'/.test(msg),
       ),
-      `missing unsupported-agent error in stderr: ${JSON.stringify(payload.errors)}`,
+      `missing unsupported channel-agent error in stderr: ${JSON.stringify(payload.errors)}`,
     );
     assert.ok(
-      payload.errors.some((msg) => /Messaging-capable agents: openclaw, hermes/.test(msg)),
-      `missing supported-agents hint in stderr: ${JSON.stringify(payload.errors)}`,
+      payload.errors.some((msg) => /Channel-supported agents: openclaw, hermes/.test(msg)),
+      `missing channel-supported agents hint in stderr: ${JSON.stringify(payload.errors)}`,
+    );
+    assert.ok(
+      payload.errors.some((msg) =>
+        /Channels supported by agent 'langchain-deepagents-code': \(none\)/.test(msg),
+      ),
+      `missing agent-supported channels hint in stderr: ${JSON.stringify(payload.errors)}`,
     );
 
     assert.deepEqual(payload.policyCalls.loadPreset, [], "loadPreset must not run before the gate");

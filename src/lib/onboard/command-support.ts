@@ -3,9 +3,49 @@
 
 import { Flags } from "@oclif/core";
 
+import { describeAgentFlag } from "./agent-flag-help";
 import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
 
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
+
+type AgentRegistryReader = () => readonly string[];
+
+let agentRegistryReaderForTest: AgentRegistryReader | null = null;
+
+export function setAgentRegistryReaderForTest(reader: AgentRegistryReader | null): void {
+  agentRegistryReaderForTest = reader;
+}
+
+function readAgentRegistryNames(): readonly string[] {
+  if (agentRegistryReaderForTest) return agentRegistryReaderForTest();
+  const { listAgents } = require("../agent/defs") as typeof import("../agent/defs");
+  return listAgents();
+}
+
+function prioritizeDefaultAgent(names: readonly string[]): string[] {
+  return [...names].sort((left, right) => {
+    if (left === "openclaw") return -1;
+    if (right === "openclaw") return 1;
+    return left.localeCompare(right);
+  });
+}
+
+// Resolve the installed agent runtimes for the `--agent` help, falling back to
+// the generic description if the agent registry can't be read (#5779). The
+// agent registry is loaded lazily via require (not a top-level import) so this
+// module — evaluated at command-class load via `static flags = ...` — does not
+// pull the agent/defs -> runner chain into the module-linking graph, matching
+// how other onboard modules consume agent/defs and avoiding a load cycle.
+// Remove this fallback only after command-class load no longer crosses the
+// agent/defs -> runner chain, or after the agent registry exposes a side-effect
+// free metadata reader for command help.
+function agentFlagDescription(): string {
+  try {
+    return describeAgentFlag(prioritizeDefaultAgent(readAgentRegistryNames()));
+  } catch {
+    return describeAgentFlag([]);
+  }
+}
 
 export const onboardUsage = [
   `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--agents <agents.yaml>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
@@ -75,7 +115,7 @@ export function buildOnboardFlags(): Record<string, any> {
       description:
         "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
     }),
-    agent: Flags.string({ description: "Agent runtime to onboard" }),
+    agent: Flags.string({ description: agentFlagDescription() }),
     agents: Flags.string({
       description:
         "Path to a YAML manifest declaring secondary OpenClaw agents, agents.defaults, and main-agent overrides; baked into the sandbox image",

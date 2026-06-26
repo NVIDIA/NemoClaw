@@ -77,7 +77,10 @@ export async function setupMessagingChannels(
   const isNonInteractive =
     deps.isNonInteractive ?? (() => process.env.NEMOCLAW_NON_INTERACTIVE === "1");
   const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const availabilityContext = getMessagingManifestAvailabilityContext(agent);
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
   const hasManifestRequiredInputs = (manifest: ChannelManifest) =>
     hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue);
@@ -169,7 +172,7 @@ export async function setupSelectedMessagingChannels(
     return null;
   }
 
-  const agent = toMessagingAgentId(options.agent);
+  const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
   const planner = new MessagingWorkflowPlanner(
     registry,

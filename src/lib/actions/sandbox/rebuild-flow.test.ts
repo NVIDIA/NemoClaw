@@ -185,7 +185,6 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const agentDef = {
     name: "openclaw",
     expectedVersion: "0.2.0",
-    messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp"],
   };
 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);

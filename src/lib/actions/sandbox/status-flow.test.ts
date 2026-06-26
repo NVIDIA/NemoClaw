@@ -12,6 +12,7 @@ const requireDist = createRequire(import.meta.url);
 const statusModulePath = "../../../../dist/lib/actions/sandbox/status.js";
 
 type StatusFlowHarness = {
+  checkAgentVersionSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   logSpy: MockInstance;
@@ -39,7 +40,15 @@ const baseSandboxEntry = {
   agentVersion: "0.1.0",
 };
 
-function createStatusFlowHarness(options: { lookupState?: "present" | "missing" } = {}) {
+function createStatusFlowHarness(
+  options: {
+    lookupState?: "present" | "missing";
+    sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
+      agent?: string | null;
+      agentVersion?: string | null;
+    };
+  } = {},
+) {
   delete require.cache[requireDist.resolve(statusModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -74,7 +83,9 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
           recoverySandboxVia: "docker unpause",
         };
 
-  vi.spyOn(registry, "getSandbox").mockReturnValue(baseSandboxEntry);
+  const sandboxEntry = { ...baseSandboxEntry, ...options.sandboxEntry };
+
+  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
   vi.spyOn(statusPreflight, "getSandboxStatusPreflight").mockResolvedValue({
     failure: null,
     failureLayer: null,
@@ -82,7 +93,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
     exitCode: 0,
   });
   vi.spyOn(statusSnapshot, "collectSandboxStatusSnapshot").mockResolvedValue({
-    sb: baseSandboxEntry,
+    sb: sandboxEntry,
     lookup,
     rpcIssue: null,
     currentModel: "nvidia/nemotron-live",
@@ -129,7 +140,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+  const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
     sandboxVersion: "0.1.0",
     expectedVersion: "0.2.0",
     isStale: true,
@@ -149,6 +160,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
   logSpy.mockClear();
 
   return {
+    checkAgentVersionSpy,
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
     logSpy,
@@ -199,6 +211,27 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("probes terminal runtime agent version when cached metadata is missing", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        agent: "langchain-deepagents-code",
+        agentVersion: null,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(output).toContain("Agent:    LangChain Deep Agents Code v0.1.0");
+    expect(output).toContain("Update:");
+    expect(output).toContain("Run `nemoclaw alpha rebuild` to upgrade");
+    expect(harness.checkAgentVersionSpy).toHaveBeenCalledWith("alpha", {
+      forceProbe: true,
+      skipProbe: false,
+    });
   });
 
   it("preserves the registry entry and exits when the live gateway is missing the sandbox", async () => {

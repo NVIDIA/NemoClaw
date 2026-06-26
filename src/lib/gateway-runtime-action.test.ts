@@ -3,7 +3,7 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 type GatewayRuntimeModule = typeof import("../../dist/lib/gateway-runtime-action");
 
@@ -76,6 +76,38 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
 
       expect(result.state).toBe("connected_other");
       expect(result.activeGateway).toBe("nemoclaw");
+    });
+
+    it("keeps probes fatal by default, but still captures stderr (ignoreError falsy)", () => {
+      captureSpy.mockReturnValue({ status: 0, output: "Status: Connected\nGateway: nemoclaw\n" });
+
+      gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw");
+
+      for (const [, opts] of captureSpy.mock.calls) {
+        // Default path is fatal (no ignoreError). stderr is still captured here
+        // because captureOpenshell includes stderr whenever ignoreError is falsy,
+        // so the `Status:`/`Gateway:` lines (written to stderr) are not dropped.
+        expect(opts?.ignoreError).not.toBe(true);
+        expect(opts?.includeStderr).not.toBe(true);
+      }
+    });
+
+    it("makes probes non-fatal AND keeps includeStderr in lockstep when ignoreProbeErrors is set (#5714)", () => {
+      // Plain `nemoclaw list` recovery must not be killed by a hung gateway:
+      // both lifecycle probes must run with ignoreError so an ETIMEDOUT is
+      // swallowed instead of triggering captureOpenshell's process.exit. Because
+      // ignoreError would otherwise drop stderr (where OpenShell writes the
+      // Status:/Gateway: lines), includeStderr MUST stay true in lockstep, or
+      // the healthy/connected classification silently breaks.
+      captureSpy.mockReturnValue({ status: 0, output: "Status: Connected\nGateway: nemoclaw\n" });
+
+      gatewayRuntime.getNamedGatewayLifecycleState("nemoclaw", { ignoreProbeErrors: true });
+
+      expect(captureSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+      for (const [, opts] of captureSpy.mock.calls) {
+        expect(opts?.ignoreError).toBe(true);
+        expect(opts?.includeStderr).toBe(true);
+      }
     });
   });
 
