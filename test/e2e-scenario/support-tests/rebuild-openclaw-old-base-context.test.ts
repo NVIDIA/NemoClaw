@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   createOldBaseBuildContext,
   directDockerfileBaseCopySources,
+  dockerignoreSecretPatterns,
 } from "../live/rebuild-openclaw-old-base-context.ts";
 
 const copiedContexts: string[] = [];
@@ -83,24 +84,57 @@ describe("rebuild-openclaw old-base build context", () => {
     );
   });
 
-  it("rejects dockerignore-secret direct Dockerfile.base COPY sources before staging", () => {
-    const envDockerfilePath = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
-      "Dockerfile.base",
-    );
-    const secretDockerfilePath = path.join(
-      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
-      "Dockerfile.base",
-    );
-    testFiles.push(path.dirname(envDockerfilePath), path.dirname(secretDockerfilePath));
-    fs.writeFileSync(envDockerfilePath, "COPY .env /tmp/env\n", "utf8");
-    fs.writeFileSync(secretDockerfilePath, "COPY secrets/token.json /tmp/token\n", "utf8");
+  it("rejects every current .dockerignore secret COPY pattern before staging", () => {
+    const representativeSourceByPattern = new Map([
+      [".env", ".env"],
+      [".env.*", ".env.prod"],
+      [".envrc", ".envrc"],
+      [".npmrc", ".npmrc"],
+      [".netrc", ".netrc"],
+      [".pypirc", ".pypirc"],
+      [".direnv/", ".direnv/config"],
+      [".ssh/", ".ssh/id_rsa.pub"],
+      ["secrets/", "secrets/token.json"],
+      [".credentials", ".credentials"],
+      ["*.key", "private.key"],
+      ["*.pem", "private.pem"],
+      ["*.pfx", "private.pfx"],
+      ["*.p12", "private.p12"],
+      ["*.jks", "private.jks"],
+      ["*.keystore", "private.keystore"],
+      ["*.tfvars", "terraform.tfvars"],
+      ["*_ecdsa", "id_ecdsa"],
+      ["*_ed25519", "id_ed25519"],
+      ["*_rsa", "id_rsa"],
+      ["credentials.json", "credentials.json"],
+      ["key.json", "key.json"],
+      ["secrets.json", "secrets.json"],
+      ["secrets.yaml", "secrets.yaml"],
+      ["service-account*.json", "service-account-prod.json"],
+      ["token.json", "token.json"],
+    ]);
 
-    expect(() => directDockerfileBaseCopySources(envDockerfilePath)).toThrow(
-      "Unsupported .dockerignore-secret Dockerfile.base COPY source",
-    );
-    expect(() => directDockerfileBaseCopySources(secretDockerfilePath)).toThrow(
-      "Unsupported .dockerignore-secret Dockerfile.base COPY source",
-    );
+    const securityPatterns = dockerignoreSecretPatterns();
+    expect(securityPatterns).not.toHaveLength(0);
+    expect(securityPatterns).toEqual([...representativeSourceByPattern.keys()]);
+
+    for (const pattern of securityPatterns) {
+      const dockerfilePath = path.join(
+        fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+        "Dockerfile.base",
+      );
+      testFiles.push(path.dirname(dockerfilePath));
+      const source = representativeSourceByPattern.get(pattern);
+      expect(
+        source,
+        `missing representative source for .dockerignore pattern ${pattern}`,
+      ).toBeDefined();
+      fs.writeFileSync(dockerfilePath, `COPY ${source} /tmp/secret\n`, "utf8");
+
+      expect(
+        () => directDockerfileBaseCopySources(dockerfilePath),
+        `.dockerignore pattern ${pattern} should reject representative source ${source}`,
+      ).toThrow("Unsupported .dockerignore-secret Dockerfile.base COPY source");
+    }
   });
 });
