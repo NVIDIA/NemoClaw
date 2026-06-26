@@ -26,7 +26,12 @@ function policyBinaryPaths(policyText: string, policyName: string): string[] {
   expect(Array.isArray(binaries), `${policyName} policy must declare binary-scoped egress`).toBe(
     true,
   );
-  return (binaries ?? []).map((entry) => (typeof entry.path === "string" ? entry.path : ""));
+  return (binaries ?? []).map((entry, index) => {
+    expect(typeof entry.path, `${policyName} binary #${index} must declare a string path`).toBe(
+      "string",
+    );
+    return entry.path as string;
+  });
 }
 
 function makeStartScriptFixture(tempDir: string): {
