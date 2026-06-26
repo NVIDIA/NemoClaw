@@ -68,7 +68,7 @@ jobs:
           echo "DOCS_ONLY_FROM_REF=$DOCS_ONLY_FROM_REF" >> "$GITHUB_ENV"
 
       - name: Run docs-only hook checks
-        run: SKIP=hadolint npx prek run --from-ref "$DOCS_ONLY_FROM_REF" --to-ref HEAD
+        run: npx prek run --from-ref "$DOCS_ONLY_FROM_REF" --to-ref HEAD
 
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
