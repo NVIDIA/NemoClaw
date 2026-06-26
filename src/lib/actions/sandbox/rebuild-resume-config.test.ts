@@ -122,20 +122,24 @@ describe("getRebuildEndpointFromRegistry", () => {
 });
 
 describe("prepareRebuildResumeConfig", () => {
-  it("pins registry config and does not pin endpoint for a matching session", () => {
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
+  it("pins registry config and keeps a matching custom-endpoint session endpoint", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      endpointUrl: "http://127.0.0.1:19999/v1",
+    });
     const config = prepareRebuildResumeConfig(
       "alpha",
-      entry({ provider: "nvidia-prod", model: "m" }),
+      entry({ provider: "compatible-endpoint", model: "m" }),
       null,
       noopLog,
       throwingBail,
     );
     expect(config).toMatchObject({
-      provider: "nvidia-prod",
+      provider: "compatible-endpoint",
       model: "m",
-      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      credentialEnv: "COMPATIBLE_API_KEY",
       pinEndpoint: false,
+      endpointUrl: "http://127.0.0.1:19999/v1",
     });
   });
 

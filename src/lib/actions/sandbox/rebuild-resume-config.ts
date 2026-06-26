@@ -163,7 +163,12 @@ export interface RebuildResumeConfig {
   readonly nimContainer: string | null;
   readonly credentialEnv: string | null;
   readonly preferredInferenceApi: string | null;
-  /** Overwrite the session endpoint with `endpointUrl`; false keeps a matching session's own custom URL. */
+  /**
+   * Whether this endpoint was derived without trusting the matching onboard
+   * session. Kept for preflight/tests; rebuild writes `endpointUrl`
+   * unconditionally after validation so stale retry sessions cannot leak old
+   * provider URLs into recreate (#4497/#5869).
+   */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
   readonly ambient: AmbientRecreateEnvAssessment;
@@ -253,6 +258,12 @@ export function prepareRebuildResumeConfig(
     return null;
   }
 
+  const endpointUrl = rebuildEndpoint.known
+    ? rebuildEndpoint.endpointUrl
+    : sessionMatchesSandbox
+      ? (session?.endpointUrl ?? null)
+      : null;
+
   return {
     agent: rebuildAgent,
     provider: registrySelection.provider,
@@ -264,7 +275,7 @@ export function prepareRebuildResumeConfig(
     ),
     preferredInferenceApi: registrySelection.preferredInferenceApi,
     pinEndpoint: !sessionMatchesSandbox && rebuildEndpoint.known,
-    endpointUrl: rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : null,
+    endpointUrl,
     ambient,
   };
 }
