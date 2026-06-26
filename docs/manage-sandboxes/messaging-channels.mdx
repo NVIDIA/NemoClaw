@@ -114,7 +114,7 @@ Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Mic
 This direct-message allowlist does not restrict OpenClaw group or channel senders.
 OpenClaw group and channel messages stay open by default, subject to mention mode.
 Set `TEAMS_GROUP_POLICY=allowlist` and `TEAMS_GROUP_ALLOWED_USERS=<entra-object-id>[,<entra-object-id>]` to render `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom` in `openclaw.json`.
-If `TEAMS_GROUP_POLICY=allowlist` is set without `TEAMS_GROUP_ALLOWED_USERS`, NemoClaw keeps the rendered group policy open because OpenClaw treats an empty group allowlist as open.
+If `TEAMS_GROUP_POLICY=allowlist` is set without `TEAMS_GROUP_ALLOWED_USERS`, NemoClaw keeps the rendered group policy open to preserve the default mention-gated group behavior.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
 
