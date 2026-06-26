@@ -11,11 +11,9 @@ const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-s
 
 function extractShellFunctionFromSource(src: string, name: string): string {
   const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = src.match(new RegExp(`${escapedName}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  return `${name}() {${match[1]}\n}`;
+  const body = src.match(new RegExp(`${escapedName}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"))?.[1];
+  expect(body, `Expected ${name} in scripts/nemoclaw-start.sh`).toBeDefined();
+  return `${name}() {${body}\n}`;
 }
 
 function shellQuote(value: string): string {
