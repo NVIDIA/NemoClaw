@@ -835,12 +835,22 @@ async function runInferenceSetWithRetry(
   switchEndpointUrl: string | null,
 ): Promise<ShellProbeResult> {
   const attempts = parsePositiveIntEnv("NEMOCLAW_SWITCH_SET_ATTEMPTS", 3);
+  const compatibleCredentialEnv = (() => {
+    switch (SWITCH_PROVIDER) {
+      case "compatible-endpoint":
+        return "COMPATIBLE_API_KEY";
+      case "compatible-anthropic-endpoint":
+        return "COMPATIBLE_ANTHROPIC_API_KEY";
+      default:
+        return null;
+    }
+  })();
   const compatibleMetadataArgs = switchEndpointUrl
     ? [
         "--endpoint-url",
         switchEndpointUrl,
         "--credential-env",
-        "COMPATIBLE_ANTHROPIC_API_KEY",
+        compatibleCredentialEnv ?? "",
         "--inference-api",
         SWITCH_INFERENCE_API,
       ]
@@ -972,11 +982,10 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         endpointUrl: mockProvider.endpointUrl,
       });
     }
-    const switchEndpointUrl = await ensureCompatibleAnthropicSwitchProvider(
-      host,
-      home,
-      mockProvider,
-    );
+    const switchEndpointUrl =
+      SWITCH_PROVIDER === "compatible-endpoint"
+        ? hosted.endpointUrl
+        : await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
     const switchResult = await runInferenceSetWithRetry(host, home, [apiKey], switchEndpointUrl);
