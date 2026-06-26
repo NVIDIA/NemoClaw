@@ -182,6 +182,36 @@ describe("prepareRebuildResumeConfig", () => {
     });
   });
 
+  it("ignores target-scoped explicit env when the custom-endpoint session matches the sandbox", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      endpointUrl: "https://session.example.test/v1?x=1#frag",
+    });
+    const restore = snapshotEnv([
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+      process.env.NEMOCLAW_PROVIDER = "custom";
+      process.env.NEMOCLAW_ENDPOINT_URL = "https://env.example.test/v1";
+      process.env.NEMOCLAW_MODEL = "m";
+      const config = prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-endpoint", model: "m" }),
+        null,
+        noopLog,
+        throwingBail,
+      );
+      expect(config?.pinEndpoint).toBe(false);
+      expect(config?.endpointUrl).toBe("https://session.example.test/v1");
+    } finally {
+      restore();
+    }
+  });
+
   it("fails closed for a matching custom-endpoint session with no recoverable endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "alpha" });
     expect(() =>
@@ -265,6 +295,75 @@ describe("prepareRebuildResumeConfig", () => {
       });
     } finally {
       restore();
+    }
+  });
+
+  it("accepts camelCase explicit provider aliases for non-matching session recovery", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    const restore = snapshotEnv([
+      "NEMOCLAW_SANDBOX_NAME",
+      "NEMOCLAW_PROVIDER",
+      "NEMOCLAW_ENDPOINT_URL",
+      "NEMOCLAW_MODEL",
+    ]);
+    try {
+      process.env.NEMOCLAW_SANDBOX_NAME = "alpha";
+      process.env.NEMOCLAW_PROVIDER = "anthropicCompatible";
+      process.env.NEMOCLAW_ENDPOINT_URL = "https://anthropic.example.test/v1?x=1#frag";
+      process.env.NEMOCLAW_MODEL = "claude-like";
+      const config = prepareRebuildResumeConfig(
+        "alpha",
+        entry({ provider: "compatible-anthropic-endpoint", model: "claude-like" }),
+        null,
+        noopLog,
+        throwingBail,
+      );
+      expect(config).toMatchObject({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-like",
+        pinEndpoint: true,
+        endpointUrl: "https://anthropic.example.test/v1",
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("rejects explicit target endpoints that do not exactly match the target boundary", () => {
+    const cases = [
+      { name: "wrong sandbox", sandboxName: "beta" },
+      { name: "wrong provider", provider: "openai" },
+      { name: "unknown provider", provider: "compatible-endpoint-alias" },
+      { name: "wrong model", model: "other-model" },
+      { name: "unsupported url", endpointUrl: "file:///tmp/x" },
+      { name: "userinfo url", endpointUrl: "https://u:p@example.test/v1" },
+    ];
+    for (const testCase of cases) {
+      vi.restoreAllMocks();
+      vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+      const restore = snapshotEnv([
+        "NEMOCLAW_SANDBOX_NAME",
+        "NEMOCLAW_PROVIDER",
+        "NEMOCLAW_ENDPOINT_URL",
+        "NEMOCLAW_MODEL",
+      ]);
+      try {
+        process.env.NEMOCLAW_SANDBOX_NAME = testCase.sandboxName ?? "alpha";
+        process.env.NEMOCLAW_PROVIDER = testCase.provider ?? "custom";
+        process.env.NEMOCLAW_ENDPOINT_URL = testCase.endpointUrl ?? "https://env.example.test/v1";
+        process.env.NEMOCLAW_MODEL = testCase.model ?? "m";
+        expect(() =>
+          prepareRebuildResumeConfig(
+            "alpha",
+            entry({ provider: "compatible-endpoint", model: "m" }),
+            null,
+            noopLog,
+            throwingBail,
+          ),
+        ).toThrow("Cannot determine recreate endpoint");
+      } finally {
+        restore();
+      }
     }
   });
 

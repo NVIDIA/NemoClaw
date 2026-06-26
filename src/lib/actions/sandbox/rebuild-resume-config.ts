@@ -57,9 +57,14 @@ function validCredentialEnvName(value: string | null | undefined): string | null
 }
 
 function providerNameFromEnvHint(value: string | null | undefined): string | null {
-  const hint = typeof value === "string" ? value.trim().toLowerCase() : "";
-  if (!hint) return null;
-  return REMOTE_PROVIDER_CONFIG[hint]?.providerName ?? hint;
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  const hint = raw.toLowerCase();
+  const config = Object.entries(REMOTE_PROVIDER_CONFIG).find(
+    ([key, config]) =>
+      key.toLowerCase() === hint || config.providerName.toLowerCase() === hint,
+  )?.[1];
+  return config?.providerName ?? null;
 }
 
 function providerRecordedCredentialEnv(
@@ -243,13 +248,14 @@ export function prepareRebuildResumeConfig(
     registrySelection.provider,
     registrySelection.endpointUrl,
   );
-  const explicitTargetEndpoint = rebuildEndpoint.known
-    ? null
-    : getExplicitTargetEndpointFromEnv(
-        sandboxName,
-        registrySelection.provider,
-        registrySelection.model,
-      );
+  const explicitTargetEndpoint =
+    !sessionMatchesSandbox && !rebuildEndpoint.known
+      ? getExplicitTargetEndpointFromEnv(
+          sandboxName,
+          registrySelection.provider,
+          registrySelection.model,
+        )
+      : null;
 
   // When the loaded session belongs to a *different* sandbox (e.g. an
   // installer's just-completed onboard before `upgrade-sandboxes --auto`), the
@@ -290,6 +296,12 @@ export function prepareRebuildResumeConfig(
     return null;
   }
 
+  // Endpoint precedence at the destructive rebuild boundary:
+  // 1. Durable/canonical registry metadata, when known.
+  // 2. Explicit target-scoped env only for legacy rows whose loaded session is
+  //    not this sandbox, after exact sandbox/provider/model checks and URL
+  //    canonicalization.
+  // 3. The target sandbox's own matching session endpoint, validated below.
   let endpointUrl = rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : explicitTargetEndpoint;
   if (!endpointUrl && !rebuildEndpoint.known && sessionMatchesSandbox) {
     endpointUrl = canonicalCustomEndpointUrl(session?.endpointUrl);
