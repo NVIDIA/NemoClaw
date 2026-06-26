@@ -150,12 +150,20 @@ The preset file under `presets/` also persists across sandbox recreations.
 
 Use this path only when you cannot add a file under the NemoClaw source tree.
 Start from the current live policy so the presets layered on at onboarding stay in the file you apply.
+Requires OpenShell 0.0.44+ for `policy get --full` and `policy set --wait` syntax.
 Strip the OpenShell metadata header before editing the file, then validate the raw policy shape before replacing your editable copy.
-The `policy set --policy <file> --wait <sandbox-name>` order matches OpenShell 0.0.44 and the command NemoClaw emits internally.
+The command order below matches the commands NemoClaw emits internally.
 
 ```bash
+# shellcheck shell=bash
+# Source-of-truth review:
+# invalidState: OpenShell 0.0.44 policy get --full emits metadata before the --- YAML header.
+# sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.
+# whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.
+# regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.
+# removalCondition: remove this pipeline after pinned OpenShell emits clean raw YAML.
 tmp_policy=$(mktemp)
-openshell policy get my-assistant --full \
+openshell policy get --full my-assistant \
   | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
   > "$tmp_policy" \
   && grep -q '^version:' "$tmp_policy" \

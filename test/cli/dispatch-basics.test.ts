@@ -225,7 +225,9 @@ describe("CLI dispatch", () => {
     const policy = run("policy set");
     expect(policy.code).toBe(1);
     expect(policy.out).toContain("Unknown nemoclaw command: policy set");
-    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain(
+      "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+    );
     expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
     expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
 

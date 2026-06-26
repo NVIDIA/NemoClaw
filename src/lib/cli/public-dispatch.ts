@@ -135,7 +135,7 @@ function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint 
   if (cmd === "policy" && subcommand === "set") {
     return {
       entered: argv.join(" "),
-      command: "openshell policy set --policy <policy-file> <sandbox-name>",
+      command: "openshell policy set --policy <policy-file> --wait <sandbox-name>",
       note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
     };
   }
