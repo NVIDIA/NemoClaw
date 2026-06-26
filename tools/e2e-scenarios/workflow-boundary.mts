@@ -51,8 +51,12 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
   "hermes-root-entrypoint-smoke-vitest",
   "jetson-nvmap-gpu-vitest",
+  "sandbox-rlimits-connect-vitest",
 ]);
-const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set(["jetson-nvmap-gpu-vitest"]);
+const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set([
+  "jetson-nvmap-gpu-vitest",
+  "sandbox-rlimits-connect-vitest",
+]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -7797,6 +7801,50 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu")) {
     errors.push("jetson-nvmap-gpu-vitest job must run only when explicitly selected");
   }
+
+  const sandboxRlimitConnectJob = asRecord(jobs["sandbox-rlimits-connect-vitest"]);
+  if (sandboxRlimitConnectJob.needs !== "generate-matrix") {
+    errors.push("sandbox-rlimits-connect-vitest job must depend on generate-matrix");
+  }
+  if (
+    sandboxRlimitConnectJob.if !==
+    explicitOnlyFreeStandingJobIf(
+      "sandbox-rlimits-connect-vitest",
+      "sandbox-rlimits-connect",
+    )
+  ) {
+    errors.push("sandbox-rlimits-connect-vitest job must run only when explicitly selected");
+  }
+  const sandboxRlimitConnectEnv = asRecord(sandboxRlimitConnectJob.env);
+  if (sandboxRlimitConnectEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("sandbox-rlimits-connect-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (sandboxRlimitConnectEnv.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
+    errors.push("sandbox-rlimits-connect-vitest job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1");
+  }
+  if (
+    sandboxRlimitConnectEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rlimits-connect"
+  ) {
+    errors.push("sandbox-rlimits-connect-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rlimits-connect");
+  }
+  const sandboxRlimitConnectSteps = asSteps(sandboxRlimitConnectJob.steps);
+  const sandboxRlimitConnectRun = namedStep(
+    sandboxRlimitConnectSteps,
+    "Run sandbox rlimit connect live test",
+  );
+  if (!sandboxRlimitConnectRun) {
+    errors.push("sandbox-rlimits-connect-vitest job missing step: Run sandbox rlimit connect live test");
+  } else {
+    const runScript = stringValue(sandboxRlimitConnectRun.run);
+    if (!runScript.includes("test/e2e-scenario/live/sandbox-rlimits-connect.test.ts")) {
+      errors.push("sandbox-rlimits-connect-vitest job must run sandbox-rlimits-connect.test.ts");
+    }
+    if (asRecord(sandboxRlimitConnectRun.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+      errors.push("sandbox-rlimits-connect-vitest step must receive NVIDIA_API_KEY from secrets");
+    }
+  }
+
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7922,6 +7970,16 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("scenarios=${scenario}") || !reportScript.includes("jetson-nvmap-gpu")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson scenario selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect-vitest")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit rlimit jobs selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit rlimit scenario selector",
       );
     }
     for (const forbidden of [

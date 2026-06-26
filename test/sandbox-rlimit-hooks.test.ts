@@ -73,7 +73,7 @@ function copyRlimitFixtureWithNprocLimit(rlimitLib: string, limit: number): void
 }
 
 function rlimitShim(rlimitLib: string): string {
-  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits`;
+  return `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || true`;
 }
 
 type ProbeValues = Record<string, string | undefined>;
@@ -165,6 +165,36 @@ function expectSystemRlimitHookBypassesShadowedUlimit(hookPath: string): void {
   expect(values.shadow).toBe("function");
   expect(Number(values.nproc)).toBeLessThanOrEqual(4096);
   expect(Number(values.nofile)).toBeLessThanOrEqual(65536);
+}
+
+function expectSystemRlimitHookIsSilentWhenVerificationFails(
+  hookPath: string,
+  rlimitLib: string,
+): void {
+  fs.chmodSync(rlimitLib, 0o644);
+  fs.writeFileSync(
+    rlimitLib,
+    [
+      "harden_resource_limits() { :; }",
+      "verify_resource_limits() {",
+      '  if [ "${1:-}" != "--quiet" ]; then',
+      '    echo "[SECURITY] noisy verification failure" >&2',
+      "  fi",
+      "  return 1",
+      "}",
+    ].join("\n"),
+  );
+  const probe = ["set -euo pipefail", `source ${JSON.stringify(hookPath)}`, 'printf "OK\\n"'].join(
+    "\n",
+  );
+  const result = spawnSync("bash", ["--noprofile", "--norc", "-c", probe], {
+    encoding: "utf-8",
+    timeout: 5000,
+  });
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe("OK\n");
+  expect(result.stderr).toBe("");
 }
 
 function expectRlimitLibIsPosixShSafe(rlimitLib: string): void {
@@ -388,6 +418,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookBypassesShadowedUlimit(rlimitHook);
+      expectSystemRlimitHookIsSilentWhenVerificationFails(rlimitHook, rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -447,7 +478,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
           "# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)",
           "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh",
           "# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)",
-          "[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits",
+          "[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true",
         ].join("\n"),
       );
       const command = dockerRunCommandBetween(
@@ -467,6 +498,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(occurrenceCount(bashrcBody, expectedRlimitShim)).toBe(1);
       expectSystemRlimitHookEnforcesLimits(rlimitHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
+      expectSystemRlimitHookIsSilentWhenVerificationFails(bashrc, rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -517,6 +549,7 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expect(fs.readFileSync(bashrc, "utf-8")).toContain(expectedRlimitShim);
       expectSystemRlimitHookEnforcesLimits(profileHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
+      expectSystemRlimitHookIsSilentWhenVerificationFails(bashrc, rlimitLib);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
