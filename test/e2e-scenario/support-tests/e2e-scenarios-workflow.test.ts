@@ -971,6 +971,8 @@ jobs:
         expect.arrayContaining([
           "workflow_dispatch missing input: scenarios",
           "workflow_dispatch missing input: jobs",
+          "workflow_dispatch missing input: inference_mode",
+          "workflow_dispatch inference_mode input must be a mock-default choice over mock, internal-nvidia, and public-nvidia",
           "workflow_dispatch must not expose legacy test_filter input",
           "workflow missing generate-matrix job",
           "live-scenarios job must run on the matrix runner",

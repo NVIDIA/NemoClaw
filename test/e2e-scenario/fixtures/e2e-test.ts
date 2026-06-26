@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test as base } from "vitest";
+import { test as base, expect } from "vitest";
 
-import { createArtifactSink, type ArtifactSink } from "./artifacts.ts";
+import { type ArtifactSink, createArtifactSink } from "./artifacts.ts";
+import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {
   GatewayClient,
   HostCliClient,
@@ -11,7 +12,7 @@ import {
   SandboxClient,
   StateClient,
 } from "./clients/index.ts";
-import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
+import { createE2EInferenceAdapter, type E2EInferenceAdapter } from "./inference-adapter.ts";
 import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
@@ -31,6 +32,7 @@ export interface E2EScenarioFixtures {
   gateway: GatewayClient;
   sandbox: SandboxClient;
   provider: ProviderClient;
+  inference: E2EInferenceAdapter;
   state: StateClient;
   environment: EnvironmentPhaseFixture;
   onboard: OnboardingPhaseFixture;
@@ -88,6 +90,14 @@ export const test = base.extend<E2EScenarioFixtures>({
   },
   provider: async ({ shellProbe }, use) => {
     await use(new ProviderClient(shellProbe));
+  },
+  inference: async ({ artifacts, host, provider, secrets }, use) => {
+    const inference = await createE2EInferenceAdapter({ artifacts, host, provider, secrets });
+    try {
+      await use(inference);
+    } finally {
+      await inference.close();
+    }
   },
   state: async ({}, use) => {
     await use(new StateClient());

@@ -225,6 +225,10 @@ function asSteps(value: unknown): WorkflowStep[] {
     : [];
 }
 
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(stringValue) : [];
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -3837,6 +3841,16 @@ function validateHermesE2EVitestJob(
   if (jobEnv.NEMOCLAW_MODEL !== "minimaxai/minimax-m2.7") {
     errors.push("hermes-e2e-vitest job must pin the CI-safe Hermes model");
   }
+  if (jobEnv.NEMOCLAW_E2E_INFERENCE_MODE !== "${{ inputs.inference_mode }}") {
+    errors.push(
+      "hermes-e2e-vitest job must pass workflow_dispatch inference_mode into the adapter",
+    );
+  }
+  if (Object.hasOwn(jobEnv, "NEMOCLAW_E2E_USE_HOSTED_INFERENCE")) {
+    errors.push(
+      "hermes-e2e-vitest job must not hard-code hosted inference outside the adapter",
+    );
+  }
   if (jobEnv.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS !== "60") {
     errors.push(
       "hermes-e2e-vitest job must give hosted endpoint validation a CI-safe timeout",
@@ -7381,6 +7395,17 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
+  const inferenceModeInput = requireInput(errors, dispatchInputs, "inference_mode");
+  const inferenceModeOptions = asStringArray(inferenceModeInput.options);
+  if (
+    inferenceModeInput.type !== "choice" ||
+    inferenceModeInput.default !== "mock" ||
+    inferenceModeOptions.join(",") !== "mock,internal-nvidia,public-nvidia"
+  ) {
+    errors.push(
+      "workflow_dispatch inference_mode input must be a mock-default choice over mock, internal-nvidia, and public-nvidia",
+    );
+  }
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled jobs")) {
     errors.push(
