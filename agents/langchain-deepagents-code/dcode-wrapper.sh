@@ -128,7 +128,8 @@ is_secret_shaped_value() {
 }
 
 has_credential_name_context() {
-  case "$1" in
+  local upper="${1^^}"
+  case "$upper" in
     KEY | API_KEY | TOKEN | SECRET | PASSWORD | PASS | CREDENTIAL)
       return 0
       ;;

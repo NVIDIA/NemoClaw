@@ -785,6 +785,21 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("rejects lower-case credential-name-context env vars to mirror canonical case-insensitive matching", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-namectx-lower-"));
+    const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+    const opaque = "opaqueLowerCasedCredentialPayload";
+
+    const result = runWrapper(wrapperPath, ["-n", "hi"], {
+      openai_api_key: opaque,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("openai_api_key");
+    expect(result.stderr).not.toContain(opaque);
+    expect(fs.existsSync(ranMarker)).toBe(false);
+  });
+
   it("rejects exact canonical credential names KEY/TOKEN/SECRET/PASSWORD/CREDENTIAL with opaque payloads", () => {
     const cases: string[] = ["KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "API_KEY"];
     const opaque = "opaqueCredentialPayloadZ1234567890";
