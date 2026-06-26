@@ -459,6 +459,7 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('name: "e2e-vitest-support"');
     expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"]');
     expect(vitestConfig).toContain('"test/e2e/**"');
+    expect(vitestConfig).toContain('"test/install-express-prompt.test.ts"');
     expect(vitestConfig).toContain('"test/install-preflight.test.ts"');
     expect(vitestConfig).toContain('"test/install-openshell-version-check.test.ts"');
   });

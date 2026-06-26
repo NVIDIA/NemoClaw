@@ -89,6 +89,8 @@ vi.mock("../lib/core/version", () => ({ getVersion: mocks.getVersion }));
 
 import DebugCliCommand from "./debug";
 import DeployCliCommand from "./deploy";
+import RootHelpCommand from "./root/help";
+import VersionCommand from "./root/version";
 import DashboardUrlCliCommand, {
   setDashboardUrlRuntimeBridgeFactoryForTest,
 } from "./sandbox/dashboard-url";
@@ -97,8 +99,6 @@ import GatewayTokenCliCommand, {
 } from "./sandbox/gateway/token";
 import DeprecatedStartCommand from "./start";
 import DeprecatedStopCommand from "./stop";
-import RootHelpCommand from "./root/help";
-import VersionCommand from "./root/version";
 import TunnelStartCommand from "./tunnel/start";
 import TunnelStopCommand from "./tunnel/stop";
 import UninstallCliCommand from "./uninstall";
@@ -145,9 +145,12 @@ describe("simple global oclif adapters", () => {
 
   it("maps gateway-token flags to the gateway token action", async () => {
     const getSandboxAgent = vi.fn(() => "openclaw");
+    const fetchToken = mocks.fetchGatewayAuthTokenFromSandbox;
+    const agentExposesToken = vi.fn(() => true);
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
-      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      fetchToken,
       getSandboxAgent,
+      agentExposesToken,
     }));
 
     await GatewayTokenCliCommand.run(["alpha", "--quiet"], rootDir);
@@ -155,7 +158,7 @@ describe("simple global oclif adapters", () => {
     expect(mocks.runGatewayTokenCommand).toHaveBeenCalledWith(
       "alpha",
       { quiet: true },
-      { fetchToken: mocks.fetchGatewayAuthTokenFromSandbox, getSandboxAgent },
+      { fetchToken, getSandboxAgent, agentExposesToken },
     );
   });
 
@@ -189,8 +192,9 @@ describe("simple global oclif adapters", () => {
       throw new mocks.GatewayTokenCommandError("not applicable");
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
-      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
       getSandboxAgent: () => "hermes",
+      agentExposesToken: () => false,
     }));
     const previousExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -216,8 +220,9 @@ describe("simple global oclif adapters", () => {
       throw new mocks.GatewayTokenCommandError(hermesLines, 1);
     });
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
-      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
       getSandboxAgent: () => "hermes",
+      agentExposesToken: () => false,
     }));
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -242,8 +247,9 @@ describe("simple global oclif adapters", () => {
     // successful invocation must still report success. Always overwrite.
     mocks.runGatewayTokenCommand.mockReturnValueOnce(undefined);
     setGatewayTokenRuntimeBridgeFactoryForTest(() => ({
-      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
       getSandboxAgent: () => "openclaw",
+      agentExposesToken: () => true,
     }));
     const previousExitCode = process.exitCode;
     process.exitCode = 1;

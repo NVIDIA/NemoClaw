@@ -226,7 +226,7 @@ export function messagingEnv(): MessagingEnv {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+    NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,
     TELEGRAM_BOT_TOKEN: telegram,
     DISCORD_BOT_TOKEN: discord,
     SLACK_BOT_TOKEN: slackBot,
@@ -513,7 +513,8 @@ if env 2>/dev/null | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
         ? `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
 if cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' | grep -Fq "$token"; then echo FOUND; else echo ABSENT; fi`
         : `token="$(printf '%s' ${shellQuote(tokenB64)} | base64 -d)"
-if grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1; then true; else echo ABSENT; fi`;
+match="$(grep -rIlm1 -F "$token" /sandbox /home /etc /tmp /var 2>/dev/null | head -1 || true)"
+if [ -n "$match" ]; then printf '%s\n' "$match"; else echo ABSENT; fi`;
   return sandboxOutput(sandbox, probe, artifactName, redactionValues);
 }
 
@@ -797,12 +798,35 @@ function decodeFrame(buffer) {
     if (buffer.length < 4) return null;
     payloadLength = buffer.readUInt16BE(2);
     offset = 4;
+  } else if (payloadLength === 127) {
+    if (buffer.length < 10) return null;
+    payloadLength = Number(buffer.readBigUInt64BE(2));
+    offset = 10;
   }
   if (buffer.length < offset + payloadLength) return null;
   return { opcode, payload: buffer.slice(offset, offset + payloadLength), totalLength: offset + payloadLength };
 }
 
-const socket = net.createConnection({ host, port });
+function parseProxyTarget() {
+  const raw = process.env.HTTP_PROXY || process.env.http_proxy || "";
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("HTTP proxy for Discord Gateway proof is malformed");
+  }
+  if (parsed.protocol !== "http:") throw new Error("Discord Gateway proof only supports HTTP proxies");
+  const proxyPort = Number(parsed.port || "80");
+  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) throw new Error("HTTP proxy port for Discord Gateway proof is invalid");
+  if (parsed.hostname !== "10.200.0.1" || proxyPort !== 3128) throw new Error("unexpected HTTP proxy for Discord Gateway proof");
+  return { host: parsed.hostname, port: proxyPort };
+}
+
+const proxy = parseProxyTarget();
+const socket = proxy
+  ? net.createConnection({ host: proxy.host, port: proxy.port })
+  : net.createConnection({ host, port });
 const timer = setTimeout(() => {
   socket.destroy();
   finish("TIMEOUT");
@@ -810,11 +834,15 @@ const timer = setTimeout(() => {
 let handshake = Buffer.alloc(0);
 let framed = Buffer.alloc(0);
 let upgraded = false;
+let finished = false;
 
 socket.on("connect", () => {
   const key = crypto.randomBytes(16).toString("base64");
+  const requestTarget = proxy
+    ? \`http://\${host}:\${port}/gateway?v=10&encoding=json\`
+    : "/gateway?v=10&encoding=json";
   socket.write([
-    "GET /gateway?v=10&encoding=json HTTP/1.1",
+    \`GET \${requestTarget} HTTP/1.1\`,
     \`Host: \${host}:\${port}\`,
     "Upgrade: websocket",
     "Connection: Upgrade",
@@ -864,6 +892,7 @@ socket.on("data", (chunk) => {
     } else if (message.op === 11) {
       results.push("HEARTBEAT_ACK");
       clearTimeout(timer);
+      finished = true;
       socket.end();
       finish();
     }
@@ -871,7 +900,11 @@ socket.on("data", (chunk) => {
 });
 socket.on("error", (error) => {
   clearTimeout(timer);
-  finish(\`ERROR \${error.message}\`);
+  if (!finished) finish(\`ERROR \${error.message}\`);
+});
+socket.on("close", () => {
+  clearTimeout(timer);
+  if (!finished) finish("CLOSED");
 });
 `,
     {

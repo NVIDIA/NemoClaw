@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   createSession,
@@ -113,6 +113,38 @@ describe("OnboardRuntimeBoundary record-only step/result pairing", () => {
       "state.exited",
       "state.entered",
     ]);
+  });
+
+  it("applies validated step completion results directly without compatibility diagnostics", async () => {
+    const { boundary, events } = createRuntimeHarness();
+    const compatibilitySpy = vi
+      .spyOn(boundary, "recordStateResultWithStepCompatibility")
+      .mockRejectedValue(new Error("compatibility bridge should not be used"));
+
+    try {
+      await boundary.recordStateResult(advanceTo("preflight"));
+      const completed = await boundary.recordStepCompleteWithStateResult(
+        "preflight",
+        { sandboxName: "strict-path-sb" },
+        advanceTo("gateway", { metadata: { state: "preflight" } }),
+      );
+
+      expect(completed).toMatchObject({
+        sandboxName: "strict-path-sb",
+        machine: { state: "gateway", revision: 2 },
+        steps: { preflight: { status: "complete" } },
+      });
+      expect(compatibilitySpy).not.toHaveBeenCalled();
+      expect(events.map((event) => event.type)).toEqual([
+        "state.exited",
+        "state.entered",
+        "state.exited",
+        "state.entered",
+      ]);
+      expect(events.some((event) => event.type === "state.result.skipped")).toBe(false);
+    } finally {
+      compatibilitySpy.mockRestore();
+    }
   });
 
   it("pairs record-only step failure with an explicit failure result", async () => {

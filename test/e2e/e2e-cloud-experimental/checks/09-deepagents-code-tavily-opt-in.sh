@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SANDBOX_NAME="${SANDBOX_NAME:-${NEMOCLAW_SANDBOX_NAME:-e2e-cloud-onboard}}"
-PREFIX="07-deepagents-code-tavily-opt-in"
+PREFIX="09-deepagents-code-tavily-opt-in"
 REPO="${REPO:-$(pwd)}"
 CLI="${NEMOCLAW_E2E_CLI:-${REPO}/bin/nemoclaw.js}"
 

@@ -126,7 +126,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(configSummary.token).toContain("openshell:resolve:env:");
     expect(configSummary.token).toContain("DISCORD_BOT_TOKEN");
     expect(configSummary.dmPolicy).not.toBe("allowlist");
-    expect(configSummary.accountProxy, "Discord account proxy").toMatch(/^http:\/\//);
+    expect(configSummary.accountProxy, "Discord account proxy").toBe("");
     expect(configSummary.managedProxy, "OpenClaw managed proxy").toMatch(/^http:\/\//);
 
     await assertOpenClawStateRoot(sandbox, SANDBOX_NAME, "discord", redactions);

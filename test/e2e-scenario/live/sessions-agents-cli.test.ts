@@ -90,7 +90,7 @@ async function runNemoclaw(
   return await host.command("node", [CLI_ENTRYPOINT, ...args], {
     artifactName: options.artifactName,
     env: commandEnv({
-      NVIDIA_API_KEY: apiKey,
+      NVIDIA_INFERENCE_API_KEY: apiKey,
       ...(options.env ?? {}),
     }),
     redactionValues: [apiKey, ...(options.redactionValues ?? [])],
@@ -345,7 +345,7 @@ runSessionsAgentsCliTest(
       migratedFrom: "test/e2e/test-sessions-agents-cli.sh",
       sandboxName: SANDBOX_NAME,
       contracts: [
-        "NVIDIA_API_KEY absence skips the live credential-gated scenario",
+        "NVIDIA_INFERENCE_API_KEY absence skips the live credential-gated scenario",
         "nemoclaw <name> sessions --json defaults to OpenClaw sessions list",
         "nemoclaw <name> sessions list --json returns a parseable JSON envelope",
         "sessions reset/delete gateway RPCs retry through pending pairing/scope approval",
@@ -365,9 +365,7 @@ runSessionsAgentsCliTest(
       `Docker is required for sessions/agents E2E\n${resultText(docker)}`,
     ).toBe(0);
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
-
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     await ensureOpenshellAvailable(host);
     cleanup.add(`destroy sessions/agents sandbox ${SANDBOX_NAME}`, async () =>
       bestEffort(() => cleanupSandbox(host, apiKey)),

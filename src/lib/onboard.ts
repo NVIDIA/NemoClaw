@@ -101,6 +101,7 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   reportProviderSelectionFailure,
 }: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
@@ -125,6 +126,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -1580,23 +1582,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
-// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
-function assertCdiNvidiaGpuSpecPresent(
-  host: ReturnType<typeof assessHost>,
-  optedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-): void {
-  if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough)
-    return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-  );
-  printRemediationActions(planHostRemediation(host));
-  process.exit(1);
-}
-
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
@@ -1643,11 +1628,13 @@ async function preflight(
     device: preflightOpts.sandboxGpuDevice ?? null,
   });
   exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
-  const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true ||
-    preflightOpts.noGpu === true ||
-    !sandboxGpuConfig.sandboxGpuEnabled;
-  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
+  const explicitlyOptedOutGpuPassthrough =
+    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+  preflightUtils.assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+  );
 
   assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
@@ -3062,10 +3049,10 @@ async function createSandbox(
       dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
+    readyCheckOutputPatterns: agentDefs.isTerminalAgent(agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: onboardTracing.addTraceEvent,
   });
-
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -3480,11 +3467,7 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-
-  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
-    saveCredential(routerCredentialEnv, _providerKeyHint);
-  }
+  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
   if (isNonInteractive()) {
     if (!resolveProviderCredential(routerCredentialEnv)) {
       console.error(
@@ -3777,17 +3760,9 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-
   hydrateCredentialEnv(state.credentialEnv);
-
   if (selected.key === "build") {
-    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-      .find(Boolean);
-    if (_nvProviderKey && !existingNvidiaKey) {
-      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-    }
+    providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -3812,15 +3787,7 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
-    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (_providerKeyHint && state.credentialEnv) {
-      const existingCredentialKey = normalizeCredentialValue(
-        process.env[state.credentialEnv] ?? "",
-      );
-      if (!existingCredentialKey) {
-        process.env[state.credentialEnv] = _providerKeyHint;
-      }
-    }
+    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -3958,6 +3925,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
+  recoverProvider = true,
 ): Promise<{
   model: string | null;
   provider: string;
@@ -4011,7 +3979,6 @@ async function setupNim(
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
-  // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
   const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4066,9 +4033,9 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider,
-          readRecordedNimContainer,
-          readRecordedModel,
+          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
+          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -4951,7 +4918,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent,
+        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
@@ -5124,6 +5091,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>
@@ -5143,7 +5111,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
@@ -5151,7 +5118,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;

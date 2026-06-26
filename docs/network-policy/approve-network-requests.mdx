@@ -23,15 +23,28 @@ OpenShell intercepts these requests and presents them in the TUI for operator ap
 
 Start the OpenShell terminal UI to monitor sandbox activity:
 
+<Tabs>
+<Tab title="Local Sandbox">
+
 ```bash
 openshell term
 ```
 
-For a remote sandbox, pass the instance name:
+</Tab>
+<Tab title="Remote Sandbox">
+
+Connect to the remote host first.
+Use a host that resolves from your terminal, such as a Brev SSH alias or `user@host`.
+Then run the TUI from the NemoClaw directory on that host.
 
 ```bash
-ssh my-gpu-box 'cd ~/nemoclaw && . .env && openshell term'
+cd ~/nemoclaw
+. .env
+openshell term
 ```
+
+</Tab>
+</Tabs>
 
 The TUI displays the sandbox state, active inference provider, and a live feed of network activity.
 

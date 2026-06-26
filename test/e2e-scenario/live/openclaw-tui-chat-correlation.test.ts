@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { containsReplyTokenAllowingWhitespace } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -160,7 +161,7 @@ function analyzeIssue2603Trace({
   const finalReplyCounts = new Map<string, number>();
   for (const [replyToken, expectedRunId] of expectedRunByReplyToken) {
     for (const event of chatEvents) {
-      if (!event.text.includes(replyToken)) continue;
+      if (!containsReplyTokenAllowingWhitespace(event.text, replyToken)) continue;
       visibleReplyCounts.set(replyToken, (visibleReplyCounts.get(replyToken) ?? 0) + 1);
       if (event.state === "final") {
         finalReplyCounts.set(replyToken, (finalReplyCounts.get(replyToken) ?? 0) + 1);
@@ -188,7 +189,7 @@ function analyzeIssue2603Trace({
     .filter((event) => event.state === "final")
     .flatMap((event) =>
       sentRuns
-        .filter((entry) => event.text.includes(entry.replyToken))
+        .filter((entry) => containsReplyTokenAllowingWhitespace(event.text, entry.replyToken))
         .map((entry) => entry.replyToken),
     );
 
@@ -288,8 +289,12 @@ function textFromMessage(message) {
   return content.map((part) => part && typeof part === "object" && typeof part.text === "string" ? part.text : "").filter(Boolean).join("\n");
 }
 
+function compactReplyTokenText(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
 function sawAllReplies(replyTokens) {
-  return replyTokens.every((token) => events.some((event) => event.event === "chat" && textFromMessage(event.payload?.message).includes(token)));
+  return replyTokens.every((token) => events.some((event) => event.event === "chat" && compactReplyTokenText(textFromMessage(event.payload?.message)).includes(compactReplyTokenText(token))));
 }
 
 ws.on("message", (data) => {

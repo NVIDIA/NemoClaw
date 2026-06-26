@@ -175,7 +175,7 @@ export class OnboardRuntimeBoundary {
   ): Promise<Session> {
     await this.assertStateResultWillApply(result);
     await this.getRuntime().markStepCompleteRecordOnly(stepName, updates);
-    return this.recordStateResultWithStepCompatibility(result);
+    return this.recordStateResult(result);
   }
 
   async recordStepFailedWithStateResult(
@@ -190,15 +190,14 @@ export class OnboardRuntimeBoundary {
 
   /**
    * Compatibility bridge for two named stale-result sources:
-   * 1. legacy/test boundaries configured with `updateMachine === true`, where
-   *    step helpers still advance `session.machine` before handler results;
+   * 1. legacy/test boundaries explicitly configured with `updateMachine === true`;
    * 2. live flow-slice replay for repaired resume or persisted ahead-state
    *    sessions, where safety checks must re-run even when the durable machine
    *    snapshot is already downstream.
    *
-   * Default production record-only paths reject stale transition results before
-   * applying them. Skipped compatible results must stay metadata-only so stale
-   * results cannot become a context source. Remove this bridge once resume
+   * Default record-only paths reject stale transition results before applying
+   * them. Skipped compatible results must stay metadata-only so stale results
+   * cannot become a context source. Remove this bridge once resume
    * repair/ahead-state replay is represented by first-class FSM recovery states
    * and no boundary opts into legacy machine step mutation.
    */

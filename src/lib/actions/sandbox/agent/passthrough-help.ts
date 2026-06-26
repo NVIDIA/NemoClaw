@@ -24,6 +24,19 @@ export function printAgentPassthroughHelp(): void {
   );
   console.log("");
   console.log(
+    "  Every invocation must include at least one target selector — --agent, --session-id,",
+  );
+  console.log(
+    "  --session-key, or --to. On Ready/Running sandboxes, invocations without a selector",
+  );
+  console.log(
+    "  exit 2 with `No target session selected` before any in-sandbox dispatch runs; on a",
+  );
+  console.log(
+    "  non-Ready sandbox the phase guard fires first and exits 1 with recovery commands.",
+  );
+  console.log("");
+  console.log(
     "  Currently supported on OpenClaw sandboxes only; Hermes sandboxes are rejected with a",
   );
   console.log("  redirect to the OpenAI-compatible API on port 8642 inside the sandbox.");

@@ -60,8 +60,20 @@ interface SessionStateComplete {
   >;
 }
 
+interface MutableSessionState extends Record<string, unknown> {
+  status?: string;
+  resumable?: boolean;
+}
+
 function readSession<T>(file: string): T {
   return JSON.parse(fs.readFileSync(file, "utf8")) as T;
+}
+
+function markSessionInProgress(file: string): void {
+  const session = readSession<MutableSessionState>(file);
+  session.status = "in_progress";
+  session.resumable = true;
+  fs.writeFileSync(file, JSON.stringify(session, null, 2), "utf8");
 }
 
 function interruptedSessionSummary(session: SessionStateInterrupted): Record<string, unknown> {
@@ -338,5 +350,57 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(fs.existsSync(REGISTRY_FILE)).toBe(true);
     const registry = JSON.parse(fs.readFileSync(REGISTRY_FILE, "utf8")) as unknown;
     expect(containsExactJsonToken(registry, SANDBOX_NAME)).toBe(true);
+
+    // ──────────────────────────────────────────────────────────────────
+    // Phase 3.5: implicit resume — a plain `onboard` auto-detects an
+    // in_progress session, and `--fresh` suppresses that auto-resume.
+    // ──────────────────────────────────────────────────────────────────
+    markSessionInProgress(SESSION_FILE);
+    const implicitResumeRun = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, "onboard", "--non-interactive"],
+      {
+        artifactName: "phase-3-5-onboard-implicit-resume",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+          NEMOCLAW_POLICY_MODE: "skip",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        },
+        redactionValues: [apiKey],
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      },
+    );
+    const implicitResumeText = `${implicitResumeRun.stdout}\n${implicitResumeRun.stderr}`;
+    expect(implicitResumeRun.exitCode, implicitResumeText).toBe(0);
+    expect(implicitResumeText).toContain("(resume mode)");
+    expect(
+      implicitResumeText.includes("[resume] Skipping") ||
+        implicitResumeText.includes("[reuse] Skipping"),
+      implicitResumeText,
+    ).toBe(true);
+
+    markSessionInProgress(SESSION_FILE);
+    const freshRun = await host.command(
+      "node",
+      [CLI_ENTRYPOINT, "onboard", "--fresh", "--non-interactive"],
+      {
+        artifactName: "phase-3-5-onboard-fresh-suppresses-resume",
+        env: {
+          ...buildAvailabilityProbeEnv(),
+          NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+          NEMOCLAW_POLICY_MODE: "skip",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_E2E_FAILURE_INJECTION: "1",
+          NEMOCLAW_E2E_FORCE_FAIL_AT_STEP: "preflight",
+        },
+        redactionValues: [apiKey],
+        timeoutMs: ONBOARD_TIMEOUT_MS,
+      },
+    );
+    const freshText = `${freshRun.stdout}\n${freshRun.stderr}`;
+    expect(freshRun.exitCode, freshText).not.toBe(0);
+    expect(freshText).toContain("[e2e] Forced onboarding failure at step 'preflight'.");
+    expect(freshText).not.toContain("(resume mode)");
   },
 );

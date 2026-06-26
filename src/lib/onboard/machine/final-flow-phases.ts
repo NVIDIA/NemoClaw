@@ -159,18 +159,18 @@ export async function runFinalOnboardFlowSlice<Context extends OnboardFlowContex
   afterPoliciesResultApplied?(): void;
   onContextUpdated?(context: Context): void;
 }): Promise<void> {
-  // Keep resume and ahead-state sessions on the compatibility path for now.
-  // The persisted invalid states for this slice are "policies", "finalizing",
-  // and "post_verify": a previous run may have advanced `session.machine`
-  // there via legacy step helpers, but resume still needs to re-run branch
-  // setup/readiness, policy reconciliation, and final verification. Those
-  // legacy helpers remain a second machine snapshot writer in
-  // OnboardRuntimeBoundary/recordStateResultWithStepCompatibility, so this
-  // slice cannot make those persisted states impossible at the source without
-  // changing the broader step persistence contract. Remove this fallback once
-  // final-phase repair checks are first-class resumable FSM states, or once
-  // legacy step helpers no longer advance `session.machine` and handler FSM
-  // results are the sole transition source.
+  // Compatibility bridge for live resume repair when durable machine snapshots
+  // are already downstream of this slice even though branch setup/readiness,
+  // policy reconciliation, and final verification must still re-run. Those
+  // ahead-state snapshots can come from legacy/test step mutation that
+  // explicitly opts into `updateMachine === true` or from repaired-resume replay
+  // of persisted sessions. This slice cannot eliminate that source locally
+  // because final-phase repair checks are still modeled as imperative resume
+  // work rather than strict FSM recovery states. The tolerated downstream states
+  // are "policies", "finalizing", and "post_verify". Phase tests cover
+  // ahead-state resume and terminal-state rejection; remove this fallback once
+  // final-phase repair checks are first-class FSM recovery states and legacy
+  // machine step mutation is gone.
   await runLiveOnboardFlowSlice({
     context: options.context,
     runtime: withAfterPoliciesResultApplied(options.runtime, options.afterPoliciesResultApplied),

@@ -11,7 +11,7 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { shellQuote } from "../runner";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
-import { isTerminalAgent, loadAgent, type AgentDefinition } from "./defs";
+import { type AgentDefinition, isTerminalAgent, loadAgent } from "./defs";
 import {
   buildHermesEnvFileBoundaryGuard,
   buildHermesRuntimeEnvBoundaryGuard,
@@ -181,6 +181,10 @@ function hermesGatewayEnvPrefix(): string {
   return "HERMES_HOME=/sandbox/.hermes";
 }
 
+function hermesDashboardEnvPrefix(): string {
+  return 'HERMES_HOME="$_HERMES_DASHBOARD_HOME" GATEWAY_HEALTH_URL="http://127.0.0.1:$_HERMES_DASHBOARD_GATEWAY_PORT"';
+}
+
 export interface HermesDashboardRecoveryConfig {
   publicPort: number;
   internalPort: number;
@@ -192,12 +196,21 @@ function buildHermesDashboardRecoveryLines(config: HermesDashboardRecoveryConfig
   const dashboardLogSelection =
     '_DASHBOARD_LOG=/tmp/hermes-dashboard.log; if ! : >> "$_DASHBOARD_LOG" 2>/dev/null; then _DASHBOARD_LOG=/tmp/hermes-dashboard-recovery.log; : >> "$_DASHBOARD_LOG" 2>/dev/null || true; fi;';
   return [
+    "_HERMES_DASHBOARD_HOME=/sandbox/.hermes/dashboard-home;",
+    `_HERMES_DASHBOARD_GATEWAY_PORT=${config.internalPort};`,
+    '_HERMES_PYTHON=/opt/hermes/.venv/bin/python; [ -x "$_HERMES_PYTHON" ] || _HERMES_PYTHON="$(command -v python3 || echo python3)";',
+    "_HERMES_DASHBOARD_CONFIG_SEEDER=/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py;",
     `_DASH_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:${config.internalPort}/ 2>/dev/null || echo 000); case "$_DASH_CODE" in 200|301|302|307|308) echo DASHBOARD_ALREADY_RUNNING; ;; *)`,
     `${buildNoFollowLogSetupCommand("/tmp/hermes-dashboard.log")} || exit 1;`,
     dashboardLogSelection,
+    '[ -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ] || { echo "[dashboard-recovery] ERROR: dashboard config seeder missing"; exit 1; };',
+    'if [ -L "$_HERMES_DASHBOARD_HOME" ]; then echo "[dashboard-recovery] ERROR: refusing symlinked dashboard home"; exit 1; fi;',
+    'mkdir -p "$_HERMES_DASHBOARD_HOME"; if [ -L "$_HERMES_DASHBOARD_HOME" ] || [ ! -d "$_HERMES_DASHBOARD_HOME" ]; then echo "[dashboard-recovery] ERROR: unsafe dashboard home"; exit 1; fi;',
+    'chmod 700 "$_HERMES_DASHBOARD_HOME"; rm -f "${_HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true;',
+    '"$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" /sandbox/.hermes/config.yaml "${_HERMES_DASHBOARD_HOME}/config.yaml" /sandbox/.hermes/.env "${_HERMES_DASHBOARD_HOME}/.env" || { echo "[dashboard-recovery] ERROR: config seed failed"; exit 1; };',
     "_DASHBOARD_PROC_PATTERN='[h]ermes[[:space:]]+dashboard([[:space:]]|$)';",
     'pkill -TERM -f "$_DASHBOARD_PROC_PATTERN" 2>/dev/null || true; sleep 1; pkill -KILL -f "$_DASHBOARD_PROC_PATTERN" 2>/dev/null || true;',
-    `${hermesGatewayEnvPrefix()} nohup "$AGENT_BIN" dashboard --host 127.0.0.1 --port ${config.internalPort} --skip-build --no-open${tuiFlag} >> "$_DASHBOARD_LOG" 2>&1 &`,
+    `${hermesDashboardEnvPrefix()} nohup "$AGENT_BIN" dashboard --host 127.0.0.1 --port ${config.internalPort} --skip-build --no-open${tuiFlag} >> "$_DASHBOARD_LOG" 2>&1 &`,
     "DPID=$!; sleep 2;",
     'if kill -0 "$DPID" 2>/dev/null; then echo "DASHBOARD_PID=$DPID"; else echo DASHBOARD_FAILED; tail -5 "$_DASHBOARD_LOG" 2>/dev/null; exit 1; fi ;; esac;',
   ];

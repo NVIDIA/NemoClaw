@@ -119,6 +119,13 @@ raise SystemExit(1)
 PY
 }
 
+contains_integer_42() {
+  local raw compact
+  raw="$(cat)"
+  compact="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  grep -Eq '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
+}
+
 assert_agent_scopes_without_admin() {
 python3 - <<'PY'
 import json, sys
@@ -159,7 +166,7 @@ if [ -z "$request_id" ]; then
     if printf '%s' "$state" | assert_agent_scopes_without_admin >/tmp/issue4462-approved-device.txt 2>/tmp/issue4462-approved-device.err; then
       echo "SCOPE_ALREADY_APPROVED=$(cat /tmp/issue4462-approved-device.txt)"
     elif [ "$trigger_rc" -eq 0 ] && ! grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-trigger-agent.log \
-      && grep -Eq '(^|[^0-9])42([^0-9]|$)' /tmp/issue4462-trigger-agent.log; then
+      && contains_integer_42 </tmp/issue4462-trigger-agent.log; then
       echo "TRIGGER_COMPLETED_WITHOUT_PENDING_SCOPE_UPGRADE"
       echo "ISSUE_4462_SCOPE_UPGRADE_OK device=trigger-completed request=not-reproduced"
       exit 0
@@ -209,7 +216,7 @@ if grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|
   cat /tmp/issue4462-final-agent.log >&2
   exit 7
 fi
-if ! grep -Eq '(^|[^0-9])42([^0-9]|$)' /tmp/issue4462-final-agent.log; then
+if ! contains_integer_42 </tmp/issue4462-final-agent.log; then
   echo "FINAL_AGENT_MISSING_42" >&2
   cat /tmp/issue4462-final-agent.log >&2
   exit 8

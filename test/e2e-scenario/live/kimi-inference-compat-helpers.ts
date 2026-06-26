@@ -21,6 +21,39 @@ export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-kimi-compa
 validateSandboxName(SANDBOX_NAME);
 export const KIMI_MODEL = process.env.NEMOCLAW_KIMI_MODEL ?? "moonshotai/kimi-k2.6";
 
+export type KimiInferenceMode = "mock" | "public-nvidia";
+
+export interface KimiEnvOptions {
+  mode?: KimiInferenceMode;
+  apiKey?: string;
+  includeSecret?: boolean;
+}
+
+// Source-of-truth boundary for the Kimi public/mock split: trusted CI sets the
+// canonical NEMOCLAW_E2E_INFERENCE_MODE selector, local runs default to mock only
+// when the selector is absent, and unknown explicit values fail closed so a typo
+// cannot downgrade public-NVIDIA validation into hermetic mock coverage.
+export function resolveKimiInferenceMode(env: NodeJS.ProcessEnv = process.env): KimiInferenceMode {
+  if (env.NEMOCLAW_E2E_INFERENCE_MODE !== undefined) {
+    const explicitMode = env.NEMOCLAW_E2E_INFERENCE_MODE.trim().toLowerCase();
+    if (explicitMode === "public-nvidia" || explicitMode === "mock") return explicitMode;
+    throw new Error(
+      `NEMOCLAW_E2E_INFERENCE_MODE must be one of: mock, public-nvidia; got ${env.NEMOCLAW_E2E_INFERENCE_MODE}`,
+    );
+  }
+  // Temporary compatibility alias for legacy shell-lane invocations copied from
+  // test/e2e/test-kimi-inference-compat.sh. NEMOCLAW_E2E_INFERENCE_MODE is the
+  // canonical selector; remove this alias when the legacy shell lane retires.
+  if (env.NEMOCLAW_KIMI_USE_MOCK === "0") return "public-nvidia";
+  return "mock";
+}
+
+export function requirePublicNvidiaApiKey(value: string): string {
+  if (!value.startsWith("nvapi-"))
+    throw new Error("NVIDIA_API_KEY must be a public NVIDIA Endpoints nvapi-* key");
+  return value;
+}
+
 export interface KimiRequest {
   path: string;
   model?: string;
@@ -35,10 +68,13 @@ export interface KimiMock {
   close(): Promise<void>;
 }
 
-export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
+export function env(
+  extra: NodeJS.ProcessEnv = {},
+  options: KimiEnvOptions = {},
+): NodeJS.ProcessEnv {
+  const mode = options.mode ?? resolveKimiInferenceMode();
+  const common: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
-    COMPATIBLE_API_KEY: "test-kimi-key",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_MODEL: KIMI_MODEL,
     NEMOCLAW_NON_INTERACTIVE: "1",
@@ -47,11 +83,27 @@ export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_POLICY_MODE: "skip",
     NEMOCLAW_POLICY_TIER: "restricted",
     NEMOCLAW_PREFERRED_API: "openai-completions",
-    NEMOCLAW_PROVIDER: "custom",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_YES: "1",
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+  };
+  if (mode === "public-nvidia") {
+    return {
+      ...common,
+      NEMOCLAW_E2E_INFERENCE_MODE: "public-nvidia",
+      NEMOCLAW_PROVIDER: "cloud",
+      ...(options.includeSecret && options.apiKey
+        ? { NVIDIA_API_KEY: options.apiKey, NVIDIA_INFERENCE_API_KEY: options.apiKey }
+        : {}),
+      ...extra,
+    };
+  }
+  return {
+    ...common,
+    COMPATIBLE_API_KEY: "test-kimi-key",
+    NEMOCLAW_E2E_INFERENCE_MODE: "mock",
+    NEMOCLAW_PROVIDER: "custom",
     ...extra,
   };
 }
@@ -75,6 +127,75 @@ export async function startKimiMock(): Promise<KimiMock> {
     requests,
     close: () => new Promise((resolve) => server.close(() => resolve())),
   };
+}
+
+export function kimiBoundary(mode: KimiInferenceMode): string {
+  return mode === "public-nvidia"
+    ? "source CLI onboard + public NVIDIA Kimi endpoint + OpenClaw config/plugin/inference route"
+    : "source CLI onboard + fake OpenAI-compatible Kimi endpoint + OpenClaw config/plugin/inference route";
+}
+
+export async function startKimiUpstream(mode: KimiInferenceMode): Promise<KimiMock | undefined> {
+  return mode === "mock" ? startKimiMock() : undefined;
+}
+
+export function maybeRegisterKimiMockCleanup(
+  cleanup: { add(name: string, fn: () => Promise<void>): void },
+  fake: KimiMock | undefined,
+): void {
+  if (fake) cleanup.add("close fake Kimi endpoint", () => fake.close());
+}
+
+export function kimiOnboardEnv(
+  fake: KimiMock | undefined,
+  mode: KimiInferenceMode,
+  apiKey: string | undefined,
+): NodeJS.ProcessEnv {
+  return env(fake ? { NEMOCLAW_ENDPOINT_URL: fake.baseUrl } : {}, {
+    mode,
+    apiKey,
+    includeSecret: true,
+  });
+}
+
+export function kimiAgentEnv(mode: KimiInferenceMode): NodeJS.ProcessEnv {
+  // Onboard owns the only raw public NVIDIA key handoff. After that, the sandbox
+  // agent must use the configured nvidia-prod route rather than inheriting the
+  // repository secret in its process environment.
+  return env({}, { mode });
+}
+
+export async function assertKimiUpstreamTraffic(options: {
+  fake: KimiMock | undefined;
+  host: HostCliClient;
+  mode: KimiInferenceMode;
+  apiKey: string | undefined;
+}): Promise<void> {
+  if (options.fake) {
+    expect(
+      options.fake.requests.some(
+        (request) =>
+          request.authOk &&
+          request.path.includes("/chat/completions") &&
+          request.model === KIMI_MODEL &&
+          request.hasTools,
+      ),
+    ).toBe(true);
+    expect(options.fake.requests.some((request) => request.authOk && request.hasToolResult)).toBe(
+      true,
+    );
+    return;
+  }
+
+  const route = await options.host.command("openshell", ["inference", "get", "-g", "nemoclaw"], {
+    artifactName: "public-nvidia-kimi-route",
+    env: env({}, { mode: options.mode, apiKey: options.apiKey }),
+    redactionValues: [options.apiKey ?? ""],
+    timeoutMs: 60_000,
+  });
+  expect(route.exitCode, resultText(route)).toBe(0);
+  expect(resultText(route)).toContain("nvidia-prod");
+  expect(resultText(route)).toContain(KIMI_MODEL);
 }
 
 function handleKimiRequest(
@@ -302,10 +423,7 @@ export function parseConfig(raw: string): {
 }
 
 export async function assertTrajectory(sandbox: SandboxClient): Promise<void> {
-  const trajectory = await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(String.raw`python3 - <<'PY'
-import json, pathlib, sys
+  const checkScript = String.raw`import json, pathlib, sys
 root=pathlib.Path('/sandbox/.openclaw')
 base=pathlib.Path('/sandbox/.openclaw/agents/main/sessions')
 session=base/'e2e-kimi-tools.jsonl'
@@ -344,8 +462,11 @@ if not final_texts or normalize_final_text(final_texts[-1]) != 'hostname, date, 
 roles=[m.get('role') for m in messages]
 if not ('toolResult' in roles and roles[-1]=='assistant'): errors.append('final assistant not after tool result')
 print(json.dumps({'errors':errors,'source':source,'toolMetas':metas,'roles':roles}, indent=2))
-sys.exit(1 if errors else 0)
-PY`),
+sys.exit(1 if errors else 0)`;
+  const encoded = Buffer.from(checkScript, "utf8").toString("base64");
+  const trajectory = await sandbox.execShell(
+    SANDBOX_NAME,
+    trustedSandboxShellScript(`python3 -c "$(printf %s '${encoded}' | base64 -d)"`),
     { artifactName: "kimi-trajectory-tool-splitting-check", env: env(), timeoutMs: 60_000 },
   );
   expect(trajectory.exitCode, resultText(trajectory)).toBe(0);

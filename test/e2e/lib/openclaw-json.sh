@@ -8,6 +8,12 @@
 # exact envelope shape. This also tolerates wrapper output before the JSON blob
 # but intentionally ignores metadata fields so IDs, durations, session names,
 # and model/provider details cannot satisfy reply assertions.
+e2e_text_contains_integer_42() {
+  local compact
+  compact="$(printf '%s' "${1:-}" | tr -d '[:space:]')"
+  grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$compact"
+}
+
 parse_openclaw_agent_text() {
   python3 -c '
 import json
@@ -87,4 +93,31 @@ except Exception:
 
 print("\n".join(parts))
 '
+}
+
+nemoclaw_e2e_compact_agent_reply() {
+  tr -d '[:space:]'
+}
+
+nemoclaw_e2e_agent_reply_contains_token() {
+  local reply="${1:-}"
+  local expected="${2:-}"
+  local compact_reply compact_expected
+
+  compact_reply="$(printf '%s' "$reply" | nemoclaw_e2e_compact_agent_reply)"
+  compact_expected="$(printf '%s' "$expected" | nemoclaw_e2e_compact_agent_reply)"
+  [ -n "$compact_expected" ] && grep -Fq -- "$compact_expected" <<<"$compact_reply"
+}
+
+openclaw_agent_text_has_integer_42() {
+  local reply
+  reply="$(cat)"
+  e2e_text_contains_integer_42 "$reply"
+}
+
+openclaw_agent_text_has_token() {
+  local expected="$1"
+  local reply
+  reply="$(cat)"
+  nemoclaw_e2e_agent_reply_contains_token "$reply" "$expected"
 }

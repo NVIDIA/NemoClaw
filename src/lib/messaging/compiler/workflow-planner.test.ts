@@ -8,7 +8,7 @@ import {
   createBuiltInRenderTemplateResolver,
 } from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
-import { createChannelManifestRegistry, type ChannelManifest } from "../manifest";
+import { type ChannelManifest, createChannelManifestRegistry } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -785,6 +785,47 @@ describe("MessagingWorkflowPlanner", () => {
     expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
   });
 
+  it("preserves an explicit empty plan on rebuild after the final channel is removed", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      channelId: "telegram",
+    });
+
+    expect(removed?.channels).toEqual([]);
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: removed! },
+      },
+      supportedChannelIds: ["telegram"],
+    });
+
+    expect(rebuilt).toMatchObject({
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+    });
+  });
+
   it("rebuilds from stored plan input values when config env is unavailable", async () => {
     const existingPlan = await withEnv(
       {
@@ -850,7 +891,39 @@ describe("MessagingWorkflowPlanner", () => {
     expect(rebuilt).toBeNull();
   });
 
-  it("drops a persisted Telegram plan during rebuild when supportedChannelIds: [] declares deny-all", async () => {
+  it("drops stored channels that fall outside the current supportedChannelIds allowlist on rebuild", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram", "slack"],
+      credentialAvailability: {
+        TELEGRAM_BOT_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+        SLACK_APP_TOKEN: true,
+      },
+    });
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      supportedChannelIds: ["telegram"],
+    });
+
+    expect(rebuilt?.channels.map((channel) => channel.channelId)).toEqual(["telegram"]);
+    expect(rebuilt?.credentialBindings.some((binding) => binding.channelId === "slack")).toBe(
+      false,
+    );
+    expect(rebuilt?.networkPolicy.entries.some((entry) => entry.channelId === "slack")).toBe(false);
+    expect(rebuilt?.agentRender.some((entry) => entry.channelId === "slack")).toBe(false);
+  });
+
+  it("returns null on rebuild when every stored channel falls outside the current allowlist", async () => {
     const existingPlan = await planner().buildPlan({
       sandboxName: "demo",
       agent: "openclaw",
@@ -918,7 +991,6 @@ describe("MessagingWorkflowPlanner", () => {
       }),
     ).toBeNull();
   });
-
   it("reports unsupported channels deterministically before compiling", async () => {
     await expect(
       planner().buildPlan({
@@ -932,7 +1004,7 @@ describe("MessagingWorkflowPlanner", () => {
     ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: discord, slack");
   });
 
-  it("rejects every configured channel when supportedChannelIds is an explicit empty array (deny-all)", async () => {
+  it("rejects every configured channel when supportedChannelIds is an explicit empty allowlist", async () => {
     await expect(
       planner().buildPlan({
         sandboxName: "demo",

@@ -13,7 +13,7 @@ export default class SandboxSessionsListCommand extends NemoClawCommand {
   static strict = false;
   static summary = "List OpenClaw conversation sessions in a sandbox";
   static description =
-    "Pass through to `openclaw sessions list` in the sandbox. All OpenClaw flags (--agent, --all-agents, --active, --limit, --json, --store, --verbose) are forwarded verbatim.";
+    "Pass through to `openclaw sessions list` in the sandbox, hiding internal NemoClaw onboard warm-up sessions from default user-facing output. All OpenClaw flags (--agent, --all-agents, --active, --limit, --json, --store, --verbose) are forwarded verbatim.";
   static usage = ["<name> [openclaw-sessions-list-flags...]"];
   static examples = [
     "<%= config.bin %> sandbox sessions list alpha",

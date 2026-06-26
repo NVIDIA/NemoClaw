@@ -4,19 +4,26 @@
 import { Flags } from "@oclif/core";
 
 import { exportSandboxSessions } from "../../../lib/actions/sandbox/sessions/export";
+import { CLI_NAME } from "../../../lib/cli/branding";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxSessionsExportCommand extends NemoClawCommand {
   static id = "sandbox:sessions:export";
   static strict = false;
+  // #5510: keep oclif from treating an option-shaped positional (e.g. a session
+  // key typo like `-mytypo`) as a NonExistentFlag. With `'--' = false`, unknown
+  // `-`-prefixed tokens fall through to argv so the stray-dash guard in run()
+  // can emit actionable guidance instead of oclif's raw "Nonexistent flag".
+  static "--" = false;
   static summary = "Export agent session JSONL out of a running sandbox";
   static description = [
     "Routes by the sandbox's agent kind, recorded in the registry.",
     "",
     "OpenClaw sandbox: tar the per-session JSONL files inside the sandbox and",
     "download the bundle to the host via `openshell sandbox download`. By default",
-    "every session for the agent is exported; pass one or more positional keys to",
-    "filter. Keys may be either an alias (e.g. `main`, `telegram:t-1`) or the",
+    "every non-internal session for the agent is exported; NemoClaw onboard",
+    "warm-up sessions are hidden from export-all output. Pass one or more",
+    "positional keys to filter. Keys may be either an alias (e.g. `main`, `telegram:t-1`) or the",
     "canonical `agent:<id>:<rest>` form. Use --agent to scope aliases to a",
     "non-default agent; mismatched --agent + canonical-key combinations are",
     "refused. Trajectory files are excluded by default (large) and re-added with",
@@ -77,13 +84,17 @@ export default class SandboxSessionsExportCommand extends NemoClawCommand {
     }
     const stray = rest.filter((token) => token.startsWith("-"));
     if (stray.length > 0) {
-      this.failWithLines(
-        [
-          `  Unknown flag or option-shaped key: ${stray.join(", ")}`,
-          "  Session keys must not start with '-'. Place flags after the sandbox name.",
-        ],
-        2,
-      );
+      const lines = [
+        `  Unknown flag or option-shaped key: ${stray.join(", ")}`,
+        "  Session keys must not start with '-'. Place flags after the sandbox name.",
+      ];
+      const deDashed = stray.map((token) => token.replace(/^-+/, "")).filter(Boolean);
+      if (deDashed.length > 0) {
+        lines.push(
+          `  Did you mean: ${CLI_NAME} ${sandboxName} sessions export ${deDashed.join(" ")}?`,
+        );
+      }
+      this.failWithLines(lines, 2);
       return;
     }
     try {

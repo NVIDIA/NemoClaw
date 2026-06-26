@@ -8,6 +8,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import type { LifecycleProfile } from "../fixtures/phases/index.ts";
 import { listScenarios } from "../scenarios/registry.ts";
 import { liveScenarioSupport, liveScenarioTestName } from "../scenarios/runtime-support.ts";
+import { cloudExperimentalChecksForOnboarding } from "./cloud-experimental-check-list.ts";
+import { runE2eCloudExperimentalChecks } from "./cloud-experimental-checks.ts";
 import { buildLiveScenarioRunPlan } from "./run-plan.ts";
 
 const LIFECYCLE_PROFILES: ReadonlySet<LifecycleProfile> = new Set(["post-reboot-recovery"]);
@@ -18,6 +20,10 @@ function isLifecycleProfile(value: string | undefined): value is LifecycleProfil
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_DIST_ENTRYPOINT = path.join(REPO_ROOT, "dist", "nemoclaw.js");
+const E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR = path.join(
+  REPO_ROOT,
+  "test/e2e/e2e-cloud-experimental/checks",
+);
 process.env.NEMOCLAW_CLI_BIN ??= path.join(REPO_ROOT, "bin", "nemoclaw.js");
 
 // The workflow filters by exact scenario id via `-t "^${SCENARIO_ID}$"`.
@@ -38,7 +44,7 @@ for (const scenario of listScenarios()) {
 
   test(
     liveScenarioTestName(scenario),
-    async ({ artifacts, environment, lifecycle, onboard, secrets, stateValidation }) => {
+    async ({ artifacts, environment, host, lifecycle, onboard, secrets, stateValidation }) => {
       for (const secret of scenario.requiredSecrets ?? []) {
         secrets.required(secret);
       }
@@ -61,7 +67,8 @@ for (const scenario of listScenarios()) {
         pendingRuntimeSuites: support.pendingRuntimeSuites,
       });
 
-      await artifacts.writeJson("run-plan.json", buildLiveScenarioRunPlan(scenario));
+      const runPlan = buildLiveScenarioRunPlan(scenario);
+      await artifacts.writeJson("run-plan.json", runPlan);
 
       const ready = await environment.assertReady(scenario.environment);
       const instance = await onboard.from(ready, { sandboxName: `e2e-${scenario.id}` });
@@ -91,6 +98,20 @@ for (const scenario of listScenarios()) {
       }
 
       const validation = await stateValidation.from(scenario.expectedStateId, instance);
+
+      const checkScripts = runPlan.e2eCloudExperimentalChecks ?? [];
+      expect(checkScripts).toEqual(
+        cloudExperimentalChecksForOnboarding(scenario.environment.onboarding),
+      );
+      for (const scriptPath of checkScripts) {
+        expect(fs.existsSync(path.join(REPO_ROOT, scriptPath))).toBe(true);
+      }
+      expect(fs.existsSync(E2E_CLOUD_EXPERIMENTAL_CHECKS_DIR)).toBe(true);
+      await runE2eCloudExperimentalChecks(scenario.id, instance.sandboxName, checkScripts, {
+        artifacts,
+        host,
+        secrets,
+      });
 
       await artifacts.writeJson("scenario-result.json", {
         id: scenario.id,

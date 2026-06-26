@@ -478,9 +478,12 @@ describe("Issue #2273: atomic rebuild", () => {
       const result = runRebuild(f);
       const output = (result.stderr || "") + (result.stdout || "");
 
-      // Should mention preflight failure
+      // Should prefer the missing-provider abort over the generic missing-env fallback.
       expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
       expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).not.toContain("export NVIDIA_INFERENCE_API_KEY=<your-key>");
       // Should say sandbox is untouched
       expect(output).toContain("untouched");
       // Sandbox should still be in the registry (not destroyed)
@@ -506,6 +509,32 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).not.toContain("preflight failed");
       // Should proceed to backup step
       expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("aborts before backup when the gateway provider is missing even with host credential", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        provider: "nvidia-prod",
+        providerRegistered: false,
+      });
+
+      const result = runRebuild(f, {
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
+      });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+      expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(output).not.toContain("missing from gateway; recreating it");
+      expect(registryHasSandbox(f)).toBe(true);
     });
 
     it("copies Hermes messaging channels from the registry into the rebuild resume session", {
@@ -631,7 +660,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(registryHasSandbox(f)).toBe(true);
@@ -656,7 +686,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
       expect(registryHasSandbox(f)).toBe(true);
@@ -682,7 +713,8 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
-      expect(output).toContain("requires OPENAI_API_KEY");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
       expect(output).not.toContain("GH #2519");
       expect(output).not.toContain("Backing up sandbox state");
       expect(output).not.toContain("Old sandbox deleted");
@@ -786,7 +818,9 @@ describe("Issue #2273: atomic rebuild", () => {
 
       expect(result.status).not.toBe(0);
       expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
       expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
       expect(output).toContain("untouched");
       expect(registryHasSandbox(f)).toBe(true);
     });
