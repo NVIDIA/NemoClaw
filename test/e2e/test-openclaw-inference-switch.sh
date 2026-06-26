@@ -463,7 +463,11 @@ ensure_compatible_anthropic_switch_provider || exit 1
 section "Phase 3: Switch inference"
 pid_before="$(openclaw_gateway_pid)"
 info "Switching ${SANDBOX_NAME} to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}..."
-switch_output=$(run_inference_set_with_retry nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME")
+switch_cmd=(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME")
+if [ "$SWITCH_PROVIDER" = "compatible-anthropic-endpoint" ] && [ "$SWITCH_INFERENCE_API" = "anthropic-messages" ]; then
+  switch_cmd+=(--endpoint-url "$SWITCH_ENDPOINT_URL" --credential-env COMPATIBLE_ANTHROPIC_API_KEY --inference-api "$SWITCH_INFERENCE_API")
+fi
+switch_output=$(run_inference_set_with_retry "${switch_cmd[@]}")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemoclaw inference set completed"

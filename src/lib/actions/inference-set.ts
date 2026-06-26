@@ -36,6 +36,9 @@ export interface InferenceSetOptions {
   model: string;
   sandboxName?: string | null;
   noVerify?: boolean;
+  endpointUrl?: string | null;
+  credentialEnv?: string | null;
+  inferenceApi?: string | null;
 }
 
 export interface InferenceSetResult {
@@ -312,6 +315,7 @@ function updateMatchingOnboardSession(
   provider: string,
   model: string,
   route: SandboxInferenceConfig,
+  registryMetadata: RegistryInferenceMetadata,
   deps: Pick<InferenceSetDeps, "loadSession" | "updateSession">,
 ): boolean {
   const session = deps.loadSession();
@@ -321,8 +325,15 @@ function updateMatchingOnboardSession(
     current.provider = provider;
     current.model = model;
     current.endpointUrl =
-      getProviderSelectionConfig(provider, model)?.endpointUrl ?? current.endpointUrl;
-    current.preferredInferenceApi = route.inferenceApi;
+      registryMetadata.endpointUrl ??
+      getProviderSelectionConfig(provider, model)?.endpointUrl ??
+      current.endpointUrl;
+    current.credentialEnv =
+      registryMetadata.credentialEnv ??
+      getProviderSelectionConfig(provider, model)?.credentialEnv ??
+      current.credentialEnv;
+    current.preferredInferenceApi = registryMetadata.preferredInferenceApi ?? route.inferenceApi;
+    current.nimContainer = registryMetadata.nimContainer ?? null;
     return current;
   });
   return true;
@@ -362,8 +373,97 @@ type RegistryInferenceMetadata = Pick<
   "endpointUrl" | "credentialEnv" | "preferredInferenceApi" | "nimContainer"
 >;
 
+const CUSTOM_COMPATIBLE_CREDENTIAL_ENV: Record<string, string> = {
+  "compatible-endpoint": "COMPATIBLE_API_KEY",
+  "compatible-anthropic-endpoint": "COMPATIBLE_ANTHROPIC_API_KEY",
+};
+
+const INFERENCE_SET_APIS = new Set([
+  "openai-completions",
+  "anthropic-messages",
+  "openai-responses",
+]);
+
 function isCustomCompatibleProvider(provider: string): boolean {
   return provider === "compatible-endpoint" || provider === "compatible-anthropic-endpoint";
+}
+
+function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
+  return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
+}
+
+function normalizeCustomEndpointUrl(value: string | null | undefined): string {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw)
+    throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+      throw new Error("unsupported URL shape");
+    }
+    url.search = "";
+    url.hash = "";
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = pathname || "/";
+    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  } catch {
+    throw new InferenceSetError(
+      "endpoint-url must be a valid http(s) URL without embedded credentials.",
+      2,
+    );
+  }
+}
+
+function normalizeExplicitCredentialEnv(
+  provider: string,
+  value: string | null | undefined,
+): string {
+  const expected = CUSTOM_COMPATIBLE_CREDENTIAL_ENV[provider];
+  const normalized = typeof value === "string" && value.trim() ? value.trim() : expected;
+  if (normalized !== expected) {
+    throw new InferenceSetError(
+      `credential-env for '${provider}' must be '${expected}' so rebuild can safely reuse it.`,
+      2,
+    );
+  }
+  return normalized;
+}
+
+function normalizeExplicitInferenceApi(value: string | null | undefined): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) return null;
+  if (!INFERENCE_SET_APIS.has(normalized)) {
+    throw new InferenceSetError(
+      `inference-api must be one of: ${Array.from(INFERENCE_SET_APIS).join(", ")}.`,
+      2,
+    );
+  }
+  return normalized;
+}
+
+function explicitCustomProviderMetadata(
+  provider: string,
+  options: InferenceSetOptions,
+): RegistryInferenceMetadata | null {
+  if (!hasExplicitCustomMetadata(options)) return null;
+  if (!isCustomCompatibleProvider(provider)) {
+    throw new InferenceSetError(
+      "endpoint-url, credential-env, and inference-api are only supported for compatible-endpoint and compatible-anthropic-endpoint.",
+      2,
+    );
+  }
+
+  // Source boundary: custom-compatible endpoint URLs are operator-supplied and
+  // not discoverable from the gateway provider registry with a sandbox-scoped
+  // trust guarantee. Treat these explicit flags as the durable metadata source
+  // for this switch, after URL and credential-env validation, instead of
+  // borrowing from an unrelated onboard session or global OpenShell provider.
+  return {
+    endpointUrl: normalizeCustomEndpointUrl(options.endpointUrl),
+    credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
+    preferredInferenceApi: normalizeExplicitInferenceApi(options.inferenceApi),
+    nimContainer: null,
+  };
 }
 
 function matchingSessionMetadata(options: {
@@ -395,8 +495,10 @@ function registryMetadataForProviderSwitch(options: {
   model: string;
   sandboxName: string;
   session: onboardSession.Session | null;
+  explicitMetadata: RegistryInferenceMetadata | null;
 }): RegistryInferenceMetadata {
-  const { entry, provider, model, sandboxName, session } = options;
+  const { entry, provider, model, sandboxName, session, explicitMetadata } = options;
+  if (explicitMetadata) return explicitMetadata;
   if (entry.provider === provider) {
     return {
       endpointUrl: entry.endpointUrl ?? null,
@@ -452,12 +554,14 @@ export async function runInferenceSet(
     );
   }
   const session = deps.loadSession();
+  const explicitMetadata = explicitCustomProviderMetadata(provider, options);
   const registryMetadata = registryMetadataForProviderSwitch({
     entry,
     provider,
     model,
     sandboxName,
     session,
+    explicitMetadata,
   });
 
   // Local providers (ollama-local, vllm-local) route through the sandbox-facing
@@ -600,6 +704,7 @@ export async function runInferenceSet(
     provider,
     model,
     patched.route,
+    registryMetadata,
     deps,
   );
 

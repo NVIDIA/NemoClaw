@@ -559,7 +559,11 @@ pid_before="$(hermes_gateway_pid)"
 ENV_HASH_BEFORE=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sha256sum /sandbox/.hermes/.env 2>/dev/null | awk '{print $1}') || true
 
 info "Switching Hermes to ${SWITCH_PROVIDER} / ${SWITCH_MODEL} with nemohermes inference set..."
-switch_output=$(run_inference_set_with_retry nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL")
+switch_cmd=(nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL")
+if [ "$SWITCH_PROVIDER" = "compatible-anthropic-endpoint" ] && [ "$SWITCH_INFERENCE_API" = "anthropic-messages" ]; then
+  switch_cmd+=(--endpoint-url "$SWITCH_ENDPOINT_URL" --credential-env COMPATIBLE_ANTHROPIC_API_KEY --inference-api "$SWITCH_INFERENCE_API")
+fi
+switch_output=$(run_inference_set_with_retry "${switch_cmd[@]}")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemohermes inference set completed without --sandbox"

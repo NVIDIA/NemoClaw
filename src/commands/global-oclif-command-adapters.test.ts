@@ -231,6 +231,12 @@ describe("global oclif command adapters", () => {
         "--sandbox",
         "alpha",
         "--no-verify",
+        "--endpoint-url",
+        "https://example.test/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
       ],
       rootDir,
     );
@@ -240,6 +246,9 @@ describe("global oclif command adapters", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       sandboxName: "alpha",
       noVerify: true,
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      inferenceApi: "openai-completions",
     });
   });
 

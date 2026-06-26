@@ -241,6 +241,9 @@ export async function ensureCompatibleAnthropicSwitchProvider(
   const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
+  if (endpointUrl && !process.env.NEMOCLAW_SWITCH_ENDPOINT_URL) {
+    process.env.NEMOCLAW_SWITCH_ENDPOINT_URL = endpointUrl;
+  }
   const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
   expect(
     endpointUrl,

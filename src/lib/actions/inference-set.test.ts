@@ -693,6 +693,60 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        noVerify: true,
+        endpointUrl: "http://host.openshell.internal:18767/",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        inferenceApi: "anthropic-messages",
+      },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        endpointUrl: "http://host.openshell.internal:18767",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+        nimContainer: null,
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      model: "mock-anthropic-model",
+      endpointUrl: "http://host.openshell.internal:18767",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+      nimContainer: null,
+    });
+  });
+
   it("preserves same-provider Bedrock Runtime adapter routing for OpenClaw switches", async () => {
     const config: ConfigObject = {
       agents: {
