@@ -204,6 +204,24 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
   });
 
+  it("does not use resume shortcuts when fresh is also set", async () => {
+    const session = createSession({ provider: "ollama-local", model: "llama3.1" });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      fresh: true,
+      sandboxName: "dcode-station",
+    });
+
+    expect(calls.recoverProvider).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
+    expect(calls.setupInference).toHaveBeenCalled();
+  });
+
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
     const setupNim = vi.fn(async () => ({
       ...baseSelection,

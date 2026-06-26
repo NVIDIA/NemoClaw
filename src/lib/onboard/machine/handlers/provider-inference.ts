@@ -202,6 +202,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
+  const effectiveResume = resume && !fresh;
   const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
@@ -209,7 +210,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let forceInferenceSetup = false;
     const resumeProviderSelection =
       !forceProviderSelection &&
-      resume &&
+      effectiveResume &&
       session?.steps?.provider_selection?.status === "complete" &&
       typeof provider === "string" &&
       typeof model === "string";
@@ -299,7 +300,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       !needsBedrockRuntimeAdapter &&
       !forceProviderSelection &&
       !forceInferenceSetup &&
-      resume &&
+      effectiveResume &&
       deps.isInferenceRouteReady(provider, model);
     if (resumeInference) {
       if (provider === constants.hermesProviderName) {
