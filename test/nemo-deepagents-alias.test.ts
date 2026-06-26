@@ -6,17 +6,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { execTimeout } from "./helpers/timeouts";
 
 const NEMOCLAW_CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
-const DEEPAGENTS_CLI = (() => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-bin-"));
-  const alias = path.join(dir, "nemo-deepagents");
-  fs.symlinkSync(NEMOCLAW_CLI, alias);
-  return alias;
-})();
+const DEEPAGENTS_ALIAS_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-bin-"));
+const DEEPAGENTS_CLI = path.join(DEEPAGENTS_ALIAS_DIR, "nemo-deepagents");
+fs.symlinkSync(NEMOCLAW_CLI, DEEPAGENTS_CLI);
+
+afterAll(() => {
+  fs.rmSync(DEEPAGENTS_ALIAS_DIR, { force: true, recursive: true });
+});
 
 function runDeepAgents(
   args: string,

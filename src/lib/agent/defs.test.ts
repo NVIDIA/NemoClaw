@@ -162,8 +162,14 @@ describe("agent definitions", () => {
   it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {
     expect(resolveAgentName({ agentFlag: "dcode" })).toBe("langchain-deepagents-code");
 
+    const previous = process.env.NEMOCLAW_AGENT;
     process.env.NEMOCLAW_AGENT = "nemohermes";
-    expect(resolveAgentName()).toBe("hermes");
+    try {
+      expect(resolveAgentName()).toBe("hermes");
+    } finally {
+      if (previous === undefined) delete process.env.NEMOCLAW_AGENT;
+      else process.env.NEMOCLAW_AGENT = previous;
+    }
   });
 
   it("rejects non-object manifest payloads", () => {

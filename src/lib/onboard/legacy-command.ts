@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { formatAgentAliasSuffix, resolveAgentNameAlias } from "../agent/aliases";
 import { CLI_NAME } from "../cli/branding";
 import { applyAgentsManifestEnv } from "./agents-manifest";
 import { isOpenclawAgent } from "./openclaw-otel-policy-presets";
@@ -54,74 +55,6 @@ const ONBOARD_BASE_ARGS = [
   "-y",
   "--no-ollama-autostart",
 ];
-
-function normalizeAgentSelector(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[\s_]+/g, "-")
-    .replace(/-+/g, "-");
-}
-
-function agentAliasSummary(): string {
-  return "nemohermes → hermes; nemo-deepagents/dcode/deepagents/deepagents-code/langchain → langchain-deepagents-code";
-}
-
-function resolveKnownAgentAlias(value: string, knownAgents: readonly string[]): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (knownAgents.includes(trimmed)) return trimmed;
-
-  const normalized = normalizeAgentSelector(trimmed);
-  const canonicalByNormalized = knownAgents.find(
-    (agentName) => normalizeAgentSelector(agentName) === normalized,
-  );
-  if (canonicalByNormalized) return canonicalByNormalized;
-
-  const aliasTarget = (() => {
-    switch (normalized) {
-      case "nemoclaw":
-      case "nemo-claw":
-        return "openclaw";
-      case "nemohermes":
-      case "nemo-hermes":
-        return "hermes";
-      case "nemo-deepagents":
-      case "nemo-deepagent":
-      case "nemodeepagents":
-      case "nemodeepagent":
-      case "dcode":
-      case "deepagent":
-      case "deepagents":
-      case "deep-agent":
-      case "deep-agents":
-      case "deepagentcode":
-      case "deepagentscode":
-      case "deepagent-code":
-      case "deepagents-code":
-      case "deep-agent-code":
-      case "deep-agents-code":
-      case "langchain":
-      case "langchain-code":
-      case "langchaindeepagent":
-      case "langchaindeepagents":
-      case "langchain-deepagent":
-      case "langchain-deepagents":
-      case "langchaindeepagentcode":
-      case "langchaindeepagentscode":
-      case "langchain-deepagent-code":
-      case "langchain-deepagents-code":
-      case "langchain-deep-agent":
-      case "langchain-deep-agents":
-      case "langchain-deep-agent-code":
-      case "langchain-deep-agents-code":
-        return "langchain-deepagents-code";
-      default:
-        return null;
-    }
-  })();
-  return aliasTarget && knownAgents.includes(aliasTarget) ? aliasTarget : null;
-}
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
@@ -205,10 +138,10 @@ export function parseOnboardArgs(
     }
     const knownAgents = deps.listAgents?.() ?? [];
     const resolvedAgent =
-      knownAgents.length > 0 ? resolveKnownAgentAlias(agentValue, knownAgents) : agentValue;
+      knownAgents.length > 0 ? resolveAgentNameAlias(agentValue, knownAgents) : agentValue;
     if (knownAgents.length > 0 && !resolvedAgent) {
       error(
-        `  Unknown agent '${agentValue}'. Available: ${knownAgents.join(", ")} (aliases: ${agentAliasSummary()})`,
+        `  Unknown agent '${agentValue}'. Available: ${knownAgents.join(", ")}${formatAgentAliasSuffix(knownAgents)}`,
       );
       printOnboardUsage(error, noticeAcceptFlag);
       exit(1);

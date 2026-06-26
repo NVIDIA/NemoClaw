@@ -73,7 +73,7 @@ describe("runUpdateAction", () => {
       { check: true },
       {
         currentVersion: () => "0.1.0",
-        env: { ...process.env, NEMOCLAW_AGENT: "langchain-deepagents-code" },
+        env: { ...process.env, NEMOCLAW_AGENT: "dcode" },
         getLatestVersion: () => "0.2.0",
         isSourceCheckout: () => false,
         log,
@@ -252,7 +252,7 @@ describe("runUpdateAction", () => {
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
   });
 
-  it("preserves the Deep Agents agent selection while sanitizing installer env", async () => {
+  it("preserves the canonical Deep Agents agent selection while sanitizing installer env", async () => {
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
     );
