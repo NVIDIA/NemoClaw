@@ -8,8 +8,10 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { shellQuote } from "../src/lib/core/shell-quote";
+import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
+const HERMES_DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
   "..",
@@ -157,11 +159,122 @@ function runHermesRuntimeApiServerKeyMint(
   }
 }
 
+function baseMessagingRuntimePlan(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 1,
+    sandboxName: "test-sandbox",
+    agent: "hermes",
+    channels: [{ channelId: "slack", active: true, disabled: false }],
+    disabledChannels: [],
+    credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+    runtimeSetup: { nodePreloads: [], envAliases: [slackBotAlias()], secretScans: [] },
+    ...overrides,
+  };
+}
+
+function runExtractedProviderPlaceholderRefresh(opts: { runtimePlanExists: boolean }) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-start-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
+  const logPath = path.join(tmpDir, "python-args.log");
+  const fakePythonPath = path.join(tmpDir, "fake-python.sh");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  fs.writeFileSync(
+    path.join(hermesHome, ".env"),
+    "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n",
+  );
+  if (opts.runtimePlanExists) {
+    fs.writeFileSync(runtimePlanPath, JSON.stringify(baseMessagingRuntimePlan()));
+  }
+
+  const functionSource = extractShellFunctionFromSource(
+    fs.readFileSync(START_SCRIPT, "utf-8"),
+    "refresh_hermes_provider_placeholders",
+  ).replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
+
+  fs.writeFileSync(
+    fakePythonPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `printf '%s\\n' "$@" >${shellQuote(logPath)}`,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      "validate_hermes_env_secret_boundary() { :; }",
+      functionSource,
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
+      `_HERMES_PYTHON=${shellQuote(fakePythonPath)}`,
+      `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(RUNTIME_CONFIG_GUARD)}`,
+      `_HERMES_BOUNDARY_VALIDATOR=${shellQuote(SECRET_BOUNDARY_VALIDATOR)}`,
+      "refresh_hermes_provider_placeholders strict",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      args: fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8").trim().split("\n") : [],
+      runtimePlanPath,
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesDockerfileRuntimePlanGuard(runtimePlan: unknown) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-docker-plan-"));
+  const runtimeDir = path.join(tmpDir, "usr", "local", "share", "nemoclaw");
+  const runtimePlanPath = path.join(runtimeDir, "messaging-runtime-plan.json");
+  const applierPath = path.join(tmpDir, "applier.mts");
+  const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+  const command = dockerRunCommandBetween(
+    dockerfile,
+    "# Bake reduced messaging runtime metadata",
+    "# Apply messaging agent-install hooks",
+  )
+    .replace(
+      "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
+      `node --experimental-strip-types ${shellQuote(applierPath)}`,
+    )
+    .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
+    // Unit fixtures run as the invoking user, not Docker root; keep the
+    // executable reduced-shape guard intact while bypassing only image-owner metadata.
+    .replace("st.uid !== 0 || st.gid !== 0 || ", "");
+
+  try {
+    fs.mkdirSync(runtimeDir, { recursive: true });
+    fs.writeFileSync(runtimePlanPath, `${JSON.stringify(runtimePlan, null, 2)}\n`, { mode: 0o644 });
+    fs.writeFileSync(applierPath, "// noop runtime-setup fixture\n", { mode: 0o644 });
+    return spawnSync("bash", ["-c", command], {
+      encoding: "utf-8",
+      timeout: 5000,
+      cwd: tmpDir,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   envFile: string;
   envOverrides: Record<string, string>;
   runtimePlan?: unknown;
-  runtimePlanPathKind?: "regular" | "symlink";
+  runtimePlanPathKind?: "regular" | "symlink" | "hardlink" | "groupWritable" | "worldWritable";
   hashFileContent?: string;
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-placeholders-"));
@@ -184,6 +297,18 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
     symlink: () => {
       fs.writeFileSync(runtimePlanTargetPath, runtimePlanText);
       fs.symlinkSync(runtimePlanTargetPath, runtimePlanPath);
+    },
+    hardlink: () => {
+      fs.writeFileSync(runtimePlanTargetPath, runtimePlanText);
+      fs.linkSync(runtimePlanTargetPath, runtimePlanPath);
+    },
+    groupWritable: () => {
+      fs.writeFileSync(runtimePlanPath, runtimePlanText, { mode: 0o664 });
+      fs.chmodSync(runtimePlanPath, 0o664);
+    },
+    worldWritable: () => {
+      fs.writeFileSync(runtimePlanPath, runtimePlanText, { mode: 0o666 });
+      fs.chmodSync(runtimePlanPath, 0o666);
     },
   } satisfies Record<NonNullable<typeof opts.runtimePlanPathKind>, () => void>;
   opts.runtimePlan === undefined || writeRuntimePlanPath[opts.runtimePlanPathKind ?? "regular"]();
@@ -564,33 +689,68 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refuses symlinked runtime plans before refreshing Hermes provider placeholders", () => {
+  it("refresh_hermes_provider_placeholders passes --runtime-plan only when the artifact exists", () => {
+    const present = runExtractedProviderPlaceholderRefresh({ runtimePlanExists: true });
+    const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanExists: false });
+
+    expect(present.result.status, present.result.stderr).toBe(0);
+    expect(absent.result.status, absent.result.stderr).toBe(0);
+    expect(present.args).toContain("--runtime-plan");
+    expect(present.args).toContain(present.runtimePlanPath);
+    expect(absent.args).not.toContain("--runtime-plan");
+    expect(absent.args).not.toContain(absent.runtimePlanPath);
+  });
+
+  it.each([
+    {
+      name: "symlinked",
+      runtimePlanPathKind: "symlink",
+      error: "refusing unsafe Hermes runtime config path",
+    },
+    {
+      name: "hardlinked",
+      runtimePlanPathKind: "hardlink",
+      error: "refusing hardlinked runtime config path",
+    },
+    {
+      name: "group-writable",
+      runtimePlanPathKind: "groupWritable",
+      error: "refusing group/world-writable runtime config path",
+    },
+    {
+      name: "world-writable",
+      runtimePlanPathKind: "worldWritable",
+      error: "refusing group/world-writable runtime config path",
+    },
+  ] as const)("refuses $name runtime plans before refreshing Hermes provider placeholders", ({
+    runtimePlanPathKind,
+    error,
+  }) => {
     const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
       envOverrides: {
         SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
       },
-      runtimePlanPathKind: "symlink",
-      runtimePlan: {
-        schemaVersion: 1,
-        sandboxName: "test-sandbox",
-        agent: "hermes",
-        channels: [{ channelId: "slack", active: true, disabled: false }],
-        disabledChannels: [],
-        credentialBindings: [],
-        runtimeSetup: {
-          nodePreloads: [],
-          envAliases: [slackBotAlias()],
-          secretScans: [],
-        },
-      },
+      runtimePlanPathKind,
+      runtimePlan: baseMessagingRuntimePlan(),
     });
 
     expect(run.result.status).toBe(1);
-    expect(run.result.stderr).toContain("refusing unsafe Hermes runtime config path");
+    expect(run.result.stderr).toContain(error);
     expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
+  });
+
+  it("Hermes Dockerfile runtime-plan guard rejects unreduced agentRender/buildSteps artifacts", () => {
+    const accepted = runHermesDockerfileRuntimePlanGuard(baseMessagingRuntimePlan());
+    const rejected = runHermesDockerfileRuntimePlanGuard(
+      baseMessagingRuntimePlan({ agentRender: [], buildSteps: [] }),
+    );
+
+    expect(accepted.status, accepted.stderr).toBe(0);
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain("runtime plan contains unreduced key agentRender");
   });
 
   it.each([
