@@ -28,17 +28,35 @@ run_dcode() {
 #   Neither is callable from the Bash wrapper before exec, so this matcher
 #   mirrors canonical TOKEN_PREFIX_PATTERNS plus the Bearer- and name-context
 #   semantics from CONTEXT_PATTERNS that apply to a name=value boundary.
-# - Scope: token-prefix and Bearer-prefix matches operate as unanchored substring
-#   regex (catches embedded/wrapped tokens). Name-context rejection fires when
-#   the variable name ends in a credential keyword (_KEY, _TOKEN, _SECRET, ...)
-#   and the value is at least 10 chars (mirroring CONTEXT_PATTERNS minimum). The
-#   env-file parser rejects values containing dotenv expansion ($VAR, ${VAR}),
-#   command substitution ($(...) or backticks), because upstream dcode may
-#   resolve those to credentials the raw scan cannot see.
-# - Regression: the parity test in
-#   test/langchain-deepagents-code-image.test.ts imports the canonical
-#   TOKEN_PREFIX_PATTERNS and pins its length; any new entry trips the test and
-#   forces this matcher (and its sample list) to update.
+# - Source-fix constraint: the upstream maintainer surface is independent; a
+#   Node shim at this boundary would double the process count and add another
+#   supply-chain hop. Bash is the only entrypoint available before exec.
+# - Scope:
+#     * Token-prefix and Bearer-prefix matches operate as unanchored substring
+#       regex (catches embedded/wrapped tokens).
+#     * Name-context rejection fires case-insensitively when the variable name
+#       ends in a credential keyword (_KEY, _TOKEN, _SECRET, _PASSWORD,
+#       _CREDENTIAL, _PASS) and the value is at least 10 chars (mirroring
+#       CONTEXT_PATTERNS minimum length).
+#     * Managed messaging values (SLACK_BOT_TOKEN, SLACK_APP_TOKEN,
+#       TELEGRAM_BOT_TOKEN, DISCORD_BOT_TOKEN) are allowed only when the value
+#       matches the platform-specific token shape AND does not embed a
+#       non-platform canonical secret prefix.
+#     * The env-file parser strips a leading `export ` keyword (mirroring
+#       python-dotenv) and rejects values containing dotenv expansion ($VAR,
+#       ${VAR}), command substitution ($(...) or backticks), because upstream
+#       dcode may resolve those to credentials the raw scan cannot see.
+#     * Runtime env iteration uses `env -0` so names that are not valid Bash
+#       identifiers (e.g. with hyphens) are still classified.
+# - Regression: the parity tests in
+#   test/langchain-deepagents-code-image.test.ts pin the canonical
+#   TOKEN_PREFIX_PATTERNS and CONTEXT_PATTERNS fingerprints (source + flags) and
+#   feed representative samples through the wrapper; any canonical change trips
+#   the fingerprint test and forces this matcher (and its samples) to update.
+#   The live no-network acceptance clause is covered by
+#   test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh
+#   which exercises a real sandbox launch under `nemoclaw exec` and inspects
+#   sandbox logs for outgoing requests during the rejected interval.
 # - Removal condition: drop this guard when (a) upstream `deepagents_code` itself
 #   rejects secret-shaped runtime/.env values, or (b) all dcode invocations
 #   route through a Node entrypoint that imports the canonical patterns directly.
