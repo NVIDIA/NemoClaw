@@ -213,6 +213,21 @@ function preflightHermesProviderCredentials(
   return false;
 }
 
+function printMissingRebuildGatewayProvider(provider: string, credentialEnv: string | null): void {
+  console.error("");
+  console.error(
+    `  ${_RD}Rebuild preflight failed:${R} provider '${provider}' is not registered in OpenShell.`,
+  );
+  console.error("  The sandbox registry still points at this upstream provider,");
+  console.error("  so rebuild will not recreate it before destroying the sandbox.");
+  if (credentialEnv) {
+    console.error(`  ${credentialEnv} may be present, but the OpenShell provider is missing.`);
+  }
+  console.error("");
+  console.error("  Re-register the provider in OpenShell or rerun onboard, then retry rebuild.");
+  console.error("  Sandbox is untouched — no data was lost.");
+}
+
 export async function stageMessagingManifestPlanForRebuild(
   sandboxName: string,
   sandboxEntry: registry.SandboxEntry,
@@ -434,6 +449,24 @@ function preflightRebuildCredentials(
   }
 
   const rebuildProvider = sb.provider;
+  const shouldVerifyGatewayProvider =
+    rebuildProvider &&
+    !isLocalInferenceProvider(rebuildProvider) &&
+    rebuildProvider !== hermesProviderAuth.HERMES_PROVIDER_NAME;
+  let rebuildProviderRegisteredInGateway: boolean | null = null;
+  const gatewayProviderExists = (): boolean => {
+    if (!shouldVerifyGatewayProvider) return false;
+    if (rebuildProviderRegisteredInGateway === null) {
+      rebuildProviderRegisteredInGateway = providerExistsInGateway(rebuildProvider, runOpenshell);
+      log(
+        `Preflight gateway provider check: provider '${rebuildProvider}' is ${
+          rebuildProviderRegisteredInGateway ? "registered" : "missing"
+        } in OpenShell`,
+      );
+    }
+    return rebuildProviderRegisteredInGateway;
+  };
+
   // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
   // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
   // write paths persist null. Only a session for this sandbox plus a local
@@ -469,6 +502,11 @@ function preflightRebuildCredentials(
   }
 
   if (!rebuildCredentialEnv) {
+    if (shouldVerifyGatewayProvider && !gatewayProviderExists()) {
+      printMissingRebuildGatewayProvider(rebuildProvider, rebuildCredentialEnv);
+      bail(`Missing gateway provider: ${rebuildProvider}`);
+      return false;
+    }
     log(
       "Preflight credential check: no credentialEnv in session (local inference or missing session)",
     );
@@ -479,8 +517,15 @@ function preflightRebuildCredentials(
   log(
     `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
   );
-  if (credentialValue) return true;
-  if (rebuildProvider && providerExistsInGateway(rebuildProvider, runOpenshell)) {
+  if (credentialValue) {
+    if (shouldVerifyGatewayProvider && !gatewayProviderExists()) {
+      printMissingRebuildGatewayProvider(rebuildProvider, rebuildCredentialEnv);
+      bail(`Missing gateway provider: ${rebuildProvider}`);
+      return false;
+    }
+    return true;
+  }
+  if (shouldVerifyGatewayProvider && gatewayProviderExists()) {
     log(
       `Preflight credential check: provider '${rebuildProvider}' registered in gateway — skipping env check for ${rebuildCredentialEnv}`,
     );

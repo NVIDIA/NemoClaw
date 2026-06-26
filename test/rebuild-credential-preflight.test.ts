@@ -508,6 +508,32 @@ describe("Issue #2273: atomic rebuild", () => {
       expect(output).toContain("Backing up sandbox state");
     });
 
+    it("aborts before backup when the gateway provider is missing even with host credential", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        provider: "nvidia-prod",
+        providerRegistered: false,
+      });
+
+      const result = runRebuild(f, {
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
+      });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+      expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(output).not.toContain("missing from gateway; recreating it");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
     it("copies Hermes messaging channels from the registry into the rebuild resume session", {
       timeout: 60_000,
     }, () => {
