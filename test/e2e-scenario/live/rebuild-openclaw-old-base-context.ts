@@ -39,14 +39,30 @@ export function directDockerfileBaseCopySources(dockerfilePath = DOCKERFILE_BASE
       );
     }
 
+    validateOldBaseContextSource(nonFlagTokens[0]);
     sources.push(nonFlagTokens[0]);
   }
 
   return sources;
 }
 
+function validateOldBaseContextSource(relativePath: string): string {
+  const parts = relativePath.split("/");
+  const resolved = path.resolve(REPO_ROOT, relativePath);
+  const repoPrefix = `${REPO_ROOT}${path.sep}`;
+  const invalidSource =
+    path.isAbsolute(relativePath) ||
+    relativePath.includes("\\") ||
+    parts.some((part) => !part || part === "." || part === "..") ||
+    (resolved !== REPO_ROOT && !resolved.startsWith(repoPrefix));
+  if (invalidSource) {
+    throw new Error(`Unsupported direct Dockerfile.base COPY source: ${relativePath}`);
+  }
+  return resolved;
+}
+
 function copyOldBaseContextFile(buildContext: string, relativePath: string): void {
-  const source = path.join(REPO_ROOT, ...relativePath.split("/"));
+  const source = validateOldBaseContextSource(relativePath);
   const target = path.join(buildContext, ...relativePath.split("/"));
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.copyFileSync(source, target);

@@ -58,4 +58,28 @@ describe("rebuild-openclaw old-base build context", () => {
       "nemoclaw-blueprint/blueprint.yaml",
     ]);
   });
+
+  it("rejects out-of-context direct Dockerfile.base COPY sources before staging", () => {
+    const parentRelativeDockerfilePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+      "Dockerfile.base",
+    );
+    const absoluteDockerfilePath = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "e2e-rebuild-openclaw-dockerfile-")),
+      "Dockerfile.base",
+    );
+    testFiles.push(
+      path.dirname(parentRelativeDockerfilePath),
+      path.dirname(absoluteDockerfilePath),
+    );
+    fs.writeFileSync(parentRelativeDockerfilePath, "COPY ../outside /tmp/outside\n", "utf8");
+    fs.writeFileSync(absoluteDockerfilePath, "COPY /etc/passwd /tmp/passwd\n", "utf8");
+
+    expect(() => directDockerfileBaseCopySources(parentRelativeDockerfilePath)).toThrow(
+      "Unsupported direct Dockerfile.base COPY source",
+    );
+    expect(() => directDockerfileBaseCopySources(absoluteDockerfilePath)).toThrow(
+      "Unsupported direct Dockerfile.base COPY source",
+    );
+  });
 });
