@@ -48,12 +48,17 @@ type WrapperRun = {
 function runWrapper(args: string[]): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
   try {
-    fs.copyFileSync(WRAPPER, path.join(dir, "dcode"));
-    fs.chmodSync(path.join(dir, "dcode"), 0o755);
-
     const marker = path.join(dir, "launched.txt");
     const bin = path.join(dir, "bin");
     fs.mkdirSync(bin);
+    const wrapperFixture = fs
+      .readFileSync(WRAPPER, "utf8")
+      .replace(
+        'export PATH="/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"',
+        `export PATH="${bin}:/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"`,
+      );
+    fs.writeFileSync(path.join(dir, "dcode"), wrapperFixture, { mode: 0o755 });
+
     fs.writeFileSync(
       path.join(bin, "python3"),
       `#!/usr/bin/env bash\nprintf '%s' "$*" > ${JSON.stringify(marker)}\nexit 0\n`,

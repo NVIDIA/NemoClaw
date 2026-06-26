@@ -58,13 +58,13 @@ function assertSmallContextCompactionPolicy(configText: string): void {
     })
     .map(asRecord)
     .find((candidate) => {
-      if (!candidate || !primary || !primaryWithoutProvider) {
-        return false;
-      }
-      const identifiers = ["id", "name", "label"].flatMap((key) => {
-        const value = modelIdentifier(candidate, key);
-        return value ? [value] : [];
-      });
+      const identifiers =
+        candidate && primary && primaryWithoutProvider
+          ? ["id", "name", "label"].flatMap((key) => {
+              const value = modelIdentifier(candidate, key);
+              return value ? [value] : [];
+            })
+          : [];
       return identifiers.some(
         (identifier) =>
           identifier === primary ||
