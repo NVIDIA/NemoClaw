@@ -115,7 +115,8 @@ preflight() {
   log "Docker is running"
   install_nemoclaw
   if ! command -v expect >/dev/null 2>&1; then
-    log "WARNING: expect not available — interactive tests will skip"
+    log "ERROR: expect is required for interactive network policy coverage"
+    exit 1
   fi
   if ! command -v python3 >/dev/null 2>&1; then
     log "ERROR: python3 is required for JSON parsing"
@@ -140,8 +141,8 @@ apply_preset() {
 apply_preset_interactive() {
   local preset_name="$1"
   if ! command -v expect >/dev/null 2>&1; then
-    log "  expect not available — cannot test interactive mode"
-    return 2
+    log "  expect is required for interactive policy-add"
+    return 1
   fi
   local preset_list preset_num
   preset_list=$(NEMOCLAW_NON_INTERACTIVE='' nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
@@ -476,13 +477,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   log "  Step 2: Adding slack preset (interactive mode)..."
   local interactive_rc=0
   apply_preset_interactive "slack" || interactive_rc=$?
-  if [[ $interactive_rc -eq 2 ]]; then
-    log "  Interactive mode unavailable (expect missing) — falling back to non-interactive..."
-    if ! apply_preset "slack"; then
-      fail "TC-NET-03: Setup" "Could not apply slack preset"
-      return
-    fi
-  elif [[ $interactive_rc -ne 0 ]]; then
+  if [[ $interactive_rc -ne 0 ]]; then
     fail "TC-NET-03: Interactive policy-add" "interactive flow failed (exit $interactive_rc)"
     return
   fi

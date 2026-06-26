@@ -660,13 +660,15 @@ else
 fi
 
 # 5.5b: Drive the real OpenClaw TUI first turn and assert preemptive
-# auto-compaction does not block the reply. Requires `expect`; skip cleanly if
-# it is unavailable so the rest of the GPU lane still runs. The harness waits
-# for the gateway to connect before sending (so a slow host cannot drop the
-# keystroke), treats a healthy reply ("streaming") as success, and fails — not
-# passes — on a dropped turn, an early EOF/crash, or an inconclusive timeout, so
-# a turn that never ran can never be scored as a pass.
-if command -v expect >/dev/null 2>&1; then
+# auto-compaction does not block the reply. Requires `expect`, which the CI
+# workflow installs before this script starts. The harness waits for the gateway
+# to connect before sending (so a slow host cannot drop the keystroke), treats a
+# healthy reply ("streaming") as success, and fails on a dropped turn, an early
+# EOF/crash, or an inconclusive timeout, so a turn that never ran can never be
+# scored as a pass.
+if ! command -v expect >/dev/null 2>&1; then
+  fail "[#5468] expect is required for the OpenClaw TUI first-turn compaction guard"
+else
   TUI_CAPTURE="/tmp/nemoclaw-5468-tui-capture.log"
   : >"$TUI_CAPTURE"
   TUI_TIMEOUT_SEC="${NEMOCLAW_5468_TUI_TIMEOUT_SEC:-240}"
@@ -701,8 +703,6 @@ EXPECT
     fail "[#5468] OpenClaw TUI first turn did not complete (rc=$tui_rc) — see capture"
     info "TUI capture (first 800 chars): $(tr -d '\000' <"$TUI_CAPTURE" | head -c 800)"
   fi
-else
-  skip "[#5468] expect not installed — TUI first-turn compaction guard not exercised"
 fi
 
 # ══════════════════════════════════════════════════════════════════

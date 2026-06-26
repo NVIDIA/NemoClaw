@@ -2266,6 +2266,11 @@ jobs:
           echo "=== Docker ==="
           docker info --format '{{.ServerVersion}}'
 
+      - name: Install GPU E2E host dependencies
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: expect
+
       - name: Run GPU E2E test (Ollama local inference)
         run: bash test/e2e/test-gpu-e2e.sh
 

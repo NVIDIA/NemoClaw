@@ -1015,6 +1015,11 @@ describe("E2E reusable workflow contract", () => {
       )?.with?.packages,
     ).toBe("expect iptables");
     expect(
+      nightlyWorkflow.jobs["gpu-e2e"].steps?.find(
+        (step) => step.name === "Install GPU E2E host dependencies",
+      )?.with?.packages,
+    ).toBe("expect");
+    expect(
       vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps?.find(
         (step) => step.name === "Install issue #4434 host dependencies",
       )?.with?.packages,
