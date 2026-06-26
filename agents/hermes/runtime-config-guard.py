@@ -20,6 +20,7 @@ from dataclasses import dataclass
 
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+SECRET_BOUNDARY_ALIAS_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 PROVIDER_PLACEHOLDER_KEYS = (
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
@@ -358,6 +359,14 @@ def _has_env_control_chars(value: str) -> bool:
     return "\x00" in value or "\r" in value or "\n" in value
 
 
+def _is_secret_boundary_placeholder_value(value: str) -> bool:
+    # Keep aligned with validate-env-secret-boundary.py:is_allowed_value.
+    return (
+        value.startswith(SCOPED_PLACEHOLDER_PREFIX)
+        or SECRET_BOUNDARY_ALIAS_RE.fullmatch(value) is not None
+    )
+
+
 def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str, tuple[str, str]]:
     if not runtime_plan_path:
         return {}
@@ -419,6 +428,8 @@ def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str,
             continue
         if _has_env_control_chars(value) or _has_env_control_chars(message):
             raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")
+        if not _is_secret_boundary_placeholder_value(value):
+            raise UnsafePathError("messaging runtime plan env alias value violates the Hermes secret boundary")
         try:
             compiled = re.compile(pattern)
         except re.error as exc:

@@ -1200,6 +1200,7 @@ refresh_hermes_provider_placeholders() {
     --hash-file "$HERMES_HASH_FILE" \
     --runtime-plan "$runtime_plan" \
     --mode "$mode"
+  validate_hermes_env_secret_boundary
 }
 
 refresh_hermes_runtime_config_hashes() {
