@@ -9,7 +9,6 @@ import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
 import { ROOT } from "../runner";
 import {
-  agentAliasSummary,
   formatAgentAliasSuffix,
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";

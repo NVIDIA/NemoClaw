@@ -6,25 +6,25 @@ import os from "node:os";
 
 import { describe, expect, it } from "vitest";
 
+import { AGENT_ALIASES } from "../dist/lib/agent/aliases";
 import { resolveAgentNameAlias } from "../dist/lib/agent/defs";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const AVAILABLE_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"];
-const ALIAS_CASES = [
+const CANONICAL_CASES = [
   ["openclaw", "openclaw"],
-  ["nemoclaw", "openclaw"],
   ["hermes", "hermes"],
-  ["nemohermes", "hermes"],
   ["langchain-deepagents-code", "langchain-deepagents-code"],
-  ["nemo-deepagents", "langchain-deepagents-code"],
+] as const;
+const NORMALIZATION_CASES = [
   ["NEMO_DEEPAGENTS", "langchain-deepagents-code"],
-  ["dcode", "langchain-deepagents-code"],
-  ["deepagents", "langchain-deepagents-code"],
   ["Deep Agents", "langchain-deepagents-code"],
-  ["deepagents-code", "langchain-deepagents-code"],
-  ["deepagentscode", "langchain-deepagents-code"],
-  ["langchain", "langchain-deepagents-code"],
   ["LANGCHAIN", "langchain-deepagents-code"],
+] as const;
+const ALIAS_CASES = [
+  ...CANONICAL_CASES,
+  ...Object.entries(AGENT_ALIASES),
+  ...NORMALIZATION_CASES,
 ] as const;
 
 function installerCanonicalAgentName(input: string): string {
