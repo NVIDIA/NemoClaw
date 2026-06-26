@@ -359,11 +359,14 @@ def _has_env_control_chars(value: str) -> bool:
 
 
 def _runtime_plan_alias_replacements(runtime_plan_path: str | None) -> dict[str, tuple[str, str]]:
-    if not runtime_plan_path or not os.path.isfile(runtime_plan_path):
+    if not runtime_plan_path:
         return {}
     try:
-        with open(runtime_plan_path, encoding="utf-8") as handle:
-            plan = json.load(handle)
+        runtime_plan_text, _runtime_plan_snapshot = _read_text(runtime_plan_path)
+    except FileNotFoundError:
+        return {}
+    try:
+        plan = json.loads(runtime_plan_text)
     except Exception as exc:
         raise UnsafePathError(f"messaging runtime plan is invalid: {exc}") from exc
     if not isinstance(plan, dict):

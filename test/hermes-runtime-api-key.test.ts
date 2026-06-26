@@ -143,6 +143,7 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   envFile: string;
   envOverrides: Record<string, string>;
   runtimePlan?: unknown;
+  runtimePlanPathKind?: "regular" | "symlink";
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-provider-placeholders-"));
   const hermesHome = path.join(tmpDir, ".hermes");
@@ -150,13 +151,21 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
   const envPath = path.join(hermesHome, ".env");
   const hashPath = path.join(tmpDir, "hermes.config-hash");
   const runtimePlanPath = path.join(tmpDir, "messaging-runtime-plan.json");
+  const runtimePlanTargetPath = path.join(tmpDir, "messaging-runtime-plan-target.json");
 
   fs.mkdirSync(hermesHome, { recursive: true });
   fs.writeFileSync(configPath, "model:\n  default: test-model\n");
   fs.writeFileSync(envPath, opts.envFile, { mode: 0o640 });
   writeHermesHash(hashPath, configPath, envPath);
-  opts.runtimePlan === undefined ||
-    fs.writeFileSync(runtimePlanPath, `${JSON.stringify(opts.runtimePlan, null, 2)}\n`);
+  const runtimePlanText = `${JSON.stringify(opts.runtimePlan, null, 2)}\n`;
+  const writeRuntimePlanPath = {
+    regular: () => fs.writeFileSync(runtimePlanPath, runtimePlanText),
+    symlink: () => {
+      fs.writeFileSync(runtimePlanTargetPath, runtimePlanText);
+      fs.symlinkSync(runtimePlanTargetPath, runtimePlanPath);
+    },
+  } satisfies Record<NonNullable<typeof opts.runtimePlanPathKind>, () => void>;
+  opts.runtimePlan === undefined || writeRuntimePlanPath[opts.runtimePlanPathKind ?? "regular"]();
 
   try {
     const runtimePlanArgs =
@@ -340,6 +349,44 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.envFileContent).not.toContain("openshell:resolve:env");
     expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN");
     expect(run.result.stderr).toContain("Normalized SLACK_APP_TOKEN");
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("refuses symlinked runtime plans before refreshing Hermes provider placeholders", () => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+      runtimePlanPathKind: "symlink",
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "slack", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [],
+        runtimeSetup: {
+          nodePreloads: [],
+          envAliases: [
+            {
+              channelId: "slack",
+              envKey: "SLACK_BOT_TOKEN",
+              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+              value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              message:
+                "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+            },
+          ],
+          secretScans: [],
+        },
+      },
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain("refusing unsafe Hermes runtime config path");
+    expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
   });
 
