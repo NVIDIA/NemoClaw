@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
 import { withLegacyMessagingPlanEnv } from "./messaging-plan-test-helper";
 
 const SCRIPT_PATH = path.join(
@@ -27,6 +28,7 @@ const GENERATOR_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
+const HERMES_DOCKERFILE_PATH = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
 
 const BASE_GENERATOR_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
@@ -375,6 +377,23 @@ describe("messaging-build-applier.mts: agent-install", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("aligns the Hermes Dockerfile runtime-plan guard with the reduced runtimeSetup schema", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_PATH, "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Bake reduced messaging runtime metadata",
+      "# Apply messaging agent-install hooks",
+    );
+
+    expect(command).toContain("Array.isArray(runtimeSetup.nodePreloads)");
+    expect(command).toContain("Array.isArray(runtimeSetup.envAliases)");
+    expect(command).toContain("Array.isArray(runtimeSetup.secretScans)");
+    expect(command).toContain("runtimeSetup.nodePreloads.every(isObject)");
+    expect(command).toContain("runtimeSetup.envAliases.every(isObject)");
+    expect(command).toContain("runtimeSetup.secretScans.every(isObject)");
+    expect(command).toContain("runtime plan missing reduced runtimeSetup shape");
   });
 
   it("preserves Hermes runtime env aliases in the reduced runtime plan artifact", () => {
