@@ -118,7 +118,7 @@ jobs:
           "--experimental-strip-types",
           path.join(ROOT, "tools", "pr-review-advisor", "analyze.mts"),
           "--base",
-          "origin/main",
+          "HEAD",
           "--head",
           "HEAD",
           "--schema",
