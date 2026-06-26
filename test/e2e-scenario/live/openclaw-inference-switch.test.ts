@@ -660,6 +660,12 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
   }
 }
 
+function agentReplyContainsToken(reply: string, expected: string): boolean {
+  const compactReply = reply.replace(/\s+/gu, "").toUpperCase();
+  const compactExpected = expected.replace(/\s+/gu, "").toUpperCase();
+  return compactExpected.length > 0 && compactReply.includes(compactExpected);
+}
+
 function parseOpenClawAgentText(raw: string): string {
   if (!raw.trim()) return "";
   const parts: string[] = [];
@@ -739,7 +745,7 @@ exit "$rc"
   });
   const [raw = "", warnings = ""] = result.stdout.split("\n__NEMOCLAW_AGENT_STDERR__\n", 2);
   const reply = parseOpenClawAgentText(raw);
-  if (result.exitCode === 0 && /\bPONG\b/i.test(reply)) return "ok";
+  if (result.exitCode === 0 && agentReplyContainsToken(reply, "PONG")) return "ok";
   if (result.exitCode === 124) {
     return {
       skipped: "OpenClaw agent turn timed out after switch; route/config checks already passed",
@@ -754,6 +760,12 @@ exit "$rc"
     ].join("; "),
   );
 }
+
+test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", () => {
+  expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
+  expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(true);
+  expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
+});
 
 function isTransientInferenceSetFailure(text: string): boolean {
   return /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|failed to verify inference endpoint|502|503|504|temporar/i.test(

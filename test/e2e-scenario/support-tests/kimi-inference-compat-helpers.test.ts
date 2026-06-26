@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertKimiTrajectorySummary,
+  buildKimiTrajectoryCheckScript,
   env,
   kimiAgentEnv,
   kimiOnboardEnv,
@@ -73,5 +75,60 @@ describe("Kimi inference compatibility mode selection", () => {
 
   it("keeps legacy NEMOCLAW_KIMI_USE_MOCK=0 as temporary public-nvidia alias", () => {
     expect(resolveKimiInferenceMode({ NEMOCLAW_KIMI_USE_MOCK: "0" })).toBe("public-nvidia");
+  });
+
+  it("keeps mock Kimi trajectory checks strict for split hostname/date/uptime calls", () => {
+    const script = buildKimiTrajectoryCheckScript(true);
+    expect(script).toContain("strict_mock = True");
+    expect(script).toContain("tool command set");
+    expect(script).toContain("source commands");
+    expect(script).toContain("final text mismatch");
+
+    assertKimiTrajectorySummary({
+      errors: [],
+      finalStatus: "success",
+      finalTextCount: 1,
+      roles: ["assistant", "toolResult", "assistant"],
+      sourceCommands: ["hostname", "date", "uptime"],
+      strictMockExpectations: true,
+      toolMetaCommandSet: ["date", "hostname", "uptime"],
+      toolMetaInvalidValues: [],
+      toolMetasCount: 3,
+    });
+  });
+
+  it("allows public Kimi trajectories with fewer safe exec calls but no combined shell", () => {
+    const script = buildKimiTrajectoryCheckScript(false);
+    expect(script).toContain("strict_mock = False");
+    expect(script).toContain("min_metas = 3 if strict_mock else 1");
+    expect(script).toContain("combined shell command remains");
+
+    assertKimiTrajectorySummary({
+      errors: [],
+      finalStatus: "success",
+      finalTextCount: 1,
+      roles: ["assistant", "toolResult", "assistant"],
+      sourceCommands: ["hostname"],
+      strictMockExpectations: false,
+      toolMetaCommandSet: ["hostname"],
+      toolMetaInvalidValues: [null],
+      toolMetasCount: 1,
+    });
+  });
+
+  it("rejects combined shell commands in both mock and public Kimi trajectory summaries", () => {
+    expect(() =>
+      assertKimiTrajectorySummary({
+        errors: [],
+        finalStatus: "success",
+        finalTextCount: 1,
+        roles: ["assistant", "toolResult", "assistant"],
+        sourceCommands: ["hostname; date; uptime"],
+        strictMockExpectations: false,
+        toolMetaCommandSet: ["hostname; date; uptime"],
+        toolMetaInvalidValues: [],
+        toolMetasCount: 1,
+      }),
+    ).toThrow();
   });
 });
