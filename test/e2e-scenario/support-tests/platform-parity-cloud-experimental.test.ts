@@ -10,6 +10,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS } from "../live/cloud-experimental-check-list.ts";
 import {
   assertRequiredCloudExperimentalResult,
+  buildCloudExperimentalChecksEvidence,
   buildCloudExperimentalCommandEnv,
 } from "../live/cloud-experimental-checks.ts";
 
@@ -77,6 +78,22 @@ describe("P0-E cloud-experimental parity guardrails", () => {
       const mode = fs.statSync(path.join(process.cwd(), scriptPath)).mode;
       expect(mode & 0o111, `${scriptPath} must be executable`).not.toBe(0);
     }
+  });
+
+  it("documents Deep Agents check scripts in generated launch/QA evidence", () => {
+    const evidence = buildCloudExperimentalChecksEvidence(
+      "cloud-langchain-deepagents-code",
+      "deepagents-sandbox",
+      DEEPAGENTS_CLOUD_EXPERIMENTAL_CHECKS,
+    );
+
+    expect(evidence).toMatchObject({
+      scenarioId: "cloud-langchain-deepagents-code",
+      sandboxName: "deepagents-sandbox",
+    });
+    expect(evidence.checkScripts).toContain(
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
+    );
   });
 
   it("builds a minimal cloud-experimental child environment", () => {

@@ -12,6 +12,24 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 
+export type CloudExperimentalChecksEvidence = {
+  scenarioId: string;
+  sandboxName: string;
+  checkScripts: readonly string[];
+};
+
+export function buildCloudExperimentalChecksEvidence(
+  scenarioId: string,
+  sandboxName: string,
+  checkScripts: readonly string[],
+): CloudExperimentalChecksEvidence {
+  return {
+    scenarioId,
+    sandboxName,
+    checkScripts,
+  };
+}
+
 export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
@@ -74,11 +92,10 @@ export async function runE2eCloudExperimentalChecks(
   context: Pick<E2EScenarioFixtures, "artifacts" | "host" | "secrets">,
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
-  await context.artifacts.writeJson("e2e-cloud-experimental-checks.json", {
-    scenarioId,
-    sandboxName,
-    checkScripts,
-  });
+  await context.artifacts.writeJson(
+    "e2e-cloud-experimental-checks.json",
+    buildCloudExperimentalChecksEvidence(scenarioId, sandboxName, checkScripts),
+  );
   await Promise.resolve(
     checkScripts.length > 0 ? assertDeepAgentsRuntimeObserved(sandboxName, context) : undefined,
   );

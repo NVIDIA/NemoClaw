@@ -149,6 +149,16 @@ function runTuiStartupCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}):
   });
 }
 
+function runTuiStartupCheckHelperResult(
+  snippet: string,
+  env: NodeJS.ProcessEnv = {},
+): SpawnSyncReturns<string> {
+  return spawnSync("bash", ["-c", `source "$1"; ${snippet}`, "bash", tuiStartupCheckPath], {
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
+}
+
 describe("LangChain Deep Agents Code image contracts", () => {
   it("hardens copied NemoClaw blueprints against sandbox-user mutation", () => {
     const dockerfile = readAgentFile("Dockerfile");
@@ -469,6 +479,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
     expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
     expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
+    expect(tuiStartupCheck).toContain("is_tui_ready_capture");
+    expect(tuiStartupCheck).toContain("redact_secrets_in_file");
     expect(tuiStartupCheck).toContain("trap cleanup_sensitive_captures EXIT");
     expect(tuiStartupCheck).toContain("cleanup_sensitive_captures");
     expect(tuiStartupCheck).toContain("${PREFIX}.sanitized.log");
@@ -592,6 +604,43 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
   });
 
+  it("matches prompt-shaped TUI readiness text without accepting banner-only startup text", () => {
+    const readiness = (capture: string) =>
+      runTuiStartupCheckHelper(
+        'if printf "%s" "$CAPTURE" | is_tui_ready_capture; then printf ready; else printf not-ready; fi',
+        { CAPTURE: capture },
+      );
+
+    expect(readiness("Deep Agents Code starting...\nLoading tools...")).toBe("not-ready");
+    expect(readiness("What would you like to do next?")).toBe("ready");
+    expect(readiness("Enter your task, then press Enter")).toBe("ready");
+    expect(readiness("How can I help with the codebase today?")).toBe("ready");
+  });
+
+  it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
+    const assertExit = (exitCode: string) =>
+      runTuiStartupCheckHelper(
+        [
+          "PASSED=0",
+          "FAILED=0",
+          'capture="$(mktemp)"',
+          'printf "NEMOCLAW_TUI_EXIT_CAPTURED:%s\\n" "$EXIT_CODE" >"$capture"',
+          'assert_clean_exit_code "$capture" 2>/dev/null',
+          'rm -f -- "$capture"',
+          'printf "passed=%s failed=%s" "$PASSED" "$FAILED"',
+        ].join("; "),
+        { EXIT_CODE: exitCode },
+      );
+
+    expect(assertExit("0")).toBe(
+      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after Ctrl-C (exit 0))\npassed=1 failed=0",
+    );
+    expect(assertExit("130")).toBe(
+      "10-deepagents-code-tui-startup: OK (dcode TUI exited cleanly after Ctrl-C (exit 130))\npassed=1 failed=0",
+    );
+    expect(assertExit("1")).toBe("passed=0 failed=1");
+  });
+
   it("detects representative secret families in TUI startup artifacts", () => {
     const detectsSecret = (token: string) =>
       runTuiStartupCheckHelper(
@@ -601,6 +650,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
 
     expect(detectsSecret("nvapi-" + "A".repeat(10))).toBe("secret");
     expect(detectsSecret("sk-" + "A".repeat(20))).toBe("secret");
+    expect(detectsSecret("Authorization: Bearer " + "a".repeat(20))).toBe("secret");
+    expect(detectsSecret("API_KEY=" + "b".repeat(20))).toBe("secret");
     expect(detectsSecret("plain startup text")).toBe("clean");
   });
 
@@ -641,6 +692,66 @@ describe("LangChain Deep Agents Code image contracts", () => {
       expect(fs.existsSync(expectLog)).toBe(false);
       expect(fs.existsSync(combinedCapture)).toBe(false);
       expect(fs.existsSync(sanitizedCapture)).toBe(true);
+    } finally {
+      fs.rmSync(tempDir, { force: true, recursive: true });
+    }
+  });
+
+  it("redacts retained TUI startup capture when a secret scan fails", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-redact-"));
+    const rawCapture = path.join(tempDir, "raw.log");
+    const expectLog = path.join(tempDir, "expect.log");
+    const combinedCapture = path.join(tempDir, "combined.log");
+    const sanitizedCapture = path.join(tempDir, "sanitized.log");
+    const prefixedToken = `sk-${"A".repeat(20)}`;
+    const bearerToken = "b".repeat(20);
+    const apiKey = "c".repeat(20);
+
+    try {
+      const result = runTuiStartupCheckHelperResult(
+        [
+          'raw_capture_file="$RAW_CAPTURE"',
+          'expect_log_file="$EXPECT_LOG"',
+          'combined_capture_file="$COMBINED_CAPTURE"',
+          'plain_capture_file="$SANITIZED_CAPTURE"',
+          'SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")',
+          'printf "%s\\nAuthorization: Bearer %s\\nAPI_KEY=%s\\n" "$PREFIXED_TOKEN" "$BEARER_TOKEN" "$API_KEY_VALUE" >"$raw_capture_file"',
+          'printf "%s\\n" "expect output" >"$expect_log_file"',
+          'cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"',
+          'strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"',
+          "secret_detected=0",
+          'if contains_secret <"$plain_capture_file"; then secret_detected=1; redact_secrets_in_file "$plain_capture_file"; fi',
+          "cleanup_sensitive_captures",
+          'if [ "$secret_detected" -eq 1 ]; then fail_test "secret-shaped value found in sanitized TUI capture"; fi',
+          'printf "secret_detected=%s failed=%s\\n" "$secret_detected" "$FAILED"',
+          '[ "$FAILED" -eq 0 ]',
+        ].join("; "),
+        {
+          API_KEY_VALUE: apiKey,
+          BEARER_TOKEN: bearerToken,
+          COMBINED_CAPTURE: combinedCapture,
+          EXPECT_LOG: expectLog,
+          PREFIXED_TOKEN: prefixedToken,
+          RAW_CAPTURE: rawCapture,
+          SANITIZED_CAPTURE: sanitizedCapture,
+        },
+      );
+
+      const output = `${result.stdout}\n${result.stderr}`;
+      const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("secret_detected=1 failed=1");
+      expect(output).not.toContain(prefixedToken);
+      expect(output).not.toContain(bearerToken);
+      expect(output).not.toContain(apiKey);
+      expect(sanitizedText).not.toContain(prefixedToken);
+      expect(sanitizedText).not.toContain(bearerToken);
+      expect(sanitizedText).not.toContain(apiKey);
+      expect(sanitizedText).toContain("Authorization: Bearer [REDACTED_SECRET]");
+      expect(sanitizedText).toContain("API_KEY=[REDACTED_SECRET]");
+      expect(fs.existsSync(rawCapture)).toBe(false);
+      expect(fs.existsSync(expectLog)).toBe(false);
+      expect(fs.existsSync(combinedCapture)).toBe(false);
     } finally {
       fs.rmSync(tempDir, { force: true, recursive: true });
     }
