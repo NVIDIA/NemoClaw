@@ -136,6 +136,12 @@ function dockerContextEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function cliEnv(apiKey: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return dockerContextEnv({
     NVIDIA_INFERENCE_API_KEY: apiKey,
+    // Keep the recreate resume request aligned with the registry/session this
+    // test seeds below. Without explicit selection, hosted-inference staging can
+    // reinterpret NVIDIA_INFERENCE_API_KEY as compatible-endpoint input and make
+    // onboard --resume reject the recorded nvidia-prod sandbox after deletion.
+    NEMOCLAW_PROVIDER: "build",
+    NEMOCLAW_MODEL: DEFAULT_MODEL,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     ...extra,
   });
