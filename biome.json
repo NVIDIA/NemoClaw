@@ -129,6 +129,21 @@
       }
     },
     {
+      "includes": ["src/lib/actions/sandbox/status.ts", "src/lib/actions/sandbox/status-text.ts"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["nemoclaw/src/**/*.ts"],
       "linter": {
         "rules": {
