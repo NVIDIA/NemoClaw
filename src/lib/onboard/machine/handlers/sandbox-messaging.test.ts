@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import { filterMessagingPlanForCurrentAgent } from "./sandbox-messaging";
+import { reconcileReusedSandboxMessaging } from "./sandbox-messaging";
 
 const channelIds = ["telegram", "unsupported"];
 
@@ -99,11 +99,18 @@ function channelIdsFrom<T extends { readonly channelId: string }>(entries: reado
   return entries.map((entry) => entry.channelId);
 }
 
-describe("filterMessagingPlanForCurrentAgent", () => {
+describe("reconcileReusedSandboxMessaging", () => {
   it("removes every unsupported channel artifact from a reused plan", () => {
-    const filtered = filterMessagingPlanForCurrentAgent(mixedChannelPlan(), { name: "openclaw" });
+    const result = reconcileReusedSandboxMessaging(
+      mixedChannelPlan(),
+      { name: "openclaw" },
+      { clearPlanEnv() {} },
+    );
+    const filtered = result.plan;
 
     expect(filtered).not.toBeNull();
+    expect(result.selectedChannels).toEqual(["telegram"]);
+    expect(result.changed).toBe(true);
     expect({
       channels: channelIdsFrom(filtered?.channels ?? []),
       disabledChannels: filtered?.disabledChannels,

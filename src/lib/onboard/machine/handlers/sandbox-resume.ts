@@ -20,7 +20,7 @@ export type SandboxResumeDecision =
       readonly note: string;
       readonly removeRegistryEntry: boolean;
     }
-  | { readonly kind: "repair" };
+  | { readonly kind: "repair-and-recreate" };
 
 export interface SandboxResumeDeps {
   note(message: string): void;
@@ -85,7 +85,7 @@ export function decideSandboxResume(signals: SandboxResumeSignals): SandboxResum
       removeRegistryEntry: true,
     };
   }
-  if (signals.sandboxReuseState === "not_ready") return { kind: "repair" };
+  if (signals.sandboxReuseState === "not_ready") return { kind: "repair-and-recreate" };
   return {
     kind: "recreate",
     note: "  [resume] Recorded sandbox state is unavailable; recreating it.",
@@ -118,7 +118,7 @@ export async function applySandboxResumeDecision(
   sandboxName: string | null,
   deps: SandboxResumeDeps,
 ): Promise<void> {
-  if (decision.kind === "repair") {
+  if (decision.kind === "repair-and-recreate") {
     await repairRecordedSandbox(sandboxName, deps);
     return;
   }

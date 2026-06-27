@@ -279,11 +279,15 @@ class SandboxStateFlow<
         })
       : state.session;
     this.deps.skippedStepMessage("sandbox", state.sandboxName);
-    await this.deps.recordStateSkipped("sandbox", {
+    const skippedSession = await this.deps.recordStateSkipped("sandbox", {
       reason: "resume",
       sandboxName: state.sandboxName,
     });
-    return { ...state, session, selectedMessagingChannels: messaging.selectedChannels };
+    return {
+      ...state,
+      session: skippedSession,
+      selectedMessagingChannels: messaging.selectedChannels,
+    };
   }
 
   private async resolveWebSearchForCreation(
@@ -350,7 +354,7 @@ class SandboxStateFlow<
     });
     // Finalization marks the default so a cancelled onboarding cannot leave a
     // partially configured sandbox selected as the default.
-    await this.deps.recordStepComplete(
+    const completedSession = await this.deps.recordStepComplete(
       "sandbox",
       this.deps.toSessionUpdates({
         sandboxName,
@@ -362,7 +366,7 @@ class SandboxStateFlow<
         hermesToolGateways: this.options.hermesToolGateways,
       }),
     );
-    return { ...state, sandboxName };
+    return { ...state, sandboxName, session: completedSession };
   }
 
   private async recreateSandbox(

@@ -39,7 +39,7 @@ describe("decideSandboxResume", () => {
 
   it("repairs a recorded sandbox that is present but not ready", () => {
     expect(decideSandboxResume(resumeSignals({ sandboxReuseState: "not_ready" }))).toEqual({
-      kind: "repair",
+      kind: "repair-and-recreate",
     });
   });
 
