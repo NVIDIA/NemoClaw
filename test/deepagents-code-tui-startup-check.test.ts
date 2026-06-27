@@ -77,6 +77,20 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(result.stderr).not.toContain("expect is required");
   });
 
+  it("fails closed when expect installation fallback cannot provide expect", () => {
+    const result = runTuiStartupCheckHelperResult(
+      [
+        "command() { case \"$*\" in '-v expect') return 1 ;; '-v sudo'|'-v apt-get') return 0 ;; *) builtin command \"$@\" ;; esac; }",
+        "sudo() { return 42; }",
+        "ensure_expect_available",
+      ].join("; "),
+      { GITHUB_ACTIONS: "true" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installing expect");
+  });
+
   it("matches prompt-shaped TUI readiness text without accepting banner-only startup text", () => {
     const readiness = (capture: string) =>
       runTuiStartupCheckHelper(
