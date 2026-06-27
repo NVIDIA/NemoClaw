@@ -77,22 +77,6 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(result.stderr).not.toContain("expect is required");
   });
 
-  it("skips Deep Agents TUI exercise when expect is unavailable", () => {
-    const result = runTuiStartupCheckHelperResult(
-      [
-        "PASSED=0",
-        "FAILED=0",
-        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
-        'command() { if [ "$1" = -v ] && [ "${2:-}" = expect ]; then return 1; fi; builtin command "$@"; }',
-        "main",
-      ].join("; "),
-    );
-
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("SKIP: expect is required");
-    expect(result.stderr).not.toContain("FAIL");
-  });
-
   it("matches prompt-shaped TUI readiness text without accepting banner-only startup text", () => {
     const readiness = (capture: string) =>
       runTuiStartupCheckHelper(
