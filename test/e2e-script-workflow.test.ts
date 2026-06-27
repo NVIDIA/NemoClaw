@@ -1292,13 +1292,13 @@ describe("E2E reusable workflow contract", () => {
       "test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts",
       "utf8",
     );
-    const hostedSkip = liveTest.indexOf('process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1"');
+    const hostedSkip = liveTest.indexOf("test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)");
     const hostedConfig = liveTest.indexOf("requireHostedInferenceConfig(secrets)");
     const firewallMutation = liveTest.indexOf('["iptables", "-I", "DOCKER-USER"');
 
     expect(hostedSkip).toBeGreaterThanOrEqual(0);
     expect(liveTest).toContain(
-      "hosted compatible inference is gateway-managed; this repro only blocks sandbox egress",
+      "Hosted compatible inference is gateway-managed; this repro only blocks",
     );
     expect(hostedSkip).toBeLessThan(hostedConfig);
     expect(hostedSkip).toBeLessThan(firewallMutation);
