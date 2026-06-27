@@ -5,11 +5,10 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RunSandboxDoctor =
-  typeof import("../../../../dist/lib/actions/sandbox/doctor")["runSandboxDoctor"];
+type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 
 const requireDist = createRequire(import.meta.url);
-const doctorModulePath = "../../../../dist/lib/actions/sandbox/doctor.js";
+const doctorModulePath = "./doctor.js";
 
 function createDoctorHarness(): {
   captureHostCommandSpy: MockInstance;
@@ -23,29 +22,23 @@ function createDoctorHarness(): {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const runtime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-  const agentDefs = requireDist("../../../../dist/lib/agent/defs.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const gatewayRuntime = requireDist("../../../../dist/lib/gateway-runtime-action.js");
-  const health = requireDist("../../../../dist/lib/inference/health.js");
-  const dockerDriverPlatform = requireDist(
-    "../../../../dist/lib/onboard/docker-driver-platform.js",
-  );
-  const gatewayBinding = requireDist("../../../../dist/lib/onboard/gateway-binding.js");
-  const sandboxVerificationExec = requireDist(
-    "../../../../dist/lib/onboard/sandbox-verification-exec.js",
-  );
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const shields = requireDist("../../../../dist/lib/shields/index.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const statusCommandDeps = requireDist("../../../../dist/lib/status-command-deps.js");
-  const tunnelServices = requireDist("../../../../dist/lib/tunnel/services.js");
-  const doctorHostCommand = requireDist(
-    "../../../../dist/lib/actions/sandbox/doctor-host-command.js",
-  );
-  const doctorToolScope = requireDist("../../../../dist/lib/actions/sandbox/doctor-tool-scope.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const runtime = requireDist("../../adapters/openshell/runtime.js");
+  const agentDefs = requireDist("../../agent/defs.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+  const health = requireDist("../../inference/health.js");
+  const dockerDriverPlatform = requireDist("../../onboard/docker-driver-platform.js");
+  const gatewayBinding = requireDist("../../onboard/gateway-binding.js");
+  const sandboxVerificationExec = requireDist("../../onboard/sandbox-verification-exec.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const shields = requireDist("../../shields/index.js");
+  const registry = requireDist("../../state/registry.js");
+  const statusCommandDeps = requireDist("../../status-command-deps.js");
+  const tunnelServices = requireDist("../../tunnel/services.js");
+  const doctorHostCommand = requireDist("./doctor-host-command.js");
+  const doctorToolScope = requireDist("./doctor-tool-scope.js");
+  const processRecovery = requireDist("./process-recovery.js");
 
   const getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
     name: "alpha",

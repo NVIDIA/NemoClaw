@@ -16,7 +16,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import * as destroy from "../dist/lib/actions/sandbox/destroy.js";
+import * as destroy from "../src/lib/actions/sandbox/destroy.js";
 
 type OpenshellResult = { status: number | null };
 

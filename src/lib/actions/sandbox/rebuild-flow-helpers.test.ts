@@ -5,16 +5,14 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RebuildFlowHelpersModule =
-  typeof import("../../../../dist/lib/actions/sandbox/rebuild-flow-helpers");
-type SandboxStateModule = typeof import("../../../../dist/lib/state/sandbox");
-type UserManagedFilesProbeModule =
-  typeof import("../../../../dist/lib/state/user-managed-files-probe");
+type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
+type SandboxStateModule = typeof import("../../state/sandbox");
+type UserManagedFilesProbeModule = typeof import("../../state/user-managed-files-probe");
 
 const requireDist = createRequire(import.meta.url);
-const rebuildFlowHelpersPath = "../../../../dist/lib/actions/sandbox/rebuild-flow-helpers.js";
-const sandboxStatePath = "../../../../dist/lib/state/sandbox.js";
-const userManagedFilesProbePath = "../../../../dist/lib/state/user-managed-files-probe.js";
+const rebuildFlowHelpersPath = "./rebuild-flow-helpers.js";
+const sandboxStatePath = "../../state/sandbox.js";
+const userManagedFilesProbePath = "../../state/user-managed-files-probe.js";
 
 function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
   delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];

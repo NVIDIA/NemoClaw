@@ -23,7 +23,7 @@
 // and `npm run build` inside nemoclaw/ for the plugin side.
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -59,9 +59,9 @@ function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
   }
 }
 
-const cliHelper = loadHelper("../dist/lib/private-networks", "`npm run build:cli`");
+const cliHelper = loadHelper("../../dist/lib/private-networks", "`npm run build:cli`");
 const pluginHelper = loadHelper(
-  "../nemoclaw/dist/blueprint/private-networks.js",
+  "../../nemoclaw/dist/blueprint/private-networks.js",
   "`npm run build` inside nemoclaw/",
 );
 

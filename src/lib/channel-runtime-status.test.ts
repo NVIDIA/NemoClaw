@@ -8,7 +8,7 @@ import {
   extractEnabledChannelsFromOpenclawConfig,
   parseGatewayLogScanOutput,
   probeChannelRuntimeStatus,
-} from "../../dist/lib/channel-runtime-status.js";
+} from "./channel-runtime-status.js";
 
 // Build an executeSandboxCommand mock that returns the config file body
 // on the `cat` call and a synthesized gateway-log-scan output on the

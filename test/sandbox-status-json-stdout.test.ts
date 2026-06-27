@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { getSandboxStatusReport } from "../dist/lib/actions/sandbox/status-snapshot.js";
+import { getSandboxStatusReport } from "../src/lib/actions/sandbox/status-snapshot.js";
 
 // `sandbox status --json` builds a machine-readable report through
 // getSandboxStatusReport, which reconciles the gateway. When the gateway needs

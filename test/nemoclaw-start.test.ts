@@ -3486,10 +3486,10 @@ describe("provider placeholder refresh (#4251)", () => {
     const distPath = path.join(
       import.meta.dirname,
       "..",
-      "dist",
+      "src",
       "lib",
       "onboard",
-      "extra-placeholder-keys.js",
+      "extra-placeholder-keys.ts",
     );
     const { canonicalPlaceholderKeys } = require(distPath);
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();

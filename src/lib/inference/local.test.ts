@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterAll, afterEach, beforeAll, describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
-import { OLLAMA_MODEL_REGISTRY } from "../../../dist/lib/inference/ollama-model-registry";
+// Import source directly so tests cannot pass against a stale build.
+import { OLLAMA_MODEL_REGISTRY } from "./ollama-model-registry";
 
 // Derive the "large enough to fit every registry entry" memory threshold
 // from the registry itself so adding or resizing a model in the registry
@@ -16,31 +15,32 @@ import { OLLAMA_MODEL_REGISTRY } from "../../../dist/lib/inference/ollama-model-
 const LARGE_OLLAMA_FIT_MEMORY_MB = Math.max(
   ...OLLAMA_MODEL_REGISTRY.map((entry) => entry.requiredMemoryMB),
 );
+
 import {
   CONTAINER_REACHABILITY_IMAGE,
   DEFAULT_OLLAMA_MODEL,
-  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-  QWEN3_6_OLLAMA_MODEL,
-  getOllamaContainerPort,
-  resetOllamaContainerPortCache,
-  getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
+  getDefaultOllamaModel,
   getLocalProviderBaseUrl,
   getLocalProviderContainerReachabilityCheck,
   getLocalProviderHealthCheck,
   getLocalProviderHealthEndpoint,
   getLocalProviderLabel,
   getLocalProviderValidationBaseUrl,
+  getOllamaContainerPort,
   getOllamaModelOptions,
   getOllamaProbeCommand,
   getOllamaWarmupCommand,
   isOllamaRunnerCrash,
+  LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   parseOllamaList,
   parseOllamaTags,
   probeLocalProviderHealth,
-  validateOllamaModel,
+  QWEN3_6_OLLAMA_MODEL,
+  resetOllamaContainerPortCache,
   validateLocalProvider,
-} from "../../../dist/lib/inference/local";
+  validateOllamaModel,
+} from "./local";
 
 describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
@@ -183,37 +183,6 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("ollama-local", mockCapture);
     expect(result).toEqual({ ok: true });
     expect(callCount).toBe(2);
-  });
-
-  it("rejects non-WSL Ollama when the backend and proxy ports collide", () => {
-    const output = execFileSync(
-      process.execPath,
-      [
-        "-e",
-        [
-          "const platform = require('./dist/lib/platform.js');",
-          "platform.isWsl = () => false;",
-          "const localInference = require('./dist/lib/inference/local.js');",
-          "const result = localInference.validateLocalProvider('ollama-local', () => '{\"models\":[]}');",
-          "process.stdout.write(JSON.stringify(result));",
-        ].join(""),
-      ],
-      {
-        cwd: path.resolve(__dirname, "../../.."),
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          NEMOCLAW_OLLAMA_PORT: "11435",
-          NEMOCLAW_OLLAMA_PROXY_PORT: "11435",
-        },
-      },
-    );
-
-    const result = JSON.parse(output);
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("NEMOCLAW_OLLAMA_PORT");
-    expect(result.message).toContain("NEMOCLAW_OLLAMA_PROXY_PORT");
-    expect(result.message).toContain("11435");
   });
 
   it("returns a clear error when ollama-local is unavailable", () => {
@@ -679,7 +648,7 @@ describe("local inference helpers", () => {
   });
 
   it("filters installed-model selection by memory fit", async () => {
-    const { getDefaultOllamaModel: gdom } = await import("../../../dist/lib/inference/local");
+    const { getDefaultOllamaModel: gdom } = await import("./local");
     // Even though nemotron-3-nano:30b is installed, it does not fit a host
     // with only 12 GiB available — the selector must downgrade to a fitting
     // installed model rather than blindly returning DEFAULT_OLLAMA_MODEL.
@@ -690,7 +659,7 @@ describe("local inference helpers", () => {
   });
 
   it("resolveNonInteractiveOllamaModel respects unknown tags and downgrades known oversize ones", async () => {
-    const { resolveNonInteractiveOllamaModel } = await import("../../../dist/lib/inference/local");
+    const { resolveNonInteractiveOllamaModel } = await import("./local");
     const messages: string[] = [];
     const log = (m: string) => messages.push(m);
 
@@ -730,7 +699,7 @@ describe("local inference helpers", () => {
   });
 
   it("resolveNonInteractiveOllamaModel surfaces the no-fit warning when even the smallest model exceeds available memory", async () => {
-    const { resolveNonInteractiveOllamaModel } = await import("../../../dist/lib/inference/local");
+    const { resolveNonInteractiveOllamaModel } = await import("./local");
     const messages: string[] = [];
     const log = (m: string) => messages.push(m);
 

@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials/store.js";
-import { cleanupStaleHostFiles } from "../dist/lib/host-artifact-cleanup.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../src/lib/credentials/store.js";
+import { cleanupStaleHostFiles } from "../src/lib/host-artifact-cleanup.js";
 
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS];
 

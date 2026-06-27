@@ -13,7 +13,7 @@ import {
   isValidProxyHost,
   isValidProxyPort,
   patchStagedDockerfile,
-} from "../../../dist/lib/onboard/dockerfile-patch";
+} from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
 

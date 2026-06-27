@@ -10,9 +10,9 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CleanupSandboxServicesDeps } from "../dist/lib/actions/sandbox/destroy.js";
-import { cleanupSandboxServices } from "../dist/lib/actions/sandbox/destroy.js";
-import { SANDBOX_PROVIDER_SUFFIXES } from "../dist/lib/onboard/sandbox-provider-cleanup.js";
+import type { CleanupSandboxServicesDeps } from "../src/lib/actions/sandbox/destroy.js";
+import { cleanupSandboxServices } from "../src/lib/actions/sandbox/destroy.js";
+import { SANDBOX_PROVIDER_SUFFIXES } from "../src/lib/onboard/sandbox-provider-cleanup.js";
 
 type SandboxLike = { provider?: string | null } | null;
 

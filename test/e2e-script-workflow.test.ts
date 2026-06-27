@@ -449,7 +449,7 @@ describe("E2E reusable workflow contract", () => {
         "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
         "npm run build:cli",
         "npx tsx scripts/check-dist-sourcemaps.ts dist",
-        "npx vitest run --project cli \\",
+        "npx vitest run --project cli --project integration \\",
       ]),
     );
   });

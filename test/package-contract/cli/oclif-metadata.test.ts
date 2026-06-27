@@ -8,7 +8,7 @@ import {
   getRegisteredOclifCommandMetadata,
   getRegisteredOclifCommandSummary,
   getRegisteredOclifCommandsMetadata,
-} from "./oclif-metadata";
+} from "../../../dist/lib/cli/oclif-metadata";
 
 describe("oclif metadata lookup", () => {
   it("returns generated-manifest command summaries", () => {

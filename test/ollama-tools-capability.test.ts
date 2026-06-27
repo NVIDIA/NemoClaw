@@ -7,14 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "local.js");
+const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "src", "lib", "inference", "local.ts");
 const ONBOARD_OLLAMA_PROXY_PATH = path.join(
   REPO_ROOT,
-  "dist",
+  "src",
   "lib",
   "inference",
   "ollama",
-  "proxy.js",
+  "proxy.ts",
 );
 
 type CapturedCall = { argv: readonly string[]; opts?: Record<string, unknown> };
@@ -262,7 +262,7 @@ function installSharedStubs(): void {
     _model: string,
   ) => SHARED.scriptedCaps;
 
-  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js");
+  const credentialsPath = path.join(REPO_ROOT, "src", "lib", "credentials", "store.ts");
   const credentials = require(credentialsPath) as {
     prompt: (msg: string) => Promise<string>;
   };

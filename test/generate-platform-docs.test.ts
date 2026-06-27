@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveAgentNameAlias } from "../dist/lib/agent/defs";
+import { resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
 

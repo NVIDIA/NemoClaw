@@ -8,7 +8,7 @@ import {
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
   resolveOllamaTarballArch,
-} from "../../../dist/lib/onboard/install-ollama-linux";
+} from "./install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
   return {

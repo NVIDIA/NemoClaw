@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveOpenshell } from "../../../../dist/lib/adapters/openshell/resolve";
+import { describe, expect, it } from "vitest";
+import { resolveOpenshell } from "./resolve";
 
 describe("lib/resolve-openshell", () => {
   it("returns command -v result when absolute path", () => {

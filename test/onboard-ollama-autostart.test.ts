@@ -7,11 +7,11 @@
 // the wizard resurrecting the daemon.
 
 import assert from "node:assert/strict";
-import { describe, it } from "vitest";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { describe, it } from "vitest";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -67,18 +67,18 @@ function runOllamaAutostartScenario(opts: ScenarioOptions): WizardResult {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-autostart-"));
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "onboard-ollama-autostart-check.js");
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
-  const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
+  const waitPath = JSON.stringify(path.join(repoRoot, "src", "lib", "core", "wait.ts"));
   const localInferencePath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    path.join(repoRoot, "src", "lib", "inference", "local.ts"),
   );
   const proxyPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
   );
 
   fs.mkdirSync(fakeBin, { recursive: true });
@@ -383,7 +383,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     // Hard-asserted against the architect contract, but the constant is the
     // single source of truth. Read it from the dist module the wizard uses.
     const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "..", "dist", "lib", "inference", "local.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "inference", "local.ts"),
     );
     assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(payload.result!.preferredInferenceApi, "openai-completions");
@@ -518,7 +518,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
     assert.ok(payload.result, "non-interactive wizard should still produce a result");
     const { DEFAULT_OLLAMA_MODEL } = require(
-      path.join(import.meta.dirname, "..", "dist", "lib", "inference", "local.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "inference", "local.ts"),
     );
     assert.equal(payload.result!.model, DEFAULT_OLLAMA_MODEL);
     assert.equal(payload.result!.provider, "ollama-local");

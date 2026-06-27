@@ -26,12 +26,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 // `handleFinalGatewayStartFailure` is exposed via `module.exports = {...}` at
-// the bottom of onboard.ts (it is not a TypeScript `export`). Import the
-// compiled output (same approach as preflight.test.ts and other onboard-
-// adjacent tests) so the CommonJS `require()` calls in onboard.ts and its
-// transitive dependencies resolve cleanly under Vitest. Coverage also lands
-// on dist/lib/onboard.js, matching what the coverage ratchet measures.
-import onboardExports from "../../../dist/lib/onboard";
+// the bottom of onboard.ts (it is not a TypeScript `export`). The shared source
+// hook preserves those CommonJS semantics without requiring a CLI build.
+import * as onboardExports from "../onboard";
 import { classifyGatewayStartFailure } from "../validation";
 import {
   printDockerDaemonRecovery,

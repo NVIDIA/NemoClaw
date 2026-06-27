@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import {
-  verifyDeployment,
-  formatVerificationDiagnostics,
-} from "../../dist/lib/verify-deployment.js";
-import { buildChain } from "../../dist/lib/dashboard/contract.js";
+import { describe, expect, it } from "vitest";
+import { buildChain } from "./dashboard/contract.js";
+import { formatVerificationDiagnostics, verifyDeployment } from "./verify-deployment.js";
 
 const chain = buildChain();
 

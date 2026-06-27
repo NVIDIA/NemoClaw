@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { setOnboardBrandingAgent } from "./branding";
 import {
   printContainerDnsRemediation,
   printDockerBridgeContainerStartFailure,
-} from "../../../dist/lib/onboard/bridge-dns-preflight";
-import { setOnboardBrandingAgent } from "../../../dist/lib/onboard/branding";
+} from "./bridge-dns-preflight";
 
 describe("printDockerBridgeContainerStartFailure", () => {
   const savedInvokedAs = process.env.NEMOCLAW_INVOKED_AS;

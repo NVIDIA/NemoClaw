@@ -28,8 +28,8 @@ import {
   getSandboxInventory,
   type ListSandboxesCommandDeps,
   renderSandboxInventoryText,
-} from "../dist/lib/inventory/index.js";
-import { recoverRegistryEntriesWithFallback } from "../dist/lib/list-command-deps.js";
+} from "../src/lib/inventory/index.js";
+import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");

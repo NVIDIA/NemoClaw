@@ -10,8 +10,8 @@ import {
   promptManualModelId,
   promptRemoteModel,
   promptVllmModel,
-} from "../../../dist/lib/inference/model-prompts";
-import { VLLM_MODELS, modelsForPlatform } from "../../../dist/lib/inference/vllm-models";
+} from "./model-prompts";
+import { modelsForPlatform, VLLM_MODELS } from "./vllm-models";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];

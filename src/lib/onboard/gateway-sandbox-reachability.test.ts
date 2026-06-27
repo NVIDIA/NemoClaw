@@ -9,7 +9,7 @@ import {
   isSandboxBridgeGatewayReachable,
   tryAutoApplyUfwRule,
   verifySandboxBridgeGatewayReachableOrExit,
-} from "../../../dist/lib/onboard/gateway-sandbox-reachability";
+} from "./gateway-sandbox-reachability";
 
 describe("gateway sandbox reachability route modeling", () => {
   it("parses Docker network IPAM config for subnet and gateway", () => {

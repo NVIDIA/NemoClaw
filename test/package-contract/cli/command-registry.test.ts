@@ -12,8 +12,8 @@ import {
   sandboxActionTokens,
   sandboxCommands,
   visibleCommands,
-} from "./command-registry";
-import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
+} from "../../../dist/lib/cli/command-registry";
+import { getRegisteredOclifCommandsMetadata } from "../../../dist/lib/cli/oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {

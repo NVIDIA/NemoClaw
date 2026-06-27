@@ -8,7 +8,7 @@ import {
   assessAmbientRecreateEnv,
   isolateAmbientRecreateEnv,
   sanitizeEnvValueForDisplay,
-} from "../../../../dist/lib/actions/sandbox/rebuild-env-isolation.js";
+} from "./rebuild-env-isolation.js";
 
 describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
   it("collapses a multi-line / ANSI value into a single safe line", () => {
