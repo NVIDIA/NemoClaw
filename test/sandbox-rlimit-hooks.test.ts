@@ -57,7 +57,9 @@ function runLoggedDockerShell(command: string, tmp: string) {
 }
 
 function copyRlimitFixture(rlimitLib: string): void {
-  copyRlimitFixtureWithNprocLimit(rlimitLib, process.platform === "darwin" ? 4096 : 512);
+  // RLIMIT_NPROC is shared by the real user, so the production default can
+  // starve this test's own shell when Vitest runs many workers concurrently.
+  copyRlimitFixtureWithNprocLimit(rlimitLib, 4096);
 }
 
 function copyRlimitFixtureWithNprocLimit(rlimitLib: string, limit: number): void {
