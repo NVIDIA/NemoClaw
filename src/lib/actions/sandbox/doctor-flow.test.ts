@@ -319,6 +319,50 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
+  it("runs live probes only after plain doctor recovers the named gateway", async () => {
+    const harness = createDoctorHarness();
+    harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
+    harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
+      before: {
+        state: "missing_named",
+        status: "Status: Disconnected",
+        gatewayInfo: "",
+      },
+      after: {
+        state: "healthy_named",
+        status: "Status: Connected",
+        gatewayInfo: "Gateway: nemoclaw-19080",
+      },
+      recovered: true,
+    });
+    harness.probeSandboxInferenceGatewayHealthSpy.mockResolvedValue({
+      ok: true,
+      endpoint: "http://127.0.0.1:19000/v1/chat/completions",
+      detail: "healthy",
+    });
+
+    await harness.runSandboxDoctor("alpha");
+
+    expect(harness.recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
+      gatewayName: "nemoclaw-19080",
+    });
+    expect(harness.captureOpenShellSpy).toHaveBeenCalledWith(
+      ["sandbox", "list"],
+      expect.any(Object),
+    );
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.executeSandboxCommandForVerificationSpy).toHaveBeenCalled();
+    expect(harness.buildToolScopeChecksSpy).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw",
+      false,
+      expect.any(Object),
+    );
+    expect(harness.recoverNamedGatewayRuntimeSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.captureOpenShellSpy.mock.invocationCallOrder[0],
+    );
+  });
+
   it("does not enable repairs for plain or JSON diagnostics", async () => {
     const harness = createDoctorHarness();
     harness.inspectMutableConfigPermsSpy.mockReturnValue({
