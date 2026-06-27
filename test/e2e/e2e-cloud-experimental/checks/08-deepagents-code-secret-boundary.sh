@@ -54,30 +54,16 @@ make_log_marker() {
 
 mark_sandbox_logs() {
   local marker="$1"
-  sandbox_exec "
-for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
-  if [ ! -e \"\$log\" ]; then
-    : > \"\$log\" 2>/dev/null || true
-  fi
-  printf '%s\n' ${marker@Q} >> \"\$log\" 2>/dev/null || true
-done
-" >/dev/null || true
+  local remote_cmd
+  remote_cmd="for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do if [ ! -e \"\$log\" ]; then : > \"\$log\" 2>/dev/null || true; fi; printf '%s\\n' ${marker@Q} >> \"\$log\" 2>/dev/null || true; done"
+  sandbox_exec "$remote_cmd" >/dev/null || true
 }
 
 sandbox_logs_since_marker() {
   local marker="$1"
-  sandbox_exec "
-found=0
-for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
-  [ -r \"\$log\" ] || continue
-  if grep -Fq ${marker@Q} \"\$log\" 2>/dev/null; then
-    found=1
-    printf '== %s ==\n' \"\$log\"
-    awk -v marker=${marker@Q} 'found { print } index(\$0, marker) { found=1; next }' \"\$log\" 2>/dev/null || true
-  fi
-done
-printf 'LOG_MARKER_FOUND:%s\n' \"\$found\"
-"
+  local remote_cmd
+  remote_cmd="found=0; for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do [ -r \"\$log\" ] || continue; if grep -Fq ${marker@Q} \"\$log\" 2>/dev/null; then found=1; printf '== %s ==\\n' \"\$log\"; awk -v marker=${marker@Q} 'found { print } index(\$0, marker) { found=1; next }' \"\$log\" 2>/dev/null || true; fi; done; printf 'LOG_MARKER_FOUND:%s\\n' \"\$found\""
+  sandbox_exec "$remote_cmd"
 }
 
 enable_openshell_audit_logs() {

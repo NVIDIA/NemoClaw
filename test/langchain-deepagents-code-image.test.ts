@@ -436,6 +436,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("dcode_secret_probe_runtime_env");
     expect(secretBoundaryCheck).toContain("dcode_secret_probe_env_file");
     expect(secretBoundaryCheck).toContain("remote_cmd=");
+    expect(secretBoundaryCheck).toContain("LOG_MARKER_FOUND:%s");
     expect(secretBoundaryCheck).toContain("OpenShell rejects newline-bearing exec");
     expect(secretBoundaryCheck).toContain("NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST");
     expect(secretBoundaryCheck).toContain("NO_NEWLINE_IN_COMMAND");
