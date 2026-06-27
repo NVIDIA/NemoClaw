@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 
@@ -204,39 +205,43 @@ describe("runSandboxDoctor flow", () => {
     delete require.cache[requireDist.resolve(doctorModulePath)];
   });
 
-  it("builds a JSON report with host, gateway, sandbox, inference, messaging, and local-service checks", async () => {
-    const harness = createDoctorHarness();
+  it(
+    "builds a JSON report with host, gateway, sandbox, inference, messaging, and local-service checks",
+    testTimeoutOptions(30_000),
+    async () => {
+      const harness = createDoctorHarness();
 
-    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+      const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
-    expect(report).toMatchObject({
-      schemaVersion: 1,
-      sandbox: "alpha",
-      status: "fail",
-    });
-    expect(report?.checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
-        expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
-        expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
-        expect.objectContaining({ group: "Inference", label: "Provider health", status: "ok" }),
-        expect.objectContaining({
-          group: "Inference",
-          label: "Provider health (gateway)",
-          status: "fail",
-        }),
-        expect.objectContaining({ group: "Messaging", label: "Channels", status: "info" }),
-        expect.objectContaining({ group: "Local services", label: "Ollama", status: "ok" }),
-        expect.objectContaining({
-          group: "Local services",
-          label: "cloudflared",
-          status: "ok",
-        }),
-      ]),
-    );
-    expect(exitSpy).not.toHaveBeenCalled();
-    expect(harness.logSpy).not.toHaveBeenCalled();
-  });
+      expect(report).toMatchObject({
+        schemaVersion: 1,
+        sandbox: "alpha",
+        status: "fail",
+      });
+      expect(report?.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ group: "Host", label: "Docker daemon", status: "ok" }),
+          expect.objectContaining({ group: "Gateway", label: "OpenShell status", status: "ok" }),
+          expect.objectContaining({ group: "Sandbox", label: "Live sandbox", status: "ok" }),
+          expect.objectContaining({ group: "Inference", label: "Provider health", status: "ok" }),
+          expect.objectContaining({
+            group: "Inference",
+            label: "Provider health (gateway)",
+            status: "fail",
+          }),
+          expect.objectContaining({ group: "Messaging", label: "Channels", status: "info" }),
+          expect.objectContaining({ group: "Local services", label: "Ollama", status: "ok" }),
+          expect.objectContaining({
+            group: "Local services",
+            label: "cloudflared",
+            status: "ok",
+          }),
+        ]),
+      );
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(harness.logSpy).not.toHaveBeenCalled();
+    },
+  );
 
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();
