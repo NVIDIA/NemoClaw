@@ -96,6 +96,8 @@ describe("commands/slash", () => {
       expect(result.text).toContain("Subcommands:");
       expect(result.text).toContain("status");
       expect(result.text).toContain("shields");
+      expect(result.text).toContain("Show how to check shields status from the host");
+      expect(result.text).not.toContain("up/down, timeout, policy");
       expect(result.text).toContain("config");
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");
