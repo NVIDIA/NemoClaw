@@ -57,8 +57,9 @@ function runLoggedDockerShell(command: string, tmp: string) {
 }
 
 function copyRlimitFixture(rlimitLib: string): void {
-  // RLIMIT_NPROC is shared by the real user, so the production default can
-  // starve this test's own shell when Vitest runs many workers concurrently.
+  // TEST-ONLY OVERRIDE: production remains 512 in scripts/lib/sandbox-rlimits.sh.
+  // RLIMIT_NPROC is shared by the real user, so that default can starve this
+  // test's own shell when Vitest runs many workers concurrently.
   copyRlimitFixtureWithNprocLimit(rlimitLib, 4096);
 }
 
@@ -292,6 +293,12 @@ function expectUnsupportedNprocDoesNotMaskPosixShNoFile(rlimitLib: string): void
 }
 
 describe("sandbox rlimit system hooks (#2173)", () => {
+  it("keeps the production nproc default at 512", () => {
+    expect(fs.readFileSync(SANDBOX_RLIMITS, "utf-8")).toMatch(
+      /^NEMOCLAW_SANDBOX_NPROC_LIMIT=512$/m,
+    );
+  });
+
   it("rlimit helper enforces supported nofile limits under POSIX sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-posix-sh-rlimit-"));
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
