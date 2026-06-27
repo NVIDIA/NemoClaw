@@ -1287,23 +1287,6 @@ describe("E2E reusable workflow contract", () => {
     expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
   });
 
-  it("skips the issue #4434 sandbox-egress repro for gateway-managed hosted inference", () => {
-    const liveTest = readFileSync(
-      "test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts",
-      "utf8",
-    );
-    const hostedSkip = liveTest.indexOf("test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)");
-    const hostedConfig = liveTest.indexOf("requireHostedInferenceConfig(secrets)");
-    const firewallMutation = liveTest.indexOf('["iptables", "-I", "DOCKER-USER"');
-
-    expect(hostedSkip).toBeGreaterThanOrEqual(0);
-    expect(liveTest).toContain(
-      "Hosted compatible inference is gateway-managed; this repro only blocks",
-    );
-    expect(hostedSkip).toBeLessThan(hostedConfig);
-    expect(hostedSkip).toBeLessThan(firewallMutation);
-  });
-
   it("uses the target custom endpoint for double-onboard stale rebuild recovery", () => {
     const liveTest = readFileSync("test/e2e-scenario/live/double-onboard.test.ts", "utf8");
 

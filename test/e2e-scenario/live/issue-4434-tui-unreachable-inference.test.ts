@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { isGatewayManagedCompatibleInference } from "../fixtures/ci-compatible-inference.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -46,7 +47,7 @@ const CONNECTED_SPINNER_RE =
 const STATUS_LINE_RE =
   /(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\|\s*(connected|error)/i;
 const ERROR_STATUS_RE = /\|\s*error\b/i;
-const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
   shouldRunLiveE2EScenarios() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
