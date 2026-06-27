@@ -11,10 +11,16 @@ const requireDist = createRequire(import.meta.url);
 const doctorModulePath = "./doctor.js";
 
 function createDoctorHarness(): {
+  buildToolScopeChecksSpy: MockInstance;
+  captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
   getSandboxSpy: MockInstance;
+  healthProbeSpy: MockInstance;
+  inspectMutableConfigPermsSpy: MockInstance;
   logSpy: MockInstance;
+  recoverNamedGatewayRuntimeSpy: MockInstance;
   repairMutableConfigPermsSpy: MockInstance;
+  resolveOpenShellSpy: MockInstance;
   runSandboxDoctor: RunSandboxDoctor;
 } {
   delete require.cache[requireDist.resolve(doctorModulePath)];
@@ -52,25 +58,31 @@ function createDoctorHarness(): {
   });
   vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
   vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
-  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
+  const resolveOpenShellSpy = vi
+    .spyOn(resolve, "resolveOpenshell")
+    .mockReturnValue("/usr/bin/openshell");
   vi.spyOn(gatewayBinding, "resolveSandboxGatewayName").mockReturnValue("nemoclaw-19080");
   vi.spyOn(gatewayBinding, "resolveGatewayName").mockReturnValue("nemoclaw-19080");
   vi.spyOn(dockerDriverPlatform, "isLinuxDockerDriverGatewayEnabled").mockReturnValue(true);
-  vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
-    before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
-    after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
-    recovered: false,
-  });
-  vi.spyOn(runtime, "captureOpenshell").mockImplementation((args: unknown) => {
-    const argv = Array.isArray(args) ? args : [];
-    if (argv[0] === "sandbox" && argv[1] === "list") {
-      return { status: 0, output: "alpha Ready" };
-    }
-    if (argv[0] === "inference" && argv[1] === "get") {
-      return { status: 0, output: "Provider: ollama-local\nModel: live-model\n" };
-    }
-    return { status: 0, output: "" };
-  });
+  const recoverNamedGatewayRuntimeSpy = vi
+    .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+    .mockResolvedValue({
+      before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
+      after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
+      recovered: false,
+    });
+  const captureOpenShellSpy = vi
+    .spyOn(runtime, "captureOpenshell")
+    .mockImplementation((args: unknown) => {
+      const argv = Array.isArray(args) ? args : [];
+      if (argv[0] === "sandbox" && argv[1] === "list") {
+        return { status: 0, output: "alpha Ready" };
+      }
+      if (argv[0] === "inference" && argv[1] === "get") {
+        return { status: 0, output: "Provider: ollama-local\nModel: live-model\n" };
+      }
+      return { status: 0, output: "" };
+    });
   const captureHostCommandSpy = vi
     .spyOn(doctorHostCommand, "captureHostCommand")
     .mockImplementation((command: unknown) => {
@@ -80,7 +92,7 @@ function createDoctorHarness(): {
       }
       return { status: 0, stdout: "", stderr: "" };
     });
-  vi.spyOn(health, "probeProviderHealth").mockReturnValue({
+  const healthProbeSpy = vi.spyOn(health, "probeProviderHealth").mockReturnValue({
     ok: true,
     probed: true,
     providerLabel: "Ollama",
@@ -107,17 +119,19 @@ function createDoctorHarness(): {
     mode: "temporarily_unlocked",
     detail: "temporarily unlocked for maintenance",
   });
-  vi.spyOn(shields, "inspectMutableConfigPerms").mockReturnValue({
-    applies: true,
-    ok: true,
-    dirMode: "2770",
-    dirOwner: "sandbox:sandbox",
-    fileMode: "660",
-    fileOwner: "sandbox:sandbox",
-    configDir: "/sandbox/.openclaw",
-    configFile: "openclaw.json",
-    issues: [],
-  });
+  const inspectMutableConfigPermsSpy = vi
+    .spyOn(shields, "inspectMutableConfigPerms")
+    .mockReturnValue({
+      applies: true,
+      ok: true,
+      dirMode: "2770",
+      dirOwner: "sandbox:sandbox",
+      fileMode: "660",
+      fileOwner: "sandbox:sandbox",
+      configDir: "/sandbox/.openclaw",
+      configFile: "openclaw.json",
+      issues: [],
+    });
   const repairMutableConfigPermsSpy = vi
     .spyOn(shields, "repairMutableConfigPerms")
     .mockReturnValue({
@@ -132,22 +146,30 @@ function createDoctorHarness(): {
     stdout: "ok",
     stderr: "",
   });
-  vi.spyOn(doctorToolScope, "buildToolScopeChecks").mockReturnValue([
-    {
-      group: "Sandbox",
-      label: "Tool scope approvals",
-      status: "ok",
-      detail: "no pending approvals",
-    },
-  ]);
+  const buildToolScopeChecksSpy = vi
+    .spyOn(doctorToolScope, "buildToolScopeChecks")
+    .mockReturnValue([
+      {
+        group: "Sandbox",
+        label: "Tool scope approvals",
+        status: "ok",
+        detail: "no pending approvals",
+      },
+    ]);
 
   logSpy.mockClear();
 
   return {
+    buildToolScopeChecksSpy,
+    captureOpenShellSpy,
     captureHostCommandSpy,
     getSandboxSpy,
+    healthProbeSpy,
+    inspectMutableConfigPermsSpy,
     logSpy,
+    recoverNamedGatewayRuntimeSpy,
     repairMutableConfigPermsSpy,
+    resolveOpenShellSpy,
     runSandboxDoctor: requireDist(doctorModulePath).runSandboxDoctor,
   };
 }
@@ -211,5 +233,100 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.getSandboxSpy).not.toHaveBeenCalled();
     expect(harness.captureHostCommandSpy).not.toHaveBeenCalled();
     expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not run live or tool-scope probes when OpenShell is unavailable", async () => {
+    const harness = createDoctorHarness();
+    harness.resolveOpenShellSpy.mockReturnValue(null);
+
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+    expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
+    const harness = createDoctorHarness();
+    harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
+      before: { state: "disconnected", status: "Status: Disconnected", gatewayInfo: "" },
+      after: null,
+      recovered: false,
+    });
+
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
+    expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not enable repairs for plain or JSON diagnostics", async () => {
+    const harness = createDoctorHarness();
+    harness.inspectMutableConfigPermsSpy.mockReturnValue({
+      applies: true,
+      ok: false,
+      dirMode: "700",
+      dirOwner: "sandbox:sandbox",
+      fileMode: "600",
+      fileOwner: "sandbox:sandbox",
+      configDir: "/sandbox/.openclaw",
+      configFile: "openclaw.json",
+      issues: ["directory mode is 700"],
+    });
+    const processRecovery = requireDist("./process-recovery.js");
+    vi.mocked(processRecovery.probeSandboxInferenceGatewayHealth).mockResolvedValue({
+      ok: true,
+      endpoint: "http://127.0.0.1:19000/v1/chat/completions",
+      detail: "healthy",
+    });
+
+    await harness.runSandboxDoctor("alpha");
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.repairMutableConfigPermsSpy).not.toHaveBeenCalled();
+    expect(harness.buildToolScopeChecksSpy).toHaveBeenCalledTimes(2);
+    expect(harness.buildToolScopeChecksSpy.mock.calls.map((call) => call[2])).toEqual([
+      false,
+      false,
+    ]);
+  });
+
+  it("skips OpenClaw tool-scope checks for other agents", async () => {
+    const harness = createDoctorHarness();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "hermes",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+    });
+
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+  });
+
+  it("appends the local gateway result without mutating provider health", async () => {
+    const harness = createDoctorHarness();
+    const providerHealth = {
+      ok: true,
+      probed: true,
+      providerLabel: "Ollama",
+      endpoint: "http://127.0.0.1:11434/v1/chat/completions",
+      detail: "healthy",
+    };
+    harness.healthProbeSpy.mockReturnValue(providerHealth);
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(providerHealth).not.toHaveProperty("subprobes");
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Inference",
+        label: "Provider health (gateway)",
+      }),
+    );
   });
 });

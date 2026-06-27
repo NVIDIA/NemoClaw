@@ -144,7 +144,12 @@
       }
     },
     {
-      "includes": ["src/lib/actions/sandbox/doctor.ts", "src/lib/actions/sandbox/doctor-report.ts"],
+      "includes": [
+        "src/lib/actions/sandbox/doctor.ts",
+        "src/lib/actions/sandbox/doctor-messaging.ts",
+        "src/lib/actions/sandbox/doctor-report.ts",
+        "src/lib/actions/sandbox/doctor-system-checks.ts"
+      ],
       "linter": {
         "rules": {
           "complexity": {

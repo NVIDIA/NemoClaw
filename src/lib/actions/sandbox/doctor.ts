@@ -3,24 +3,16 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { buildValidatedCurlCommandArgs } from "../../adapters/http/curl-args";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { loadAgent } from "../../agent/defs";
 import * as agentRuntime from "../../agent/runtime";
-import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
 import { CLI_NAME } from "../../cli/branding";
-import { GATEWAY_PORT, OLLAMA_PORT } from "../../core/ports";
+import { GATEWAY_PORT } from "../../core/ports";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
-import {
-  collectBuiltInMessagingChannelDiagnostics,
-  type MessagingChannelDiagnosticSpec,
-} from "../../messaging/diagnostics";
-import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
@@ -29,15 +21,10 @@ import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { buildStatusCommandDeps } from "../../status-command-deps";
-import { readCloudflaredState } from "../../tunnel/services";
 import { runSandboxAutoPairApprovalPass, wrapSandboxShellScript } from "./auto-pair-approval";
 import { buildConfigPermsCheck } from "./doctor-config-perms";
-import {
-  buildGatewayInspectFailureChecks,
-  type GatewayInspectOptions,
-} from "./doctor-gateway-fallback";
 import { captureHostCommand } from "./doctor-host-command";
+import { collectMessagingDoctorChecks } from "./doctor-messaging";
 import {
   buildDoctorReport,
   type DoctorCheck,
@@ -45,12 +32,19 @@ import {
   type DoctorStatus,
   renderDoctorReport,
 } from "./doctor-report";
+import {
+  cloudflaredDoctorCheck,
+  dockerInspectGateway,
+  findSandboxListLine,
+  inferSandboxReadyFromLine,
+  ollamaDoctorCheck,
+  oneLine,
+  shouldInspectLegacyGatewayContainer,
+} from "./doctor-system-checks";
 import { buildToolScopeChecks } from "./doctor-tool-scope";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 
 export type { DoctorCheck, DoctorReport } from "./doctor-report";
-
-const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 
 function pushInferenceHealthCheck(checks: DoctorCheck[], probe: ProviderHealthStatus): void {
   const label = probe.probeLabel ? `Provider health (${probe.probeLabel})` : "Provider health";
@@ -65,433 +59,6 @@ function pushInferenceHealthCheck(checks: DoctorCheck[], probe: ProviderHealthSt
     detail: probe.ok ? `${probe.endpoint} reachable` : probe.detail,
     hint: probe.ok ? undefined : "check network access or provider credentials",
   });
-}
-
-function oneLine(value = ""): string {
-  return String(value).replace(/\s+/g, " ").trim();
-}
-
-function gatewayContainerCheck(
-  containerName: string,
-  output: string,
-  options: GatewayInspectOptions,
-): DoctorCheck {
-  const [runningRaw, healthRaw, imageRaw] = output.trim().split("\t");
-  const running = runningRaw === "true";
-  const health = healthRaw || "none";
-  const image = imageRaw || "unknown";
-  const healthy = health === "healthy" || health === "none";
-  return {
-    group: "Gateway",
-    label: "Docker container",
-    status: running && healthy ? "ok" : "fail",
-    detail: `${containerName} ${running ? "running" : "stopped"} (${health}; ${image})`,
-    hint: running
-      ? undefined
-      : `restart the gateway with \`openshell gateway start --name ${options.gatewayName ?? "nemoclaw"}\``,
-  };
-}
-
-function gatewayPortCheck(containerName: string): DoctorCheck {
-  const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
-  if (port.status !== 0 || !port.stdout.trim()) {
-    return {
-      group: "Gateway",
-      label: "Port mapping",
-      status: "fail",
-      detail: "30051/tcp is not published on the host",
-      hint: "gateway traffic will not reach OpenShell until the container is recreated with a host port",
-    };
-  }
-  const mapping = oneLine(port.stdout);
-  const expected = mapping.includes(`:${GATEWAY_PORT}`);
-  return {
-    group: "Gateway",
-    label: "Port mapping",
-    status: expected ? "ok" : "warn",
-    detail: mapping,
-    hint: expected ? undefined : `expected host port ${GATEWAY_PORT} from NEMOCLAW_GATEWAY_PORT`,
-  };
-}
-
-function dockerInspectGateway(
-  containerName: string,
-  options: GatewayInspectOptions = {},
-): DoctorCheck[] {
-  const inspect = captureHostCommand(
-    "docker",
-    [
-      "inspect",
-      "--format",
-      "{{.State.Running}}\t{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}\t{{.Config.Image}}",
-      containerName,
-    ],
-    5000,
-  );
-  if (inspect.status !== 0) {
-    return buildGatewayInspectFailureChecks(containerName, options);
-  }
-  return [
-    gatewayContainerCheck(containerName, inspect.stdout, options),
-    gatewayPortCheck(containerName),
-  ];
-}
-
-function findSandboxListLine(output: string, sandboxName: string): string | null {
-  const lines = stripAnsi(output).split(/\r?\n/);
-  return (
-    lines.find((line: string) => {
-      const columns = line.trim().split(/\s+/);
-      return columns.includes(sandboxName);
-    }) || null
-  );
-}
-
-function inferSandboxReadyFromLine(line: string | null): boolean | null {
-  if (!line) return null;
-  if (/\bReady\b/i.test(line)) return true;
-  if (/\b(Failed|Error|CrashLoopBackOff|ImagePullBackOff|Unknown|Evicted)\b/i.test(line)) {
-    return false;
-  }
-  return null;
-}
-
-function stoppedCloudflaredCheck(): DoctorCheck {
-  return {
-    group: "Local services",
-    label: "cloudflared",
-    status: "info",
-    detail: "stopped",
-    hint: `no cloudflared process; run \`${CLI_NAME} tunnel start\` to start it`,
-  };
-}
-
-function staleCloudflaredPidFileCheck(): DoctorCheck {
-  return {
-    group: "Local services",
-    label: "cloudflared",
-    status: "warn",
-    detail: "stale PID file",
-    hint: `no cloudflared process (stored PID is invalid); run \`${CLI_NAME} tunnel start\` to restart it`,
-  };
-}
-
-function staleCloudflaredPidCheck(pid: number): DoctorCheck {
-  return {
-    group: "Local services",
-    label: "cloudflared",
-    status: "warn",
-    detail: `stale PID ${pid}`,
-    hint: `no cloudflared process (PID ${pid} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
-  };
-}
-
-function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
-  switch (state.kind) {
-    case "stopped":
-      return stoppedCloudflaredCheck();
-    case "stale-pid-file":
-      return staleCloudflaredPidFileCheck();
-    case "stale-pid-process":
-      return staleCloudflaredPidCheck(state.pid);
-    case "running":
-      return {
-        group: "Local services",
-        label: "cloudflared",
-        status: "ok",
-        detail: `running (PID ${state.pid})`,
-      };
-  }
-}
-
-function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
-  const endpoint = `http://127.0.0.1:${OLLAMA_PORT}/api/tags`;
-  const result = captureHostCommand(
-    "curl",
-    buildValidatedCurlCommandArgs(["-sS", "--connect-timeout", "2", "--max-time", "4", endpoint]),
-    6000,
-  );
-  const required = currentProvider === "ollama-local";
-  if (result.status !== 0) {
-    return {
-      group: "Local services",
-      label: "Ollama",
-      status: required ? "fail" : "info",
-      detail: `not reachable at ${endpoint}`,
-      hint: required ? "start Ollama or change the sandbox inference provider" : undefined,
-    };
-  }
-
-  let modelCount = "unknown model count";
-  try {
-    const parsed = JSON.parse(result.stdout);
-    if (Array.isArray(parsed.models)) {
-      modelCount = `${parsed.models.length} model(s)`;
-    }
-  } catch {
-    /* keep generic detail */
-  }
-  return {
-    group: "Local services",
-    label: "Ollama",
-    status: "ok",
-    detail: `reachable at ${endpoint} (${modelCount})`,
-  };
-}
-
-function runtimeProbeUnavailableCheck(sandboxName: string, detail: string): DoctorCheck {
-  return {
-    group: "Messaging",
-    label: "Runtime channel registry",
-    status: "warn",
-    detail,
-    hint:
-      `start the sandbox and rerun \`${CLI_NAME} ${sandboxName} doctor\`, ` +
-      `or rebuild with \`${CLI_NAME} ${sandboxName} rebuild\` if the config file is missing`,
-  };
-}
-
-function runtimeVisibilityCheck(
-  sandboxName: string,
-  enabledChannels: string[],
-  visibleChannels: string[],
-  configDir: string,
-  configFile: string,
-): DoctorCheck | null {
-  const { missing } = compareChannelSets(enabledChannels, visibleChannels);
-  if (missing.length === 0) return null;
-  return {
-    group: "Messaging",
-    label: "Runtime channel registry",
-    status: "warn",
-    detail: `not visible to OpenClaw runtime: ${missing.join(", ")}`,
-    hint:
-      `the OpenClaw dashboard "Channels" panel will show "No channels found" for ` +
-      `${missing.join(", ")}; inspect \`${configDir}/${configFile}\` ` +
-      `and the gateway log with \`${CLI_NAME} ${sandboxName} logs\`, then re-run ` +
-      `\`${CLI_NAME} ${sandboxName} rebuild\` if the channels block needs to be regenerated`,
-  };
-}
-
-function runtimeConfigCheck(
-  sandboxName: string,
-  enabledChannels: string[],
-  configuredChannels: string[],
-  configDir: string,
-  configFile: string,
-): DoctorCheck | null {
-  const { missing } = compareChannelSets(enabledChannels, configuredChannels);
-  if (missing.length === 0) return null;
-  return {
-    group: "Messaging",
-    label: "Runtime channel registry",
-    status: "warn",
-    detail: `missing from sandbox config: ${missing.join(", ")}`,
-    hint:
-      `\`${configDir}/${configFile}\` is missing the channel block ` +
-      `for ${missing.join(", ")}; re-run \`${CLI_NAME} ${sandboxName} rebuild\` so the config is regenerated`,
-  };
-}
-
-function runtimeLogUnavailableCheck(sandboxName: string, enabledChannels: string[]): DoctorCheck {
-  return {
-    group: "Messaging",
-    label: "Runtime channel registry",
-    status: "warn",
-    detail: `${enabledChannels.join(", ")} present in config; gateway log unavailable, runtime startup not confirmed`,
-    hint:
-      `start the sandbox and rerun \`${CLI_NAME} ${sandboxName} doctor\`, or inspect ` +
-      `the gateway log with \`${CLI_NAME} ${sandboxName} logs\``,
-  };
-}
-
-function healthyRuntimeCheck(enabledChannels: string[]): DoctorCheck {
-  return {
-    group: "Messaging",
-    label: "Runtime channel registry",
-    status: "ok",
-    detail: `${enabledChannels.join(", ")} acknowledged by OpenClaw runtime`,
-  };
-}
-
-/**
- * Compare the registry's enabled channels with the runtime's config and log
- * evidence. A null result means the probe does not apply, so the caller omits
- * the line instead of rendering a no-op diagnostic.
- */
-function channelRuntimeDoctorCheck(
-  sandboxName: string,
-  enabledChannels: string[],
-): DoctorCheck | null {
-  if (enabledChannels.length === 0) return null;
-  let agent: ReturnType<typeof loadAgent>;
-  try {
-    const sb = registry.getSandbox(sandboxName);
-    agent = loadAgent(sb?.agent || "openclaw");
-  } catch {
-    return null;
-  }
-  if (agent.configPaths.format !== "json") return null;
-  const configFilePath = `${agent.configPaths.dir}/${agent.configPaths.configFile}`;
-  const runtime = probeChannelRuntimeStatus({
-    configFilePath,
-    executeSandboxCommand: (script: string) =>
-      executeSandboxCommandForVerification(sandboxName, script),
-  });
-  if (!runtime.ok) return runtimeProbeUnavailableCheck(sandboxName, runtime.detail);
-  if (runtime.logProbeOk) {
-    return (
-      runtimeVisibilityCheck(
-        sandboxName,
-        enabledChannels,
-        runtime.visibleChannels,
-        agent.configPaths.dir,
-        agent.configPaths.configFile,
-      ) ?? healthyRuntimeCheck(enabledChannels)
-    );
-  }
-  return (
-    runtimeConfigCheck(
-      sandboxName,
-      enabledChannels,
-      runtime.configuredChannels,
-      agent.configPaths.dir,
-      agent.configPaths.configFile,
-    ) ?? runtimeLogUnavailableCheck(sandboxName, enabledChannels)
-  );
-}
-
-function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorCheck {
-  const registeredChannels = registry.getConfiguredMessagingChannelsFromEntry(sb);
-  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
-  const channels = registeredChannels.filter((channel: string) => !disabledChannels.has(channel));
-  const pausedChannels = registeredChannels.filter((channel: string) =>
-    disabledChannels.has(channel),
-  );
-  if (registeredChannels.length === 0) {
-    return {
-      group: "Messaging",
-      label: "Channels",
-      status: "info",
-      detail: "no messaging channels registered",
-    };
-  }
-
-  if (channels.length === 0) {
-    return {
-      group: "Messaging",
-      label: "Channels",
-      status: "info",
-      detail: `all messaging channels paused (${pausedChannels.join(", ")})`,
-      hint: `run \`${CLI_NAME} ${sandboxName} channels start <channel>\` to re-enable one`,
-    };
-  }
-
-  const statusDeps = buildStatusCommandDeps(ROOT);
-  const degraded = statusDeps.checkMessagingBridgeHealth?.(sandboxName, channels, sb.agent) || [];
-  const overlaps = (statusDeps.findMessagingOverlaps?.() ?? []).filter(
-    (overlap) => channels.includes(overlap.channel) && overlap.sandboxes.includes(sandboxName),
-  );
-  const pausedSuffix =
-    pausedChannels.length > 0 ? `; paused channels skipped: ${pausedChannels.join(", ")}` : "";
-  const warningDetails = [
-    ...degraded.map(
-      (item: { channel: string; conflicts: number }) =>
-        `${item.channel}: ${item.conflicts} conflict(s)`,
-    ),
-    ...overlaps.map(formatMessagingOverlapDoctorDetail),
-  ];
-  if (warningDetails.length === 0) {
-    const deepProbeDiagnostic = channels
-      .map(getChannelStatusDiagnostic)
-      .find((diagnostic) => diagnostic?.doctorWhenNoHealthSignals);
-    if (deepProbeDiagnostic?.doctorWhenNoHealthSignals) {
-      const templateContext = {
-        channel: deepProbeDiagnostic.channelId,
-        channels: channels.join(", "),
-        cli: CLI_NAME,
-        pausedSuffix,
-        sandbox: sandboxName,
-      };
-      return {
-        group: "Messaging",
-        label: "Channels",
-        status: "info",
-        detail: formatDiagnosticTemplate(
-          deepProbeDiagnostic.doctorWhenNoHealthSignals.detail,
-          templateContext,
-        ),
-        hint: formatDiagnosticTemplate(
-          deepProbeDiagnostic.doctorWhenNoHealthSignals.hint,
-          templateContext,
-        ),
-      };
-    }
-    return {
-      group: "Messaging",
-      label: "Channels",
-      status: "ok",
-      detail: `${channels.join(", ")} enabled; no recent conflict signatures${pausedSuffix}`,
-    };
-  }
-
-  return {
-    group: "Messaging",
-    label: "Channels",
-    status: "warn",
-    detail: warningDetails.join("; ") + pausedSuffix,
-    hint: `run \`${CLI_NAME} ${sandboxName} logs --follow\` for enabled bridge details`,
-  };
-}
-
-function getChannelStatusDiagnostic(channelName: string): MessagingChannelDiagnosticSpec | null {
-  return (
-    CHANNEL_STATUS_DIAGNOSTICS.find((diagnostic) => diagnostic.channelId === channelName) ?? null
-  );
-}
-
-function formatMessagingOverlapDoctorDetail(overlap: {
-  readonly channel: string;
-  readonly sandboxes: readonly [string, string];
-  readonly message?: string;
-}): string {
-  const detail = overlap.message
-    ? formatDiagnosticTemplate(overlap.message, {
-        channel: overlap.channel,
-        first: overlap.sandboxes[0],
-        second: overlap.sandboxes[1],
-      })
-    : `'${overlap.sandboxes[0]}' and '${overlap.sandboxes[1]}' overlap`;
-  return `${overlap.channel}: ${detail}`;
-}
-
-function formatDiagnosticTemplate(
-  template: string,
-  values: Readonly<Record<string, string>>,
-): string {
-  let result = template;
-  for (const [key, value] of Object.entries(values)) {
-    result = result.replaceAll(`{${key}}`, value);
-  }
-  return result;
-}
-
-/**
- * Decide whether to inspect the legacy k3s gateway container
- * (`openshell-cluster-<name>`). That container only exists for the legacy
- * Kubernetes gateway driver. The current Linux/arm64 Docker-driver gateway runs
- * as a host process (or a separate `nemoclaw-openshell-gateway` compatibility
- * container), so inspecting `openshell-cluster-nemoclaw` there always fails and
- * produces a false doctor failure even when OpenShell reports the named gateway
- * as connected (#4502). Prefer the sandbox's recorded driver; fall back to
- * platform detection for older registry entries that predate the field.
- */
-function shouldInspectLegacyGatewayContainer(sb: SandboxEntry | null | undefined): boolean {
-  const driver = sb?.openshellDriver;
-  if (driver === "docker" || driver === "vm") return false;
-  if (driver === "kubernetes") return true;
-  return !isLinuxDockerDriverGatewayEnabled();
 }
 
 type RunSandboxDoctorOptions = {
@@ -847,16 +414,6 @@ function shieldsDoctorCheck(sandboxName: string): DoctorCheck {
   };
 }
 
-function messagingDoctorChecks(sandboxName: string, sb: SandboxEntry): DoctorCheck[] {
-  const checks = [messagingDoctorCheck(sandboxName, sb)];
-  const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
-  const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
-  const enabled = registered.filter((channel: string) => !disabled.has(channel));
-  const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabled);
-  if (runtimeCheck) checks.push(runtimeCheck);
-  return checks;
-}
-
 function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
@@ -870,7 +427,7 @@ function collectRegisteredSandboxChecks(
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);
-  checks.push(...messagingDoctorChecks(sandboxName, sb));
+  checks.push(...collectMessagingDoctorChecks(sandboxName, sb));
   return checks;
 }
 
