@@ -46,7 +46,9 @@ export default defineConfig({
       {
         test: {
           name: "integration",
-          testTimeout: testTimeout(),
+          // Source-backed process fixtures can exceed the unit-test budget
+          // when several coverage shards transpile and spawn them concurrently.
+          testTimeout: testTimeout(15_000),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
