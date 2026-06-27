@@ -139,7 +139,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
-          '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$1"',
+          '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "}",
           "main",
         ].join("\n"),
@@ -275,6 +275,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
   it("removes raw TUI startup artifacts after writing the sanitized capture", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-"));
     const rawCapture = path.join(tempDir, "raw.log");
+    const markerCapture = path.join(tempDir, "markers.log");
     const expectLog = path.join(tempDir, "expect.log");
     const combinedCapture = path.join(tempDir, "combined.log");
     const sanitizedCapture = path.join(tempDir, "sanitized.log");
@@ -283,21 +284,24 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       const output = runTuiStartupCheckHelper(
         [
           'raw_capture_file="$RAW_CAPTURE"',
+          'marker_capture_file="$MARKER_CAPTURE"',
           'expect_log_file="$EXPECT_LOG"',
           'combined_capture_file="$COMBINED_CAPTURE"',
           'plain_capture_file="$SANITIZED_CAPTURE"',
-          'SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")',
+          'SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$marker_capture_file" "$expect_log_file" "$combined_capture_file")',
           'printf "%s\\n" "$SECRET_TOKEN" >"$raw_capture_file"',
+          'printf "%s\\n" "NEMOCLAW_TUI_READY" >"$marker_capture_file"',
           'printf "%s\\n" "expect output" >"$expect_log_file"',
-          'cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"',
+          'cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file" >"$combined_capture_file"',
           'strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"',
           "cleanup_sensitive_captures",
-          'for artifact in "$raw_capture_file" "$expect_log_file" "$combined_capture_file"; do if [ -e "$artifact" ]; then printf "leaked:%s" "$artifact"; exit 1; fi; done',
+          'for artifact in "$raw_capture_file" "$marker_capture_file" "$expect_log_file" "$combined_capture_file"; do if [ -e "$artifact" ]; then printf "leaked:%s" "$artifact"; exit 1; fi; done',
           'if [ -e "$plain_capture_file" ]; then printf sanitized; else printf missing; fi',
         ].join("; "),
         {
           COMBINED_CAPTURE: combinedCapture,
           EXPECT_LOG: expectLog,
+          MARKER_CAPTURE: markerCapture,
           RAW_CAPTURE: rawCapture,
           SANITIZED_CAPTURE: sanitizedCapture,
           SECRET_TOKEN: `sk-${"A".repeat(20)}`,
@@ -306,6 +310,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
 
       expect(output).toBe("sanitized");
       expect(fs.existsSync(rawCapture)).toBe(false);
+      expect(fs.existsSync(markerCapture)).toBe(false);
       expect(fs.existsSync(expectLog)).toBe(false);
       expect(fs.existsSync(combinedCapture)).toBe(false);
       expect(fs.existsSync(sanitizedCapture)).toBe(true);

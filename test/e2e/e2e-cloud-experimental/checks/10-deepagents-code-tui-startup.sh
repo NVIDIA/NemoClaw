@@ -138,8 +138,10 @@ make_capture_dir() {
 
 run_tui_expect() {
   local raw_capture_file="$1"
+  local marker_capture_file="$2"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
+    NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
@@ -147,11 +149,12 @@ run_tui_expect() {
 set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
+set markers $env(NEMOCLAW_TUI_MARKERS)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 log_file -a $capture
 
-proc append_marker {capture marker} {
-  set fh [open $capture a]
+proc append_marker {markers marker} {
+  set fh [open $markers a]
   puts $fh $marker
   close $fh
 }
@@ -160,18 +163,19 @@ set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TER
 spawn {*}$cmd
 expect {
   -nocase -re $ready_pattern {
-    append_marker $capture "NEMOCLAW_TUI_READY"
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_READY"
     puts "\nNEMOCLAW_TUI_READY"
     send -- "\003"
   }
   timeout {
-    append_marker $capture "NEMOCLAW_TUI_TIMEOUT"
+    append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
     puts "\nNEMOCLAW_TUI_TIMEOUT"
     send -- "\003"
     exit 20
   }
   eof {
-    append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_READY"
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
     exit 21
   }
@@ -180,18 +184,18 @@ expect {
 set timeout 20
 expect {
   -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
-    append_marker $capture "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
+    append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     puts "\nNEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     exit 0
   }
   timeout {
-    append_marker $capture "NEMOCLAW_TUI_EXIT_TIMEOUT"
+    append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
     puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
     send -- "\003"
     exit 22
   }
   eof {
-    append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_EXIT"
     exit 23
   }
@@ -256,26 +260,33 @@ main() {
     exit 1
   fi
 
-  local capture_dir raw_capture_file expect_log_file combined_capture_file plain_capture_file
+  local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
   raw_capture_file="${capture_dir}/${PREFIX}.raw.log"
+  marker_capture_file="${capture_dir}/${PREFIX}.markers.log"
   expect_log_file="${capture_dir}/${PREFIX}.expect.log"
   combined_capture_file="${capture_dir}/${PREFIX}.combined.log"
   plain_capture_file="${capture_dir}/${PREFIX}.sanitized.log"
-  SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")
+  SENSITIVE_CAPTURE_FILES=(
+    "$raw_capture_file"
+    "$marker_capture_file"
+    "$expect_log_file"
+    "$combined_capture_file"
+  )
   : >"$raw_capture_file"
+  : >"$marker_capture_file"
   : >"$expect_log_file"
 
   info "Running Deep Agents Code TUI startup check in sandbox: $SANDBOX_NAME"
   info "Capture directory: $capture_dir"
 
   set +e
-  run_tui_expect "$raw_capture_file" >"$expect_log_file" 2>&1
+  run_tui_expect "$raw_capture_file" "$marker_capture_file" >"$expect_log_file" 2>&1
   local expect_rc
   expect_rc=$?
   set -e
 
-  cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"
+  cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file" >"$combined_capture_file"
   strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"
   local secret_detected=0
   if contains_secret <"$plain_capture_file"; then

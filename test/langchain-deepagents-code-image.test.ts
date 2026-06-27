@@ -471,14 +471,19 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain("unable to probe sandbox");
     expect(tuiStartupCheck).toContain("unexpected sandbox probe output");
     expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
-    expect(tuiStartupCheck).toContain('append_marker $capture "NEMOCLAW_TUI_READY"');
-    expect(tuiStartupCheck).toContain('append_marker $capture "NEMOCLAW_TUI_TIMEOUT"');
-    expect(tuiStartupCheck).toContain('append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_READY"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "$expect_out(0,string)"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_READY"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"');
     expect(tuiStartupCheck).toContain(
-      'append_marker $capture "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',
     );
-    expect(tuiStartupCheck).toContain('append_marker $capture "NEMOCLAW_TUI_EXIT_TIMEOUT"');
-    expect(tuiStartupCheck).toContain('append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_EXIT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"');
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_MARKERS="$marker_capture_file"');
+    expect(tuiStartupCheck).toContain(
+      'cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file"',
+    );
     expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
     expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
     expect(tuiStartupCheck).toContain("is_tui_ready_capture");
