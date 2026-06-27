@@ -10,6 +10,11 @@ type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "./rebuild.js";
 
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(rebuildModulePath);
+delete require.cache[requireDist.resolve(rebuildModulePath)];
+
 type RebuildFlowStep = {
   status: string;
   startedAt: string | null;

@@ -11,6 +11,11 @@ type ConnectSandbox = typeof import("./connect")["connectSandbox"];
 const requireDist = createRequire(import.meta.url);
 const connectModulePath = "./connect.js";
 
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(connectModulePath);
+delete require.cache[requireDist.resolve(connectModulePath)];
+
 type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
   checkAndRecoverSpy: MockInstance;

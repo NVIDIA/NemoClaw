@@ -10,6 +10,11 @@ type ShowSandboxStatus = typeof import("./status")["showSandboxStatus"];
 const requireDist = createRequire(import.meta.url);
 const statusModulePath = "./status.js";
 
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(statusModulePath);
+delete require.cache[requireDist.resolve(statusModulePath)];
+
 type StatusFlowHarness = {
   checkAgentVersionSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
