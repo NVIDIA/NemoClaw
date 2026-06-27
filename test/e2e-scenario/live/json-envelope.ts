@@ -5,13 +5,17 @@ export function stripAnsi(value: string): string {
   return value.replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
+function looksLikeJsonStart(trimmedLine: string): boolean {
+  return /^\{\s*(?:"|}|$)/.test(trimmedLine) || /^\[\s*(?:[\[{"\-0-9tfn]|\]|$)/.test(trimmedLine);
+}
+
 export function parseJsonFromText(raw: string): unknown {
   const text = stripAnsi(raw);
   let cursor = 0;
   for (const lineWithBreak of text.match(/^.*(?:\r?\n|$)/gm) ?? []) {
     const line = lineWithBreak.replace(/\r?\n$/, "");
     const trimmed = line.trimStart();
-    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+    if (looksLikeJsonStart(trimmed)) {
       const offset = cursor + line.length - trimmed.length;
       const candidate = text.slice(offset);
       const candidates = [

@@ -22,6 +22,12 @@ describe("E2E JSON envelope parsing", () => {
     ).toEqual({ sessions: [{ key: "agent:main:main" }] });
   });
 
+  it("ignores bracket-prefixed diagnostics before the JSON envelope", () => {
+    expect(parseJsonFromText('[warn] retrying after transient warning\n["session-a"]')).toEqual([
+      "session-a",
+    ]);
+  });
+
   it("throws when a JSON-looking envelope cannot be parsed", () => {
     expect(() => parseJsonFromText('{"sessions": [}\nwarning after malformed JSON')).toThrow(
       /JSON envelope was present but not parseable/,
