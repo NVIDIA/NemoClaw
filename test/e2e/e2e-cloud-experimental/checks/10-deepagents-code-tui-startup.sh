@@ -46,9 +46,10 @@ is_positive_integer() {
 
 ensure_expect_available() {
   # The Deep Agents Code TUI proof is a PTY contract, so expect(1) is a
-  # required test dependency. The shared workflow installs it before this
-  # check; this fallback keeps older/manual GitHub-hosted runner invocations
-  # aligned instead of silently skipping the release-gate signal.
+  # required test dependency. Source of truth: the E2E workflows install the
+  # `expect` apt package before jobs that can run this check. This fallback
+  # keeps older/manual GitHub-hosted runner invocations aligned instead of
+  # silently skipping the release-gate signal.
   if command -v expect >/dev/null 2>&1; then
     return 0
   fi

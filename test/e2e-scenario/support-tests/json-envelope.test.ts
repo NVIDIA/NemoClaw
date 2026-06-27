@@ -22,6 +22,12 @@ describe("E2E JSON envelope parsing", () => {
     ).toEqual({ sessions: [{ key: "agent:main:main" }] });
   });
 
+  it("throws when a JSON-looking envelope cannot be parsed", () => {
+    expect(() => parseJsonFromText('{"sessions": [}\nwarning after malformed JSON')).toThrow(
+      /JSON envelope was present but not parseable/,
+    );
+  });
+
   it("throws when only warning-shaped output is present", () => {
     expect(() => parseJsonFromText("(node:123) [UNDICI-EHPA] Warning")).toThrow(
       /no JSON object or array found/,

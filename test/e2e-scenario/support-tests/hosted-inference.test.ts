@@ -196,10 +196,12 @@ describe("hosted inference E2E config", () => {
       PATH: "/usr/bin",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
       NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+      RANDOM_NON_SECRET: "not-allowlisted",
     });
 
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
   });
 
   it("builds provider reachability probes only from trusted endpoints", async () => {
