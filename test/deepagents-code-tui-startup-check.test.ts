@@ -20,6 +20,11 @@ const tuiStartupCheckPath = path.join(
 const tuiStartupCheckSource = fs
   .readFileSync(tuiStartupCheckPath, "utf8")
   .replace('\nif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then\n  main "$@"\nfi\n', "\n");
+const tuiExpectProgram = tuiStartupCheckSource.match(/expect <<'EXPECT'\n([\s\S]*?)\nEXPECT/)?.[1];
+
+if (!tuiExpectProgram) {
+  throw new Error("Deep Agents Code TUI check is missing its embedded Expect program");
+}
 
 function runTuiStartupCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
   return execFileSync("bash", ["-s"], {
@@ -46,6 +51,92 @@ function fingerprint(pattern: RegExp): string {
 
 function secretFixture(...parts: string[]): string {
   return parts.join("");
+}
+
+function runTuiExpectStateMachine(events: string[]) {
+  const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
+  const capture = path.join(captureDir, "raw.log");
+  const markers = path.join(captureDir, "markers.log");
+  const trace = path.join(captureDir, "trace.log");
+  fs.writeFileSync(capture, "");
+  fs.writeFileSync(markers, "");
+
+  const prelude = String.raw`
+rename after real_after
+rename exit real_exit
+set ::fake_events [list ${events.map((event) => `{${event}}`).join(" ")}]
+set ::fake_sent {}
+
+proc log_file {args} {}
+proc spawn {args} {}
+proc after {args} {}
+proc send {args} {
+  binary scan [lindex $args end] H* key_hex
+  lappend ::fake_sent $key_hex
+}
+proc expect {branches} {
+  if {[llength $::fake_events] == 0} {
+    error "fake Expect event queue exhausted"
+  }
+  set event [lindex $::fake_events 0]
+  set ::fake_events [lrange $::fake_events 1 end]
+  switch -- $event {
+    onboarding {
+      set branch_index [lsearch -exact $branches {$onboarding_pattern}]
+      set ::expect_out(0,string) "Your name (optional)"
+    }
+    ready {
+      set branch_index [lsearch -exact $branches {$ready_pattern}]
+      set ::expect_out(0,string) "What would you like to build?"
+    }
+    exit {
+      set branch_index [lsearch -glob $branches {NEMOCLAW_TUI_EXIT:*}]
+      set ::expect_out(0,string) "NEMOCLAW_TUI_EXIT:0"
+      set ::expect_out(1,string) "0"
+    }
+    timeout {
+      set branch_index [lsearch -exact $branches timeout]
+    }
+    eof {
+      set branch_index [lsearch -exact $branches eof]
+    }
+    default {
+      error "unsupported fake Expect event: $event"
+    }
+  }
+  if {$branch_index < 0} {
+    error "fake Expect event $event has no matching branch"
+  }
+  uplevel 1 [lindex $branches [expr {$branch_index + 1}]]
+}
+proc exit {{code 0}} {
+  set trace_file [open $::env(NEMOCLAW_TUI_TRACE) w]
+  puts $trace_file [join $::fake_sent ,]
+  close $trace_file
+  real_exit $code
+}
+`;
+  const result = spawnSync("tclsh", ["-"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NEMOCLAW_TUI_CAPTURE: capture,
+      NEMOCLAW_TUI_MARKERS: markers,
+      NEMOCLAW_TUI_ONBOARDING_PATTERN:
+        "(your name \\(optional\\)|what should deep agents call you)",
+      NEMOCLAW_TUI_READY_PATTERN:
+        "(what would you like|enter (your )?(task|message|prompt)|how can i help)",
+      NEMOCLAW_TUI_SANDBOX_NAME: "fake-deepagents",
+      NEMOCLAW_TUI_TIMEOUT: "5",
+      NEMOCLAW_TUI_TRACE: trace,
+    },
+    input: `${prelude}\n${tuiExpectProgram}\n`,
+  });
+
+  const markerText = fs.readFileSync(markers, "utf8");
+  const traceText = fs.existsSync(trace) ? fs.readFileSync(trace, "utf8").trim() : "";
+  fs.rmSync(captureDir, { force: true, recursive: true });
+  return { markerText, result, traceText };
 }
 
 describe("Deep Agents Code TUI startup check helpers", () => {
@@ -117,6 +208,33 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(isOnboarding("What should Deep Agents call you?")).toBe("onboarding");
     expect(isOnboarding("Your project name")).toBe("other");
     expect(isOnboarding("What would you like to build?")).toBe("other");
+  });
+
+  it("skips first-run onboarding before marking the real TUI prompt ready", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine([
+      "onboarding",
+      "ready",
+      "exit",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(traceText).toBe("1b,03,03");
+    expect(markerText).toContain("Your name (optional)");
+    expect(markerText).toContain("What would you like to build?");
+    expect(markerText.indexOf("NEMOCLAW_TUI_ONBOARDING_SKIPPED")).toBeLessThan(
+      markerText.indexOf("NEMOCLAW_TUI_READY"),
+    );
+    expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+  });
+
+  it("does not mark the TUI ready when the coding prompt times out after onboarding", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["onboarding", "timeout"]);
+
+    expect(result.status, result.stderr).toBe(20);
+    expect(traceText).toBe("1b,03");
+    expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
+    expect(markerText).toContain("NEMOCLAW_TUI_TIMEOUT");
+    expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
   });
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
