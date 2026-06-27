@@ -147,8 +147,14 @@ fi
 if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
   sandbox_exec() {
     case "$1" in
-      *$'\n'*) printf '%s\n' "NEWLINE_IN_COMMAND" ; return 1 ;;
-      *) printf '%s\n' "NO_NEWLINE_IN_COMMAND" ; return 0 ;;
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        return 0
+        ;;
     esac
   }
   python_probe "python3" "https://example.com/"
