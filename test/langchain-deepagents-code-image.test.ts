@@ -497,6 +497,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tavilyOptInCheck).toContain("policy-add tavily --dry-run");
     expect(tavilyOptInCheck).toContain("policy-add tavily --yes");
     expect(tavilyOptInCheck).toContain("https://api.tavily.com/");
+    expect(tavilyOptInCheck).toContain("python_probe_source");
+    expect(tavilyOptInCheck).toContain("base64 | tr -d");
+    expect(tavilyOptInCheck).toContain("python3 -c");
+    expect(tavilyOptInCheck).toContain("NEMOCLAW_E2E_TAVILY_SELF_TEST");
     expect(tavilyOptInCheck).toContain("/opt/venv/");
     expect(tavilyOptInCheck).toContain("managed Deep Agents Code python can reach Tavily");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
