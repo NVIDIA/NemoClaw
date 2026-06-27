@@ -272,12 +272,12 @@ class SandboxStateFlow<
       this.options.agent,
       this.deps,
     );
-    const session = messaging.changed
-      ? this.deps.updateSession((current) => {
-          current.messagingPlan = messaging.plan;
-          return current;
-        })
-      : state.session;
+    if (messaging.changed) {
+      this.deps.updateSession((current) => {
+        current.messagingPlan = messaging.plan;
+        return current;
+      });
+    }
     this.deps.skippedStepMessage("sandbox", state.sandboxName);
     const skippedSession = await this.deps.recordStateSkipped("sandbox", {
       reason: "resume",
