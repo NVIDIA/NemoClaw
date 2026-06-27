@@ -100,7 +100,7 @@ python_probe() {
     return 0
   fi
   encoded="$(python_probe_source | base64 | tr -d '\n')"
-  remote_cmd="probe_dir=\$(mktemp -d /tmp/nemoclaw-python-egress.XXXXXX); probe=\"\$probe_dir/probe.py\"; cleanup(){ rm -rf \"\$probe_dir\"; }; trap cleanup EXIT; printf '%s' ${encoded@Q} | base64 -d > \"\$probe\"; ${python_bin@Q} \"\$probe\" ${url@Q}"
+  remote_cmd="${python_bin@Q} -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
   sandbox_exec "$remote_cmd"
 }
 

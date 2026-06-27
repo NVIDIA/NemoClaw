@@ -404,10 +404,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("lacked denial evidence");
     expect(pythonEgressCheck).toContain("python_probe_source");
     expect(pythonEgressCheck).toContain("base64 | tr -d");
-    expect(pythonEgressCheck).toContain("mktemp -d /tmp/nemoclaw-python-egress.XXXXXX");
-    expect(pythonEgressCheck).toContain("probe.py");
+    expect(pythonEgressCheck).not.toContain("mktemp");
     expect(pythonEgressCheck).toContain("base64 -d");
-    expect(pythonEgressCheck).toContain("${python_bin@Q}");
+    expect(pythonEgressCheck).toContain("${python_bin@Q} -c");
     expect(pythonEgressCheck).toContain("${url@Q}");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
