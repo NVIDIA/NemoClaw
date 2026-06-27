@@ -8,8 +8,10 @@ import {
   type TeamsHostForwardPortConflictHookOptions,
   type TeamsHostForwardPortStatusHookOptions,
 } from "./host-forward-port-conflict";
+import { TEAMS_MSTEAMS_MENTION_PATCH_HOOK_HANDLER_ID } from "./msteams-mention-patch";
 
 export * from "./host-forward-port-conflict";
+export * from "./msteams-mention-patch";
 
 export interface TeamsHookOptions {
   readonly hostForwardPortConflict?: TeamsHostForwardPortConflictHookOptions;
@@ -26,6 +28,10 @@ export function createTeamsHookRegistrations(
     createTeamsHostForwardPortStatusHookRegistration(
       withoutUndefinedValues(options.hostForwardPortStatus),
     ),
+    {
+      id: TEAMS_MSTEAMS_MENTION_PATCH_HOOK_HANDLER_ID,
+      handler: () => ({}),
+    },
   ] as const;
 }
 

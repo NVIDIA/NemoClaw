@@ -252,6 +252,13 @@ export const teamsManifest = {
       ],
     },
     {
+      id: "teams-msteams-mention-patch",
+      phase: "post-agent-install",
+      handler: "teams.msteamsMentionPatch",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    },
+    {
       id: "teams-token-paste",
       phase: "enroll",
       handler: "common.tokenPaste",

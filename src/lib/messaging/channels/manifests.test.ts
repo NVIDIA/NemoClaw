@@ -715,6 +715,12 @@ describe("built-in channel manifests", () => {
       "teams.hostForwardPortStatus",
       "hostForwardPortOverlaps",
     );
+    expect(findHook(teamsManifest, "teams-msteams-mention-patch")).toMatchObject({
+      phase: "post-agent-install",
+      handler: "teams.msteamsMentionPatch",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    });
     expectEnvRenderLines(teamsManifest, "teams-hermes-env", [
       "TEAMS_CLIENT_ID={{teamsConfig.appId}}",
       "TEAMS_CLIENT_SECRET={{credential.teamsClientSecret.placeholder}}",

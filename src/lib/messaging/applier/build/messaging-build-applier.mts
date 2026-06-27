@@ -3,20 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { discordManifest } from "../../channels/discord/manifest.ts";
 import { slackManifest } from "../../channels/slack/manifest.ts";
+import {
+  patchInstalledOpenClawMSTeamsMentions,
+  TEAMS_MSTEAMS_MENTION_PATCH_HOOK_HANDLER_ID,
+} from "../../channels/teams/hooks/msteams-mention-patch.ts";
 import { teamsManifest } from "../../channels/teams/manifest.ts";
 import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
@@ -549,155 +545,7 @@ export function installOpenClawMessagingPlugins(plan: MessagingBuildPlan | null,
       ["openclaw", "plugins", "install", install.spec, ...(install.pin ? ["--pin"] : [])],
       env,
     );
-    if (isMSTeamsOpenClawPluginSpec(install.spec)) {
-      patchInstalledOpenClawMSTeamsMentions(env);
-    }
   }
-}
-
-function isMSTeamsOpenClawPluginSpec(spec: string): boolean {
-  return /^npm:@openclaw\/msteams@/i.test(spec.trim());
-}
-
-export function patchInstalledOpenClawMSTeamsMentions(env: Env = process.env): void {
-  const runtimeFile = findInstalledOpenClawMSTeamsRuntimeFile(env);
-  const source = readFileSync(runtimeFile, "utf-8");
-  const result = patchMSTeamsMentionEntitiesInSource(source, runtimeFile);
-  if (result.status === "no-match") {
-    throw new MessagingBuildApplierError(result.error);
-  }
-  if (result.status === "would-apply") {
-    writeFileSync(runtimeFile, result.nextSource);
-  }
-}
-
-export function patchMSTeamsMentionEntitiesInSource(
-  source: string,
-  fileLabel = "msteams runtime",
-): {
-  readonly nextSource: string;
-  readonly status: "already-applied" | "would-apply" | "no-match";
-  readonly error?: string;
-} {
-  if (source.includes("nemoclaw: normalize Teams display-name AAD mentions")) {
-    return { nextSource: source, status: "already-applied" };
-  }
-
-  const original = [
-    "function parseMentions(text) {",
-    "\tconst mentionPattern = /@\\[([^\\]]+)\\]\\(([^)]+)\\)/g;",
-    "\tconst entities = [];",
-    "\treturn {",
-    "\t\ttext: text.replace(mentionPattern, (match, name, id) => {",
-    "\t\t\tconst trimmedId = id.trim();",
-    "\t\t\tif (!isValidTeamsId(trimmedId)) return match;",
-    "\t\t\tconst trimmedName = name.trim();",
-    "\t\t\tconst mentionTag = `<at>${trimmedName}</at>`;",
-    "\t\t\tentities.push({",
-    '\t\t\t\ttype: "mention",',
-    "\t\t\t\ttext: mentionTag,",
-    "\t\t\t\tmentioned: {",
-    "\t\t\t\t\tid: trimmedId,",
-    "\t\t\t\t\tname: trimmedName",
-    "\t\t\t\t}",
-    "\t\t\t});",
-    "\t\t\treturn mentionTag;",
-    "\t\t}),",
-    "\t\tentities",
-    "\t};",
-    "}",
-  ].join("\n");
-  if (!source.includes(original)) {
-    return {
-      nextSource: source,
-      status: "no-match",
-      error: `OpenClaw msteams mention parser shape not recognized in ${fileLabel}`,
-    };
-  }
-
-  const replacement = [
-    "function parseMentions(text) {",
-    "\tconst mentionPattern = /@\\[([^\\]]+)\\]\\(([^)]+)\\)/g;",
-    "\tconst displayNameAadMentionPattern = /@[\\s\\r\\n]*([^()\\r\\n@][^()\\r\\n]{0,80}?)\\s*\\(([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\\)/gi;",
-    "\tconst entities = [];",
-    "\tconst appendMention = (name, id) => {",
-    "\t\tconst trimmedId = id.trim();",
-    "\t\tif (!isValidTeamsId(trimmedId)) return null;",
-    "\t\tconst trimmedName = name.trim();",
-    "\t\tif (!trimmedName) return null;",
-    "\t\tconst mentionTag = `<at>${trimmedName}</at>`;",
-    "\t\tentities.push({",
-    '\t\t\ttype: "mention",',
-    "\t\t\ttext: mentionTag,",
-    "\t\t\tmentioned: {",
-    "\t\t\t\tid: trimmedId,",
-    "\t\t\t\tname: trimmedName",
-    "\t\t\t}",
-    "\t\t});",
-    "\t\treturn mentionTag;",
-    "\t};",
-    "\tconst explicitMentionText = text.replace(mentionPattern, (match, name, id) => appendMention(name, id) ?? match);",
-    "\treturn {",
-    "\t\ttext: explicitMentionText.replace(displayNameAadMentionPattern, (match, name, id) => appendMention(name, id) ?? match),",
-    "\t\tentities",
-    "\t}; // nemoclaw: normalize Teams display-name AAD mentions (#5852)",
-    "}",
-  ].join("\n");
-
-  return {
-    nextSource: source.replace(original, replacement),
-    status: "would-apply",
-  };
-}
-
-function findInstalledOpenClawMSTeamsRuntimeFile(env: Env): string {
-  const roots = msteamsPluginSearchRoots(env);
-  const matches: string[] = [];
-  for (const root of roots) {
-    if (!existsSync(root)) continue;
-    for (const file of listJsFilesRecursive(root, 8)) {
-      const source = readFileSync(file, "utf-8");
-      if (
-        source.includes("function parseMentions(text)") &&
-        source.includes("function buildActivity(msg")
-      ) {
-        matches.push(file);
-      }
-    }
-  }
-  if (matches.length !== 1) {
-    throw new MessagingBuildApplierError(
-      `Expected exactly one installed OpenClaw msteams runtime file, found ${matches.length}`,
-    );
-  }
-  return matches[0];
-}
-
-function msteamsPluginSearchRoots(env: Env): readonly string[] {
-  const configuredRoot = sanitizeOptionalString(env.NEMOCLAW_MSTEAMS_PLUGIN_ROOT);
-  if (configuredRoot) return [configuredRoot];
-  const home = sanitizeOptionalString(env.HOME) || homedir();
-  return [join(home, ".openclaw", "extensions")];
-}
-
-function listJsFilesRecursive(root: string, maxDepth: number): string[] {
-  const out: string[] = [];
-  const visit = (dir: string, depth: number): void => {
-    if (depth > maxDepth) return;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        visit(fullPath, depth + 1);
-        continue;
-      }
-      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
-      const stats = statSync(fullPath);
-      if (stats.size > 512 * 1024) continue;
-      out.push(fullPath);
-    }
-  };
-  visit(root, 0);
-  return out;
 }
 
 export function runOpenClawMessagingDoctor(plan: MessagingBuildPlan | null, env: Env): void {
@@ -928,6 +776,35 @@ function findHookPhase(
 ): string | undefined {
   const channel = plan.channels.find((candidate) => candidate.channelId === channelId);
   return channel?.hooks?.find((hook) => hook.id === hookId)?.phase;
+}
+
+export function applyPostAgentInstallHookSideEffects(
+  plan: MessagingBuildPlan | null,
+  env: Env = process.env,
+): readonly string[] {
+  if (!plan || plan.agent !== "openclaw") return [];
+  const appliedTargets: string[] = [];
+  for (const hook of enabledHooksForPhase(plan, "post-agent-install")) {
+    if (hook.handler === TEAMS_MSTEAMS_MENTION_PATCH_HOOK_HANDLER_ID) {
+      appliedTargets.push(patchInstalledOpenClawMSTeamsMentions(env));
+    }
+  }
+  return uniqueStrings(appliedTargets);
+}
+
+function enabledHooksForPhase(
+  plan: MessagingBuildPlan,
+  phase: MessagingHookPhase,
+): MessagingPlanHook[] {
+  const active = new Set(activeChannels(plan));
+  const hooks: MessagingPlanHook[] = [];
+  for (const channel of plan.channels) {
+    if (!active.has(channel.channelId)) continue;
+    for (const hook of channel.hooks ?? []) {
+      if (hook.phase === phase) hooks.push(hook);
+    }
+  }
+  return hooks;
 }
 
 function applyBuildFileOutputToLocalAgentRoot(
@@ -1555,6 +1432,7 @@ export function applyMessagingBuildPhase(
   const applyPostAgentInstallOutputs = (): readonly string[] => [
     ...applyMessagingAgentRenderToLocalFiles(plan),
     ...applyPostAgentInstallBuildFilesToLocalFiles(plan),
+    ...applyPostAgentInstallHookSideEffects(plan, env),
   ];
   const appliedTargets = applyPostAgentInstallOutputs();
   if (plan?.agent === "openclaw") {

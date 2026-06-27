@@ -72,19 +72,40 @@ function teamsConfigB64(overrides: Record<string, string | string[]> = {}): stri
   ).toString("base64");
 }
 
-function writeAlreadyPatchedMSTeamsRuntime(root: string): string {
+function writeMSTeamsRuntime(root: string): string {
   const runtimeFile = path.join(root, "msteams", "dist", "probe.js");
   fs.mkdirSync(path.dirname(runtimeFile), { recursive: true });
   fs.writeFileSync(
     runtimeFile,
     [
       "function parseMentions(text) {",
-      "\treturn { text, entities: [] };",
+      "\tconst mentionPattern = /@\\[([^\\]]+)\\]\\(([^)]+)\\)/g;",
+      "\tconst entities = [];",
+      "\treturn {",
+      "\t\ttext: text.replace(mentionPattern, (match, name, id) => {",
+      "\t\t\tconst trimmedId = id.trim();",
+      "\t\t\tif (!isValidTeamsId(trimmedId)) return match;",
+      "\t\t\tconst trimmedName = name.trim();",
+      "\t\t\tconst mentionTag = `<at>${trimmedName}</at>`;",
+      "\t\t\tentities.push({",
+      '\t\t\t\ttype: "mention",',
+      "\t\t\t\ttext: mentionTag,",
+      "\t\t\t\tmentioned: {",
+      "\t\t\t\t\tid: trimmedId,",
+      "\t\t\t\t\tname: trimmedName",
+      "\t\t\t\t}",
+      "\t\t\t});",
+      "\t\t\treturn mentionTag;",
+      "\t\t}),",
+      "\t\tentities",
+      "\t};",
+      "}",
+      "function isValidTeamsId(id) {",
+      "\treturn /^[a-f0-9-]+$/i.test(id);",
       "}",
       "function buildActivity(msg) {",
       "\treturn msg;",
       "}",
-      "// nemoclaw: normalize Teams display-name AAD mentions (#5852)",
       "",
     ].join("\n"),
   );
@@ -556,7 +577,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
     const msteamsPluginRoot = path.join(tmp, "extensions");
-    const msteamsRuntimeFile = writeAlreadyPatchedMSTeamsRuntime(msteamsPluginRoot);
+    const msteamsRuntimeFile = writeMSTeamsRuntime(msteamsPluginRoot);
     fs.writeFileSync(
       fakeOpenclaw,
       [
@@ -572,6 +593,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       const planEnv = withLegacyMessagingPlanEnv(
         {
           PATH: `${tmp}:${TEST_PATH}`,
+          HOME: tmp,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_VERSION: "2026.5.22",
           NEMOCLAW_MSTEAMS_PLUGIN_ROOT: msteamsPluginRoot,
@@ -614,8 +636,31 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/msteams@2026.5.22|--pin|||",
       ]);
+      expect(fs.readFileSync(msteamsRuntimeFile, "utf-8")).not.toContain(
+        "nemoclaw: accept Teams spaced AAD mentions (#5852)",
+      );
+
+      const postInstallResult = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: planEnv,
+          timeout: 10_000,
+        },
+      );
+
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
       expect(fs.readFileSync(msteamsRuntimeFile, "utf-8")).toContain(
-        "nemoclaw: normalize Teams display-name AAD mentions (#5852)",
+        "nemoclaw: accept Teams spaced AAD mentions (#5852)",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

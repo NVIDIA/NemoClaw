@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
   patchInstalledOpenClawMSTeamsMentions,
   patchMSTeamsMentionEntitiesInSource,
-} from "../src/lib/messaging/applier/build/messaging-build-applier.mts";
+} from "../src/lib/messaging/channels/teams/hooks/msteams-mention-patch";
 
 const AAD_ID = "205f29da-231e-4a0e-a0b2-b398e6302087";
 
@@ -59,7 +59,7 @@ function msteamsRuntimeFixture(): string {
 }
 
 describe("OpenClaw Microsoft Teams mention patch", () => {
-  it("renders raw display-name AAD mentions as Teams mention entities", async () => {
+  it("accepts spaced display-name AAD mentions as Teams mention entities", async () => {
     const patched = patchMSTeamsMentionEntitiesInSource(msteamsRuntimeFixture());
     expect(patched.status).toBe("would-apply");
 
@@ -75,7 +75,7 @@ describe("OpenClaw Microsoft Teams mention patch", () => {
       };
 
       const activity = await runtime.buildActivity({
-        text: `@\nSan Dang (${AAD_ID}) I've tagged you!`,
+        text: `@[San Dang] (${AAD_ID}) I've tagged you!`,
       });
 
       expect(activity.text).toBe(`<at>San Dang</at> I've tagged you!`);
@@ -87,8 +87,37 @@ describe("OpenClaw Microsoft Teams mention patch", () => {
           name: "San Dang",
         },
       });
-      expect(JSON.stringify(activity)).not.toContain(`San Dang (${AAD_ID})`);
+      expect(JSON.stringify(activity)).not.toContain(`San Dang] (${AAD_ID})`);
       expect(activity.entities.at(-1)).toEqual({
+        type: "https://schema.org/Message",
+        "@type": "CreativeWork",
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not rewrite loose email-like text as a Teams mention", async () => {
+    const patched = patchMSTeamsMentionEntitiesInSource(msteamsRuntimeFixture());
+    expect(patched.status).toBe("would-apply");
+
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-mention-boundary-"));
+    const runtimeFile = path.join(tmp, "runtime.mjs");
+    try {
+      fs.writeFileSync(runtimeFile, patched.nextSource);
+      const runtime = (await import(`${pathToFileURL(runtimeFile).href}?t=${Date.now()}`)) as {
+        buildActivity: (msg: { text: string }) => Promise<{
+          text: string;
+          entities: Array<Record<string, unknown>>;
+        }>;
+      };
+
+      const sourceText = `contact foo@San Dang (${AAD_ID}) please`;
+      const activity = await runtime.buildActivity({ text: sourceText });
+
+      expect(activity.text).toBe(sourceText);
+      expect(activity.entities).toHaveLength(1);
+      expect(activity.entities[0]).toEqual({
         type: "https://schema.org/Message",
         "@type": "CreativeWork",
       });
@@ -129,5 +158,17 @@ describe("OpenClaw Microsoft Teams mention patch", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("treats an upstream spaced mention parser as already patched", () => {
+    const upstreamFixedSource = msteamsRuntimeFixture().replace(
+      "const mentionPattern = /@\\[([^\\]]+)\\]\\(([^)]+)\\)/g;",
+      "const mentionPattern = /@\\[([^\\]]+)\\]\\s*\\(([^)]+)\\)/g;",
+    );
+
+    const patched = patchMSTeamsMentionEntitiesInSource(upstreamFixedSource);
+
+    expect(patched.status).toBe("already-applied");
+    expect(patched.nextSource).toBe(upstreamFixedSource);
   });
 });
