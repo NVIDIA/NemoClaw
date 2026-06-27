@@ -179,7 +179,8 @@ function printActiveSessions(sandboxName: string): void {
     const connected = count > 0 ? `${G}yes${R} (${count} session${count > 1 ? "s" : ""})` : "no";
     console.log(`    Connected: ${connected}`);
   } catch {
-    /* non-fatal */
+    // Session detection is informational; an unavailable OpenShell client must
+    // not suppress the primary sandbox and gateway health report.
   }
 }
 
@@ -223,7 +224,8 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
       );
     }
   } catch {
-    /* non-fatal */
+    // Version metadata is advisory; omit it when probing fails so the primary
+    // sandbox and gateway health report remains available.
   }
 }
 
