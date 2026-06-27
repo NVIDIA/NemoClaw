@@ -135,6 +135,27 @@ reviews:
     - path: "src/lib/sandbox/{config,privileged-exec}.ts"
       instructions: *security-boundary
 
+    - path: "nemoclaw/src/security/**"
+      instructions: *security-boundary
+
+    - path: "nemoclaw/src/blueprint/ssrf.ts"
+      instructions: *security-boundary
+
+    - path: "Dockerfile*"
+      instructions: *security-boundary
+
+    - path: "agents/**"
+      instructions: *security-boundary
+
+    - path: "scripts/nemoclaw-start.sh"
+      instructions: *security-boundary
+
+    - path: "scripts/lib/sandbox-init.sh"
+      instructions: *security-boundary
+
+    - path: "nemoclaw-blueprint/scripts/http-proxy-fix.js"
+      instructions: *security-boundary
+
     - path: "nemoclaw-blueprint/policies/**"
       instructions: *security-boundary
 
