@@ -663,11 +663,12 @@ describe("built-in channel manifests", () => {
     const clientSecret = findInput(teamsManifest, "clientSecret");
     const tenantId = findInput(teamsManifest, "tenantId");
     const allowedUsers = findInput(teamsManifest, "allowedUsers");
-    const groupPolicy = findInput(teamsManifest, "groupPolicy");
-    const groupAllowFrom = findInput(teamsManifest, "groupAllowFrom");
     const webhookPort = findInput(teamsManifest, "webhookPort");
     const requireMention = findInput(teamsManifest, "requireMention");
 
+    expect(() => findInput(teamsManifest, "groupPolicy")).toThrow(
+      /missing input teams\.groupPolicy/,
+    );
     expect(getChannelTokenKeys(KNOWN_CHANNELS.teams)).toEqual(["MSTEAMS_APP_PASSWORD"]);
     expect(teamsManifest.description).toContain("experimental");
     expect(appId.envKey).toBe("MSTEAMS_APP_ID");
@@ -680,16 +681,6 @@ describe("built-in channel manifests", () => {
     expect(allowedUsers.envKey).toBe("TEAMS_ALLOWED_USERS");
     expect(allowedUsers.envAliases).toEqual(["MSTEAMS_ALLOWED_USERS"]);
     expect(allowedUsers.required).toBe(false);
-    expect(allowedUsers.prompt?.help).toContain("Direct-message allowlist only");
-    expect(groupPolicy.envKey).toBe("TEAMS_GROUP_POLICY");
-    expect(groupPolicy.validValues).toEqual(["open", "allowlist", "disabled"]);
-    expect(groupPolicy).toMatchObject({ kind: "config", defaultValue: "open" });
-    expect(groupAllowFrom.envKey).toBe("TEAMS_GROUP_ALLOWED_USERS");
-    expect(groupAllowFrom.envAliases).toEqual([
-      "MSTEAMS_GROUP_ALLOWED_USERS",
-      "TEAMS_GROUP_ALLOW_FROM",
-    ]);
-    expect(groupAllowFrom.prompt?.help).toContain("TEAMS_GROUP_POLICY=allowlist");
     expect(webhookPort.envKey).toBe("MSTEAMS_PORT");
     expect(webhookPort.envAliases).toEqual(["TEAMS_PORT"]);
     expect(webhookPort).toMatchObject({ kind: "config", defaultValue: "3978" });
@@ -736,10 +727,8 @@ describe("built-in channel manifests", () => {
     expect(renderJson(teamsManifest)).toContain('"path":"platforms.teams"');
     expect(renderJson(teamsManifest)).toContain("credential.teamsClientSecret.placeholder");
     expect(renderJson(teamsManifest)).toContain("teamsConfig.webhookPort");
-    expect(renderJson(teamsManifest)).toContain('"groupPolicy":"{{teamsConfig.groupPolicy}}"');
-    expect(renderJson(teamsManifest)).toContain(
-      '"groupAllowFrom":"{{teamsConfig.groupAllowFrom}}"',
-    );
+    expect(renderJson(teamsManifest)).toContain('"groupPolicy":"open"');
+    expect(renderJson(teamsManifest)).not.toContain("groupAllowFrom");
     expectTokenPasteEnrollHook(teamsManifest, ["clientSecret"]);
     expect(findHook(teamsManifest, "teams-config-prompt")).toMatchObject({
       phase: "enroll",
@@ -757,14 +746,6 @@ describe("built-in channel manifests", () => {
         },
         {
           id: "allowedUsers",
-          kind: "config",
-        },
-        {
-          id: "groupPolicy",
-          kind: "config",
-        },
-        {
-          id: "groupAllowFrom",
           kind: "config",
         },
         {
@@ -802,14 +783,7 @@ describe("built-in channel manifests", () => {
     });
     expect(teamsManifest.state).toEqual({
       persist: {
-        teamsConfig: [
-          "appId",
-          "tenantId",
-          "groupPolicy",
-          "groupAllowFrom",
-          "webhookPort",
-          "requireMention",
-        ],
+        teamsConfig: ["appId", "tenantId", "webhookPort", "requireMention"],
         allowedIds: ["allowedUsers"],
       },
       rebuildHydration: [
@@ -824,14 +798,6 @@ describe("built-in channel manifests", () => {
         {
           statePath: "allowedIds.teams",
           env: "TEAMS_ALLOWED_USERS",
-        },
-        {
-          statePath: "teamsConfig.groupPolicy",
-          env: "TEAMS_GROUP_POLICY",
-        },
-        {
-          statePath: "teamsConfig.groupAllowFrom",
-          env: "TEAMS_GROUP_ALLOWED_USERS",
         },
         {
           statePath: "teamsConfig.webhookPort",

@@ -62,7 +62,7 @@ Refer to [Commands](../reference/commands) for details.
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
 | WeChat (experimental) | None. Captured through host-side QR scan during `$$nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
 | WhatsApp (experimental) | None. Pair through QR after rebuild | None |
-| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for direct-message Microsoft Entra ID object ID allowlisting, `TEAMS_GROUP_POLICY` and `TEAMS_GROUP_ALLOWED_USERS` for OpenClaw group and channel sender allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
+| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for direct-message Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -116,8 +116,8 @@ The client secret is stored as the `<sandbox>-teams-bridge` OpenShell provider a
 Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may direct-message the bot.
 This direct-message allowlist does not restrict OpenClaw group or channel senders.
 OpenClaw group and channel messages stay open by default, subject to mention mode.
-Set `TEAMS_GROUP_POLICY=allowlist` and `TEAMS_GROUP_ALLOWED_USERS=<entra-object-id>[,<entra-object-id>]` to render `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom` in `openclaw.json`.
-If `TEAMS_GROUP_POLICY=allowlist` is set without `TEAMS_GROUP_ALLOWED_USERS`, NemoClaw keeps the rendered group policy open to preserve the default mention-gated group behavior.
+Operators who need group or channel sender allowlisting can configure OpenClaw directly with `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom`.
+If `groupPolicy="allowlist"` is set without an effective group allowlist, OpenClaw denies group messages instead of treating the group as open.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
 
@@ -186,8 +186,6 @@ export MSTEAMS_APP_ID=<your-teams-app-id>
 export MSTEAMS_APP_PASSWORD=<your-teams-client-secret>
 export MSTEAMS_TENANT_ID=<your-teams-tenant-id>
 export TEAMS_ALLOWED_USERS=<your-entra-object-id>
-export TEAMS_GROUP_POLICY=allowlist
-export TEAMS_GROUP_ALLOWED_USERS=<your-entra-object-id>
 export MSTEAMS_PORT=3978
 ```
 
@@ -239,7 +237,7 @@ Verify the gateway bridge before relying on the channel.
 Restore the preset YAML and re-run `$$nemoclaw <sandbox> channels add <channel>`.
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, Slack, and Microsoft Teams, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
-If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `TELEGRAM_GROUP_POLICY`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`, `TEAMS_ALLOWED_USERS`, `TEAMS_GROUP_POLICY`, `TEAMS_GROUP_ALLOWED_USERS`, `MSTEAMS_PORT`, or `TEAMS_REQUIRE_MENTION`, export them before the rebuild starts.
+If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `TELEGRAM_GROUP_POLICY`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`, `TEAMS_ALLOWED_USERS`, `MSTEAMS_PORT`, or `TEAMS_REQUIRE_MENTION`, export them before the rebuild starts.
 You can omit `TELEGRAM_REQUIRE_MENTION` and `DISCORD_REQUIRE_MENTION` when you want the default mention-only mode.
 You can omit `TELEGRAM_GROUP_POLICY` when you want OpenClaw Telegram group access to stay open.
 Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user.
@@ -277,8 +275,6 @@ MSTEAMS_APP_ID=<your-teams-app-id> \
   MSTEAMS_APP_PASSWORD=<your-teams-client-secret> \
   MSTEAMS_TENANT_ID=<your-teams-tenant-id> \
   TEAMS_ALLOWED_USERS=<your-entra-object-id> \
-  TEAMS_GROUP_POLICY=allowlist \
-  TEAMS_GROUP_ALLOWED_USERS=<your-entra-object-id> \
   MSTEAMS_PORT=3978 \
   $$nemoclaw my-assistant channels add teams
 ```

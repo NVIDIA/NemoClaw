@@ -8,7 +8,6 @@ import {
   nonEmptyArray,
   nonEmptyCsv,
   nonEmptyString,
-  parseList,
   parseBoolean,
   resolvedRenderTemplateReference,
   stateValue,
@@ -35,10 +34,6 @@ export const resolveTeamsTemplateReference: BuiltInRenderTemplateResolver = (
       return resolvedRenderTemplateReference(
         parseBoolean(stateValue(context, "teamsConfig.requireMention")),
       );
-    case "teamsConfig.groupPolicy":
-      return resolvedRenderTemplateReference(teamsGroupPolicy(context));
-    case "teamsConfig.groupAllowFrom":
-      return resolvedRenderTemplateReference(nonEmptyArray(teamsGroupAllowFrom(context)));
     default:
       break;
   }
@@ -68,21 +63,4 @@ function teamsWebhookPort(context: RenderTemplateContext): number {
     );
   }
   return port;
-}
-
-function teamsGroupAllowFrom(context: RenderTemplateContext): string[] {
-  if (rawTeamsGroupPolicy(context) !== "allowlist") return [];
-  return parseList(stateValue(context, "teamsConfig.groupAllowFrom"));
-}
-
-function teamsGroupPolicy(context: RenderTemplateContext): string {
-  const raw = rawTeamsGroupPolicy(context);
-  if (raw === "allowlist") {
-    return teamsGroupAllowFrom(context).length > 0 ? "allowlist" : "open";
-  }
-  return raw;
-}
-
-function rawTeamsGroupPolicy(context: RenderTemplateContext): string {
-  return nonEmptyString(stateValue(context, "teamsConfig.groupPolicy")) ?? "open";
 }

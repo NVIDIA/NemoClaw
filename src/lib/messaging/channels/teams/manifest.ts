@@ -10,7 +10,7 @@ export const teamsManifest = {
   description: "Microsoft Teams bot messaging (experimental)",
   enrollmentNotes: [
     "Microsoft Teams requires a public HTTPS webhook endpoint at /api/messages; expose the configured Teams webhook port before installing the Teams app.",
-    "Use Azure AD object IDs in TEAMS_ALLOWED_USERS for direct-message access. Restrict OpenClaw group and channel senders separately with TEAMS_GROUP_ALLOWED_USERS.",
+    "Use Azure AD object IDs in TEAMS_ALLOWED_USERS so only authorized users can interact with the bot.",
   ],
   supportedAgents: ["openclaw", "hermes"],
   auth: {
@@ -60,34 +60,8 @@ export const teamsManifest = {
       envAliases: ["MSTEAMS_ALLOWED_USERS"],
       statePath: "allowedIds.teams",
       prompt: {
-        label: "Microsoft Teams AAD Object IDs (DM allowlist)",
-        help: "Direct-message allowlist only. Run `teams status --verbose` and enter comma-separated Azure AD object IDs allowed to DM the bot.",
-      },
-    },
-    {
-      id: "groupPolicy",
-      kind: "config",
-      required: false,
-      envKey: "TEAMS_GROUP_POLICY",
-      statePath: "teamsConfig.groupPolicy",
-      validValues: ["open", "allowlist", "disabled"],
-      defaultValue: "open",
-      prompt: {
-        label: "Microsoft Teams group policy",
-        help: "Controls OpenClaw group and channel access. Use allowlist with Teams group sender IDs, or keep open for mention-gated group access.",
-      },
-    },
-    {
-      id: "groupAllowFrom",
-      kind: "config",
-      required: false,
-      envKey: "TEAMS_GROUP_ALLOWED_USERS",
-      envAliases: ["MSTEAMS_GROUP_ALLOWED_USERS", "TEAMS_GROUP_ALLOW_FROM"],
-      statePath: "teamsConfig.groupAllowFrom",
-      prompt: {
-        label: "Microsoft Teams group sender IDs (comma-separated allowlist)",
-        help: "OpenClaw group and channel allowlist. Set this with TEAMS_GROUP_POLICY=allowlist to restrict group replies to these Entra object IDs.",
-        emptyValueMessage: "group and channel messages stay open when group policy is open",
+        label: "Microsoft Teams AAD Object IDs (comma-separated allowlist)",
+        help: "Recommended: run `teams status --verbose` and enter the Azure AD object IDs allowed to use the bot.",
       },
     },
     {
@@ -154,8 +128,7 @@ export const teamsManifest = {
           },
           dmPolicy: "{{allowedIds.teams.dmPolicy}}",
           allowFrom: "{{allowedIds.teams.values}}",
-          groupPolicy: "{{teamsConfig.groupPolicy}}",
-          groupAllowFrom: "{{teamsConfig.groupAllowFrom}}",
+          groupPolicy: "open",
           requireMention: "{{teamsConfig.requireMention}}",
         },
       },
@@ -233,14 +206,7 @@ export const teamsManifest = {
   ],
   state: {
     persist: {
-      teamsConfig: [
-        "appId",
-        "tenantId",
-        "groupPolicy",
-        "groupAllowFrom",
-        "webhookPort",
-        "requireMention",
-      ],
+      teamsConfig: ["appId", "tenantId", "webhookPort", "requireMention"],
       allowedIds: ["allowedUsers"],
     },
     rebuildHydration: [
@@ -255,14 +221,6 @@ export const teamsManifest = {
       {
         statePath: "allowedIds.teams",
         env: "TEAMS_ALLOWED_USERS",
-      },
-      {
-        statePath: "teamsConfig.groupPolicy",
-        env: "TEAMS_GROUP_POLICY",
-      },
-      {
-        statePath: "teamsConfig.groupAllowFrom",
-        env: "TEAMS_GROUP_ALLOWED_USERS",
       },
       {
         statePath: "teamsConfig.webhookPort",
@@ -323,14 +281,6 @@ export const teamsManifest = {
         },
         {
           id: "allowedUsers",
-          kind: "config",
-        },
-        {
-          id: "groupPolicy",
-          kind: "config",
-        },
-        {
-          id: "groupAllowFrom",
           kind: "config",
         },
         {
