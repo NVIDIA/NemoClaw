@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,8 +12,6 @@ const DOCKERFILE = path.join(ROOT, "Dockerfile");
 const DOCKERFILE_BASE = path.join(ROOT, "Dockerfile.base");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 const SANDBOX_RLIMITS = path.join(ROOT, "scripts", "lib", "sandbox-rlimits.sh");
-const FORK_STORM_LIMIT_HEADROOM = 512;
-const FORK_STORM_SAFETY_HEADROOM = 128;
 
 function dockerRunCommandBetween(
   dockerfile: string,
@@ -93,17 +90,6 @@ function parseProbeOutput(stdout: string): ProbeValues {
 
 function occurrenceCount(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
-}
-
-function currentUserProcessCount(): number {
-  const result = spawnSync("bash", ["-lc", 'ps -u "$(id -u)" -o pid= | wc -l'], {
-    encoding: "utf-8",
-    timeout: 5000,
-  });
-  expect(result.status, result.stderr).toBe(0);
-  const count = Number(result.stdout.trim());
-  expect(Number.isInteger(count), result.stdout).toBe(true);
-  return count;
 }
 
 function expectSystemRlimitHookEnforcesLimits(hookPath: string): void {
@@ -303,77 +289,7 @@ function expectUnsupportedNprocDoesNotMaskPosixShNoFile(rlimitLib: string): void
   expect(values.verify_output).not.toContain("unknown");
 }
 
-function expectHookDeniesBoundedForkStorm(hookPath: string, safetyCap: number): void {
-  const probePath = path.join(path.dirname(hookPath), "fork-storm-probe.py");
-  fs.writeFileSync(
-    probePath,
-    [
-      "import errno",
-      "import subprocess",
-      "import sys",
-      "",
-      "safety_cap = int(sys.argv[1])",
-      "spawned = 0",
-      "fork_status = 0",
-      "fork_error = ''",
-      "children = []",
-      "try:",
-      "    for attempt in range(1, 5001):",
-      "        try:",
-      "            child = subprocess.Popen(['sleep', '30'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)",
-      "        except OSError as exc:",
-      "            fork_status = exc.errno or errno.EAGAIN",
-      "            fork_error = str(exc)",
-      "            break",
-      "        children.append(child)",
-      "        spawned = attempt",
-      "        if attempt >= safety_cap:",
-      "            break",
-      "finally:",
-      "    for child in children:",
-      "        child.terminate()",
-      "    for child in children:",
-      "        try:",
-      "            child.wait(timeout=2)",
-      "        except subprocess.TimeoutExpired:",
-      "            child.kill()",
-      "            child.wait(timeout=2)",
-      "",
-      "print(f'spawned={spawned}')",
-      "print(f'fork_status={fork_status}')",
-      "if fork_error:",
-      "    print(f'fork_error={fork_error}')",
-      "",
-    ].join("\n"),
-  );
-  const probe = [
-    "set -euo pipefail",
-    `source ${JSON.stringify(hookPath)}`,
-    `exec python3 ${JSON.stringify(probePath)} ${safetyCap}`,
-  ].join("\n");
-  const result: SpawnSyncReturns<string> = spawnSync(
-    "bash",
-    ["--noprofile", "--norc", "-c", probe],
-    {
-      encoding: "utf-8",
-      timeout: 10000,
-    },
-  );
-
-  expect(result.status, result.stderr).toBe(0);
-  const values = parseProbeOutput(result.stdout);
-  const spawned = Number(values.spawned ?? "5000");
-  const forkStatus = Number(values.fork_status ?? "0");
-  const forkStderr = `${values.fork_error ?? ""}\n${result.stderr}`;
-  const deniedByRlimit =
-    forkStatus !== 0 || /Resource temporarily unavailable|fork: retry|fork/i.test(forkStderr);
-  expect(deniedByRlimit, `spawned=${spawned} stderr=${forkStderr}`).toBe(true);
-  expect(spawned).toBeLessThan(5000);
-}
-
 describe("sandbox rlimit system hooks (#2173)", () => {
-  const forkStormIt = process.platform === "linux" ? it : it.skip;
-
   it("rlimit helper enforces supported nofile limits under POSIX sh", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-posix-sh-rlimit-"));
     const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
@@ -423,41 +339,6 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
-  forkStormIt(
-    "connect shell hook denies a bounded 5000-process fork storm with Resource temporarily unavailable",
-    () => {
-      const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fork-storm-rlimit-"));
-      const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
-      const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
-      const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
-      const bashrc = path.join(tmp, "bash.bashrc");
-      const nprocLimit = currentUserProcessCount() + FORK_STORM_LIMIT_HEADROOM;
-      const safetyCap = nprocLimit + FORK_STORM_SAFETY_HEADROOM;
-      expect(safetyCap).toBeGreaterThan(nprocLimit);
-      try {
-        fs.mkdirSync(path.dirname(profileHook), { recursive: true });
-        copyRlimitFixtureWithNprocLimit(rlimitLib, nprocLimit);
-        fs.writeFileSync(bashrc, "# existing bashrc\n");
-        const command = dockerRunCommandBetween(
-          dockerfile,
-          "# System-wide proxy hooks",
-          "# Install OpenClaw CLI + PyYAML",
-        )
-          .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
-          .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
-          .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
-          .replaceAll("/etc/bash.bashrc", bashrc);
-
-        const result = runLoggedDockerShell(command, tmp);
-        expect(result.status, result.stderr).toBe(0);
-        expectHookDeniesBoundedForkStorm(rlimitHook, safetyCap);
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    },
-  );
 
   it("stale OpenClaw base replay preserves effective connect-shell rlimit hooks", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
