@@ -92,6 +92,16 @@ function healthyRuntimeCheck(enabledChannels: string[]): DoctorCheck {
   };
 }
 
+function unreachableRuntimeCheck(sandboxName: string): DoctorCheck {
+  return {
+    group: "Messaging",
+    label: "Runtime channel registry",
+    status: "info",
+    detail: "skipped because the sandbox is not reachable through its named gateway",
+    hint: `fix the gateway and live sandbox checks, then rerun \`${CLI_NAME} ${sandboxName} doctor\``,
+  };
+}
+
 /**
  * Compare the registry's enabled channels with the runtime's config and log
  * evidence. A null result means the probe does not apply, so the caller omits
@@ -251,12 +261,20 @@ function configuredChannelsCheck(sandboxName: string, sb: SandboxEntry): DoctorC
   };
 }
 
-export function collectMessagingDoctorChecks(sandboxName: string, sb: SandboxEntry): DoctorCheck[] {
+export function collectMessagingDoctorChecks(
+  sandboxName: string,
+  sb: SandboxEntry,
+  sandboxReachable: boolean,
+): DoctorCheck[] {
   const checks = [configuredChannelsCheck(sandboxName, sb)];
   const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
   const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
   const enabled = registered.filter((channel: string) => !disabled.has(channel));
-  const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabled, sb);
+  const runtimeCheck = sandboxReachable
+    ? channelRuntimeDoctorCheck(sandboxName, enabled, sb)
+    : enabled.length > 0
+      ? unreachableRuntimeCheck(sandboxName)
+      : null;
   if (runtimeCheck) checks.push(runtimeCheck);
   return checks;
 }

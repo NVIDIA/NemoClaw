@@ -16,11 +16,13 @@ function createDoctorHarness(): {
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
   configuredMessagingChannelsSpy: MockInstance;
+  executeSandboxCommandForVerificationSpy: MockInstance;
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
   loadAgentSpy: MockInstance;
+  probeSandboxInferenceGatewayHealthSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
   repairMutableConfigPermsSpy: MockInstance;
@@ -113,11 +115,13 @@ function createDoctorHarness(): {
     endpoint: "http://127.0.0.1:11434/v1/chat/completions",
     detail: "healthy",
   });
-  vi.spyOn(processRecovery, "probeSandboxInferenceGatewayHealth").mockResolvedValue({
-    ok: false,
-    endpoint: "http://127.0.0.1:19000/v1/chat/completions",
-    detail: "gateway refused connection",
-  });
+  const probeSandboxInferenceGatewayHealthSpy = vi
+    .spyOn(processRecovery, "probeSandboxInferenceGatewayHealth")
+    .mockResolvedValue({
+      ok: false,
+      endpoint: "http://127.0.0.1:19000/v1/chat/completions",
+      detail: "gateway refused connection",
+    });
   const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
     configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
@@ -155,11 +159,13 @@ function createDoctorHarness(): {
     });
   vi.spyOn(statusCommandDeps, "buildStatusCommandDeps").mockReturnValue({});
   vi.spyOn(tunnelServices, "readCloudflaredState").mockReturnValue({ kind: "running", pid: 1234 });
-  vi.spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification").mockReturnValue({
-    status: 0,
-    stdout: "ok",
-    stderr: "",
-  });
+  const executeSandboxCommandForVerificationSpy = vi
+    .spyOn(sandboxVerificationExec, "executeSandboxCommandForVerification")
+    .mockReturnValue({
+      status: 0,
+      stdout: "ok",
+      stderr: "",
+    });
   const buildToolScopeChecksSpy = vi
     .spyOn(doctorToolScope, "buildToolScopeChecks")
     .mockReturnValue([
@@ -178,11 +184,13 @@ function createDoctorHarness(): {
     captureOpenShellSpy,
     captureHostCommandSpy,
     configuredMessagingChannelsSpy,
+    executeSandboxCommandForVerificationSpy,
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
     inspectMutableConfigPermsSpy,
     loadAgentSpy,
+    probeSandboxInferenceGatewayHealthSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
     repairMutableConfigPermsSpy,
@@ -265,10 +273,12 @@ describe("runSandboxDoctor flow", () => {
     expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
   });
 
   it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
     const harness = createDoctorHarness();
+    harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
     harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
       state: "missing_named",
       status: "Status: Disconnected",
@@ -276,10 +286,28 @@ describe("runSandboxDoctor flow", () => {
       activeGateway: null,
     });
 
-    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+    expect(harness.probeSandboxInferenceGatewayHealthSpy).not.toHaveBeenCalled();
+    expect(harness.executeSandboxCommandForVerificationSpy).not.toHaveBeenCalled();
+    expect(report?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          group: "Inference",
+          label: "Provider health (gateway)",
+          status: "info",
+          detail: "skipped because the sandbox is not reachable through its named gateway",
+        }),
+        expect.objectContaining({
+          group: "Messaging",
+          label: "Runtime channel registry",
+          status: "info",
+          detail: "skipped because the sandbox is not reachable through its named gateway",
+        }),
+      ]),
+    );
   });
 
   it("keeps JSON gateway diagnostics read-only", async () => {

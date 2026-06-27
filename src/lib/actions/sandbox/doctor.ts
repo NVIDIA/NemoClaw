@@ -330,9 +330,45 @@ function isLocalInferenceProvider(provider: string): boolean {
   return provider === "ollama-local" || provider === "vllm-local";
 }
 
+function skippedInferenceGatewayProbe(): ProviderHealthStatus {
+  return {
+    ok: false,
+    probed: false,
+    providerLabel: "Inference gateway chain",
+    endpoint: "",
+    detail: "skipped because the sandbox is not reachable through its named gateway",
+    probeLabel: "gateway",
+  };
+}
+
+async function collectInferenceSubprobes(
+  sandboxName: string,
+  provider: string,
+  sandboxReachable: boolean,
+  existing: ProviderHealthStatus[],
+): Promise<ProviderHealthStatus[]> {
+  if (!isLocalInferenceProvider(provider)) return existing;
+  if (!sandboxReachable) return [...existing, skippedInferenceGatewayProbe()];
+  const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
+  if (!gateway) return existing;
+  return [
+    ...existing,
+    {
+      ok: gateway.ok,
+      probed: true,
+      providerLabel: "Inference gateway chain",
+      endpoint: gateway.endpoint,
+      detail: gateway.detail,
+      probeLabel: "gateway",
+      ...(gateway.ok ? {} : { failureLabel: "unreachable" as const }),
+    },
+  ];
+}
+
 async function collectInferenceChecks(
   sandboxName: string,
   route: InferenceRoute,
+  sandboxReachable: boolean,
 ): Promise<DoctorCheck[]> {
   const checks = [inferenceRouteCheck(sandboxName, route)];
   if (route.provider === "unknown") return checks;
@@ -347,24 +383,12 @@ async function collectInferenceChecks(
     return checks;
   }
 
-  let subprobes = health.subprobes ?? [];
-  if (isLocalInferenceProvider(route.provider)) {
-    const gateway = await probeSandboxInferenceGatewayHealth(sandboxName);
-    if (gateway) {
-      subprobes = [
-        ...subprobes,
-        {
-          ok: gateway.ok,
-          probed: true,
-          providerLabel: "Inference gateway chain",
-          endpoint: gateway.endpoint,
-          detail: gateway.detail,
-          probeLabel: "gateway",
-          ...(gateway.ok ? {} : { failureLabel: "unreachable" as const }),
-        },
-      ];
-    }
-  }
+  const subprobes = await collectInferenceSubprobes(
+    sandboxName,
+    route.provider,
+    sandboxReachable,
+    health.subprobes ?? [],
+  );
   pushInferenceHealthCheck(checks, health);
   for (const subprobe of subprobes) pushInferenceHealthCheck(checks, subprobe);
   return checks;
@@ -434,6 +458,7 @@ function collectRegisteredSandboxChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   wantsFix: boolean,
+  sandboxReachable: boolean,
 ): DoctorCheck[] {
   if (!sb) return [];
   const checks = [agentVersionDoctorCheck(sandboxName), shieldsDoctorCheck(sandboxName)];
@@ -443,7 +468,7 @@ function collectRegisteredSandboxChecks(
     cliName: CLI_NAME,
   });
   if (permsCheck) checks.push(permsCheck);
-  checks.push(...collectMessagingDoctorChecks(sandboxName, sb));
+  checks.push(...collectMessagingDoctorChecks(sandboxName, sb, sandboxReachable));
   return checks;
 }
 
@@ -478,8 +503,8 @@ async function collectDoctorChecks(
     ...host.checks,
     ...gateway.checks,
     ...sandbox.checks,
-    ...(await collectInferenceChecks(sandboxName, route)),
-    ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix),
+    ...(await collectInferenceChecks(sandboxName, route, sandbox.reachable)),
+    ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix, sandbox.reachable),
     ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
