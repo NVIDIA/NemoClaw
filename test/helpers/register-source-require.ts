@@ -4,7 +4,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import Module from "node:module";
-import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 
@@ -57,7 +56,10 @@ const compilerOptions: ts.CompilerOptions = {
   rootDir: undefined,
   sourceMap: false,
 };
-const cacheDir = path.join(os.tmpdir(), "nemoclaw-source-require-cache");
+// Keep the cross-process transpilation cache in this checkout's dependency
+// tree. A shared, predictable directory under the OS temp root could be
+// replaced by another local user before a test process reads from it.
+const cacheDir = path.join(repoRoot, "node_modules", ".cache", "nemoclaw-source-require");
 const compilerFingerprint = JSON.stringify({ compilerOptions, typescript: ts.version });
 fs.mkdirSync(cacheDir, { recursive: true });
 
@@ -113,7 +115,7 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
     }
     outputText = result.outputText;
     const temporaryPath = `${cachePath}.${process.pid}.${crypto.randomUUID()}`;
-    fs.writeFileSync(temporaryPath, outputText);
+    fs.writeFileSync(temporaryPath, outputText, { flag: "wx", mode: 0o600 });
     try {
       fs.renameSync(temporaryPath, cachePath);
     } catch (error) {
