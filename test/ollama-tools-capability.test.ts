@@ -55,6 +55,15 @@ interface OnboardOllamaProxyModule {
       confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
     },
   ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
+  prepareOllamaModel: (
+    model: string,
+    installedModels?: string[],
+    interaction?: {
+      isNonInteractive: () => boolean;
+      isAutoYes: () => boolean;
+      confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
+    },
+  ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
 }
 
 function loadLocalInference(): LocalInferenceModule {
@@ -479,6 +488,28 @@ describe("checkOllamaModelToolSupport", () => {
     expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
     expect(confirm).toHaveBeenCalledWith("  Use this model anyway?", false);
     expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("threads caller interaction through model preparation", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.prepareOllamaModel("phi4", ["phi4"], {
+      isNonInteractive: () => true,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({
+      ok: false,
+      message: "Tools-incompatible model in non-interactive mode.",
+    });
+    expect(confirm).not.toHaveBeenCalled();
   });
 
   it("probe failed (capabilities unknown) → {ok:true} (graceful degradation)", async () => {

@@ -859,8 +859,8 @@ async function checkOllamaModelToolSupport(
 
 async function prepareOllamaModel(
   model,
-  installedModels: string[],
-  interaction: OllamaToolCapabilityInteraction,
+  installedModels: string[] = [],
+  interaction: OllamaToolCapabilityInteraction = defaultOllamaToolCapabilityInteraction,
 ): Promise<{
   ok: boolean;
   message?: string;
