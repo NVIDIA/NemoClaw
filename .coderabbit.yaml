@@ -34,10 +34,12 @@ reviews:
           and workflow wiring. The new path existing is not evidence of cutover.
         - Require in-scope callers to use one authoritative path and delete the
           superseded runtime path, forwarding glue, support helpers, and tests in
-          the same PR.
-        - Retain compatibility only for a demonstrated external or persisted-data
-          contract. Derive it from the new source of truth, cover it through the
-          public boundary, and state an observable removal condition.
+          the same PR unless it is in an explicitly bounded compatibility or
+          confidence window.
+        - Retain an old path only for a demonstrated external/persisted-data
+          contract or a bounded confidence/rollback window. Keep the replacement
+          authoritative, freeze the old path against new callers and features, link
+          the retirement issue or PR in GitHub, and state observable exit criteria.
         - If a PR intentionally migrates only a slice, it must say so and link the
           remaining work in GitHub. Do not introduce repository-local migration
           ledgers or describe the overall migration as complete.
@@ -138,21 +140,24 @@ reviews:
 
     - path: "test/{e2e,e2e-scenario}/**"
       instructions: &e2e-migration |
-        Review against `test/e2e-scenario/docs/MIGRATION.md`: Vitest is the one E2E
-        execution path, and fixtures are support code rather than another runner.
+        Review against the active guide at
+        `test/{e2e,e2e-scenario}/docs/MIGRATION.md`: Vitest is the one E2E execution
+        path, and fixtures are support code rather than another runner.
 
         - Preserve real shell, process, installer, platform, and full-journey
           boundaries by invoking them from Vitest when they are the contract.
-        - Once replacement coverage preserves the contract, require the legacy
-          script, nightly workflow reference, and obsolete helpers to be deleted in
-          the same PR. A Vitest wrapper plus an independently scheduled bash test is
-          not a completed migration.
+        - A bounded dual-run confidence window is allowed when the Vitest path is
+          authoritative and dispatchable, the legacy lane is frozen, and a linked
+          GitHub retirement issue or PR names the exact deletions and evidence-based
+          exit criteria. Do not describe the overall migration as complete yet.
+        - Once those exit criteria are met, require the retirement PR to delete the
+          legacy scripts, workflow references, and obsolete helpers together.
         - Keep migration status and ownership in GitHub issues and PRs. Do not add a
           repository-local inventory, checklist, or parallel status model.
         - Flag new runners, compilers, fixture frameworks, or generalized registries
           when a focused Vitest test and local helper would express the behavior.
 
-    - path: ".github/workflows/{nightly-e2e,e2e-vitest-scenarios}.yaml"
+    - path: ".github/workflows/{e2e,nightly-e2e,e2e-vitest-scenarios}.yaml"
       instructions: *e2e-migration
 
     - path: "**/*.test.{ts,js,mts,mjs,cts,cjs}"
