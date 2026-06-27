@@ -78,6 +78,12 @@ runs:
     - name: Merge CLI coverage
       shell: bash
       run: |
+        coverage_include="dist/lib/**/*.js"
+        # Keep the merge denominator aligned with the shard command during
+        # the PR #5904 transition. That PR removes this probe after landing.
+        if npx vitest list --project integration --filesOnly >/dev/null 2>&1; then
+          coverage_include="src/**/*.ts"
+        fi
         npx vitest --mergeReports .vitest-reports \
           --reporter=json \
           --outputFile.json=coverage/cli/vitest-results.json \
@@ -87,7 +93,7 @@ runs:
           --coverage.reporter=cobertura \
           --coverage.reportsDirectory=coverage/cli \
           --coverage.include="bin/**/*.js" \
-          --coverage.include="dist/lib/**/*.js" \
+          --coverage.include="$coverage_include" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
         npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"
