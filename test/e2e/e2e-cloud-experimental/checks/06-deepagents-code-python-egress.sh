@@ -34,8 +34,8 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
-python_probe_source_b64() {
-  base64 -w0 <<'PY'
+python_probe_source() {
+  cat <<'PY'
 import sys
 import urllib.error
 import urllib.request
@@ -99,8 +99,8 @@ python_probe() {
     printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
     return 0
   fi
-  encoded="$(python_probe_source_b64)"
-  remote_cmd="probe=\$(mktemp /tmp/nemoclaw-python-egress.XXXXXX.py); printf '%s' ${encoded@Q} | base64 -d > \"\$probe\"; ${python_bin@Q} \"\$probe\" ${url@Q}; rc=\$?; rm -f \"\$probe\"; exit \"\$rc\""
+  encoded="$(python_probe_source | base64 | tr -d '\n')"
+  remote_cmd="probe_dir=\$(mktemp -d /tmp/nemoclaw-python-egress.XXXXXX); probe=\"\$probe_dir/probe.py\"; cleanup(){ rm -rf \"\$probe_dir\"; }; trap cleanup EXIT; printf '%s' ${encoded@Q} | base64 -d > \"\$probe\"; ${python_bin@Q} \"\$probe\" ${url@Q}"
   sandbox_exec "$remote_cmd"
 }
 
