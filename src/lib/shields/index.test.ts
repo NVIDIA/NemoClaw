@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 // The shields module uses CJS require("./runner") etc., which vitest resolves
 // relative to src/lib/. We mock the absolute paths that vitest will resolve.
@@ -293,15 +294,21 @@ describe("shields — unit logic", () => {
   // NC-2227-02: Three-state shields model
   // -------------------------------------------------------------------
   describe("NC-2227-02: three-state shields model", () => {
-    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", async () => {
-      const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
-      const { deriveShieldsMode } = await import(sourceModulePath);
+    // The first source import instruments the full shields dependency graph.
+    // Loaded coverage shards can spend well beyond the unit-test default here.
+    it(
+      "deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases",
+      testTimeoutOptions(30_000),
+      async () => {
+        const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+        const { deriveShieldsMode } = await import(sourceModulePath);
 
-      expect(deriveShieldsMode({}, false)).toBe("mutable_default");
-      expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
-      expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
-      expect(deriveShieldsMode({}, true)).toBe("mutable_default");
-    });
+        expect(deriveShieldsMode({}, false)).toBe("mutable_default");
+        expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
+        expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
+        expect(deriveShieldsMode({}, true)).toBe("mutable_default");
+      },
+    );
 
     it("getShieldsPosture exposes canonical status wording for callers", async () => {
       const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
