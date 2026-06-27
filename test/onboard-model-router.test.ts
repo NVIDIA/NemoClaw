@@ -190,7 +190,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
         process.execPath,
         [
           "--require",
-          path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+          path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
           scriptPath,
         ],
         {
@@ -444,7 +444,7 @@ const { setupInference } = require(${onboardPath});
           process.execPath,
           [
             "--require",
-            path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
             scriptPath,
           ],
           {
@@ -642,7 +642,7 @@ const { setupInference } = require(${onboardPath});
         process.execPath,
         [
           "--require",
-          path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+          path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
           scriptPath,
         ],
         {
@@ -876,7 +876,7 @@ const { setupInference } = require(${onboardPath});
           process.execPath,
           [
             "--require",
-            path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
             scriptPath,
           ],
           {
@@ -1104,7 +1104,7 @@ const { setupInference } = require(${onboardPath});
           process.execPath,
           [
             "--require",
-            path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
             scriptPath,
           ],
           {

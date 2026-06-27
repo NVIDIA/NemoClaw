@@ -18,7 +18,7 @@ const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
 const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
-const sourceRequireHook = path.resolve("test/helpers/register-source-require.cjs");
+const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
 const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
   .filter(Boolean)
   .join(" ");
@@ -38,7 +38,7 @@ export default defineConfig({
         test: {
           name: "cli",
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/register-source-require.cjs"],
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
         },
@@ -47,7 +47,7 @@ export default defineConfig({
         test: {
           name: "integration",
           testTimeout: testTimeout(),
-          setupFiles: ["test/helpers/register-source-require.cjs"],
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
           env: { NODE_OPTIONS: sourceNodeOptions },

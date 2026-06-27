@@ -111,7 +111,7 @@ try {
         process.execPath,
         [
           "--require",
-          path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
+          path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
           scriptPath,
         ],
         {

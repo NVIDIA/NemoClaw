@@ -90,11 +90,7 @@ process.stdout.write(JSON.stringify(payload));
 
   const result = spawnSync(
     process.execPath,
-    [
-      "--require",
-      path.join(REPO_ROOT, "test", "helpers", "register-source-require.cjs"),
-      scriptPath,
-    ],
+    ["--require", path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
     {
       cwd: REPO_ROOT,
       encoding: "utf-8",

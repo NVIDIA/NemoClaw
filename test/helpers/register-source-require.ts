@@ -1,13 +1,28 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs");
-const crypto = require("node:crypto");
-const moduleRuntime = require("node:module");
-const os = require("node:os");
-const path = require("node:path");
-const ts = require("typescript");
+import crypto from "node:crypto";
+import fs from "node:fs";
+import Module from "node:module";
+import os from "node:os";
+import path from "node:path";
+import ts from "typescript";
 
+type CommonJsModule = NodeModule & {
+  _compile(source: string, filename: string): void;
+};
+
+type ResolveFilename = (
+  request: string,
+  parent?: CommonJsModule | null,
+  isMain?: boolean,
+  options?: unknown,
+) => string;
+
+const moduleRuntime = Module as unknown as {
+  _extensions: Record<string, (module: CommonJsModule, filename: string) => void>;
+  _resolveFilename: ResolveFilename;
+};
 const repoRoot = path.resolve(__dirname, "../..");
 const configPath = path.join(repoRoot, "tsconfig.src.json");
 const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
@@ -16,7 +31,13 @@ if (configFile.error) {
   throw new Error(ts.flattenDiagnosticMessageText(configFile.error.messageText, "\n"));
 }
 
-const parsedConfig = ts.parseJsonConfigFileContent(configFile.config, ts.sys, repoRoot, {}, configPath);
+const parsedConfig = ts.parseJsonConfigFileContent(
+  configFile.config,
+  ts.sys,
+  repoRoot,
+  {},
+  configPath,
+);
 if (parsedConfig.errors.length > 0) {
   throw new Error(
     parsedConfig.errors
@@ -25,7 +46,7 @@ if (parsedConfig.errors.length > 0) {
   );
 }
 
-const compilerOptions = {
+const compilerOptions: ts.CompilerOptions = {
   ...parsedConfig.options,
   declaration: false,
   declarationMap: false,
@@ -69,12 +90,12 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
     .update(compilerFingerprint)
     .digest("hex");
   const cachePath = path.join(cacheDir, `${cacheKey}.cjs`);
-  let outputText;
+  let outputText: string;
 
   try {
     outputText = fs.readFileSync(cachePath, "utf8");
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     const result = ts.transpileModule(source, {
       compilerOptions,
       fileName: filename,
@@ -97,7 +118,7 @@ moduleRuntime._extensions[".ts"] = (module, filename) => {
       fs.renameSync(temporaryPath, cachePath);
     } catch (error) {
       fs.rmSync(temporaryPath, { force: true });
-      if (error.code !== "EEXIST") throw error;
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
   module._compile(outputText, filename);

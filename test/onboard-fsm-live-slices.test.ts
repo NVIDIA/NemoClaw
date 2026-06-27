@@ -296,11 +296,7 @@ const { onboard } = require(${onboardPath});
 
   const result = spawnSync(
     process.execPath,
-    [
-      "--require",
-      path.join(repoRoot, "test", "helpers", "register-source-require.cjs"),
-      scriptPath,
-    ],
+    ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
     {
       cwd: repoRoot,
       encoding: "utf-8",

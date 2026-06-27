@@ -32,7 +32,7 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.ts");
-const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "register-source-require.cjs");
+const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
 const REQUIRED_SOURCE_MODULES = [
   path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
   path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"),
