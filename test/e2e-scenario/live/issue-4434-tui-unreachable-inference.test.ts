@@ -218,7 +218,8 @@ runIssue4434LiveTest(
       timeoutMs: 60_000,
     });
     expect(status.exitCode, resultText(status)).toBe(0);
-    expect(resultText(status)).toMatch(/inference.*healthy|healthy.*inference/i);
+    expect(resultText(status)).toMatch(/managed_inference|inference\.local/i);
+    expect(resultText(status)).toMatch(/Docker health:\s*healthy/i);
 
     const connectProbe = await host.nemoclaw([instance.sandboxName, "connect", "--probe-only"], {
       artifactName: "issue4434-connect-probe-before-block",

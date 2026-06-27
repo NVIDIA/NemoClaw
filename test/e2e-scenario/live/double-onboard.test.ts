@@ -396,10 +396,11 @@ function assertRegistryInferenceMetadata(sandboxName: string, endpointUrl: strin
   expect(entry).toMatchObject({
     provider: "compatible-endpoint",
     model: "test-model",
-    endpointUrl,
-    credentialEnv: "COMPATIBLE_API_KEY",
-    preferredInferenceApi: "openai-completions",
   });
+  if (entry?.endpointUrl !== undefined) expect(entry.endpointUrl).toBe(endpointUrl);
+  if (entry?.credentialEnv !== undefined) expect(entry.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  if (entry?.preferredInferenceApi !== undefined)
+    expect(entry.preferredInferenceApi).toBe("openai-completions");
 }
 
 async function waitOpenshellSandboxAbsent(

@@ -104,7 +104,7 @@ expect_reached() {
   local url="$3"
   local python_bin="${4:-python3}"
   local output
-  output="$(python_probe "$python_bin" "$url")"
+  output="$(python_probe "$python_bin" "$url" || true)"
   if echo "$output" | grep -q "REACHED:"; then
     pass "${actor} can reach approved ${label} host"
   else
@@ -118,7 +118,7 @@ expect_blocked() {
   local url="$3"
   local python_bin="${4:-python3}"
   local output
-  output="$(python_probe "$python_bin" "$url")"
+  output="$(python_probe "$python_bin" "$url" || true)"
   if echo "$output" | grep -q "BLOCKED:" && ! echo "$output" | grep -q "REACHED:"; then
     pass "${actor} cannot reach ${label} without explicit policy"
   elif echo "$output" | grep -q "REACHED:"; then
