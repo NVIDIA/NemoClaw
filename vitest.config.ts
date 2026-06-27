@@ -15,6 +15,7 @@ import { testTimeout } from "./test/helpers/timeouts";
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
+const SOURCE_TEST_TIMEOUT_MS = 10_000;
 const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
@@ -37,7 +38,9 @@ export default defineConfig({
       {
         test: {
           name: "cli",
-          testTimeout: testTimeout(),
+          // Source transpilation plus V8 instrumentation is measurably slower
+          // than executing prebuilt dist files on shared CI runners.
+          testTimeout: testTimeout(SOURCE_TEST_TIMEOUT_MS),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
@@ -46,7 +49,7 @@ export default defineConfig({
       {
         test: {
           name: "integration",
-          testTimeout: testTimeout(),
+          testTimeout: testTimeout(SOURCE_TEST_TIMEOUT_MS),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
