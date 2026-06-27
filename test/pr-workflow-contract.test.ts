@@ -462,6 +462,22 @@ describe("pull request and main workflow contracts", () => {
     expect(installerRuns).toContain("CI=true npx vitest run --project installer-integration");
   });
 
+  it("keeps the temporary CLI source-coverage switch aligned across shard and merge", () => {
+    const shardRun = requiredStep(sharedActions.cliCoverageShard, "Run CLI coverage shard").run;
+    const mergeRun = requiredStep(sharedActions.cliCoverageMerge, "Merge CLI coverage").run;
+
+    for (const run of [shardRun, mergeRun]) {
+      expect(run).toContain('coverage_include="dist/lib/**/*.js"');
+      expect(run).toContain("npx vitest list --project integration --filesOnly");
+      expect(run).toContain('coverage_include="src/**/*.ts"');
+      expect(run).toContain('--coverage.include="$coverage_include"');
+    }
+
+    expect(shardRun).toContain("additional_projects=()");
+    expect(shardRun).toContain("additional_projects+=(--project integration)");
+    expect(shardRun).toContain('"${additional_projects[@]}"');
+  });
+
   it("keeps PR coverage for non-opt-in Vitest projects after removing the self-hosted full run", () => {
     const vitestConfig = readFileSync("vitest.config.ts", "utf8");
     const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
