@@ -120,7 +120,11 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
-| `npm test` | Run root-level tests (`test/*.test.js`) |
+| `npm test` | Build package artifacts and run every non-live Vitest project |
+| `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
+| `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
+| `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
+| `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
 | `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
