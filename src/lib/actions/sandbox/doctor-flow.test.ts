@@ -14,10 +14,12 @@ function createDoctorHarness(): {
   buildToolScopeChecksSpy: MockInstance;
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
+  configuredMessagingChannelsSpy: MockInstance;
   getSandboxSpy: MockInstance;
   getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
+  loadAgentSpy: MockInstance;
   logSpy: MockInstance;
   recoverNamedGatewayRuntimeSpy: MockInstance;
   repairMutableConfigPermsSpy: MockInstance;
@@ -57,7 +59,9 @@ function createDoctorHarness(): {
     gatewayPort: 19080,
     messaging: undefined,
   });
-  vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue([]);
+  const configuredMessagingChannelsSpy = vi
+    .spyOn(registry, "getConfiguredMessagingChannelsFromEntry")
+    .mockReturnValue([]);
   vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
   const resolveOpenShellSpy = vi
     .spyOn(resolve, "resolveOpenshell")
@@ -113,7 +117,7 @@ function createDoctorHarness(): {
     endpoint: "http://127.0.0.1:19000/v1/chat/completions",
     detail: "gateway refused connection",
   });
-  vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
+  const loadAgentSpy = vi.spyOn(agentDefs, "loadAgent").mockReturnValue({
     name: "openclaw",
     configPaths: { dir: "/sandbox/.openclaw", configFile: "openclaw.json", format: "json" },
   });
@@ -172,10 +176,12 @@ function createDoctorHarness(): {
     buildToolScopeChecksSpy,
     captureOpenShellSpy,
     captureHostCommandSpy,
+    configuredMessagingChannelsSpy,
     getSandboxSpy,
     getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
     inspectMutableConfigPermsSpy,
+    loadAgentSpy,
     logSpy,
     recoverNamedGatewayRuntimeSpy,
     repairMutableConfigPermsSpy,
@@ -346,6 +352,25 @@ describe("runSandboxDoctor flow", () => {
       expect.objectContaining({
         group: "Inference",
         label: "Provider health (gateway)",
+      }),
+    );
+  });
+
+  it("reports agent definition failures instead of hiding the runtime channel check", async () => {
+    const harness = createDoctorHarness();
+    harness.configuredMessagingChannelsSpy.mockReturnValue(["telegram"]);
+    harness.loadAgentSpy.mockImplementation(() => {
+      throw new Error("agent definition is invalid");
+    });
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(report?.checks).toContainEqual(
+      expect.objectContaining({
+        group: "Messaging",
+        label: "Runtime channel registry",
+        status: "warn",
+        detail: "unable to resolve agent config paths: agent definition is invalid",
       }),
     );
   });

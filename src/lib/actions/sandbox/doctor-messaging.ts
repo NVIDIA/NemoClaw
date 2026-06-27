@@ -100,14 +100,18 @@ function healthyRuntimeCheck(enabledChannels: string[]): DoctorCheck {
 function channelRuntimeDoctorCheck(
   sandboxName: string,
   enabledChannels: string[],
+  sb: SandboxEntry,
 ): DoctorCheck | null {
   if (enabledChannels.length === 0) return null;
   let agent: ReturnType<typeof loadAgent>;
   try {
-    const sb = registry.getSandbox(sandboxName);
-    agent = loadAgent(sb?.agent || "openclaw");
-  } catch {
-    return null;
+    agent = loadAgent(sb.agent || "openclaw");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return runtimeProbeUnavailableCheck(
+      sandboxName,
+      `unable to resolve agent config paths: ${detail}`,
+    );
   }
   if (agent.configPaths.format !== "json") return null;
   const configFilePath = `${agent.configPaths.dir}/${agent.configPaths.configFile}`;
@@ -252,7 +256,7 @@ export function collectMessagingDoctorChecks(sandboxName: string, sb: SandboxEnt
   const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
   const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
   const enabled = registered.filter((channel: string) => !disabled.has(channel));
-  const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabled);
+  const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabled, sb);
   if (runtimeCheck) checks.push(runtimeCheck);
   return checks;
 }
