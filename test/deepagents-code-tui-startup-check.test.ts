@@ -185,6 +185,30 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     }
   });
 
+  it("suppresses the capture excerpt when secret-shaped data remains", () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-secret-"));
+    const capture = path.join(captureDir, "sanitized.log");
+    const secret = `sk-${"A".repeat(20)}`;
+
+    try {
+      fs.writeFileSync(capture, `diagnostic body\n${secret}\n`);
+      const result = runTuiStartupCheckHelperResult('print_sanitized_capture_excerpt "$CAPTURE"', {
+        CAPTURE: capture,
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(
+        "sanitized TUI capture omitted because secret-shaped data remains",
+      );
+      expect(result.stdout).not.toContain(secret);
+      expect(result.stderr).not.toContain(secret);
+      expect(result.stderr).not.toContain("sanitized capture excerpt");
+      expect(result.stderr).not.toContain("diagnostic body");
+    } finally {
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+
   it("detects and redacts every canonical secret family in TUI startup artifacts", () => {
     const detectsSecret = (token: string) =>
       runTuiStartupCheckHelper(
