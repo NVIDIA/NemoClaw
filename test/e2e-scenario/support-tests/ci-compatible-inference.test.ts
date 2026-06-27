@@ -22,21 +22,20 @@ describe("gateway-managed compatible inference detection", () => {
       },
     },
   ])("skips the live issue #4434 sandbox-egress repro for $label", ({ env: hostedEnv }) => {
+    const {
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: _hostedSentinel,
+      NEMOCLAW_PROVIDER: _provider,
+      NVIDIA_INFERENCE_API_KEY: _hostedKey,
+      NVIDIA_API_KEY: _publicKey,
+      COMPATIBLE_API_KEY: _compatibleKey,
+      ...baseEnv
+    } = process.env;
     const env: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...baseEnv,
       NEMOCLAW_RUN_E2E_SCENARIOS: "1",
       NEMOCLAW_ISSUE_4434_LIVE: "1",
       ...hostedEnv,
     };
-    for (const key of [
-      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
-      "NEMOCLAW_PROVIDER",
-      "NVIDIA_INFERENCE_API_KEY",
-    ]) {
-      if (!(key in hostedEnv)) delete env[key];
-    }
-    delete env.NVIDIA_API_KEY;
-    delete env.COMPATIBLE_API_KEY;
 
     const output = execFileSync(
       process.execPath,
