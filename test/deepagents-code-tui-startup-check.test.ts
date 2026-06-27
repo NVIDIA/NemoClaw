@@ -140,6 +140,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
           '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          "  return 0",
           "}",
           "main",
         ].join("\n"),
@@ -153,6 +154,32 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
+    } finally {
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+
+  it("preserves a failed expect status and emits only the sanitized capture excerpt", () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-failure-"));
+
+    try {
+      const result = runTuiStartupCheckHelperResult(
+        [
+          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
+          "ensure_expect_available() { return 0; }",
+          "run_tui_expect() {",
+          '  printf "NEMOCLAW_TUI_EOF_BEFORE_READY\\n" >>"$2"',
+          "  return 21",
+          "}",
+          "main",
+        ].join("\n"),
+        { DEEPAGENTS_TUI_CAPTURE_DIR: captureDir },
+      );
+
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("finite expect harness exited 21");
+      expect(result.stderr).toContain("sanitized capture excerpt (last 20000 bytes)");
+      expect(result.stderr).toContain("NEMOCLAW_TUI_EOF_BEFORE_READY");
     } finally {
       fs.rmSync(captureDir, { force: true, recursive: true });
     }

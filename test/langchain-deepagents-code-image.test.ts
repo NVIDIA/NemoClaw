@@ -484,6 +484,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain(
       'cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file"',
     );
+    expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
+      tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
+    );
+    expect(tuiStartupCheck).toContain('print_sanitized_capture_excerpt "$plain_capture_file"');
     expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
     expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
     expect(tuiStartupCheck).toContain("is_tui_ready_capture");

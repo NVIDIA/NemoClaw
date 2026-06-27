@@ -203,6 +203,22 @@ expect {
 EXPECT
 }
 
+print_sanitized_capture_excerpt() {
+  local plain_capture_file="$1"
+  if [ ! -r "$plain_capture_file" ]; then
+    info "sanitized TUI capture unavailable for diagnostics"
+    return
+  fi
+  if contains_secret <"$plain_capture_file"; then
+    info "sanitized TUI capture omitted because secret-shaped data remains"
+    return
+  fi
+
+  printf '%s\n' "${PREFIX}: sanitized capture excerpt (last 20000 bytes):" >&2
+  tail -c 20000 -- "$plain_capture_file" >&2
+  printf '\n%s\n' "${PREFIX}: end sanitized capture excerpt" >&2
+}
+
 assert_clean_exit_code() {
   local plain_capture_file="$1"
   local exit_code
@@ -280,9 +296,9 @@ main() {
   info "Running Deep Agents Code TUI startup check in sandbox: $SANDBOX_NAME"
   info "Capture directory: $capture_dir"
 
+  local expect_rc
   set +e
   run_tui_expect "$raw_capture_file" "$marker_capture_file" >"$expect_log_file" 2>&1
-  local expect_rc
   expect_rc=$?
   set -e
 
@@ -304,6 +320,7 @@ main() {
     pass "finite expect harness reached startup and observed exit"
   else
     fail_test "finite expect harness exited ${expect_rc}"
+    print_sanitized_capture_excerpt "$plain_capture_file"
   fi
 
   if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then
