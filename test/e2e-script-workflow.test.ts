@@ -1304,6 +1304,18 @@ describe("E2E reusable workflow contract", () => {
     expect(hostedSkip).toBeLessThan(firewallMutation);
   });
 
+  it("uses the target custom endpoint for double-onboard stale rebuild recovery", () => {
+    const liveTest = readFileSync("test/e2e-scenario/live/double-onboard.test.ts", "utf8");
+
+    expect(liveTest).toContain(
+      "function staleRebuildEnv(sandboxName: string, fakeBaseUrl: string)",
+    );
+    expect(liveTest).toContain("return onboardEnv(sandboxName, fakeBaseUrl);");
+    expect(liveTest).toContain("env: staleRebuildEnv(SANDBOX_A, fake.baseUrl)");
+    expect(liveTest).not.toContain("ambient-wrong-model");
+    expect(liveTest).not.toContain('onboardEnv(sandboxName, "http://127.0.0.1:9/v1")');
+  });
+
   it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {
     const rebuildFixtures = [
       "test/e2e/test-rebuild-openclaw.sh",
