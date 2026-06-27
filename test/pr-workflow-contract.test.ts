@@ -469,6 +469,8 @@ describe("pull request and main workflow contracts", () => {
     for (const run of [shardRun, mergeRun]) {
       expect(run).toContain('coverage_include="dist/lib/**/*.js"');
       expect(run).toContain("npx vitest list --project integration --filesOnly");
+      expect(run).toContain('Error: No projects matched the filter "integration".');
+      expect(run).toContain("printf '%s\\n' \"$integration_probe_output\" >&2");
       expect(run).toContain('coverage_include="src/**/*.ts"');
       expect(run).toContain('--coverage.include="$coverage_include"');
     }

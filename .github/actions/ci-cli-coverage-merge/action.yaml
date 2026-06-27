@@ -81,8 +81,12 @@ runs:
         coverage_include="dist/lib/**/*.js"
         # Keep the merge denominator aligned with the shard command during
         # the PR #5904 transition. That PR removes this probe after landing.
-        if npx vitest list --project integration --filesOnly >/dev/null 2>&1; then
+        integration_probe_output=""
+        if integration_probe_output=$(npx vitest list --project integration --filesOnly 2>&1); then
           coverage_include="src/**/*.ts"
+        elif ! grep -Fqx 'Error: No projects matched the filter "integration".' <<<"$integration_probe_output"; then
+          printf '%s\n' "$integration_probe_output" >&2
+          exit 1
         fi
         npx vitest --mergeReports .vitest-reports \
           --reporter=json \

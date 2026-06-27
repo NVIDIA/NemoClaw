@@ -71,9 +71,13 @@ runs:
         # Bootstrap the source-test migration without executing action code
         # from the PR branch. PR #5904 removes this probe once `integration`
         # is part of the trusted base configuration.
-        if npx vitest list --project integration --filesOnly >/dev/null 2>&1; then
+        integration_probe_output=""
+        if integration_probe_output=$(npx vitest list --project integration --filesOnly 2>&1); then
           additional_projects+=(--project integration)
           coverage_include="src/**/*.ts"
+        elif ! grep -Fqx 'Error: No projects matched the filter "integration".' <<<"$integration_probe_output"; then
+          printf '%s\n' "$integration_probe_output" >&2
+          exit 1
         fi
         npx vitest run --project cli \
           "${additional_projects[@]}" \
