@@ -150,19 +150,28 @@ set capture $env(NEMOCLAW_TUI_CAPTURE)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 log_file -a $capture
 
+proc append_marker {capture marker} {
+  set fh [open $capture a]
+  puts $fh $marker
+  close $fh
+}
+
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
 expect {
   -nocase -re $ready_pattern {
+    append_marker $capture "NEMOCLAW_TUI_READY"
     puts "\nNEMOCLAW_TUI_READY"
     send -- "\003"
   }
   timeout {
+    append_marker $capture "NEMOCLAW_TUI_TIMEOUT"
     puts "\nNEMOCLAW_TUI_TIMEOUT"
     send -- "\003"
     exit 20
   }
   eof {
+    append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_READY"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
     exit 21
   }
@@ -171,15 +180,18 @@ expect {
 set timeout 20
 expect {
   -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+    append_marker $capture "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     puts "\nNEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     exit 0
   }
   timeout {
+    append_marker $capture "NEMOCLAW_TUI_EXIT_TIMEOUT"
     puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
     send -- "\003"
     exit 22
   }
   eof {
+    append_marker $capture "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_EXIT"
     exit 23
   }
