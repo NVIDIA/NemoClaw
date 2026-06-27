@@ -36,15 +36,9 @@ sandbox_exec() {
 
 dcode_secret_probe() {
   local command="$1"
-  sandbox_exec "
-tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX)
-${command} >\"\$tmp\" 2>&1
-status=\$?
-cat \"\$tmp\"
-rm -f \"\$tmp\"
-printf 'DCODE_EXIT:%s\n' \"\$status\"
-exit 0
-"
+  local remote_cmd
+  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); ${command} >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  sandbox_exec "$remote_cmd"
 }
 
 make_log_marker() {

@@ -433,6 +433,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("Case: Deep Agents Code dcode secret boundary");
     expect(secretBoundaryCheck).toContain("env OPENAI_API_KEY=");
     expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
+    expect(secretBoundaryCheck).toContain("remote_cmd=");
+    expect(secretBoundaryCheck).toContain("DCODE_EXIT:%s\\\\n");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");
     expect(secretBoundaryCheck).toContain("NETWORK_LOG_PATTERN=");
