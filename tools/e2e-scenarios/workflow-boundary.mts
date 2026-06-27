@@ -484,6 +484,15 @@ function validateFreeStandingJobSelector(
   }
 }
 
+function validateGatewayGuardRecoveryVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["gateway-guard-recovery"]);
+  if (Object.keys(job).length === 0) return;
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
+  }
+}
+
 function validateFreeStandingInventoryBoundary(
   errors: string[],
   jobs: WorkflowRecord,
@@ -7757,6 +7766,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "openclaw-tui-chat-correlation",
   );
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
+  validateGatewayGuardRecoveryVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
     jobs,
