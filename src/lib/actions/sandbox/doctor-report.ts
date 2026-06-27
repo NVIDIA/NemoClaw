@@ -5,6 +5,7 @@ import { CLI_DISPLAY_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 
 export type DoctorStatus = "ok" | "warn" | "fail" | "info";
+type DoctorReportStatus = Exclude<DoctorStatus, "info">;
 
 export type DoctorCheck = {
   group: string;
@@ -17,14 +18,14 @@ export type DoctorCheck = {
 export type DoctorReport = {
   schemaVersion: 1;
   sandbox: string;
-  status: DoctorStatus;
+  status: DoctorReportStatus;
   failed: number;
   warnings: number;
   checks: DoctorCheck[];
 };
 
 function summarizeChecks(checks: DoctorCheck[]): {
-  status: DoctorStatus;
+  status: DoctorReportStatus;
   failed: number;
   warned: number;
 } {

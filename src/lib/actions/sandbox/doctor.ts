@@ -10,7 +10,10 @@ import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { GATEWAY_PORT } from "../../core/ports";
-import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import {
+  getNamedGatewayLifecycleState,
+  recoverNamedGatewayRuntime,
+} from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import { type ProviderHealthStatus, probeProviderHealth } from "../../inference/health";
 import { resolveGatewayName, resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -170,29 +173,42 @@ async function collectGatewayChecks(
   gatewayName: string,
   sb: SandboxEntry | null | undefined,
   openshellBin: ReturnType<typeof resolveOpenshell>,
+  recoverGateway: boolean,
 ): Promise<GatewayProbe> {
   const checks: DoctorCheck[] = [];
   const gateway = openshellBin
-    ? await probeOpenShellGateway(gatewayName)
+    ? await probeOpenShellGateway(gatewayName, recoverGateway)
     : { check: null, connected: false };
   if (gateway.check) checks.push(gateway.check);
   if (shouldInspectLegacyGatewayContainer(sb)) {
     checks.push(
-      ...dockerInspectGateway(`openshell-cluster-${gatewayName}`, {
-        namedGatewayConnected: gateway.connected,
-        gatewayName,
-      }),
+      ...dockerInspectGateway(
+        `openshell-cluster-${gatewayName}`,
+        {
+          namedGatewayConnected: gateway.connected,
+          gatewayName,
+        },
+        sb?.gatewayPort ?? GATEWAY_PORT,
+      ),
     );
   }
   return { checks, connected: gateway.connected };
 }
 
-async function probeOpenShellGateway(gatewayName: string): Promise<{
+async function gatewayLifecycle(gatewayName: string, recoverGateway: boolean) {
+  if (!recoverGateway) return getNamedGatewayLifecycleState(gatewayName);
+  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
+  return recovery.after || recovery.before;
+}
+
+async function probeOpenShellGateway(
+  gatewayName: string,
+  recoverGateway: boolean,
+): Promise<{
   check: DoctorCheck;
   connected: boolean;
 }> {
-  const recovery = await recoverNamedGatewayRuntime({ gatewayName });
-  const lifecycle = recovery.after || recovery.before;
+  const lifecycle = await gatewayLifecycle(gatewayName, recoverGateway);
   const cleanStatus = stripAnsi(lifecycle?.status || "");
   const connected = lifecycle?.state === "healthy_named";
   return {
@@ -452,10 +468,10 @@ async function collectDoctorChecks(
   sandboxName: string,
   sb: SandboxEntry | null | undefined,
   gatewayName: string,
-  wantsFix: boolean,
+  intent: DoctorIntent,
 ): Promise<DoctorCheck[]> {
   const host = collectHostChecks();
-  const gateway = await collectGatewayChecks(gatewayName, sb, host.openshellBin);
+  const gateway = await collectGatewayChecks(gatewayName, sb, host.openshellBin, !intent.asJson);
   const sandbox = collectSandboxReadinessChecks(sandboxName, host.openshellBin, gateway.connected);
   const route = resolveInferenceRoute(sb, host.openshellBin, gateway.connected);
   return [
@@ -463,8 +479,8 @@ async function collectDoctorChecks(
     ...gateway.checks,
     ...sandbox.checks,
     ...(await collectInferenceChecks(sandboxName, route)),
-    ...collectRegisteredSandboxChecks(sandboxName, sb, wantsFix),
-    ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, wantsFix),
+    ...collectRegisteredSandboxChecks(sandboxName, sb, intent.wantsFix),
+    ...collectToolScopeChecks(sandboxName, sb, sandbox.reachable, intent.wantsFix),
     ollamaDoctorCheck(route.provider),
     cloudflaredDoctorCheck(sandboxName),
   ];
@@ -480,7 +496,7 @@ export async function runSandboxDoctor(
 
   const sb = registry.getSandbox(sandboxName);
   const gatewayName = sb ? resolveSandboxGatewayName(sb) : resolveGatewayName(GATEWAY_PORT);
-  const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent.wantsFix);
+  const checks = await collectDoctorChecks(sandboxName, sb, gatewayName, intent);
   const report = buildDoctorReport(sandboxName, checks);
   if (intent.asJson && options.quietJson) return report;
 

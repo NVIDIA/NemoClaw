@@ -41,7 +41,7 @@ function gatewayContainerCheck(
   };
 }
 
-function gatewayPortCheck(containerName: string): DoctorCheck {
+function gatewayPortCheck(containerName: string, expectedHostPort: number): DoctorCheck {
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
   if (port.status !== 0 || !port.stdout.trim()) {
     return {
@@ -53,19 +53,20 @@ function gatewayPortCheck(containerName: string): DoctorCheck {
     };
   }
   const mapping = oneLine(port.stdout);
-  const expected = mapping.includes(`:${GATEWAY_PORT}`);
+  const expected = new RegExp(`:${expectedHostPort}(?:\\s|$)`).test(mapping);
   return {
     group: "Gateway",
     label: "Port mapping",
     status: expected ? "ok" : "warn",
     detail: mapping,
-    hint: expected ? undefined : `expected host port ${GATEWAY_PORT} from NEMOCLAW_GATEWAY_PORT`,
+    hint: expected ? undefined : `expected host port ${expectedHostPort} for this sandbox gateway`,
   };
 }
 
 export function dockerInspectGateway(
   containerName: string,
   options: GatewayInspectOptions = {},
+  expectedHostPort = GATEWAY_PORT,
 ): DoctorCheck[] {
   const inspect = captureHostCommand(
     "docker",
@@ -82,7 +83,7 @@ export function dockerInspectGateway(
   }
   return [
     gatewayContainerCheck(containerName, inspect.stdout, options),
-    gatewayPortCheck(containerName),
+    gatewayPortCheck(containerName, expectedHostPort),
   ];
 }
 

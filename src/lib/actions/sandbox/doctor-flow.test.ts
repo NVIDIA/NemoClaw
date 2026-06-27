@@ -15,6 +15,7 @@ function createDoctorHarness(): {
   captureOpenShellSpy: MockInstance;
   captureHostCommandSpy: MockInstance;
   getSandboxSpy: MockInstance;
+  getNamedGatewayLifecycleStateSpy: MockInstance;
   healthProbeSpy: MockInstance;
   inspectMutableConfigPermsSpy: MockInstance;
   logSpy: MockInstance;
@@ -70,6 +71,14 @@ function createDoctorHarness(): {
       before: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
       after: { state: "healthy_named", status: "Status: Connected", gatewayInfo: "" },
       recovered: false,
+    });
+  const getNamedGatewayLifecycleStateSpy = vi
+    .spyOn(gatewayRuntime, "getNamedGatewayLifecycleState")
+    .mockReturnValue({
+      state: "healthy_named",
+      status: "Status: Connected",
+      gatewayInfo: "Gateway: nemoclaw-19080",
+      activeGateway: "nemoclaw-19080",
     });
   const captureOpenShellSpy = vi
     .spyOn(runtime, "captureOpenshell")
@@ -164,6 +173,7 @@ function createDoctorHarness(): {
     captureOpenShellSpy,
     captureHostCommandSpy,
     getSandboxSpy,
+    getNamedGatewayLifecycleStateSpy,
     healthProbeSpy,
     inspectMutableConfigPermsSpy,
     logSpy,
@@ -248,16 +258,26 @@ describe("runSandboxDoctor flow", () => {
 
   it("does not run live or tool-scope probes when the named gateway is disconnected", async () => {
     const harness = createDoctorHarness();
-    harness.recoverNamedGatewayRuntimeSpy.mockResolvedValue({
-      before: { state: "disconnected", status: "Status: Disconnected", gatewayInfo: "" },
-      after: null,
-      recovered: false,
+    harness.getNamedGatewayLifecycleStateSpy.mockReturnValue({
+      state: "missing_named",
+      status: "Status: Disconnected",
+      gatewayInfo: "",
+      activeGateway: null,
     });
 
     await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
 
     expect(harness.captureOpenShellSpy).not.toHaveBeenCalled();
     expect(harness.buildToolScopeChecksSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps JSON gateway diagnostics read-only", async () => {
+    const harness = createDoctorHarness();
+
+    await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+
+    expect(harness.getNamedGatewayLifecycleStateSpy).toHaveBeenCalledWith("nemoclaw-19080");
+    expect(harness.recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
   });
 
   it("does not enable repairs for plain or JSON diagnostics", async () => {
