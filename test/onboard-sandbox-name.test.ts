@@ -28,6 +28,15 @@ const {
   normalizeSandboxAgentName: (agentName?: string | null) => string;
 };
 
+function envWithoutNemoClawOverrides(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("NEMOCLAW_")),
+    ),
+    ...overrides,
+  };
+}
+
 describe("onboard sandbox naming helpers", () => {
   it("uses Hermes-oriented sandbox defaults when NemoHermes selects Hermes", () => {
     const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -208,31 +217,26 @@ const onboardModule = require(${onboardPath});
   it("exits nonzero for non-interactive resume when the session has no sandbox name", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-null-name-"));
-    const seedPath = path.join(tmpDir, "seed-null-sandbox-session.js");
-
-    const seedScript = String.raw`
-const fs = require("node:fs");
-const path = require("node:path");
-const sessionModule = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"))});
-const session = sessionModule.createSession({
-  status: "in_progress",
-  resumable: true,
-  mode: "interactive",
-  agent: "langchain-deepagents-code",
-  sandboxName: null,
-});
-fs.mkdirSync(path.dirname(sessionModule.sessionPath()), { recursive: true, mode: 0o700 });
-fs.writeFileSync(sessionModule.sessionPath(), JSON.stringify(session, null, 2));
-`;
-    fs.writeFileSync(seedPath, seedScript);
 
     try {
-      const seedResult = spawnSync(process.execPath, [seedPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmpDir },
-      });
-      assert.equal(seedResult.status, 0, seedResult.stderr);
+      const sessionDir = path.join(tmpDir, ".nemoclaw");
+      fs.mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+      fs.writeFileSync(
+        path.join(sessionDir, "onboard-session.json"),
+        JSON.stringify(
+          {
+            version: 1,
+            sessionId: "null-sandbox-name",
+            status: "in_progress",
+            resumable: true,
+            mode: "interactive",
+            agent: "langchain-deepagents-code",
+            sandboxName: null,
+          },
+          null,
+          2,
+        ),
+      );
 
       const result = spawnSync(
         process.execPath,
@@ -240,11 +244,10 @@ fs.writeFileSync(sessionModule.sessionPath(), JSON.stringify(session, null, 2));
         {
           cwd: repoRoot,
           encoding: "utf-8",
-          env: {
-            ...process.env,
+          env: envWithoutNemoClawOverrides({
             HOME: tmpDir,
             NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
-          },
+          }),
         },
       );
 
