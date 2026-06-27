@@ -20,11 +20,11 @@ const tuiStartupCheckPath = path.join(
 const tuiStartupCheckSource = fs
   .readFileSync(tuiStartupCheckPath, "utf8")
   .replace('\nif [[ "${BASH_SOURCE[0]}" == "$0" ]]; then\n  main "$@"\nfi\n', "\n");
-const tuiExpectProgram = tuiStartupCheckSource.match(/expect <<'EXPECT'\n([\s\S]*?)\nEXPECT/)?.[1];
-
-if (!tuiExpectProgram) {
-  throw new Error("Deep Agents Code TUI check is missing its embedded Expect program");
-}
+const tuiExpectProgram =
+  tuiStartupCheckSource.match(/expect <<'EXPECT'\n([\s\S]*?)\nEXPECT/)?.[1] ??
+  (() => {
+    throw new Error("Deep Agents Code TUI check is missing its embedded Expect program");
+  })();
 
 function runTuiStartupCheckHelper(snippet: string, env: NodeJS.ProcessEnv = {}): string {
   return execFileSync("bash", ["-s"], {
