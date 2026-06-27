@@ -192,6 +192,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(readiness("Deep Agents Code starting...\nLoading tools...")).toBe("not-ready");
     expect(readiness("Press Enter to continue")).toBe("not-ready");
     expect(readiness("Your name (optional)")).toBe("not-ready");
+    expect(readiness("What should Deep Agents call you?")).toBe("not-ready");
     expect(readiness("What would you like to do next?")).toBe("ready");
     expect(readiness("Enter your task, then press Enter")).toBe("ready");
     expect(readiness("How can I help with the codebase today?")).toBe("ready");
@@ -221,6 +222,8 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(traceText).toBe("1b,03,03");
     expect(markerText).toContain("Your name (optional)");
     expect(markerText).toContain("What would you like to build?");
+    expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
+    expect(markerText).toContain("NEMOCLAW_TUI_READY");
     expect(markerText.indexOf("NEMOCLAW_TUI_ONBOARDING_SKIPPED")).toBeLessThan(
       markerText.indexOf("NEMOCLAW_TUI_READY"),
     );
