@@ -145,7 +145,7 @@ for line in raw.splitlines(keepends=True):
   cursor += len(line)
 if offset < 0:
   sys.exit(1)
-json.loads(raw[offset:])
+json.JSONDecoder().raw_decode(raw[offset:])
 " 2>/dev/null
 }
 
@@ -436,7 +436,7 @@ for line in raw.splitlines(keepends=True):
   cursor += len(line)
 if offset < 0:
   sys.exit(1)
-data = json.loads(raw[offset:])
+data, _ = json.JSONDecoder().raw_decode(raw[offset:])
 entries = data if isinstance(data, list) else data.get('agents', [])
 target = os.environ['TARGET']
 sys.exit(0 if any(entry.get('id') == target for entry in entries) else 1)

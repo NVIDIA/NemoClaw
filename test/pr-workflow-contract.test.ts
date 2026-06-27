@@ -19,6 +19,13 @@ type CodebaseGrowthGuardrailsWorkflow = {
   jobs: Record<string, WorkflowJob>;
 };
 
+type PrekConfig = {
+  default_stages?: string[];
+  repos: Array<{
+    hooks?: Array<{ id: string; stages?: string[] }>;
+  }>;
+};
+
 const sharedActionPaths = {
   staticChecks: "./.github/actions/ci-static-checks",
   buildTypecheck: "./.github/actions/ci-build-typecheck",
@@ -129,6 +136,7 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
+  const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
     buildTypecheck: readYaml<CompositeAction>(".github/actions/ci-build-typecheck/action.yaml"),
@@ -164,6 +172,28 @@ describe("pull request and main workflow contracts", () => {
         "src/lib/runner.ts",
       ]),
     ).toBe(true);
+  });
+
+  it("keeps ordinary hooks in pre-commit and heavyweight push hooks explicit", () => {
+    const hooks = prekConfig.repos.flatMap((repo) => repo.hooks ?? []);
+    const hook = (id: string) => hooks.find((candidate) => candidate.id === id);
+
+    expect(prekConfig.default_stages).toEqual(["pre-commit"]);
+    expect(hook("test-cli")?.stages).toBeUndefined();
+    expect(hook("test-plugin")?.stages).toBeUndefined();
+    for (const id of [
+      "trailing-whitespace",
+      "end-of-file-fixer",
+      "shfmt",
+      "check-added-large-files",
+      "check-executables-have-shebangs",
+      "check-shebang-scripts-are-executable",
+    ]) {
+      expect(hook(id)?.stages, id).toEqual(["pre-commit"]);
+    }
+    for (const id of ["tsc-plugin", "tsc-js", "tsc-cli", "version-tag-sync"]) {
+      expect(hook(id)?.stages, id).toEqual(["pre-push"]);
+    }
   });
 
   it("reuses the same shared CI actions in PR and main workflows", () => {
@@ -353,7 +383,7 @@ describe("pull request and main workflow contracts", () => {
     const staticRuns = stepRuns(sharedActions.staticChecks);
     const staticRunsJoined = staticRuns.join("\n");
     const staticPrekRun = staticRuns.find((run) =>
-      run.includes("npx prek run --all-files --stage pre-push"),
+      run.includes("npx prek run --all-files --stage pre-commit"),
     );
     const buildRuns = stepRuns(sharedActions.buildTypecheck);
     const cliShardRuns = stepRuns(sharedActions.cliCoverageShard).join("\n");
@@ -363,12 +393,8 @@ describe("pull request and main workflow contracts", () => {
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
     expect(staticRuns).toContain("npm run validate:configs");
-    expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-push");
+    expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");
     for (const skippedHook of [
-      "tsc-plugin",
-      "tsc-js",
-      "tsc-cli",
-      "version-tag-sync",
       "test-cli",
       "test-plugin",
       "source-shape-test-budget",

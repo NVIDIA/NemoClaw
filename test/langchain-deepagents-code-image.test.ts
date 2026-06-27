@@ -402,7 +402,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("except urllib.error.URLError as exc:");
     expect(pythonEgressCheck).toContain("ERROR:URLError");
     expect(pythonEgressCheck).toContain("lacked denial evidence");
-    expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain("python_probe_source");
+    expect(pythonEgressCheck).toContain("base64 | tr -d");
+    expect(pythonEgressCheck).not.toContain("mktemp");
+    expect(pythonEgressCheck).toContain("base64 -d");
+    expect(pythonEgressCheck).toContain("${python_bin@Q} -c");
+    expect(pythonEgressCheck).toContain("${url@Q}");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
     );

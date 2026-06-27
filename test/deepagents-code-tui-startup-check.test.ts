@@ -61,6 +61,36 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(validate("1; touch /tmp/nemoclaw-tui-timeout-injection")).toBe("invalid");
   });
 
+  it("skips non-Deep-Agents sandboxes before requiring expect", () => {
+    const result = runTuiStartupCheckHelperResult(
+      [
+        "PASSED=0",
+        "FAILED=0",
+        "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:other\\n'; }",
+        'command() { if [ "$1" = -v ] && [ "${2:-}" = expect ]; then return 1; fi; builtin command "$@"; }',
+        "main",
+      ].join("; "),
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("SKIP: sandbox");
+    expect(result.stderr).not.toContain("expect is required");
+  });
+
+  it("fails closed when expect installation fallback cannot provide expect", () => {
+    const result = runTuiStartupCheckHelperResult(
+      [
+        "command() { case \"$*\" in '-v expect') return 1 ;; '-v sudo'|'-v apt-get') return 0 ;; *) builtin command \"$@\" ;; esac; }",
+        "sudo() { return 42; }",
+        "ensure_expect_available",
+      ].join("; "),
+      { GITHUB_ACTIONS: "true" },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("installing expect");
+  });
+
   it("matches prompt-shaped TUI readiness text without accepting banner-only startup text", () => {
     const readiness = (capture: string) =>
       runTuiStartupCheckHelper(

@@ -26,6 +26,11 @@
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
 
+# Stage-less hooks run only while creating a commit. Hooks for later Git
+# lifecycle stages declare their own `stages` explicitly below.
+default_stages:
+  - pre-commit
+
 # Which git hook shims `prek install` writes (separate from each hook's `stages:`).
 # https://prek.j178.dev/configuration/#default_install_hook_types
 default_install_hook_types:
@@ -42,9 +47,11 @@ repos:
     hooks:
       - id: trailing-whitespace
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: end-of-file-fixer
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
@@ -98,6 +105,7 @@ repos:
           - "2"
           - -ci
           - -bn
+        stages: [pre-commit]
         priority: 5
 
   - repo: local
@@ -129,6 +137,7 @@ repos:
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
+        stages: [pre-commit]
         priority: 10
       - id: check-case-conflict
         priority: 10
@@ -141,8 +150,10 @@ repos:
       - id: detect-private-key
         priority: 10
       - id: check-executables-have-shebangs
+        stages: [pre-commit]
         priority: 10
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]
         priority: 10
 
   - repo: local
