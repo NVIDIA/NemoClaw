@@ -219,7 +219,7 @@ puts "\nNEMOCLAW_TUI_READY"
 # Idle dcode arms quit on the first Ctrl-C and exits on the second.
 send -- "\003"
 after 250
-send -- "\003"
+catch {send -- "\003"}
 
 set timeout 20
 expect {

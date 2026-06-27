@@ -66,7 +66,10 @@ const tclshAvailable =
   spawnSync("tclsh", ["-"], { encoding: "utf8", input: "exit 0\n" }).status === 0;
 const itWithTclsh = it.runIf(tclshAvailable);
 
-function runTuiExpectStateMachine(events: TuiExpectEvent[]) {
+function runTuiExpectStateMachine(
+  events: TuiExpectEvent[],
+  options: { closeAfterFirstCtrlC?: boolean } = {},
+) {
   const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
   const capture = path.join(captureDir, "raw.log");
   const markers = path.join(captureDir, "markers.log");
@@ -79,13 +82,20 @@ rename after real_after
 rename exit real_exit
 set ::fake_events [list ${events.map((event) => tclEventLiterals[event]).join(" ")}]
 set ::fake_sent {}
+set ::fake_closed 0
 
 proc log_file {args} {}
 proc spawn {args} {}
 proc after {args} {}
 proc send {args} {
   binary scan [lindex $args end] H* key_hex
+  if {$::fake_closed} {
+    error "fake spawn id is closed"
+  }
   lappend ::fake_sent $key_hex
+  if {$key_hex eq "03" && $::env(NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C) eq "1"} {
+    set ::fake_closed 1
+  }
 }
 proc expect {branches} {
   if {[llength $::fake_events] == 0} {
@@ -134,6 +144,7 @@ proc exit {{code 0}} {
     env: {
       ...process.env,
       NEMOCLAW_TUI_CAPTURE: capture,
+      NEMOCLAW_TUI_CLOSE_AFTER_FIRST_CTRL_C: options.closeAfterFirstCtrlC ? "1" : "0",
       NEMOCLAW_TUI_MARKERS: markers,
       NEMOCLAW_TUI_ONBOARDING_PATTERN:
         "(your name \\(optional\\)|what should deep agents call you)",
@@ -255,6 +266,17 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
     },
   );
+
+  itWithTclsh("captures a clean exit when dcode closes after the first Ctrl-C (tclsh)", () => {
+    const { markerText, result, traceText } = runTuiExpectStateMachine(["ready", "exit"], {
+      closeAfterFirstCtrlC: true,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(traceText).toBe("03");
+    expect(markerText).toContain("NEMOCLAW_TUI_READY");
+    expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
+  });
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
     const assertExit = (exitCode: string) =>
