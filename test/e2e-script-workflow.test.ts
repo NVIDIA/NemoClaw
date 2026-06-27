@@ -49,6 +49,7 @@ const TRUSTED_REF_GUARD = "github.event_name != 'workflow_dispatch' || inputs.ta
 const GUARDED_HOSTED_INFERENCE_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_INFERENCE_API_KEY || '' }}`;
 const GUARDED_PUBLIC_NVIDIA_SECRET = `\${{ (${TRUSTED_REF_GUARD}) && secrets.NVIDIA_API_KEY || '' }}`;
 const RAW_HOSTED_INFERENCE_SECRET = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
+const APT_PACKAGE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9+.-]*$/;
 
 function timingSummary(
   phases: Record<string, number> = { "nemoclaw.onboard.phase.preflight": 1000 },
@@ -370,7 +371,7 @@ function collectLegacyE2eShellScriptRefs(value: unknown): string[] {
 }
 
 describe("E2E reusable workflow contract", () => {
-  const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
+  const { runnerWorkflow, nightlyWorkflow, action, installAptAction } = loadE2eWorkflowContract();
 
   it("does not persist checkout credentials in the reusable runner", () => {
     const checkoutSteps = runnerWorkflow.jobs.run.steps.filter((step) =>
@@ -733,7 +734,7 @@ describe("E2E reusable workflow contract", () => {
     );
     const alwaysUploadStep = action.runs.steps.find((step) => step.name === "Upload E2E artifacts");
     const workflowActionCheckout = runnerWorkflow.jobs.run.steps.find(
-      (step) => step.name === "Checkout workflow action",
+      (step) => step.name === "Checkout workflow actions",
     );
     const cloudOnboardJob = nightlyWorkflow.jobs["cloud-onboard-e2e"];
     const envJson = JSON.parse(cloudOnboardJob.with?.env_json ?? "{}") as Record<string, unknown>;
@@ -978,6 +979,169 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain('[[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]');
     expect(exportStep?.run).toContain("git -C repo rev-parse HEAD");
     expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
+  });
+
+  it("installs apt packages before scripts that need host tools start", () => {
+    const callInputs =
+      runnerWorkflow.on?.workflow_call?.inputs ?? runnerWorkflow.true?.workflow_call?.inputs ?? {};
+    const vitestScenarioWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
+      ".github/workflows/e2e-vitest-scenarios.yaml",
+    );
+    const workflowActionsCheckout = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Checkout workflow actions",
+    );
+    const installStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Install requested apt packages",
+    );
+    const installActionStep = installAptAction.runs.steps.find(
+      (step) => step.name === "Install apt packages",
+    );
+    const stepIndex = (name: string) =>
+      runnerWorkflow.jobs.run.steps.findIndex((step) => step.name === name);
+    const installStepIndex = stepIndex("Install requested apt packages");
+
+    expect(callInputs.apt_packages?.default).toBe("");
+    expect(workflowActionsCheckout?.with?.ref).toBe("${{ github.sha }}");
+    expect(workflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/install-apt-packages",
+    );
+    expect(installStep?.if).toBe("${{ inputs.apt_packages != '' }}");
+    expect(installStep?.uses).toBe("./workflow-actions/.github/actions/install-apt-packages");
+    expect(installStep?.with?.packages).toBe("${{ inputs.apt_packages }}");
+    expect(installStepIndex).toBe(stepIndex("Checkout workflow actions") + 1);
+    expect(installStepIndex).toBeLessThan(stepIndex("Authenticate to Docker Hub"));
+    expect(installStepIndex).toBeLessThan(stepIndex("Export CI inference environment"));
+    expect(installStepIndex).toBeLessThan(stepIndex("Run E2E script"));
+
+    expect(nightlyWorkflow.jobs["cloud-onboard-e2e"].with?.apt_packages).toBeUndefined();
+    expect(nightlyWorkflow.jobs["network-policy-e2e"].with?.apt_packages).toBe("expect");
+    expect(
+      nightlyWorkflow.jobs["issue-4434-tui-unreachable-inference-e2e"].steps?.find(
+        (step) => step.name === "Install issue #4434 test dependencies",
+      )?.with?.packages,
+    ).toBe("expect iptables");
+    const gpuE2eSteps = nightlyWorkflow.jobs["gpu-e2e"].steps ?? [];
+    const gpuE2eStepIndex = (name: string) => gpuE2eSteps.findIndex((step) => step.name === name);
+    const gpuWorkflowActionsCheckout = gpuE2eSteps.find(
+      (step) => step.name === "Checkout GPU E2E workflow actions",
+    );
+    const gpuInstallStep = gpuE2eSteps.find(
+      (step) => step.name === "Install GPU E2E host dependencies",
+    );
+    expect(gpuWorkflowActionsCheckout?.with?.ref).toBe("${{ github.sha }}");
+    expect(gpuWorkflowActionsCheckout?.with?.["sparse-checkout"]).toContain(
+      ".github/actions/install-apt-packages",
+    );
+    expect(gpuWorkflowActionsCheckout?.with?.path).toBe("workflow-actions");
+    expect(gpuInstallStep?.uses).toBe("./workflow-actions/.github/actions/install-apt-packages");
+    expect(gpuInstallStep?.with?.packages).toBe("expect");
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBe(
+      gpuE2eStepIndex("Checkout GPU E2E workflow actions") + 1,
+    );
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBeLessThan(
+      gpuE2eStepIndex("Authenticate to Docker Hub"),
+    );
+    expect(gpuE2eStepIndex("Install GPU E2E host dependencies")).toBeLessThan(
+      gpuE2eStepIndex("Run GPU E2E test (Ollama local inference)"),
+    );
+    const issue4434VitestSteps =
+      vitestScenarioWorkflow.jobs["issue-4434-tui-unreachable-inference-vitest"].steps ?? [];
+    const issue4434VitestStepIndex = (name: string) =>
+      issue4434VitestSteps.findIndex((step) => step.name === name);
+    const issue4434VitestInstallStep = issue4434VitestSteps.find(
+      (step) => step.name === "Install issue #4434 host dependencies",
+    );
+    const issue4434VitestInstallRun = issue4434VitestInstallStep?.run ?? "";
+    const installActionRun = installActionStep?.run ?? "";
+
+    expect(issue4434VitestInstallStep?.uses).toBeUndefined();
+    expect(issue4434VitestInstallRun).toContain(
+      "sudo apt-get install -y --no-install-recommends expect iptables",
+    );
+    expect(issue4434VitestStepIndex("Install issue #4434 host dependencies")).toBeLessThan(
+      issue4434VitestStepIndex("Authenticate to Docker Hub"),
+    );
+
+    expect(installActionStep?.env?.APT_PACKAGES).toBe("${{ inputs.packages }}");
+    expect(installActionStep?.run).toContain('read -r -a packages <<< "$APT_PACKAGES"');
+    expect(installActionStep?.run).toContain('"${#packages[@]}" -eq 0');
+    expect(installActionStep?.run).toContain('[[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]');
+    expect(installActionStep?.run).toContain("Multi-arch qualifiers");
+    expect(installActionStep?.run).toContain(
+      'sudo apt-get install -y --no-install-recommends "${packages[@]}"',
+    );
+    expect(installActionStep?.run).toContain("expect|iptables");
+    expect(installActionStep?.run).toContain("Unsupported apt package");
+    for (const fragment of [
+      "for attempt in 1 2 3",
+      "sudo apt-get update",
+      'if [ "$attempt" -eq 3 ]; then',
+      "apt-get update failed after 3 attempts",
+      "apt-get update attempt ${attempt} failed",
+      "sleep $((attempt * 5))",
+      "sudo apt-get install -y --no-install-recommends",
+    ]) {
+      expect(issue4434VitestInstallRun, fragment).toContain(fragment);
+      expect(installActionRun, fragment).toContain(fragment);
+    }
+  });
+
+  it("keeps apt package requests tied to reviewed host-tool consumers", () => {
+    const reviewedAptPackageLiterals = new Set(["expect", "expect iptables"]);
+    const reusableAptPackageRequests = Object.entries(nightlyWorkflow.jobs)
+      .map(([name, job]) => ({
+        name,
+        packages: job.with?.apt_packages,
+        script: String(job.with?.script ?? ""),
+      }))
+      .filter(({ packages }) => packages !== undefined);
+    const directAptPackageRequests = Object.entries(nightlyWorkflow.jobs).flatMap(([name, job]) =>
+      (job.steps ?? [])
+        .filter((step) => String(step.uses ?? "").includes("install-apt-packages"))
+        .map((step) => ({
+          name: `${name}:${step.name ?? ""}`,
+          packages: String(step.with?.packages ?? ""),
+        })),
+    );
+
+    for (const { name, packages } of [...reusableAptPackageRequests, ...directAptPackageRequests]) {
+      expect(reviewedAptPackageLiterals.has(String(packages)), name).toBe(true);
+      expect(String(packages), name).not.toMatch(
+        /\$\{\{|matrix\.|inputs\.|github\.event\.inputs|env\./,
+      );
+    }
+
+    const reusableExpectConsumers = Object.fromEntries(
+      reusableAptPackageRequests
+        .filter(({ packages }) => String(packages).split(/\s+/).includes("expect"))
+        .map(({ name, script }) => [name, script]),
+    );
+    expect(reusableExpectConsumers).toEqual({
+      "network-policy-e2e": "test/e2e/test-network-policy.sh",
+    });
+    for (const [name, script] of Object.entries(reusableExpectConsumers)) {
+      const scriptText = readFileSync(new URL(`../${script}`, import.meta.url), "utf8");
+      expect(scriptText, name).toContain("command -v expect");
+    }
+  });
+
+  it("keeps the apt package validator scoped to simple host tool packages", () => {
+    for (const packageName of [
+      "expect",
+      "iptables",
+      "libssl3",
+      "pkg-config",
+      "python3.12",
+      "7zip",
+      "c++",
+      "libfoo-bar-dev",
+    ]) {
+      expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(true);
+    }
+
+    for (const packageName of ["", "-bad", "pkg:amd64", "bad name", "pkg;rm", "pkg/name"]) {
+      expect(APT_PACKAGE_NAME_PATTERN.test(packageName), packageName).toBe(false);
+    }
   });
 
   it("routes reusable NVIDIA-key jobs through explicit hosted or internal NVIDIA env", () => {

@@ -3,6 +3,16 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+// Compatibility boundary: Hermes' Slack adapter requires Bolt-shaped xoxb-/xapp-
+// placeholders in .env, while older OpenShell persisted bindings may still pass
+// generic openshell:resolve:env:SLACK_* runtime env values into startup. The
+// manifest owns these aliases, the reduced runtime plan carries them to the
+// Hermes entrypoint, and runtime-config-guard only applies them for active,
+// non-disabled Slack channels. The no-runtime-plan fallback is intentionally
+// limited to runtime-config-guard.py's LEGACY_PROVIDER_PLACEHOLDER_KEYS; new
+// channels must ship runtime-plan metadata instead of extending ambient fallback
+// behavior. Remove this normalization once all persisted Hermes legacy bindings
+// render manifest placeholders directly.
 const slackRuntimeEnvAliases = [
   {
     envKey: "SLACK_BOT_TOKEN",

@@ -8,6 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { resolveAgentNameAlias } from "../dist/lib/agent/defs";
+
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
 
 function runPython(script: string): string {
@@ -351,19 +353,24 @@ print(block)
     }
     expect(agentIds.size).toBeGreaterThan(0);
     const agentsRoot = path.join(repoRoot, "agents");
+    const availableAgents = ["openclaw", "hermes", "langchain-deepagents-code"];
     for (const id of agentIds) {
-      const manifest = path.join(agentsRoot, id, "manifest.yaml");
+      const canonicalId = resolveAgentNameAlias(id, availableAgents) ?? id;
+      const manifest = path.join(agentsRoot, canonicalId, "manifest.yaml");
       expect(
         existsSync(manifest),
-        `\`--agent ${id}\` advertised somewhere in matrix/docs/skills but agents/${id}/manifest.yaml is missing`,
+        `\`--agent ${id}\` advertised somewhere in matrix/docs/skills but neither aliases nor agents/${id}/manifest.yaml resolve it`,
       ).toBe(true);
       const manifestBody = readFileSync(manifest, "utf-8");
       const nameMatch = manifestBody.match(/^name:\s*([a-z0-9-]+)\s*$/m);
-      expect(nameMatch?.[1], `agents/${id}/manifest.yaml lacks a name field`).toBeDefined();
       expect(
         nameMatch?.[1],
-        `agents/${id}/manifest.yaml declares name ${nameMatch?.[1]}, breaking the loader contract for documented \`--agent ${id}\``,
-      ).toBe(id);
+        `agents/${canonicalId}/manifest.yaml lacks a name field`,
+      ).toBeDefined();
+      expect(
+        nameMatch?.[1],
+        `agents/${canonicalId}/manifest.yaml declares name ${nameMatch?.[1]}, breaking the loader contract for documented \`--agent ${id}\``,
+      ).toBe(canonicalId);
     }
   });
 

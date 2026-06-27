@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
@@ -399,6 +402,32 @@ describe("oclif compatibility dispatch", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("$ nemohermes sandbox channels start <name> <channel>");
     expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+  });
+
+  it("uses the Deep Agents alias binary name in native oclif help", () => {
+    const aliasDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-oclif-bin-"));
+    const alias = path.join(aliasDir, "nemo-deepagents");
+    fs.symlinkSync(path.join(process.cwd(), "bin", "nemoclaw.js"), alias);
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [alias, "sandbox", "channels", "start", "--help"],
+        {
+          cwd: process.cwd(),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            NO_COLOR: "1",
+          },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("$ nemo-deepagents sandbox channels start <name> <channel>");
+      expect(result.stdout).not.toContain("$ nemoclaw sandbox channels start <name> <channel>");
+    } finally {
+      fs.rmSync(aliasDir, { force: true, recursive: true });
+    }
   });
 
   it("keeps nested internal commands routable through native oclif help", () => {

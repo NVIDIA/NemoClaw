@@ -533,11 +533,9 @@ jobs:
           printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
 
       - name: "Install issue #4434 test dependencies"
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y expect iptables
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: expect iptables
 
       - name: "Run issue #4434 TUI unreachable inference E2E test"
         env:
@@ -1533,6 +1531,7 @@ jobs:
       script: test/e2e/test-network-policy.sh
       artifact_name: "network-policy-test-log"
       artifact_path: "test-network-policy-*.log"
+      apt_packages: expect
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"restricted","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
@@ -2253,6 +2252,23 @@ jobs:
     steps:
       - *target-ref-checkout
 
+      - name: Checkout GPU E2E workflow actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # The GPU script target remains checked out above. Privileged host
+          # dependency setup uses helper actions from the trusted workflow
+          # commit so target_ref cannot replace the local composite action.
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/install-apt-packages
+          path: workflow-actions
+          persist-credentials: false
+
+      - name: Install GPU E2E host dependencies
+        uses: ./workflow-actions/.github/actions/install-apt-packages
+        with:
+          packages: expect
+
       - *dockerhub-auth-step
 
       - name: Verify GPU availability
@@ -2320,6 +2336,8 @@ jobs:
           echo "=== Docker ==="
           docker info --format '{{.ServerVersion}}'
 
+      # No expect install here: this double-onboard regression stays
+      # non-interactive and does not drive the OpenClaw TUI.
       - name: Run GPU double-onboard E2E test
         run: bash test/e2e/test-gpu-double-onboard.sh
 

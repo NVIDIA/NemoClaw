@@ -772,21 +772,25 @@ export async function rebuildSandbox(
       // null fallback) so a missing registry value doesn't silently leave a
       // stale session entry from an earlier sandbox in place.
       // #5735: apply the recreate config resolved + validated BEFORE delete by
-      // prepareRebuildResumeConfig (provider/model/credential/endpoint derived
-      // from the about-to-be-removed registry entry, never from ambient env), so
-      // onboard --resume recreates the recorded sandbox in non-interactive mode.
-      // Assign explicitly so a missing value doesn't leave a stale entry from an
-      // earlier sandbox in place. `pinEndpoint` is false for a matching session
-      // (keep its own custom endpoint) and true for a non-matching session with a
-      // canonical/registry-derivable endpoint.
+      // prepareRebuildResumeConfig, so onboard --resume recreates the recorded
+      // sandbox in non-interactive mode. Provider/model/credential/endpoint come
+      // from the about-to-be-removed registry entry or a validated matching
+      // custom-endpoint session, never ambient env. Assign explicitly so missing
+      // values cannot leave stale entries from an earlier sandbox in place.
       s.provider = resumeConfig.provider;
       s.model = resumeConfig.model;
       s.nimContainer = resumeConfig.nimContainer;
       s.credentialEnv = resumeConfig.credentialEnv;
       s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
-      if (resumeConfig.pinEndpoint) {
-        s.endpointUrl = resumeConfig.endpointUrl;
-      }
+      // `onboard --resume` uses the session as the recreate contract. Always
+      // overwrite the endpoint from the preflighted registry-derived config,
+      // even when the pre-existing session currently matches this sandbox name:
+      // stale recovery can be retrying after an earlier failed recreate left a
+      // partial session behind. Leaving the old endpoint in that case can silently
+      // steer the recreate to the wrong provider URL. `prepareRebuildResumeConfig`
+      // already validates whether this endpoint is recoverable before any
+      // destructive work, so this is the safest source boundary (#4497/#5869).
+      s.endpointUrl = resumeConfig.endpointUrl;
       return s;
     });
     process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;

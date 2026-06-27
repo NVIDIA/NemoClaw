@@ -1203,6 +1203,32 @@ jobs:
         with:
           persist-credentials: false
 
+      # This free-standing job checks out and executes the PR target ref. It
+      # intentionally avoids `uses: ./workflow-actions/.github/actions/install-apt-packages`
+      # because that would load a repo-local action from the target ref after
+      # checkout. Keep privileged host dependency setup inline in trusted
+      # workflow YAML instead; the reusable e2e-script workflow can use the
+      # composite action safely because it pins a separate helper checkout to
+      # github.sha. Contract tests compare this retry/install behavior with the
+      # shared install-apt-packages action so the inline copy cannot drift
+      # silently.
+      - name: "Install issue #4434 host dependencies"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect iptables
+
       - name: Authenticate to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1238,19 +1264,13 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Install issue #4434 host dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y expect iptables
-
       - name: Build CLI
         run: npm run build:cli
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run issue #4434 TUI unreachable inference live test
+      - name: "Run issue #4434 TUI unreachable inference live test"
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
@@ -1272,7 +1292,7 @@ jobs:
             test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload issue #4434 TUI unreachable inference artifacts
+      - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Install apt packages
+
+description: Validate and install requested apt packages on Ubuntu runners.
+
+inputs:
+  packages:
+    description: Space-separated apt package names to install.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install apt packages
+      shell: bash
+      env:
+        APT_PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+
+        read -r -a packages <<< "$APT_PACKAGES"
+        if [ "${#packages[@]}" -eq 0 ]; then
+          echo "::error::No apt packages requested." >&2
+          exit 1
+        fi
+        for package in "${packages[@]}"; do
+          # Matches standard Debian package names. Multi-arch qualifiers such as
+          # :amd64 are intentionally excluded because this action installs host
+          # tools for GitHub-hosted Ubuntu runners.
+          if [[ ! "$package" =~ ^[A-Za-z0-9][A-Za-z0-9+.-]*$ ]]; then
+            echo "::error::Invalid apt package name: $package" >&2
+            exit 1
+          fi
+          case "$package" in
+            expect|iptables) ;;
+            *)
+              echo "::error::Unsupported apt package: $package. Add it to the reviewed host-tool allowlist before use." >&2
+              exit 1
+              ;;
+          esac
+        done
+
+        for attempt in 1 2 3; do
+          if sudo apt-get update; then
+            break
+          fi
+          if [ "$attempt" -eq 3 ]; then
+            echo "::error::apt-get update failed after 3 attempts." >&2
+            exit 1
+          fi
+          echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+          sleep $((attempt * 5))
+        done
+        # Trust model: this CI-only action intentionally trusts the apt sources
+        # configured on GitHub/NVIDIA Ubuntu runners for small host tools.
+        # The allowlist above enforces that callers pass fixed, reviewed package
+        # literals from trusted workflow YAML, not target-ref, workflow_dispatch,
+        # matrix, or script-derived values. Keep runner setup small and
+        # predictable; the explicit package list plus --no-install-recommends:
+        # (1) minimizes attack surface, (2) reduces install time, (3) avoids
+        # pulling unnecessary recommended packages, and (4) makes callers
+        # request every additional host tool explicitly.
+        sudo apt-get install -y --no-install-recommends "${packages[@]}"
