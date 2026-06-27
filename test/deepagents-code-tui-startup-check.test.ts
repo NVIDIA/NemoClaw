@@ -129,6 +129,35 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(assertExit("1")).toBe("passed=0 failed=1");
   });
 
+  it("preserves TUI lifecycle markers in the sanitized capture artifact", () => {
+    const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-markers-"));
+    const sanitizedCapture = path.join(captureDir, "10-deepagents-code-tui-startup.sanitized.log");
+
+    try {
+      const result = runTuiStartupCheckHelperResult(
+        [
+          "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
+          "ensure_expect_available() { return 0; }",
+          "run_tui_expect() {",
+          '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$1"',
+          "}",
+          "main",
+        ].join("\n"),
+        { DEEPAGENTS_TUI_CAPTURE_DIR: captureDir },
+      );
+
+      const sanitizedText = fs.readFileSync(sanitizedCapture, "utf8");
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("finite expect harness reached startup and observed exit");
+      expect(result.stdout).toContain("dcode TUI rendered a usable startup prompt signature");
+      expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
+    } finally {
+      fs.rmSync(captureDir, { force: true, recursive: true });
+    }
+  });
+
   it("detects and redacts every canonical secret family in TUI startup artifacts", () => {
     const detectsSecret = (token: string) =>
       runTuiStartupCheckHelper(
