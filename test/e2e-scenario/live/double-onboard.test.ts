@@ -397,10 +397,9 @@ function assertRegistryInferenceMetadata(sandboxName: string, endpointUrl: strin
     provider: "compatible-endpoint",
     model: "test-model",
   });
-  if (entry?.endpointUrl !== undefined) expect(entry.endpointUrl).toBe(endpointUrl);
-  if (entry?.credentialEnv !== undefined) expect(entry.credentialEnv).toBe("COMPATIBLE_API_KEY");
-  if (entry?.preferredInferenceApi !== undefined)
-    expect(entry.preferredInferenceApi).toBe("openai-completions");
+  expect(entry?.endpointUrl ?? endpointUrl).toBe(endpointUrl);
+  expect(entry?.credentialEnv ?? "COMPATIBLE_API_KEY").toBe("COMPATIBLE_API_KEY");
+  expect(entry?.preferredInferenceApi ?? "openai-completions").toBe("openai-completions");
 }
 
 async function waitOpenshellSandboxAbsent(
