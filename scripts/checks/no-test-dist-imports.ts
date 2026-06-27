@@ -10,15 +10,21 @@ type Violation = { file: string; line: number; detail: string };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
-const EXCLUDED_FILES = new Set([
+// These tests intentionally construct fake dist/lib trees; they do not load
+// repository build output. The self-audit below prevents this list growing or
+// retaining an exemption after the fixture no longer needs one.
+const FIXTURE_EXCLUSIONS = new Set([
   "test/dist-sourcemaps.test.ts",
-  "test/install-express-prompt.test.ts",
-  "test/install-openshell-version-check.test.ts",
-  "test/install-preflight-docker-bootstrap.test.ts",
   "test/install-preflight.test.ts",
   "test/stale-dist-check.test.ts",
 ]);
-const EXCLUDED_PREFIXES = ["test/e2e/", "test/e2e-scenario/live/", "test/package-contract/"];
+const EXCLUDED_PREFIXES = [
+  // Live/branch E2E validates installed artifacts rather than unit-test imports.
+  "test/e2e/",
+  "test/e2e-scenario/live/",
+  // This is the sole non-live lane allowed to import compiled package artifacts.
+  "test/package-contract/",
+];
 
 function repoPath(absolutePath: string): string {
   return path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
@@ -26,7 +32,7 @@ function repoPath(absolutePath: string): string {
 
 function isScannedTestFile(absolutePath: string): boolean {
   const relativePath = repoPath(absolutePath);
-  if (EXCLUDED_FILES.has(relativePath)) return false;
+  if (FIXTURE_EXCLUSIONS.has(relativePath)) return false;
   if (EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) return false;
   if (relativePath.startsWith("src/")) return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relativePath);
   return relativePath.startsWith("test/") && /\.[cm]?[jt]sx?$/.test(relativePath);
@@ -131,6 +137,17 @@ function findViolations(absolutePath: string): Violation[] {
     });
   }
   return violations;
+}
+
+const staleFixtureExclusions = [...FIXTURE_EXCLUSIONS].filter((relativePath) => {
+  const absolutePath = path.join(REPO_ROOT, relativePath);
+  return !existsSync(absolutePath) || findViolations(absolutePath).length === 0;
+});
+
+if (staleFixtureExclusions.length > 0) {
+  console.error("Fixture exclusions must exist and still construct a compiled-internal path:");
+  for (const relativePath of staleFixtureExclusions) console.error(`  ${relativePath}`);
+  process.exit(1);
 }
 
 const violations = [...walk(path.join(REPO_ROOT, "src")), ...walk(path.join(REPO_ROOT, "test"))]
