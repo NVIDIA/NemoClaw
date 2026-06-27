@@ -359,7 +359,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: 30_000,
     });
     expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(resultText(inference)).toMatch(/nvidia-prod/i);
+    expect(resultText(inference)).toContain(hosted.providerName);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-3-openshell-policy-get",

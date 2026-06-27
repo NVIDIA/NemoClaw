@@ -16,6 +16,7 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
 const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
+const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -93,6 +94,9 @@ function restoreFile(file: string, snapshot: FileSnapshot): void {
 function createOldBaseBuildContext(): string {
   const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
   fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
+  fs.mkdirSync(path.join(buildContext, path.dirname(BASE_CONTEXT_SCRIPT_RELPATH)), {
+    recursive: true,
+  });
   const original = fs.readFileSync(BLUEPRINT, "utf8");
   const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
   expect(
@@ -103,6 +107,10 @@ function createOldBaseBuildContext(): string {
     path.join(buildContext, BLUEPRINT_RELPATH),
     original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`),
     "utf8",
+  );
+  fs.copyFileSync(
+    path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
+    path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
   );
   return buildContext;
 }
