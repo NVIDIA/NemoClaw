@@ -100,9 +100,23 @@ describe("Deep Agents Code TUI startup check helpers", () => {
 
     expect(readiness("Deep Agents Code starting...\nLoading tools...")).toBe("not-ready");
     expect(readiness("Press Enter to continue")).toBe("not-ready");
+    expect(readiness("Your name (optional)")).toBe("not-ready");
     expect(readiness("What would you like to do next?")).toBe("ready");
     expect(readiness("Enter your task, then press Enter")).toBe("ready");
     expect(readiness("How can I help with the codebase today?")).toBe("ready");
+  });
+
+  it("matches only the pinned first-run onboarding name screen", () => {
+    const isOnboarding = (capture: string) =>
+      runTuiStartupCheckHelper(
+        'if printf "%s" "$CAPTURE" | grep -Eiq "$TUI_ONBOARDING_PATTERN"; then printf onboarding; else printf other; fi',
+        { CAPTURE: capture },
+      );
+
+    expect(isOnboarding("Your name (optional)")).toBe("onboarding");
+    expect(isOnboarding("What should Deep Agents call you?")).toBe("onboarding");
+    expect(isOnboarding("Your project name")).toBe("other");
+    expect(isOnboarding("What would you like to build?")).toBe("other");
   });
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
@@ -139,7 +153,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
           "sandbox_exec() { printf 'NEMOCLAW_DCODE_PROBE:deepagents\\n'; }",
           "ensure_expect_available() { return 0; }",
           "run_tui_expect() {",
-          '  printf "What would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
+          '  printf "Your name (optional)\\nNEMOCLAW_TUI_ONBOARDING_SKIPPED\\nWhat would you like to do next?\\nNEMOCLAW_TUI_READY\\nNEMOCLAW_TUI_EXIT_CAPTURED:130\\n" >>"$2"',
           "  return 0",
           "}",
           "main",
@@ -152,6 +166,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       expect(result.stdout).toContain("finite expect harness reached startup and observed exit");
       expect(result.stdout).toContain("dcode TUI rendered a usable startup prompt signature");
       expect(result.stdout).toContain("dcode TUI exited cleanly after Ctrl-C (exit 130)");
+      expect(sanitizedText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_READY");
       expect(sanitizedText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:130");
     } finally {

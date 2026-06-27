@@ -471,6 +471,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain("unable to probe sandbox");
     expect(tuiStartupCheck).toContain("unexpected sandbox probe output");
     expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN"');
+    expect(tuiStartupCheck).toContain("-nocase -re $onboarding_pattern");
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"');
+    expect(tuiStartupCheck).toContain('send -- "\\033"');
+    expect(tuiStartupCheck).toContain("if {$saw_onboarding}");
+    expect(tuiStartupCheck).toContain('send -- "\\003"\nafter 250\nsend -- "\\003"');
     expect(tuiStartupCheck).toContain('append_marker $markers "$expect_out(0,string)"');
     expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_READY"');
     expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_TIMEOUT"');
