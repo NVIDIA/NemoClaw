@@ -161,9 +161,9 @@ reviews:
 
     - path: "test/{e2e,e2e-scenario}/**"
       instructions: &e2e-migration |
-        Review against the active guide at
-        `test/{e2e,e2e-scenario}/docs/MIGRATION.md`: Vitest is the one E2E execution
-        path, and fixtures are support code rather than another runner.
+        Review against the active migration guide in the matching E2E tree. Vitest
+        is the one E2E execution path, and fixtures are support code rather than
+        another runner.
 
         - Preserve real shell, process, installer, platform, and full-journey
           boundaries by invoking them from Vitest when they are the contract.
