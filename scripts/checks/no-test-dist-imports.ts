@@ -3,10 +3,10 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import ts from "typescript";
 
-type Violation = { file: string; line: number; detail: string };
+export type Violation = { file: string; line: number; detail: string };
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
@@ -30,12 +30,15 @@ function repoPath(absolutePath: string): string {
   return path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/");
 }
 
-function isScannedTestFile(absolutePath: string): boolean {
-  const relativePath = repoPath(absolutePath);
+export function isScannedTestPath(relativePath: string): boolean {
   if (FIXTURE_EXCLUSIONS.has(relativePath)) return false;
   if (EXCLUDED_PREFIXES.some((prefix) => relativePath.startsWith(prefix))) return false;
   if (relativePath.startsWith("src/")) return /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(relativePath);
   return relativePath.startsWith("test/") && /\.[cm]?[jt]sx?$/.test(relativePath);
+}
+
+function isScannedTestFile(absolutePath: string): boolean {
+  return isScannedTestPath(repoPath(absolutePath));
 }
 
 function* walk(directory: string): Generator<string> {
@@ -57,16 +60,14 @@ function isCompiledInternalSpecifier(specifier: string): boolean {
   );
 }
 
-function findViolations(absolutePath: string): Violation[] {
-  const source = readFileSync(absolutePath, "utf8");
+export function findCompiledInternalViolations(file: string, source: string): Violation[] {
   const sourceFile = ts.createSourceFile(
-    absolutePath,
+    file,
     source,
     ts.ScriptTarget.Latest,
     true,
-    absolutePath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   );
-  const file = repoPath(absolutePath);
   const violations: Violation[] = [];
 
   function add(node: ts.Node, detail: string): void {
@@ -136,40 +137,51 @@ function findViolations(absolutePath: string): Violation[] {
       detail: "embeds a compiled-internal require in generated test code",
     });
   }
-  return violations;
-}
-
-const staleFixtureExclusions = [...FIXTURE_EXCLUSIONS].filter((relativePath) => {
-  const absolutePath = path.join(REPO_ROOT, relativePath);
-  return !existsSync(absolutePath) || findViolations(absolutePath).length === 0;
-});
-
-if (staleFixtureExclusions.length > 0) {
-  console.error("Fixture exclusions must exist and still construct a compiled-internal path:");
-  for (const relativePath of staleFixtureExclusions) console.error(`  ${relativePath}`);
-  process.exit(1);
-}
-
-const violations = [...walk(path.join(REPO_ROOT, "src")), ...walk(path.join(REPO_ROOT, "test"))]
-  .flatMap(findViolations)
-  .filter(
+  return violations.filter(
     (violation, index, all) =>
       all.findIndex(
         (candidate) => candidate.file === violation.file && candidate.line === violation.line,
       ) === index,
   );
-
-if (violations.length > 0) {
-  console.error(
-    "Compiled CLI internals may only be imported by the package-contract test project:",
-  );
-  for (const violation of violations) {
-    console.error(`  ${violation.file}:${violation.line} ${violation.detail}`);
-  }
-  console.error(
-    "Import src/ instead, or move a genuine compiled-package contract under test/package-contract/.",
-  );
-  process.exit(1);
 }
 
-console.log("Test imports respect the source/package boundary.");
+function findViolations(absolutePath: string): Violation[] {
+  return findCompiledInternalViolations(repoPath(absolutePath), readFileSync(absolutePath, "utf8"));
+}
+
+function main(): void {
+  const staleFixtureExclusions = [...FIXTURE_EXCLUSIONS].filter((relativePath) => {
+    const absolutePath = path.join(REPO_ROOT, relativePath);
+    return !existsSync(absolutePath) || findViolations(absolutePath).length === 0;
+  });
+
+  if (staleFixtureExclusions.length > 0) {
+    console.error("Fixture exclusions must exist and still construct a compiled-internal path:");
+    for (const relativePath of staleFixtureExclusions) console.error(`  ${relativePath}`);
+    process.exit(1);
+  }
+
+  const violations = [
+    ...walk(path.join(REPO_ROOT, "src")),
+    ...walk(path.join(REPO_ROOT, "test")),
+  ].flatMap(findViolations);
+
+  if (violations.length > 0) {
+    console.error(
+      "Compiled CLI internals may only be imported by the package-contract test project:",
+    );
+    for (const violation of violations) {
+      console.error(`  ${violation.file}:${violation.line} ${violation.detail}`);
+    }
+    console.error(
+      "Import src/ instead, or move a genuine compiled-package contract under test/package-contract/.",
+    );
+    process.exit(1);
+  }
+
+  console.log("Test imports respect the source/package boundary.");
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  main();
+}
