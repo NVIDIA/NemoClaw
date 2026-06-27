@@ -434,6 +434,9 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("env OPENAI_API_KEY=");
     expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
     expect(secretBoundaryCheck).toContain("remote_cmd=");
+    expect(secretBoundaryCheck).toContain("OpenShell rejects newline-bearing exec");
+    expect(secretBoundaryCheck).toContain("NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST");
+    expect(secretBoundaryCheck).toContain("NO_NEWLINE_IN_COMMAND");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:%s\\\\n");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");

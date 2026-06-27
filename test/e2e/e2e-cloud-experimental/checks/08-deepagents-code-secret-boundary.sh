@@ -37,6 +37,10 @@ sandbox_exec() {
 dcode_secret_probe() {
   local command="$1"
   local remote_cmd
+  # This helper is intentionally used only with hardcoded probe commands below;
+  # secret material is inserted by callers with Bash @Q quoting. Keep the
+  # remote command single-line because OpenShell rejects newline-bearing exec
+  # arguments.
   remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); ${command} >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
   sandbox_exec "$remote_cmd"
 }
@@ -184,6 +188,23 @@ assert_no_rejected_interval_audit_logs() {
 
 PASSED=0
 FAILED=0
+
+if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "probe-command-shape" ]; then
+  sandbox_exec() {
+    case "$1" in
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        return 0
+        ;;
+    esac
+  }
+  dcode_secret_probe "env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING'"
+  exit 0
+fi
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
