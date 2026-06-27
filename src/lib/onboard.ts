@@ -4088,7 +4088,6 @@ async function setupNim(
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
-          compatibleEndpointReasoning,
           allowToolsIncompatible,
         } = state);
         compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
