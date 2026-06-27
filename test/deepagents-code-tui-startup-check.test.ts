@@ -53,7 +53,20 @@ function secretFixture(...parts: string[]): string {
   return parts.join("");
 }
 
-function runTuiExpectStateMachine(events: string[]) {
+type TuiExpectEvent = "eof" | "exit" | "onboarding" | "ready" | "timeout";
+
+const tclEventLiterals: Record<TuiExpectEvent, string> = {
+  eof: "{eof}",
+  exit: "{exit}",
+  onboarding: "{onboarding}",
+  ready: "{ready}",
+  timeout: "{timeout}",
+};
+const tclshAvailable =
+  spawnSync("tclsh", ["-"], { encoding: "utf8", input: "exit 0\n" }).status === 0;
+const itWithTclsh = it.runIf(tclshAvailable);
+
+function runTuiExpectStateMachine(events: TuiExpectEvent[]) {
   const captureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-tui-expect-"));
   const capture = path.join(captureDir, "raw.log");
   const markers = path.join(captureDir, "markers.log");
@@ -64,7 +77,7 @@ function runTuiExpectStateMachine(events: string[]) {
   const prelude = String.raw`
 rename after real_after
 rename exit real_exit
-set ::fake_events [list ${events.map((event) => `{${event}}`).join(" ")}]
+set ::fake_events [list ${events.map((event) => tclEventLiterals[event]).join(" ")}]
 set ::fake_sent {}
 
 proc log_file {args} {}
@@ -211,7 +224,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(isOnboarding("What would you like to build?")).toBe("other");
   });
 
-  it("skips first-run onboarding before marking the real TUI prompt ready", () => {
+  itWithTclsh("skips first-run onboarding before marking the real TUI prompt ready (tclsh)", () => {
     const { markerText, result, traceText } = runTuiExpectStateMachine([
       "onboarding",
       "ready",
@@ -230,15 +243,18 @@ describe("Deep Agents Code TUI startup check helpers", () => {
     expect(markerText).toContain("NEMOCLAW_TUI_EXIT_CAPTURED:0");
   });
 
-  it("does not mark the TUI ready when the coding prompt times out after onboarding", () => {
-    const { markerText, result, traceText } = runTuiExpectStateMachine(["onboarding", "timeout"]);
+  itWithTclsh(
+    "does not mark the TUI ready when the coding prompt times out after onboarding (tclsh)",
+    () => {
+      const { markerText, result, traceText } = runTuiExpectStateMachine(["onboarding", "timeout"]);
 
-    expect(result.status, result.stderr).toBe(20);
-    expect(traceText).toBe("1b,03");
-    expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
-    expect(markerText).toContain("NEMOCLAW_TUI_TIMEOUT");
-    expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
-  });
+      expect(result.status, result.stderr).toBe(20);
+      expect(traceText).toBe("1b,03");
+      expect(markerText).toContain("NEMOCLAW_TUI_ONBOARDING_SKIPPED");
+      expect(markerText).toContain("NEMOCLAW_TUI_TIMEOUT");
+      expect(markerText).not.toContain("NEMOCLAW_TUI_READY");
+    },
+  );
 
   it("does not treat generic TUI exit status 1 as a clean Ctrl-C exit", () => {
     const assertExit = (exitCode: string) =>
