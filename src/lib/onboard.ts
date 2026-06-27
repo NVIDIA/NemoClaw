@@ -1065,7 +1065,7 @@ const {
   promptOllamaModel,
   printOllamaExposureWarning,
   prepareOllamaModel,
-} = require("./inference/ollama/proxy");
+}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -3281,6 +3281,11 @@ async function selectAndValidateOllamaModel(
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
+  const interaction: import("./inference/ollama/proxy").OllamaToolCapabilityInteraction = {
+    isNonInteractive,
+    isAutoYes,
+    confirm: (question, defaultIsYes) => promptYesNoOrDefault(question, null, defaultIsYes),
+  };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
@@ -3323,7 +3328,10 @@ async function selectAndValidateOllamaModel(
         }
       }
     }
-    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    const probe = await prepareOllamaModel(selectedModel, {
+      installedModels,
+      interaction,
+    });
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);

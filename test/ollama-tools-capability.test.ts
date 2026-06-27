@@ -49,6 +49,11 @@ interface LocalInferenceModule {
 interface OnboardOllamaProxyModule {
   checkOllamaModelToolSupport: (
     model: string,
+    interaction?: {
+      isNonInteractive: () => boolean;
+      isAutoYes: () => boolean;
+      confirm: (question: string, defaultIsYes: boolean) => Promise<boolean>;
+    },
   ) => Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }>;
 }
 
@@ -209,11 +214,10 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
 // onboard-ollama-proxy from the require cache between tests so it
 // re-binds to the patched local-inference function.
 //
-// Equally critical: onboard.js destructures `prompt` from credentials
-// at load time, so our credentials.prompt monkey-patch must be in
-// place BEFORE onboard.js is first required. We install one durable
-// proxy via shared state so re-creating per-test mocks doesn't hand
-// onboard a stale closure.
+// Equally critical: the proxy destructures `prompt` from credentials at
+// load time, so our credentials.prompt monkey-patch must be in place before
+// the proxy is first required. We install one durable proxy via shared state
+// so re-creating per-test mocks does not leave the module with a stale closure.
 // ─────────────────────────────────────────────────────────────────
 
 interface ProxyTestHarness {
@@ -411,6 +415,69 @@ describe("checkOllamaModelToolSupport", () => {
     // Note about --yes is printed.
     expect(h.logs.some((l) => l.toLowerCase().includes("--yes"))).toBe(true);
     // Prompt should NOT have been shown.
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("uses the caller's non-interactive state instead of rediscovering onboard globals", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => true,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({
+      ok: false,
+      message: "Tools-incompatible model in non-interactive mode.",
+    });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("uses the caller's auto-yes state without prompting", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => false);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => false,
+      isAutoYes: () => true,
+      confirm,
+    });
+
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("delegates interactive confirmation to the caller", async () => {
+    const h = loadProxyWithStubs();
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const confirm = vi.fn(async () => true);
+
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4", {
+      isNonInteractive: () => false,
+      isAutoYes: () => false,
+      confirm,
+    });
+
+    expect(out).toEqual({ ok: true, allowToolsIncompatible: true });
+    expect(confirm).toHaveBeenCalledWith("  Use this model anyway?", false);
     expect(h.promptCalls.length).toBe(0);
   });
 
