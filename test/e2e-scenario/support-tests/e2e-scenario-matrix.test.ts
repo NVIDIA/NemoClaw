@@ -135,7 +135,7 @@ describe("live Vitest scenario matrix", () => {
     ]);
   });
 
-  it("--emit-live-matrix prints a single-line JSON array for supported live Vitest scenarios", () => {
+  it("prints a single-line JSON array of supported live Vitest scenarios for --emit-live-matrix", () => {
     const result = runEmitLiveMatrix();
     expect(result.status, result.stderr).toBe(0);
     const lines = result.stdout.trim().split("\n");
@@ -148,7 +148,7 @@ describe("live Vitest scenario matrix", () => {
     ]);
   });
 
-  it("--emit-live-matrix honors explicit scenario selections", () => {
+  it("honors explicit scenario selections for --emit-live-matrix", () => {
     const result = runEmitLiveMatrix(["--scenarios", "ubuntu-repo-cloud-hermes"]);
     expect(result.status, result.stderr).toBe(0);
     const parsed = JSON.parse(result.stdout.trim());

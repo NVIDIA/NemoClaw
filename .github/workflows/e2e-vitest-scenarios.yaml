@@ -1994,6 +1994,27 @@ jobs:
         with:
           persist-credentials: false
 
+      # Expect is a reviewed host-tool consumer for the interactive policy-add
+      # test. Keep this privileged setup inline in trusted workflow YAML. This
+      # job executes a selected target ref, so it must not load a repo-local
+      # action from that ref with sudo privileges.
+      - name: Install network-policy host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -4082,7 +4103,7 @@ jobs:
         # sandbox inference.local completion boundaries without adding registry
         # or migration-ledger wiring.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -4376,7 +4397,9 @@ jobs:
         # Docker/OpenShell mutation.
         run: |
           set -euo pipefail
-          npx vitest run --project cli             test/gateway-drift-preflight.test.ts             --silent=false --reporter=default
+          npx vitest run --project integration \
+            test/gateway-drift-preflight.test.ts \
+            --silent=false --reporter=default
 
       - name: Upload gateway drift preflight artifacts
         if: always()

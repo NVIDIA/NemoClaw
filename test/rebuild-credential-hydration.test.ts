@@ -106,7 +106,7 @@ process.stdout.write(JSON.stringify(payload));
   return { result, tmpDir };
 }
 
-describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => {
+describe("credential hydration from legacy storage, layer 1 (#2273)", () => {
   // Test each provider's credential env to ensure parametric coverage
   const providers = [
     {

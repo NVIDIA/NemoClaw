@@ -147,7 +147,7 @@ describe("sandbox name validation", () => {
   });
 });
 
-describe("#1077 — status host service PID dir matches start/stop env", () => {
+describe("status host service PID dir matches start/stop env (#1077)", () => {
   const savedSandboxName = process.env.SANDBOX_NAME;
   const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
   const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;

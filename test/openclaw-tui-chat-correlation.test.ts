@@ -579,7 +579,7 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
 }
 
 describe("OpenClaw TUI chat correlation regression (#2603)", () => {
-  it("classifies the observed #2603 gateway trace as broken", () => {
+  it("classifies the observed gateway trace as broken (#2603)", () => {
     const analysis = analyzeIssue2603Trace(capturedIssue2603Trace);
 
     expect(analysis.emptyFinalsForSubmittedRuns).toEqual([

@@ -169,7 +169,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("langchain-deepagents-code");
   });
 
-  it("--help exits 0", () => {
+  it("exits 0 for --help", () => {
     expect(run("--help").code).toBe(0);
   });
 
@@ -179,7 +179,7 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("-h exits 0", () => {
+  it("exits 0 for -h", () => {
     expect(run("-h").code).toBe(0);
   });
 

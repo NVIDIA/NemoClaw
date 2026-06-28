@@ -218,7 +218,7 @@ module.exports = {
 `;
 }
 
-describe("channels remove full teardown (issue #3998)", () => {
+describe("channels remove full teardown (#3998)", () => {
   for (const sandboxAgent of ["openclaw", "hermes"] as const) {
     it(`strips '${sandboxAgent}' session.policyPresets and clears the in-sandbox whatsapp state dir`, () => {
       const script = `${buildPreamble({ sandboxAgent })}

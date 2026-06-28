@@ -480,7 +480,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 4
-  it("--force bypasses the conflict even in non-interactive mode", async () => {
+  it("bypasses the conflict with --force even in non-interactive mode", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -566,7 +566,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 7
-  it("--dry-run never runs the conflict check or touches credentials", async () => {
+  it("avoids the conflict check and credentials with --dry-run", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -706,7 +706,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
-  it("--force proceeds when the conflict check throws", async () => {
+  it("proceeds with --force when the conflict check throws", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha"), others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     listSandboxesMock.mockImplementation(() => {

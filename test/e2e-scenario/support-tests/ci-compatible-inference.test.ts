@@ -21,7 +21,7 @@ describe("gateway-managed compatible inference detection", () => {
         NVIDIA_INFERENCE_API_KEY: "hosted-compatible-test-key",
       },
     },
-  ])("skips the live issue #4434 sandbox-egress repro for $label", ({ env: hostedEnv }) => {
+  ])("skips the live sandbox-egress repro for $label (#4434)", ({ env: hostedEnv }) => {
     const {
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: _hostedSentinel,
       NEMOCLAW_PROVIDER: _provider,

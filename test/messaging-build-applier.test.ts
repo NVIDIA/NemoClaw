@@ -721,7 +721,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(result.stderr).toContain("unexpected-package==1.2.3");
   });
 
-  it("#4246: messaging post-agent-install render reaches the mocked OpenClaw doctor boundary", () => {
+  it("reaches the mocked OpenClaw doctor boundary during post-agent-install messaging render (#4246)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-runtime-contract-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");

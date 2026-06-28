@@ -239,7 +239,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       expect(result.stderr).toMatch(/Aborting --from-dir/);
     });
 
-    it("--from-dir skips hidden dotfile yaml presets", () => {
+    it("skips hidden dotfile YAML presets for --from-dir", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-hidden-"));
       fs.writeFileSync(path.join(dir, ".bad.yaml"), "preset:\n  name: bad\nnetwork_policies: {}\n");
       fs.writeFileSync(
@@ -260,7 +260,7 @@ Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
       expect(result.stderr).toMatch(/Directory not found/);
     });
 
-    it("--from-dir skips sub-directories whose names end in .yaml/.yml", () => {
+    it("skips subdirectories ending in .yaml or .yml for --from-dir", () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-from-dir-skipdir-"));
       // A real preset file and a directory that happens to match the yaml glob.
       fs.writeFileSync(

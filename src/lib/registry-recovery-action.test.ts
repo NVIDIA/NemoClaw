@@ -73,7 +73,7 @@ import { recoverRegistryEntries } from "./registry-recovery-action.js";
 import { parseLiveSandboxEntries } from "./runtime-recovery.js";
 import { loadSession } from "./state/onboard-session.js";
 
-describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
+describe("recoverRegistryEntries seed-time guard (#2753)", () => {
   beforeEach(() => {
     mockRegistryState.sandboxes = {};
     mockRegistryState.defaultSandbox = null;
@@ -226,7 +226,7 @@ describe("recoverRegistryEntries (#2753 seed-time guard)", () => {
   });
 });
 
-describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", () => {
+describe("recoverRegistryEntries empty-registry live gateway recovery (#5714)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRegistryState.sandboxes = {};
@@ -347,7 +347,7 @@ describe("recoverRegistryEntries (#5714 empty-registry live gateway recovery)", 
     expect(result.recoveredFromGateway).toBe(0);
   });
 
-  it("does NOT persist unseeded gateway recoveries to the on-disk registry (#5714 agent safety)", async () => {
+  it("does not persist unseeded gateway recoveries to the on-disk registry for agent safety (#5714)", async () => {
     // `openshell sandbox list` does not expose the agent type, so persisting a
     // recovered entry would default agent to "openclaw" everywhere downstream
     // and permanently misclassify a Deep Agents/Hermes sandbox. Recovery is

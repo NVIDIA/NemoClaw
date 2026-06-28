@@ -128,7 +128,7 @@ const { setupPoliciesWithSelection } = require(${onboardPath});
 `;
 }
 
-describe("setupPoliciesWithSelection preset-diff (issue #2177)", () => {
+describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // In non-interactive mode a user who runs onboard twice — first with Balanced
   // defaults (applies 5 presets), second with NEMOCLAW_POLICY_PRESETS=npm —
   // expects the final sandbox to have ONLY npm. Previously-applied presets

@@ -96,6 +96,8 @@ describe("MCP OpenShell workflow boundary", () => {
       expect(step?.env ?? {}).not.toHaveProperty("GH_TOKEN");
       expect(step?.env ?? {}).not.toHaveProperty("NEMOCLAW_INSTALL_OPENSHELL_GH_TOKEN");
       expect(step?.run ?? "").not.toContain("OPENSHELL_ARTIFACT_READ_TOKEN");
+      expect(step?.run ?? "").not.toContain("artifact");
+      expect(step?.run ?? "").toContain("bash scripts/install-openshell.sh");
     }
   });
 

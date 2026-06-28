@@ -15,7 +15,7 @@ import path from "node:path";
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("fails probe-only when the gateway serves once and then drops its listener (#4710 wedge)", () => {
+  it("fails probe-only when a wedged gateway serves once and then drops its listener (#4710)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-wedge-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
