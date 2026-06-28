@@ -642,7 +642,7 @@ export function resetManagedInferenceRouteWithDeps(
     return fail(detail);
   }
 
-  if (!quiet) log(`  Resetting inference route to ${provider}/${model}.`);
+  if (!quiet) log(`  Resetting inference route to ${route}.`);
   const resetResult = deps.runInferenceSet(provider, model);
   const resetFailed = resetResult.status !== 0;
   if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
