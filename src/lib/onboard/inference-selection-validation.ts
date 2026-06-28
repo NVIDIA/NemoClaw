@@ -21,6 +21,7 @@ const { probeAnthropicEndpoint, probeOpenAiLikeEndpoint } =
 import { shouldForceCompletionsApi } from "../validation";
 import { getProbeRecovery } from "../validation-recovery";
 import { summarizeProbeForDisplay } from "./probe-diagnostics";
+import { normalizeReasoningFlag } from "./reasoning-mode";
 
 export type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -185,7 +186,7 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
-    const reasoningEnabled = process.env.NEMOCLAW_REASONING === "true";
+    const reasoningEnabled = normalizeReasoningFlag(process.env.NEMOCLAW_REASONING) === "true";
     // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
     const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       requireResponsesToolCalling: !reasoningEnabled,

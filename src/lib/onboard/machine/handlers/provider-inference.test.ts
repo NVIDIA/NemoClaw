@@ -150,13 +150,6 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.startStep).toHaveBeenNthCalledWith(1, "provider_selection");
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true);
-    expect(calls.complete).toHaveBeenCalledWith(
-      "provider_selection",
-      expect.objectContaining({
-        compatibleEndpointReasoning: null,
-        provider: "nvidia-prod",
-      }),
-    );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
     expect(calls.startStep).toHaveBeenNthCalledWith(2, "inference", {
@@ -179,6 +172,7 @@ describe("handleProviderInferenceState", () => {
       model: "nvidia/test",
       provider: "nvidia-prod",
       preferredInferenceApi: "openai-responses",
+      compatibleEndpointReasoning: null,
     });
     expect(result.stateResult).toEqual({
       type: "transition",
@@ -207,20 +201,17 @@ describe("handleProviderInferenceState", () => {
       provider: "compatible-endpoint",
       credentialEnv: "COMPATIBLE_API_KEY",
     }));
-    const { deps, calls } = createDeps({ setupNim });
+    const { deps } = createDeps({ setupNim });
 
-    await handleProviderInferenceState({
+    const result = await handleProviderInferenceState({
       ...baseOptions(deps),
       env: { NEMOCLAW_REASONING: "true" },
     });
 
-    expect(calls.complete).toHaveBeenCalledWith(
-      "provider_selection",
-      expect.objectContaining({
-        compatibleEndpointReasoning: "true",
-        provider: "compatible-endpoint",
-      }),
-    );
+    expect(result).toMatchObject({
+      compatibleEndpointReasoning: "true",
+      provider: "compatible-endpoint",
+    });
   });
 
   it("disables recorded provider recovery during fresh provider selection", async () => {
