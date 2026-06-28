@@ -165,31 +165,32 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
 
     const tamperedPlan = {
       ...basePlan,
-      channels: basePlan.channels.map((channel) => {
-        if (channel.channelId !== "telegram") return channel;
-        return {
-          ...channel,
-          inputs: [
-            ...channel.inputs.filter(
-              (input) => input.inputId !== "groupPolicy" && input.inputId !== "requireMention",
-            ),
-            {
-              channelId: "telegram",
-              inputId: "groupPolicy",
-              kind: "config" as const,
-              required: false,
-              value: { tampered: ["allowlist", "open"] } as unknown as string,
-            },
-            {
-              channelId: "telegram",
-              inputId: "requireMention",
-              kind: "config" as const,
-              required: false,
-              value: ["1", "0"] as unknown as string,
-            },
-          ],
-        };
-      }),
+      channels: basePlan.channels.map((channel) =>
+        channel.channelId === "telegram"
+          ? {
+              ...channel,
+              inputs: [
+                ...channel.inputs.filter(
+                  (input) => input.inputId !== "groupPolicy" && input.inputId !== "requireMention",
+                ),
+                {
+                  channelId: "telegram",
+                  inputId: "groupPolicy",
+                  kind: "config" as const,
+                  required: false,
+                  value: { tampered: ["allowlist", "open"] } as unknown as string,
+                },
+                {
+                  channelId: "telegram",
+                  inputId: "requireMention",
+                  kind: "config" as const,
+                  required: false,
+                  value: ["1", "0"] as unknown as string,
+                },
+              ],
+            }
+          : channel,
+      ),
     };
 
     const diagnostic = collectBuiltInMessagingChannelDiagnostics().find(
