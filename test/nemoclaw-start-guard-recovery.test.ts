@@ -49,8 +49,10 @@ function runRecoveryHarness({ missingCiaoSource = false } = {}): Harness {
     runtimeEnv: path.join(tmpDir, "nemoclaw-proxy-env.sh"),
   };
 
-  for (const [name, sourcePath] of Object.entries(sources)) {
-    if (missingCiaoSource && name === "ciao") continue;
+  const stagedSources = Object.entries(sources).filter(
+    ([name]) => !missingCiaoSource || name !== "ciao",
+  );
+  for (const [name, sourcePath] of stagedSources) {
     fs.writeFileSync(sourcePath, `module.exports = ${JSON.stringify(name)};\n`, { mode: 0o644 });
   }
 
