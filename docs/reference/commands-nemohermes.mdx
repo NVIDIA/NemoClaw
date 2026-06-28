@@ -1016,7 +1016,7 @@ Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoCl
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
 All endpoints must use HTTPS, and persisted MCP URLs cannot contain query strings, percent-escaped or glob-style paths, or port zero.
 OpenShell globally reserves the credential key for the generated policy, requires verified TLS and an exact Host match, then enforces the endpoint, runtime, path, query, and MCP-method boundary before replacing the placeholder; broader overlapping policies cannot widen that decision, and denied requests are neither rewritten nor sent upstream.
-The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP bridge, proxy, relay, or listener.
+The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 
 ```bash
@@ -2000,6 +2000,7 @@ Defaults are sized for typical hardware; override only if you see false-positive
 
 | Variable | Default | Effect |
 |----------|---------|--------|
+| `NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS` | `30` | Maximum time to wait for an OpenShell MCP provider credential revision to become active or fully revoked inside the sandbox. Integer seconds; raise only when provider synchronization is unusually slow. |
 | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS` | per call site (typically `15000`) | Overrides the default timeout for `openshell sandbox exec` calls issued by recovery and lifecycle helpers. Integer milliseconds; non-positive or non-numeric values fall back to the per-call-site default. |
 | `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` | built-in default | Overrides the timeout for the OpenShell status probe used by `nemohermes <name> status`. Integer milliseconds; non-positive or non-numeric values fall back to the default. |
 

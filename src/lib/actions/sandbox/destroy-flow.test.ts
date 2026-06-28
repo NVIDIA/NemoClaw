@@ -224,7 +224,7 @@ describe("destroySandbox flow", () => {
     delete require.cache[requireDist.resolve(destroyModulePath)];
   });
 
-  it("trusts absence only from a successful, error-free sandbox list", () => {
+  it("trusts absence only from a successful, error-free sandbox list", { timeout: 15_000 }, () => {
     const { classifyDestroySandboxPresence } = requireDist(destroyModulePath) as {
       classifyDestroySandboxPresence: (
         sandboxName: string,

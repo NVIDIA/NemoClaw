@@ -12,6 +12,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { installMcpTestCaInSandbox } from "./mcp-bridge-sandbox.ts";
 import { startCompatibleMock, startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
@@ -121,51 +122,6 @@ async function onboardAgent(
     },
   );
   expectExitZero(result, `onboard ${options.agent} sandbox for MCP bridge`);
-}
-
-async function installMcpTestCaInSandbox(
-  host: HostCliClient,
-  sandbox: SandboxClient,
-  sandboxName: string,
-  artifactPrefix: string,
-): Promise<void> {
-  const caPath = process.env.NEMOCLAW_MCP_TLS_CA_CERT;
-  if (!caPath) {
-    throw new Error("NEMOCLAW_MCP_TLS_CA_CERT is required for the HTTPS MCP live proof");
-  }
-  const install = await host.command(
-    "bash",
-    [
-      "-lc",
-      [
-        "set -euo pipefail",
-        `sandbox_name=${shellQuote(sandboxName)}`,
-        `ca_path=${shellQuote(caPath)}`,
-        `container_id="$(docker ps --filter \"label=openshell.ai/sandbox-name=\${sandbox_name}\" --format '{{.ID}}' | head -n 1)"`,
-        '[ -n "$container_id" ] || { echo "OpenShell sandbox container not found" >&2; exit 1; }',
-        'docker cp "$ca_path" "$container_id:/tmp/nemoclaw-mcp-e2e-ca.crt"',
-        "docker exec --user 0 \"$container_id\" sh -eu -c 'install -m 0644 /tmp/nemoclaw-mcp-e2e-ca.crt /usr/local/share/ca-certificates/nemoclaw-mcp-e2e.crt && update-ca-certificates'",
-        'docker restart "$container_id" >/dev/null',
-      ].join("\n"),
-    ],
-    {
-      artifactName: `${artifactPrefix}-install-mcp-test-ca`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  expectExitZero(install, `${artifactPrefix} install MCP test CA into sandbox runtime`);
-
-  for (let attempt = 1; attempt <= 18; attempt += 1) {
-    const ready = await sandbox.execShell(sandboxName, trustedSandboxShellScript("true"), {
-      artifactName: `${artifactPrefix}-wait-after-mcp-ca-restart-${attempt}`,
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 10_000,
-    });
-    if (ready.exitCode === 0) return;
-    await new Promise((resolve) => setTimeout(resolve, 1_000));
-  }
-  throw new Error(`OpenShell sandbox '${sandboxName}' did not recover after installing test CA`);
 }
 
 async function assertSecretAbsentFromSandbox(

@@ -197,7 +197,7 @@ function writeLockState(state) {
 if (a[0]==="build")  { process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
-if (a[0]==="ps")     { process.stdout.write("openshell-${sandboxName}-abc123\\n"); process.exit(0); }
+if (a[0]==="ps")     { process.stdout.write("abc123\\topenshell-${sandboxName}-abc123\\n"); process.exit(0); }
 // Supports both direct exec ("docker exec --user root <container> <cmd...>")
 // and legacy kubectl proxying ("docker exec <k3s> kubectl exec ... -- <cmd...>").
 if (a[0]==="exec") {

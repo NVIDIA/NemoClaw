@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_MCP_FEATURES,
+  REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE,
   REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE,
 } from "./openshell-feature-gate";
 
@@ -23,7 +24,7 @@ describe("OpenShell MCP feature gate", () => {
       fs.writeFileSync(gateway, `binary ${REQUIRED_OPENSHELL_MCP_FEATURES[1]}`);
       fs.writeFileSync(
         sandbox,
-        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES[2]} ${REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE}`,
+        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.slice(2).join(" ")} ${REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE} ${REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE}`,
       );
 
       expect(
@@ -56,7 +57,7 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
-  it("requires the transport marker from the exact sandbox runtime binary", () => {
+  it("requires transport and lifecycle markers from the exact sandbox runtime binary", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
     try {
       const openshell = path.join(dir, "openshell");

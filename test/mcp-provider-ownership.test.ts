@@ -34,7 +34,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 globalActions.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
-    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1"] }), stderr: "" };
+    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {
@@ -228,7 +228,7 @@ processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stde
 globalActions.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
-    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1"] }), stderr: "" };
+    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {

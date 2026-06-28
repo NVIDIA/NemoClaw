@@ -4,16 +4,24 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER } from "../adapters/openshell/runtime-capabilities";
+import {
+  OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER,
+  OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION,
+  OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER,
+} from "../adapters/openshell/runtime-capabilities";
 
 export const REQUIRED_OPENSHELL_MCP_FEATURES = [
   "request-body-credential-rewrite",
   "websocket-credential-rewrite",
   "allow_all_known_mcp_methods",
+  OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER,
+  OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION,
 ] as const;
 
 export const REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE =
   OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER;
+export const REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE =
+  OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER;
 
 // OpenShell current main (NVIDIA/OpenShell#1865) does not expose a CLI or RPC
 // capability query for these security boundaries. The marker strings are
@@ -74,7 +82,11 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   ].filter(
     (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
   );
-  const transportMarker = Buffer.from(REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE);
+  const sandboxMarkers = [
+    REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE,
+    REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE,
+    OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION,
+  ].map((marker) => Buffer.from(marker));
   let foundRuntimeArtifact = false;
   for (const candidate of new Set(sandboxCandidates)) {
     let fd: number | null = null;
@@ -82,7 +94,8 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
       fd = fs.openSync(candidate, "r");
       if (!fs.fstatSync(fd).isFile()) continue;
       foundRuntimeArtifact = true;
-      if (fs.readFileSync(fd).includes(transportMarker)) return true;
+      const content = fs.readFileSync(fd);
+      if (sandboxMarkers.every((marker) => content.includes(marker))) return true;
     } catch {
       // Try the next exact sandbox-runtime candidate.
     } finally {

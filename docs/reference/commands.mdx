@@ -1291,7 +1291,7 @@ Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoCl
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
 All endpoints must use HTTPS, and persisted MCP URLs cannot contain query strings, percent-escaped or glob-style paths, or port zero.
 OpenShell globally reserves the credential key for the generated policy, requires verified TLS and an exact Host match, then enforces the endpoint, runtime, path, query, and MCP-method boundary before replacing the placeholder; broader overlapping policies cannot widen that decision, and denied requests are neither rewritten nor sent upstream.
-The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP bridge, proxy, relay, or listener.
+The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 
 ```bash

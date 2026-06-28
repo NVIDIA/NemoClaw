@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import { stripAnsi } from "../../adapters/openshell/client";
-import { OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER } from "../../adapters/openshell/runtime-capabilities";
+import { OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES } from "../../adapters/openshell/runtime-capabilities";
 import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -67,7 +67,11 @@ export function assertMcpGatewayCapability(): void {
       // Old CLIs and human output fail closed below.
     }
   }
-  if (!gatewayCapabilities.includes(OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER)) {
+  if (
+    !OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES.every((capability) =>
+      gatewayCapabilities.includes(capability),
+    )
+  ) {
     throw new McpBridgeError(
       `The selected OpenShell gateway does not attest the complete authenticated MCP policy, provider-CAS, durable-reservation, and scoped-binding contract. Upgrade/restart OpenShell before enabling authenticated MCP.`,
     );
@@ -76,16 +80,16 @@ export function assertMcpGatewayCapability(): void {
 
 export function assertMcpTransportRuntimeCapability(sandboxName: string): void {
   assertMcpGatewayCapability();
-  const marker = shellQuote(OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER);
+  const markerChecks = OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES.map(
+    (capability) => `grep -aF -m 1 -- ${shellQuote(capability)} /proc/1/exe >/dev/null 2>&1`,
+  );
   const result = executeSandboxExecCommand(
     sandboxName,
-    ["[ -r /proc/1/exe ] || exit 1", `grep -aF -m 1 -- ${marker} /proc/1/exe >/dev/null 2>&1`].join(
-      "\n",
-    ),
+    ["[ -r /proc/1/exe ] || exit 1", ...markerChecks].join("\n"),
   );
   if (!result || result.status !== 0) {
     throw new McpBridgeError(
-      `Sandbox '${sandboxName}' is missing OpenShell's TLS-required, Host-bound MCP credential replacement capability. Upgrade OpenShell and rebuild the sandbox before enabling authenticated MCP.`,
+      `Sandbox '${sandboxName}' is missing OpenShell's TLS-required, Host-bound MCP credential replacement or policy-authorized lifecycle capability. Upgrade OpenShell and rebuild the sandbox before enabling authenticated MCP.`,
     );
   }
 }

@@ -80,7 +80,7 @@ describe("authenticated MCP live fixtures", () => {
           url,
           {
             method,
-            rejectUnauthorized: false,
+            ca: fixtureTls.cert,
             headers: encoded
               ? { ...headers, "content-length": Buffer.byteLength(encoded) }
               : headers,

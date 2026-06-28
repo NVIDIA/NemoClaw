@@ -38,7 +38,16 @@
       "type": "object",
       "properties": {
         "run_as_user": { "type": "string" },
-        "run_as_group": { "type": "string" }
+        "run_as_group": { "type": "string" },
+        "lifecycle_operations": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["nemoclaw.hermes-mcp-config-transaction-v1"]
+          }
+        }
       }
     },
     "network_policies": {

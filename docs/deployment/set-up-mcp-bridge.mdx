@@ -4,7 +4,7 @@
 title: "Set Up MCP Servers"
 sidebar-title: "Set Up MCP Servers"
 description: "Connect sandboxed agents to authenticated Streamable HTTP MCP servers through OpenShell policy enforcement and credential replacement."
-description-agent: "Explains how to add, inspect, rotate, recover, rebuild, and remove authenticated Streamable HTTP MCP servers through native OpenShell policy and credential replacement with no host-side bridge, proxy, relay, or listener. Use when configuring MCP for OpenClaw, Hermes, or LangChain Deep Agents Code."
+description-agent: "Explains how to add, inspect, rotate, recover, rebuild, and remove authenticated Streamable HTTP MCP servers through native OpenShell policy and credential replacement with no host-side MCP data-plane bridge, proxy, relay, or listener. Use when configuring MCP for OpenClaw, Hermes, or LangChain Deep Agents Code."
 keywords: ["nemoclaw mcp", "authenticated mcp", "openshell credential replacement", "streamable http mcp"]
 content:
   type: "how_to"
@@ -24,9 +24,16 @@ This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from NV
 NemoClaw requires an OpenShell build that exposes the `protocol: mcp` policy capability and the TLS-required, Host-bound credential replacement runtime before it enables managed MCP servers.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
-NemoClaw does not launch an MCP server, stdio adapter, bridge, credential proxy, relay, or listener on the host.
+NemoClaw does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
 The sandbox agent connects directly to the configured endpoint, and OpenShell enforces policy and replaces credentials in its existing sandbox egress path.
 No NemoClaw host process remains running after an `mcp` lifecycle command returns.
+
+## Architecture Decision
+
+This native OpenShell design supersedes the original host-side stdio-to-HTTP proxy proposed in NVIDIA/NemoClaw#566.
+NemoClaw does not accept an inline secret-and-command tuple, persist a raw MCP service credential, or operate a host-side MCP data-plane process.
+The only supported managed path is authenticated Streamable HTTP through an OpenShell `protocol: mcp` policy, with the raw credential held by the OpenShell provider and replaced only on an authorized outbound request.
+Host-side MCP data-plane bridges, proxies, relays, listeners, and stdio translation are explicitly out of scope for this feature.
 
 ## Add an MCP Server
 
@@ -100,11 +107,15 @@ mcp_servers:
 ```
 
 Hermes config changes and gateway reloads stay inside the sandbox.
-NemoClaw invokes the validated transaction helper as a one-shot `openshell sandbox exec` command.
-The required OpenShell build places that command in the same workload uid and network namespace as Hermes, so the helper can update the same-uid compatibility hash, signal the exact gateway PID, and verify its loopback health.
-The helper rejects non-root execution when the root-separated lifecycle marker or a separately owned gateway is present.
-It validates the PID against the trusted Hermes gateway launcher before signaling it.
-There is no persistent control socket or service.
+NemoClaw invokes the validated transaction helper as a one-shot, policy-authorized `openshell sandbox exec --lifecycle` command.
+The Hermes process policy grants a closed operation ID that OpenShell maps to the NemoClaw image's exact root-owned helper path and fixed argument shape; OpenShell reauthorizes the request in the gateway and supervisor, validates the helper and its interpreter chain, and runs it directly through the existing authenticated gateway-to-supervisor control stream.
+Root ownership and non-writability enforce immutability against the running workload; they do not establish image provenance, code signing, or semantic trust.
+The operation keeps the normal workload uid, gid, supplementary groups, Landlock policy, seccomp policy, and empty credential environment.
+The supported helper entrypoint additionally consumes a one-shot inherited Unix descriptor with a root supervisor peer and the exact lifecycle handshake; ordinary sandbox exec does not receive that descriptor or select the private control target.
+This descriptor authenticates the packaged helper's supported invocation route; it is an orchestration check, not an additional privilege boundary against code already running as the workload identity.
+Lifecycle mode grants no additional uid, gid, groups, Linux capabilities, provider credentials, filesystem or network access, or persistent privileged channel, and OpenShell keeps provider values and policy mutation outside the sandbox.
+The helper updates the managed compatibility hash, validates the PID against the trusted Hermes gateway launcher before signaling it, and verifies loopback health after reload.
+There is no host listener, shell, persistent control socket, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
 LangChain Deep Agents Code writes an HTTP entry under its user-level discovery path, `/sandbox/.deepagents/.mcp.json`.

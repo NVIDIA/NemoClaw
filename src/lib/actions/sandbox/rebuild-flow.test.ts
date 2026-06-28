@@ -485,7 +485,7 @@ describe("rebuildSandbox flow", () => {
     });
 
     await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      harness.rebuildSandbox("alpha", ["--yes", "--verbose"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
     expect(harness.backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
@@ -508,7 +508,7 @@ describe("rebuildSandbox flow", () => {
     );
     expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
     expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
-    expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+    expect(harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "Preserving MCP-bearing registry entry across sandbox recreation",
     );
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");

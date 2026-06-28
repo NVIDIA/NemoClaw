@@ -202,7 +202,7 @@ describe("MCP-generated network policy ownership", () => {
       `#!/bin/sh
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
-  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1"]}'
+  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1","policy-authorized-lifecycle-exec-v1","nemoclaw.hermes-mcp-config-transaction-v1"]}'
   exit 0
 fi
 if [ "$1 $2" = "provider get" ]; then
@@ -288,7 +288,7 @@ bridge.addMcpBridge("alpha", {
       `#!/bin/sh
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
-  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1"]}'
+  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1","policy-authorized-lifecycle-exec-v1","nemoclaw.hermes-mcp-config-transaction-v1"]}'
   exit 0
 fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
@@ -393,7 +393,11 @@ globalActions.runOpenshellProviderCommand = (args) => {
     return {
       status: 0,
       stdout: JSON.stringify({
-        capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1"],
+        capabilities: [
+          "authenticated-mcp-policy-bound-credential-rewrite-v1",
+          "policy-authorized-lifecycle-exec-v1",
+          "nemoclaw.hermes-mcp-config-transaction-v1",
+        ],
       }),
       stderr: "",
     };

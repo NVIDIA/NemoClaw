@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 type Step = {
+  if?: string;
   name?: string;
   env?: Record<string, string>;
   run?: string;
@@ -43,6 +44,10 @@ function installStep(job: Job): Step | undefined {
 
 function tlsStep(job: Job): Step | undefined {
   return job.steps?.find((step) => step.name === "Generate MCP test TLS");
+}
+
+function dockerHubAuthStep(job: Job): Step | undefined {
+  return job.steps?.find((step) => step.name === "Authenticate to Docker Hub");
 }
 
 describe("MCP OpenShell workflow boundary", () => {
@@ -85,6 +90,14 @@ describe("MCP OpenShell workflow boundary", () => {
       expect(step?.env ?? {}).not.toHaveProperty("NEMOCLAW_INSTALL_OPENSHELL_GH_TOKEN");
       expect(step?.run ?? "").not.toContain("OPENSHELL_ARTIFACT_READ_TOKEN");
     }
+  });
+
+  it("does not expose Docker Hub credentials to a feature-ref MCP workflow", () => {
+    const vitest = workflow(".github/workflows/e2e-vitest-scenarios.yaml");
+
+    expect(dockerHubAuthStep(vitest.jobs["mcp-bridge-vitest"])?.if).toBe(
+      "${{ github.ref == 'refs/heads/main' }}",
+    );
   });
 
   it("generates the HTTPS MCP fixture certificate before the live test", () => {

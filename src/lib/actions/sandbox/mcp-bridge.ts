@@ -7,6 +7,7 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
+  assertAgentMcpMutationRuntimeCapability,
   inspectAgentAdapterRegistration,
   registerAgentAdapter,
   unregisterAgentAdapter,
@@ -78,6 +79,7 @@ export {
   buildDeepAgentsMcpRemoveCommand,
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpLifecycleExecArgs,
+  buildHermesMcpLifecycleProbeCommand,
   buildHermesMcpRegisterCommand,
   buildOpenClawMcporterInspectCommand,
   buildOpenClawMcporterRegisterCommand,
@@ -133,6 +135,21 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
     existing.env.length === requested.env.length &&
     existing.env.every((name, index) => name === requested.env[index])
   );
+}
+
+function assertMcpAdapterMutationRuntimeCapabilities(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  entries: readonly McpBridgeEntry[],
+): void {
+  const adapters = new Set(
+    entries.map((entry) =>
+      isAgentMcpAdapter(entry.adapter) ? entry.adapter : getBridgeAdapter(getSandboxAgent(sandbox)),
+    ),
+  );
+  for (const adapter of adapters) {
+    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+  }
 }
 
 function assertPreparedMcpAddResourcesAbsent(
@@ -266,6 +283,7 @@ async function addMcpBridgeUnlocked(
   try {
     await ensureSandboxGatewaySelected(sandboxName);
     assertMcpTransportRuntimeCapability(sandboxName);
+    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
 
     if (entry.addState === "prepared") {
       assertPreparedMcpAddResourcesAbsent(sandboxName, adapter, entry, resolvedAddresses);
@@ -412,6 +430,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpTransportRuntimeCapability(sandboxName);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
   // Prove every policy key is absent or still matches its recorded ownership
   // before inspecting or updating any provider. `applyGeneratedPolicy` repeats
   // this check immediately before mutation to close the preflight-to-apply race.
@@ -682,6 +701,7 @@ export async function prepareMcpBridgesForDestroy(
 
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpTransportRuntimeCapability(sandboxName);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
   try {
@@ -957,6 +977,7 @@ export async function prepareMcpBridgesForRebuild(
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpTransportRuntimeCapability(sandboxName);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
@@ -1044,6 +1065,11 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpTransportRuntimeCapability(sandboxName);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, [
+    ...entries,
+    ...scrubbedAdapterEntries,
+  ]);
 
   const failures: string[] = [];
   for (const entry of entries) {
@@ -1058,7 +1084,6 @@ export async function reattachMcpProvidersAfterRebuildAbort(
       failures.push(error instanceof Error ? error.message : String(error));
     }
   }
-  const sandbox = getSandboxOrThrow(sandboxName);
   for (const entry of scrubbedAdapterEntries) {
     try {
       const adapter = isAgentMcpAdapter(entry.adapter)
@@ -1141,6 +1166,7 @@ async function removeMcpBridgeUnlocked(
     : getBridgeAdapter(getSandboxAgent(sandbox));
   await ensureSandboxGatewaySelected(sandboxName);
   assertMcpTransportRuntimeCapability(sandboxName);
+  assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
 
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];

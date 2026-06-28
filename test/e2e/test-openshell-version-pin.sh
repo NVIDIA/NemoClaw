@@ -23,7 +23,7 @@ DOWNLOAD_LOG="/tmp/nemoclaw-e2e-openshell-version-pin-downloads.log"
 FAKE_BIN="/tmp/nemoclaw-e2e-openshell-version-pin-bin"
 REQUIRED_OPENSHELL_VERSION="0.0.72"
 STICKY_OPENSHELL_VERSION="0.0.73"
-OPENSHELL_FEATURE_MARKERS="request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1"
+OPENSHELL_FEATURE_MARKERS="request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1 policy-authorized-lifecycle-exec-v1 nemoclaw.hermes-mcp-config-transaction-v1"
 export OPENSHELL_FEATURE_MARKERS
 
 exec > >(tee "$LOG_FILE") 2>&1
@@ -91,7 +91,7 @@ exit 0
 SH
 write_executable "$FAKE_BIN/openshell-sandbox" <<'SH'
 #!/usr/bin/env bash
-# authenticated-mcp-policy-bound-credential-rewrite-v1
+# authenticated-mcp-policy-bound-credential-rewrite-v1 policy-authorized-lifecycle-exec-v1 nemoclaw.hermes-mcp-config-transaction-v1
 exit 0
 SH
 
@@ -243,7 +243,7 @@ esac
 cat > "$outdir/$name" <<'EOS'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION:-0.0.72}"; exit 0; fi
-printf '%s\n' "${OPENSHELL_FEATURE_MARKERS:-request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1}"
+printf '%s\n' "${OPENSHELL_FEATURE_MARKERS:-request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1 policy-authorized-lifecycle-exec-v1 nemoclaw.hermes-mcp-config-transaction-v1}"
 exit 0
 EOS
 chmod 755 "$outdir/$name"

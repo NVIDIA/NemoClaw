@@ -3,6 +3,7 @@
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import type { AgentMcpAdapter } from "../../agent/defs";
+import { OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION } from "../../adapters/openshell/runtime-capabilities";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -16,6 +17,7 @@ export const MCPORTER_VERSION = "0.7.3";
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
+const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
 
 function authPlaceholder(entry: Pick<McpBridgeEntry, "env">): string | null {
   const envName = entry.env[0];
@@ -111,13 +113,7 @@ export function buildHermesMcpRegisterCommand(
     headers: entryHeaders(entry),
     replace_existing: replaceExisting,
   };
-  return [
-    "/opt/hermes/.venv/bin/python",
-    "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
-    "add",
-    "--payload",
-    JSON.stringify(payload),
-  ];
+  return [HERMES_MCP_TRANSACTION_HELPER, "add", "--payload", JSON.stringify(payload)];
 }
 
 function buildHermesMcpRemoveCommand(entry: McpBridgeEntry, force = false): string[] {
@@ -127,20 +123,32 @@ function buildHermesMcpRemoveCommand(entry: McpBridgeEntry, force = false): stri
     headers: entryHeaders(entry),
     force,
   };
-  return [
-    "/opt/hermes/.venv/bin/python",
-    "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
-    "remove",
-    "--payload",
-    JSON.stringify(payload),
-  ];
+  return [HERMES_MCP_TRANSACTION_HELPER, "remove", "--payload", JSON.stringify(payload)];
 }
+
+const HERMES_MCP_LIFECYCLE_TIMEOUT_SECONDS = 620;
+const HERMES_MCP_LIFECYCLE_PROBE_TIMEOUT_SECONDS = 30;
 
 export function buildHermesMcpLifecycleExecArgs(
   sandboxName: string,
   command: readonly string[],
+  timeoutSeconds = HERMES_MCP_LIFECYCLE_TIMEOUT_SECONDS,
 ): string[] {
-  return ["sandbox", "exec", "--name", sandboxName, "--no-tty", "--", ...command];
+  return [
+    "sandbox",
+    "exec",
+    "--name",
+    sandboxName,
+    "--timeout",
+    String(timeoutSeconds),
+    "--lifecycle",
+    "--",
+    ...command,
+  ];
+}
+
+export function buildHermesMcpLifecycleProbeCommand(): string[] {
+  return [HERMES_MCP_TRANSACTION_HELPER, "probe"];
 }
 
 function hermesManagedServerConfig(entry: McpBridgeEntry): Record<string, unknown> {
@@ -490,6 +498,50 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
   return null;
 }
 
+/**
+ * Prove the running Hermes sandbox has the compiled operation/path contract,
+ * policy grant, protected packaged helper, supervisor auth path, and successful
+ * invocation before changing a global provider, policy, attachment, or adapter.
+ */
+export function assertAgentMcpMutationRuntimeCapability(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+): void {
+  if (adapter !== "hermes-config") return;
+  let result: ReturnType<typeof runOpenshellProviderCommand>;
+  try {
+    result = runOpenshellProviderCommand(
+      buildHermesMcpLifecycleExecArgs(
+        sandboxName,
+        buildHermesMcpLifecycleProbeCommand(),
+        HERMES_MCP_LIFECYCLE_PROBE_TIMEOUT_SECONDS,
+      ),
+      {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 45_000,
+      },
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      `Hermes sandbox '${sandboxName}' cannot authorize the managed MCP lifecycle operation. Upgrade OpenShell and rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+    );
+  }
+  const response = parseLastJsonObject(result.stdout || "");
+  if (
+    result.status !== 0 ||
+    result.error ||
+    response?.ok !== true ||
+    response.capability !== OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION
+  ) {
+    const detail = commandOutput(result).trim();
+    throw new McpBridgeError(
+      `Hermes sandbox '${sandboxName}' cannot authorize the exact managed MCP lifecycle operation. Upgrade OpenShell and rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+    );
+  }
+}
+
 function runHermesAdapterCommand(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -501,16 +553,18 @@ function runHermesAdapterCommand(
     requireReload?: boolean;
   } = {},
 ): void {
-  // OpenShell current main runs this one-shot command with the sandbox's
-  // configured workload uid and network namespace. That is the same identity
-  // and loopback namespace as Hermes, without a listener, proxy, or persistent
-  // privileged service. The argv carries only an OpenShell placeholder.
+  // OpenShell current main maps the closed policy operation to a fixed helper
+  // path and argv contract, protects the packaged files from runtime workload
+  // replacement, and executes with ordinary workload authority. There is no
+  // shell, listener, proxy, or persistent privileged service; argv carries only
+  // an OpenShell placeholder. This path check does not claim image provenance.
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
     result = runOpenshellProviderCommand(buildHermesMcpLifecycleExecArgs(sandboxName, command), {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
-      // Hermes can spend up to 180s draining, followed by a 60s health window.
+      // The remote supervisor enforces 620s; keep a small transport margin so
+      // remote termination is observed before this local subprocess is killed.
       timeout: 645_000,
     });
   } catch (error) {

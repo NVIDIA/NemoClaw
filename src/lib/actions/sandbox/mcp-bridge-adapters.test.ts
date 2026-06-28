@@ -13,6 +13,7 @@ import {
   buildDeepAgentsMcpRemoveCommand,
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpLifecycleExecArgs,
+  buildHermesMcpLifecycleProbeCommand,
   buildHermesMcpRegisterCommand,
   buildOpenClawMcporterInspectCommand,
   buildOpenClawMcporterRegisterCommand,
@@ -211,13 +212,12 @@ describe("MCP adapters", () => {
       adapter: "hermes-config",
     });
 
-    expect(command.slice(0, 4)).toEqual([
-      "/opt/hermes/.venv/bin/python",
+    expect(command.slice(0, 3)).toEqual([
       "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
       "add",
       "--payload",
     ]);
-    expect(JSON.parse(command[4] ?? "{}")).toEqual({
+    expect(JSON.parse(command[3] ?? "{}")).toEqual({
       server: "github",
       url: "https://api.githubcopilot.com/mcp/",
       headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
@@ -228,9 +228,29 @@ describe("MCP adapters", () => {
       "exec",
       "--name",
       "hermes-box",
-      "--no-tty",
+      "--timeout",
+      "620",
+      "--lifecycle",
       "--",
       ...command,
+    ]);
+    expect(buildHermesMcpLifecycleProbeCommand()).toEqual([
+      "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
+      "probe",
+    ]);
+    expect(
+      buildHermesMcpLifecycleExecArgs("hermes-box", buildHermesMcpLifecycleProbeCommand(), 30),
+    ).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "hermes-box",
+      "--timeout",
+      "30",
+      "--lifecycle",
+      "--",
+      "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
+      "probe",
     ]);
   });
 

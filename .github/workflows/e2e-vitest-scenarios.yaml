@@ -397,6 +397,7 @@ jobs:
         run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-mcp-bridge" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
+        if: ${{ github.ref == 'refs/heads/main' }}
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}

@@ -25,7 +25,7 @@ const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const REQUIRED_OPENSHELL_VERSION = "0.0.72";
 const STICKY_OPENSHELL_VERSION = "0.0.73";
 const OPENSHELL_FEATURE_MARKERS =
-  "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1";
+  "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods authenticated-mcp-policy-bound-credential-rewrite-v1 policy-authorized-lifecycle-exec-v1 nemoclaw.hermes-mcp-config-transaction-v1";
 
 type GhDownloadMode = "success" | "fail";
 
