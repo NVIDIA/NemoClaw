@@ -253,8 +253,8 @@ else
   elif command -v shasum >/dev/null 2>&1; then
     actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
   else
-    warn "No SHA-256 tool found — skipping NodeSource integrity check"
-    actual_hash="$NODESOURCE_SHA256"
+    rm -f "$ns_tmp"
+    fail "No SHA-256 tool available (sha256sum/shasum)"
   fi
   if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
     rm -f "$ns_tmp"

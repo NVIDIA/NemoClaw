@@ -12,11 +12,27 @@ const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "brev-launchable-
 const ASSET = "openshell-x86_64-unknown-linux-musl.tar.gz";
 const PINNED_ASSET_SHA256 = "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716";
 
+type FakeSystemOptions = {
+  checksum: "match" | "mismatch" | "unpinned";
+  nodeSourceChecksumTool?: boolean;
+  openshellVersion?: string;
+};
+
 function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function makeFakeSystem(options: { checksum: "match" | "mismatch" | "unpinned" }): {
+function linkSystemCommands(targetDir: string, commands: readonly string[]): void {
+  for (const command of commands) {
+    const source = [`/usr/bin/${command}`, `/bin/${command}`].find((candidate) =>
+      fs.existsSync(candidate),
+    );
+    if (!source) throw new Error(`Required test command is unavailable: ${command}`);
+    fs.symlinkSync(source, path.join(targetDir, command));
+  }
+}
+
+function makeFakeSystem(options: FakeSystemOptions): {
   cleanup: () => void;
   cloneDir: string;
   curlLog: string;
@@ -33,6 +49,21 @@ function makeFakeSystem(options: { checksum: "match" | "mismatch" | "unpinned" }
   const sudoLog = path.join(root, "sudo.log");
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
+
+  if (options.nodeSourceChecksumTool === false) {
+    linkSystemCommands(fakeBin, [
+      "bash",
+      "basename",
+      "cut",
+      "date",
+      "dirname",
+      "head",
+      "mkdir",
+      "mktemp",
+      "rm",
+      "tee",
+    ]);
+  }
 
   writeExecutable(
     path.join(fakeBin, "uname"),
@@ -70,7 +101,7 @@ exit 0
   writeExecutable(
     path.join(fakeBin, "node"),
     `#!/usr/bin/env bash
-if [ "\${1:-}" = "-p" ]; then printf '22\\n'; exit 0; fi
+if [ "\${1:-}" = "-p" ]; then printf '${options.nodeSourceChecksumTool === false ? "20" : "22"}\\n'; exit 0; fi
 if [ "\${1:-}" = "--version" ]; then printf 'v22.16.0\\n'; exit 0; fi
 exit 0
 `,
@@ -161,9 +192,10 @@ esac
 exit 0
 `,
   );
-  writeExecutable(
-    path.join(fakeBin, "sha256sum"),
-    `#!/usr/bin/env bash
+  if (options.nodeSourceChecksumTool !== false) {
+    writeExecutable(
+      path.join(fakeBin, "sha256sum"),
+      `#!/usr/bin/env bash
 if [ "\${1:-}" = "-c" ]; then
   cat >/dev/null
   if [ ${JSON.stringify(options.checksum)} = "mismatch" ]; then
@@ -175,7 +207,8 @@ if [ "\${1:-}" = "-c" ]; then
 fi
 exec /usr/bin/sha256sum "$@"
 `,
-  );
+    );
+  }
 
   return {
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
@@ -188,10 +221,7 @@ exec /usr/bin/sha256sum "$@"
   };
 }
 
-function runLaunchable(options: {
-  checksum: "match" | "mismatch" | "unpinned";
-  openshellVersion?: string;
-}) {
+function runLaunchable(options: FakeSystemOptions) {
   const fake = makeFakeSystem(options);
   const result = spawnSync("bash", [SCRIPT], {
     encoding: "utf-8",
@@ -200,7 +230,8 @@ function runLaunchable(options: {
       LAUNCH_LOG: fake.launchLog,
       NEMOCLAW_CLONE_DIR: fake.cloneDir,
       OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.71",
-      PATH: `${fake.fakeBin}:/usr/bin:/bin`,
+      PATH:
+        options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
       SKIP_DOCKER_PULL: "1",
       SUDO_USER: "tester",
     },
@@ -264,6 +295,26 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "").not.toMatch(
         /^install -m 755 .*openshell/m,
       );
+    } finally {
+      fake.cleanup();
+    }
+  });
+
+  it("refuses to run the NodeSource installer as root when no SHA-256 tool is available", () => {
+    const { fake, result } = runLaunchable({
+      checksum: "match",
+      nodeSourceChecksumTool: false,
+    });
+    try {
+      const out = combinedLaunchableOutput(result, fake.launchLog);
+      const sudoLog = fs.existsSync(fake.sudoLog) ? fs.readFileSync(fake.sudoLog, "utf-8") : "";
+      expect(result.status, out).toBe(1);
+      expect(out).toContain("No SHA-256 tool available (sha256sum/shasum)");
+      expect(fs.readFileSync(fake.curlLog, "utf-8")).toContain(
+        "https://deb.nodesource.com/setup_22.x",
+      );
+      expect(sudoLog).not.toMatch(/^-E bash /m);
+      expect(out).not.toContain("NodeSource installer integrity verified");
     } finally {
       fake.cleanup();
     }
