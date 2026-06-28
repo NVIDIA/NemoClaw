@@ -348,34 +348,25 @@ print(json.dumps({'deviceId': device_id, 'requestId': want}, sort_keys=True))
 PY
 }
 
-openclaw devices list --json >/tmp/issue4462-devices-list.json 2>&1 || true
+initial_list_rc=0
+echo "ISSUE_4462_STAGE=direct-local-bootstrap"
+(
+  unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN
+  command openclaw devices list --json
+) >/tmp/issue4462-devices-list.json 2>&1 || initial_list_rc=$?
+printf '%s\n' "$initial_list_rc" >/tmp/issue4462-devices-list.rc
 state="$(state_json)"
 initial_request_id="$(printf '%s' "$state" | select_initial_pairing_request 2>/dev/null || true)"
-if [ -z "$initial_request_id" ]; then
-  bootstrap_session_id="issue-4462-bootstrap-$(date +%s)-$$"
-  rm -f "/sandbox/.openclaw/agents/main/sessions/$bootstrap_session_id.jsonl.lock" \
-        "/sandbox/.openclaw/agents/main/sessions/$bootstrap_session_id.trajectory.jsonl" 2>/dev/null || true
-  set +e
-  openclaw agent --agent main --json --session-id "$bootstrap_session_id" \
-    -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.' \
-    >/tmp/issue4462-bootstrap-agent.log 2>&1
-  bootstrap_rc=$?
-  set -e
-  printf '%s\n' "$bootstrap_rc" >/tmp/issue4462-bootstrap-agent.rc
-  state="$(state_json)"
-  initial_request_id="$(printf '%s' "$state" | select_initial_pairing_request 2>/dev/null || true)"
-fi
 if [ -n "$initial_request_id" ]; then
-  approve_request "$initial_request_id"
-  state="$(state_json)"
+  echo "DIRECT_LOCAL_BOOTSTRAP_PENDING request=$initial_request_id rc=$initial_list_rc" >&2
+  exit 5
 fi
 paired_device_id="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
 if [ -z "$paired_device_id" ]; then
-  echo "NO_INITIAL_PAIRED_CLI_DEVICE" >&2
-  cat /tmp/issue4462-bootstrap-agent.log >&2 2>/dev/null || true
-  printf '%s\n' "$state" >&2
+  echo "NO_INITIAL_PAIRED_CLI_DEVICE rc=$initial_list_rc" >&2
   exit 5
 fi
+echo "ISSUE_4462_STAGE=rotate-cli-to-pairing"
 rotate_cli_to_pairing_scope "$paired_device_id" >/tmp/issue4462-initial-pairing.log
 state="$(state_json)"
 request_id="$(printf '%s' "$state" | select_scope_request "$paired_device_id" 2>/dev/null || true)"
@@ -408,6 +399,7 @@ if [ -z "$request_id" ]; then
 fi
 
 if [ -n "$request_id" ]; then
+  echo "ISSUE_4462_STAGE=approve-scope-upgrade request=$request_id"
   approve_request "$request_id"
 fi
 
@@ -419,6 +411,7 @@ if printf '%s' "$state" | select_scope_request "$paired_device_id" >/tmp/issue44
 fi
 
 session_id="issue-4462-final-$(date +%s)-$$"
+echo "ISSUE_4462_STAGE=final-gateway-agent"
 final_output="$(openclaw agent --agent main --json --session-id "$session_id" -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.' 2>&1)"
 printf '%s\n' "$final_output" >/tmp/issue4462-final-agent.log
 if grep -Eiq 'EMBEDDED FALLBACK|scope upgrade pending approval|pairing required|fallbackFrom[": ]+gateway|transport[": ]+embedded' /tmp/issue4462-final-agent.log; then
