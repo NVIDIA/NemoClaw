@@ -9,6 +9,8 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
+  if?: string;
+  needs?: string | string[];
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;

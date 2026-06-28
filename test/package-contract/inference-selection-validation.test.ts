@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 
 describe("inference selection validation", () => {
   it("preserves non-zero exit signaling when non-interactive endpoint validation fails (#5721)", () => {

@@ -16,6 +16,7 @@ export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-gpu-ollama";
 validateSandboxName(SANDBOX_NAME);
 export const PROXY_PORT = tcpPort(process.env.NEMOCLAW_OLLAMA_PROXY_PORT, "11435");
+export const DEFAULT_OLLAMA_PULL_TIMEOUT_SECONDS = "2400";
 
 function tcpPort(value: string | undefined, fallback: string): string {
   const raw = value ?? fallback;
@@ -31,6 +32,8 @@ export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: "ollama",
+    NEMOCLAW_OLLAMA_PULL_TIMEOUT:
+      process.env.NEMOCLAW_OLLAMA_PULL_TIMEOUT?.trim() || DEFAULT_OLLAMA_PULL_TIMEOUT_SECONDS,
     NEMOCLAW_OLLAMA_PROXY_PORT: PROXY_PORT,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
