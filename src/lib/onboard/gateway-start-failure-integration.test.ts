@@ -186,7 +186,7 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
   // confirms the chain bottoms out at exitProcess(1) with the recovery
   // message printed.
 
-  describe("composition: classify → handleFinal → exit 1", () => {
+  describe("composition classifies, handles the final state, and exits 1", () => {
     let capturedClassifyLog: string[];
     let capturedPrintError: string[];
 

@@ -665,7 +665,7 @@ describe("validateOllamaModel — no-tools override propagation (#4241)", () => 
 // validateOllamaModel does not know about the override and re-rejects.
 // ─────────────────────────────────────────────────────────────────
 
-describe("override propagation across checkOllamaModelToolSupport → validateOllamaModel (#4241)", () => {
+describe("override propagation from checkOllamaModelToolSupport to validateOllamaModel (#4241)", () => {
   it("does not reject the same tools-incompatible error after the user accepts an override", async () => {
     const h = loadProxyWithStubs();
     h.setProbeResult({
