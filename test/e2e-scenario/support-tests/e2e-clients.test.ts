@@ -166,6 +166,20 @@ describe("E2E fixture clients", () => {
     expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
   });
 
+  it("host client accepts an already-absent legacy gateway registration", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
+    runner.enqueue({ exitCode: 1, stderr: "No gateway metadata found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupGatewayRegistration("nemoclaw");
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["gateway", "remove", "nemoclaw"],
+      ["gateway", "destroy", "-g", "nemoclaw"],
+    ]);
+  });
+
   it("host client surfaces an unexpected legacy gateway cleanup failure", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });

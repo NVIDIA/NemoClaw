@@ -104,6 +104,20 @@ describe("sandbox operations workflow boundary", () => {
     );
   });
 
+  it("keeps secret-bearing live jobs on manual dispatch with read-only contents", () => {
+    expect(
+      validateCentralWorkflowMutation((source) =>
+        source.replace("on:\n  workflow_dispatch:", "on:\n  pull_request:\n  workflow_dispatch:"),
+      ),
+    ).toContain("workflow must not run on pull_request");
+
+    expect(
+      validateCentralWorkflowMutation((source) =>
+        source.replace("permissions:\n  contents: read", "permissions:\n  contents: write"),
+      ),
+    ).toContain("workflow permissions.contents must be read");
+  });
+
   it.each([
     {
       label: "a non-launcher CLI path",
