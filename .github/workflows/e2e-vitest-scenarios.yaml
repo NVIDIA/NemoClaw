@@ -794,6 +794,8 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gpu-e2e-vitest,') || contains(format(',{0},', inputs.scenarios), ',gpu-e2e,') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    # The 55 minute install command includes a cold 40 minute model pull;
+    # 35 minutes remain for runner setup, assertions, artifacts, and cleanup.
     timeout-minutes: 90
     env:
       FREE_STANDING_VITEST_JOB: "1"
@@ -804,6 +806,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_PROVIDER: "ollama"
+      NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -5664,6 +5667,19 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        if: github.ref == 'refs/heads/main'
+        # Authentication only accelerates pulls; anonymous pulls remain valid.
+        continue-on-error: true
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -5695,6 +5711,15 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install" ]]; then
+            docker logout docker.io || true
+            rm -rf -- "${DOCKER_CONFIG}"
+          fi
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the

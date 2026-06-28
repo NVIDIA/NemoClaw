@@ -407,7 +407,15 @@ jobs:
       github_token: true
     secrets: *nightly-e2e-default-secrets
   openclaw-tui-chat-correlation-e2e:
+    # Keep this strict hosted-correlation probe out of the peak inference burst.
+    # Selective dispatches skip unselected dependencies, so always() preserves
+    # targeted execution while the full gate waits for the peak hosted jobs.
+    needs:
+      - token-rotation-e2e
+      - channels-stop-start-openclaw-e2e
+      - channels-stop-start-hermes-e2e
     if: >-
+      always() &&
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
@@ -2242,13 +2250,16 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',gpu-e2e,'))
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 30
+    # A cold runner may spend up to 40 minutes pulling the 35B model;
+    # 15 minutes remain for install/assertions and 5 minutes for cleanup.
+    timeout-minutes: 60
     env:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_PROVIDER: "ollama"
+      NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
     steps:
       - *target-ref-checkout
 
