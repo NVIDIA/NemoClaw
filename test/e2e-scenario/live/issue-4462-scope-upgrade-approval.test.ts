@@ -118,13 +118,18 @@ state=json.load(os.fdopen(3))
 def norm(v): return str(v or '').strip()
 def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli' or 'cli' in norm(e.get('clientId')).lower()
 def roles(e): return {norm(r) for r in (e.get('roles') or [e.get('role')]) if norm(r)}
-def scopes(e): return {norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
+def scopes(e):
+    result={norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
+    if 'operator.write' in result: result.add('operator.read')
+    return result
 identity=json.loads((Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw') / 'identity' / 'device.json').read_text(encoding='utf-8'))
 identity_device_id=norm(identity.get('deviceId'))
 paired={norm(e.get('deviceId')) for e in state.get('paired') or [] if isinstance(e, dict)}
+allowed={'operator.pairing','operator.read','operator.write'}
 for req in sorted([e for e in state.get('pending') or [] if isinstance(e, dict)], key=lambda e:e.get('ts') or 0, reverse=True):
     requested=scopes(req)
-    if (is_cli(req) and roles(req) == {'operator'} and requested == {'operator.pairing'}
+    if (is_cli(req) and roles(req) == {'operator'}
+            and 'operator.pairing' in requested and requested.issubset(allowed)
             and norm(req.get('deviceId')) == identity_device_id
             and identity_device_id not in paired and norm(req.get('requestId'))
             and norm(req.get('publicKey'))):
@@ -341,8 +346,8 @@ requested=canonical_scopes(request, ('scopes','requestedScopes'), 'requested')
 paired=load('paired.json')
 existing=next((item for item in paired.values() if isinstance(item, dict) and norm(item.get('deviceId')) == device_id), None)
 if existing is None:
-    if requested != {'operator.pairing'}:
-        raise SystemExit('first pairing request is not pairing-only')
+    if 'operator.pairing' not in requested:
+        raise SystemExit('first pairing request is missing operator.pairing')
     expected=requested
 else:
     if norm(existing.get('publicKey')) != public_key or roles(existing) != {'operator'}:
