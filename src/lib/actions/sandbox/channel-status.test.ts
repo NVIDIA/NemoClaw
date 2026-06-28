@@ -225,7 +225,6 @@ function mergePlanInputs(
   };
 }
 
-
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
     const heartbeat = JSON.stringify({
