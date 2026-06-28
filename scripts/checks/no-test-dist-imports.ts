@@ -75,21 +75,23 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
     violations.push({ file, line: position.line + 1, detail });
   }
 
-  function checkSpecifier(node: ts.Node, specifier: string): void {
-    if (isCompiledInternalSpecifier(specifier)) {
-      add(node, `imports compiled CLI internals from ${JSON.stringify(specifier)}`);
-    }
+  function checkSpecifier(node: ts.Node, specifier: string, viaDynamicCall: boolean): void {
+    if (!isCompiledInternalSpecifier(specifier)) return;
+    const detail = viaDynamicCall
+      ? `constructs a path into compiled CLI internals via dynamic require to ${JSON.stringify(specifier)}`
+      : `imports compiled CLI internals from ${JSON.stringify(specifier)}`;
+    add(node, detail);
   }
 
   function visit(node: ts.Node): void {
     if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
-      checkSpecifier(node.moduleSpecifier, node.moduleSpecifier.text);
+      checkSpecifier(node.moduleSpecifier, node.moduleSpecifier.text, false);
     } else if (
       ts.isExportDeclaration(node) &&
       node.moduleSpecifier &&
       ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      checkSpecifier(node.moduleSpecifier, node.moduleSpecifier.text);
+      checkSpecifier(node.moduleSpecifier, node.moduleSpecifier.text, false);
     } else if (ts.isCallExpression(node)) {
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
@@ -104,7 +106,7 @@ export function findCompiledInternalViolations(file: string, source: string): Vi
         firstArgument &&
         ts.isStringLiteralLike(firstArgument)
       ) {
-        checkSpecifier(firstArgument, firstArgument.text);
+        checkSpecifier(firstArgument, firstArgument.text, true);
       }
 
       const isPathBuilder =
@@ -152,7 +154,8 @@ function findViolations(absolutePath: string): Violation[] {
 export function isPathConstructionViolation(violation: Violation): boolean {
   return (
     violation.detail.startsWith("constructs a path") ||
-    violation.detail.includes("require in generated test code")
+    violation.detail.includes("require in generated test code") ||
+    violation.detail.startsWith("constructs a path into compiled CLI internals via dynamic require")
   );
 }
 

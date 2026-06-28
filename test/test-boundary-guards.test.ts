@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   findCompiledInternalViolations,
+  isPathConstructionViolation,
   isScannedTestPath,
 } from "../scripts/checks/no-test-dist-imports";
 import { findProjectOverlaps, parseProjectListing } from "../scripts/checks/vitest-project-overlap";
@@ -45,6 +46,29 @@ describe("compiled-test import boundary", () => {
     expect(isScannedTestPath("test/package-contract/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/e2e/example.test.ts")).toBe(false);
     expect(isScannedTestPath("test/dist-sourcemaps.test.ts")).toBe(false);
+  });
+
+  it("classifies path-construction violations distinctly from import-specifier violations", () => {
+    const importOnly = findCompiledInternalViolations(
+      "test/example.test.ts",
+      'import value from "../dist/lib/value.js";\n',
+    );
+    expect(importOnly).toHaveLength(1);
+    expect(importOnly.some(isPathConstructionViolation)).toBe(false);
+
+    const pathOnly = findCompiledInternalViolations(
+      "test/example.test.ts",
+      'path.join(root, "dist", "lib", "value.js");\n',
+    );
+    expect(pathOnly).toHaveLength(1);
+    expect(pathOnly.every(isPathConstructionViolation)).toBe(true);
+
+    const requireOnly = findCompiledInternalViolations(
+      "test/example.test.ts",
+      'require("../dist/lib/value.js");\n',
+    );
+    expect(requireOnly).toHaveLength(1);
+    expect(requireOnly.every(isPathConstructionViolation)).toBe(true);
   });
 });
 
