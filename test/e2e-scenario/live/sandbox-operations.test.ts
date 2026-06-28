@@ -48,18 +48,6 @@ function expectExitZero(result: ProcessResult, label: string): void {
   expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
 }
 
-async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  const result = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
-    artifactName: `cleanup-destroy-${sandboxName}`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 15 * 60_000,
-  });
-  if (result.exitCode === 0) return;
-  const text = resultText(result);
-  if (/Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one/i.test(text)) return;
-  expectExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
-}
-
 async function cleanupGateway(host: HostCliClient, artifactName = "cleanup-gateway") {
   const remove = await host.command("openshell", ["gateway", "remove", "nemoclaw"], {
     artifactName: `${artifactName}-remove`,
@@ -93,7 +81,7 @@ async function onboardSandbox(
   hosted: HostedInferenceConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
-  cleanup.add(`destroy sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
+  cleanup.add(`destroy sandbox ${sandboxName}`, () => host.cleanupSandbox(sandboxName));
   const result = await host.nemoclaw(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
@@ -582,8 +570,8 @@ liveTest(
 
     await environment.assertReady(ENVIRONMENT);
     cleanup.add("remove shared NemoClaw gateway registration", () => cleanupGateway(host));
-    await cleanupSandbox(host, SANDBOX_B);
-    await cleanupSandbox(host, SANDBOX_A);
+    await host.cleanupSandbox(SANDBOX_B);
+    await host.cleanupSandbox(SANDBOX_A);
 
     await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
 

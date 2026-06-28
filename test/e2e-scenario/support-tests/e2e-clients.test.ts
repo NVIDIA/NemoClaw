@@ -6,17 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-
-import { assertExitZero, type CommandRunner } from "../fixtures/clients/index.ts";
 import {
+  assertExitZero,
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   ProviderClient,
   SandboxClient,
   StateClient,
-  trustedSandboxShellScript,
-  trustedProviderEndpoint,
   type TrustedSandboxShellScript,
+  trustedProviderEndpoint,
+  trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -98,6 +98,29 @@ describe("E2E fixture clients", () => {
       { command: "nemoclaw", args: ["assistant", "status"] },
       { command: "nemoclaw", args: ["assistant", "destroy", "--yes"] },
     ]);
+  });
+
+  it.each([
+    "Error: sandbox assistant not found",
+    "no such sandbox: assistant",
+  ])("host client accepts canonical already-absent cleanup output: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.exitCode = 1;
+    runner.stderr = stderr;
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupSandbox("assistant")).resolves.toBeUndefined();
+  });
+
+  it("host client surfaces unexpected sandbox cleanup failures", async () => {
+    const runner = new FakeRunner();
+    runner.exitCode = 1;
+    runner.stderr = "permission denied";
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupSandbox("assistant")).rejects.toThrow(
+      "cleanup destroy sandbox assistant failed: permission denied",
+    );
   });
 
   it("host client propagates cwd, env, and timeout options", async () => {
