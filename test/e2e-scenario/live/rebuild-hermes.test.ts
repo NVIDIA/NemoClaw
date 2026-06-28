@@ -14,6 +14,7 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { listCredentialLeakPaths } from "../fixtures/phases/state-validation.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { buildRebuildHermesChildEnv } from "./rebuild-hermes-env.ts";
 
 // Direct Vitest replacement coverage for test/e2e/test-rebuild-hermes.sh.
 // The migrated scope is the legacy non-interactive shell regression: install.sh,
@@ -99,8 +100,7 @@ interface SessionArtifactSummary {
 }
 
 function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  return {
-    ...buildAvailabilityProbeEnv(),
+  return buildRebuildHermesChildEnv(process.env, {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_COMPAT_MODEL: HOSTED_MODEL,
@@ -119,7 +119,7 @@ function testEnv(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Process
         }
       : {}),
     ...extra,
-  };
+  });
 }
 
 function snapshotFile(file: string): FileSnapshot {

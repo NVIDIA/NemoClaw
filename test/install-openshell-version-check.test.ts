@@ -7,6 +7,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildRebuildHermesChildEnv } from "./e2e-scenario/live/rebuild-hermes-env.ts";
+
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const REQUIRED_OPENSHELL_VERSION = "0.0.72";
 const LEGACY_OPENSHELL_VERSION = "0.0.44";
@@ -550,6 +552,27 @@ exit 0`,
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("refreshing the moving dev release");
     expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("preserves the rebuild Hermes requested channel through the real installer boundary", () => {
+    const childEnv = buildRebuildHermesChildEnv(
+      {
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+        NVIDIA_API_KEY: "must-not-reach-child",
+      },
+      {},
+    );
+    const result = runWithInstalledVersion("0.0.36", childEnv);
+
+    expect(childEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
+    expect(childEnv.NVIDIA_API_KEY).toBeUndefined();
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+    expect(result.stdout).not.toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
   });
 
   it("upgrades stable OpenShell when the dev channel is requested", () => {
