@@ -274,6 +274,31 @@ fi
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
+  it("does not retry a parseable JSON HTTP 429 response", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-429-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+printf '%s\n' '__HTTP_STATUS__=429'
+printf '%s\n' '{"error":{"message":"rate limited"}}'
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("did not contain non-empty choices[0].message.content");
+    expect(result.stderr).not.toContain("retrying in");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
+  });
+
   it.each([
     6, 7, 28, 52, 55, 56,
   ])("retries transient curl exit %i before succeeding", (exitCode) => {
