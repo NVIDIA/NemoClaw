@@ -159,7 +159,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
       }
     }
     if (
-      process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
+      process.env.OPENSHELL_TEST_FAIL_APPROVAL_PASS === "1" &&
       approvalCmd.includes("openclaw") &&
       approvalCmd.includes("devices") &&
       approvalCmd.includes("approve")
@@ -171,7 +171,7 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     // STOPPED so the probe path takes the not-running branch and (when recovery
     // also fails) the probe-failure exit — where the approval sweep must NOT run.
     if (
-      process.env.NEMOCLAW_TEST_GATEWAY_DOWN === "1" &&
+      process.env.OPENSHELL_TEST_GATEWAY_DOWN === "1" &&
       command.includes("/health") &&
       command.includes("HTTP_CODE")
     ) {

@@ -38,7 +38,6 @@ import {
   detachMissingProviderReference,
   detachProvider,
   inspectMcpProvider,
-  inspectMcpProviderAttachments,
   type McpProviderInspection,
   preflightMcpEntryTargets,
   providerMatchesCredential,
