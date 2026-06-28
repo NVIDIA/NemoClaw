@@ -3,6 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
+import {
+  getMessagingPlanFromEntry,
+  serializeSandboxMessagingStateForDisk,
+} from "../state/registry-messaging";
 import { compileTelegramPlanForTests } from "./__test-utils__/telegram-plan";
 import {
   collectBuiltInMessagingChannelDiagnostics,
@@ -165,5 +169,34 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
     expect(byLabel("Telegram group mention mode")?.display.detail).not.toMatch(
       /definitely-not-a-mode/,
     );
+  });
+
+  it("preserves Telegram visible config through disk serialization and registry readback", async () => {
+    const compiled = await compileTelegramPlanForTests({
+      envOverrides: {
+        TELEGRAM_GROUP_POLICY: "allowlist",
+        TELEGRAM_REQUIRE_MENTION: "0",
+      },
+    });
+    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
+    expect(onDisk).toBeDefined();
+    const fakeEntry = { messaging: onDisk };
+    const reloaded = getMessagingPlanFromEntry(fakeEntry);
+    expect(reloaded).not.toBeNull();
+
+    const diagnostic = collectBuiltInMessagingChannelDiagnostics().find(
+      (spec) => spec.channelId === "telegram",
+    );
+    expect(diagnostic).toBeDefined();
+    const records = collectVisibleConfigRecords(diagnostic!, reloaded, "telegram", "openclaw");
+    const byLabel = (label: string) => records.find((record) => record.input.label === label);
+    expect(byLabel("Telegram group policy")?.display).toMatchObject({
+      source: "persisted",
+      detail: "allowlist",
+    });
+    expect(byLabel("Telegram group mention mode")?.display).toMatchObject({
+      source: "persisted",
+      detail: "all group messages (TELEGRAM_REQUIRE_MENTION=0)",
+    });
   });
 });
