@@ -15,14 +15,20 @@ content:
   type: "get_started"
 ---
 
-Use this guide when you want NemoClaw to build an OpenShell sandbox with the `dcode` terminal coding agent installed and configured for NemoClaw-managed inference.
+Use this guide to build an OpenShell sandbox with the `dcode` terminal coding agent installed and configured for NemoClaw-managed inference.
 
 ## Onboard
 
-Run onboarding with the canonical agent ID.
+Run onboarding with the Deep Agents alias, or use `nemoclaw --agent` with either the canonical agent ID or a short alias.
 
 ```bash
+nemo-deepagents onboard
+# Equivalent:
 nemoclaw onboard --agent langchain-deepagents-code
+# Also accepted:
+nemoclaw onboard --agent dcode
+nemoclaw onboard --agent deepagents
+nemoclaw onboard --agent langchain
 ```
 
 The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA provider support.
@@ -58,21 +64,22 @@ For project-specific Python dependencies, create a separate virtual environment 
 Deep Agents Code state lives under `/sandbox/.deepagents`.
 NemoClaw snapshot and rebuild flows preserve the app state directory, skills, generated config, and hooks config when those files exist.
 Run `nemoclaw <sandbox-name> snapshot create` after active `dcode` tasks finish.
-For `langchain-deepagents-code` sandboxes, NemoClaw refuses before backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
+For `langchain-deepagents-code` sandboxes, NemoClaw refuses backup when it detects an active `dcode` task or cannot verify that the state tree is idle.
 NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may put Tavily, LangSmith, MCP service, or provider credentials there, and this managed harness disables MCP at runtime.
 
 ## Optional Web Search
 
-Deep Agents Code can use Tavily web search when you provide a Tavily credential in the runtime environment.
-NemoClaw does not enable Tavily or LangSmith by default for this harness. The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
+Deep Agents Code uses Tavily web search when you provide a Tavily credential in the runtime environment.
+NemoClaw does not enable Tavily or LangSmith by default for this harness.
+The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 
 To enable Tavily, apply the maintained `tavily` policy preset so the sandbox may reach the Tavily API, then supply the credential.
 
 ```bash
 # Preview the endpoints the preset opens:
-nemoclaw <sandbox-name> policy-add tavily --dry-run
+nemo-deepagents <sandbox-name> policy-add tavily --dry-run
 # Apply it:
-nemoclaw <sandbox-name> policy-add tavily --yes
+nemo-deepagents <sandbox-name> policy-add tavily --yes
 ```
 
 The `tavily` preset only opens egress to `api.tavily.com:443`.
@@ -82,24 +89,25 @@ Because OpenShell attributes the harness's calls to the sandbox `python3` interp
 Remove the access again when it is no longer needed.
 
 ```bash
-nemoclaw <sandbox-name> policy-remove tavily --yes
+nemo-deepagents <sandbox-name> policy-remove tavily --yes
 ```
 
 ### Optional Tracing (LangSmith)
 
-LangSmith tracing is **not a supported integration** for this managed harness yet.
+NemoClaw does not support LangSmith tracing for this managed harness yet.
 `start.sh` forwards the non-secret `LANGSMITH_TRACING`/`LANGSMITH_PROJECT` toggles if set, but no policy preset opens `api.smith.langchain.com` and no supported mechanism injects `LANGSMITH_API_KEY`.
-If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy); treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
+If you need tracing, [add the egress endpoints manually](../network-policy/customize-network-policy).
+Treat it as unsupported until NemoClaw ships a maintained `langsmith` preset.
 
 ## Troubleshooting
 
-Use normal sandbox lifecycle commands:
+Use normal sandbox lifecycle commands through either `nemo-deepagents` or `nemoclaw`:
 
 ```bash
-nemoclaw <sandbox-name> status
-nemoclaw <sandbox-name> logs --follow
-nemoclaw <sandbox-name> rebuild
-nemoclaw <sandbox-name> snapshot create --name before-change
+nemo-deepagents <sandbox-name> status
+nemo-deepagents <sandbox-name> logs --follow
+nemo-deepagents <sandbox-name> rebuild
+nemo-deepagents <sandbox-name> snapshot create --name before-change
 ```
 
 `status` reports the selected harness as a terminal runtime and prints the interactive/headless command shape.
@@ -108,7 +116,7 @@ There is no dashboard port or long-running gateway process for this harness.
 
 ## Next Steps
 
-- [Inference Options](../inference/inference-options) to choose a provider and model.
-- [Backup and Restore](../manage-sandboxes/backup-restore) for snapshot and rebuild preservation details.
-- [Runtime Controls](../manage-sandboxes/runtime-controls) for sandbox mutability and host-side control boundaries.
-- [Troubleshooting](../reference/troubleshooting) for common setup and runtime issues.
+- [Inference Options](../inference/inference-options) explains how to choose a provider and model.
+- [Backup and Restore](../manage-sandboxes/backup-restore) explains snapshot and rebuild preservation.
+- [Runtime Controls](../manage-sandboxes/runtime-controls) explains sandbox mutability and host-side control boundaries.
+- [Troubleshooting](../reference/troubleshooting) covers common setup and runtime issues.

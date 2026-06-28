@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-import { loadAgent } from "../../../dist/lib/agent/defs";
-// Import from compiled dist/ so coverage is attributed correctly.
-import { handleAgentSetup } from "../../../dist/lib/agent/onboard";
 import type { AgentDefinition } from "./defs";
+import { loadAgent } from "./defs";
+// Import source directly so tests cannot pass against a stale build.
+import { handleAgentSetup } from "./onboard";
 import {
   recordFailingDeepAgentsSmokeCall,
   recordSuccessfulDeepAgentsRuntimeCall,

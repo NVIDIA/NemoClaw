@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+// Import source directly so tests cannot pass against a stale build.
 import {
   classifyApplyFailure,
   classifySandboxCreateFailure,
@@ -14,7 +14,7 @@ import {
   shouldForceCompletionsApi,
   shouldSkipResponsesProbe,
   validateNvidiaApiKeyValue,
-} from "../../dist/lib/validation";
+} from "./validation";
 
 describe("classifyValidationFailure", () => {
   it("classifies curl failures as transport", () => {

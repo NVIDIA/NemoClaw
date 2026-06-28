@@ -8,7 +8,7 @@ import {
   printSandboxCreateRecoveryHints,
   reconstructImageRefCreateCommand,
   shouldIncludeBuildContextPath,
-} from "../../dist/lib/build-context";
+} from "./build-context";
 
 type ConsoleErrorSpy = ReturnType<typeof vi.spyOn>;
 

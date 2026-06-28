@@ -822,8 +822,8 @@ export function startNimContainerByName(
   }
 
   // Resolve the NGC key: explicit arg wins, then NGC_API_KEY, then NVIDIA_INFERENCE_API_KEY,
-  // then the NVIDIA provider product-surface key.
-  // (covers users who only set the NVIDIA provider key for cloud inference but reuse it
+  // then the legacy NVIDIA_API_KEY alias.
+  // (covers users who only set the NVIDIA key for cloud inference but reuse it
   // against NGC). Without this, NIM's in-container model-manifest download
   // returns "Authentication Error" and the container exits 0 a few seconds in.
   // Regression of #210 — see #3333.

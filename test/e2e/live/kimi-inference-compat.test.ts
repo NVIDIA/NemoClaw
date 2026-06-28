@@ -116,7 +116,7 @@ test.skipIf(!shouldRunLiveE2E())(
       },
     );
     expect(toolAgent.exitCode, resultText(toolAgent)).toBe(0);
-    await assertTrajectory(sandbox);
+    await assertTrajectory(sandbox, mode);
     await assertKimiUpstreamTraffic({ fake, host, mode, apiKey });
   },
 );

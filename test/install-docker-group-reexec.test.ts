@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
@@ -99,6 +99,7 @@ function runEnsureDocker(
       esac
     }
     # Surface info() output on stdout so tests can pin the user-facing
+    # guidance text emitted by the legacy fallback path.
     info() { printf '%s\n' "$*"; }
     warn() { :; }
     error() { return 1; }

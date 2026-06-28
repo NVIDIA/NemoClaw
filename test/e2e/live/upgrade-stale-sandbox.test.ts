@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- *
- * Preserves the legacy #1904 contract with real Docker/OpenShell/NemoClaw
+ * Preserves the #1904 contract with real Docker/OpenShell/NemoClaw
  * boundaries: onboard current NemoClaw, create an old OpenClaw sandbox from a
  * real image, register stale sandbox metadata, prove upgrade-sandboxes detects
  * the stale sandbox, rebuild it, and prove the stale version is gone.
@@ -12,6 +11,7 @@
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   assertDeleteInstalledSandboxAllowed,
@@ -36,7 +36,7 @@ test.skipIf(!shouldRunLiveE2E())(
   "upgrade-sandboxes detects and rebuilds stale OpenClaw sandboxes (#1904)",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.writeJson("target.json", {
       id: "upgrade-stale-sandbox",
@@ -65,7 +65,7 @@ test.skipIf(!shouldRunLiveE2E())(
     cleanup.add("remove stale OpenClaw test image", () => cleanupOldImage(host));
     await cleanupStaleSandbox(host, sandbox);
 
-    const install = await installCurrentNemoclaw(host, apiKey);
+    const install = await installCurrentNemoclaw(host, hosted);
     expect(install.exitCode, resultText(install)).toBe(0);
 
     const deleteInstalledSandbox = await sandbox.openshell(["sandbox", "delete", SANDBOX_NAME], {
@@ -117,8 +117,8 @@ test.skipIf(!shouldRunLiveE2E())(
 
     const staleCheck = await host.nemoclaw(["upgrade-sandboxes", "--check"], {
       artifactName: "phase-5-upgrade-sandboxes-check-stale",
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
+      env: commandEnv(hosted.env),
+      redactionValues: [hosted.apiKey],
       timeoutMs: 120_000,
     });
     expect(staleCheck.exitCode, resultText(staleCheck)).toBe(0);
@@ -127,8 +127,8 @@ test.skipIf(!shouldRunLiveE2E())(
 
     const rebuild = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
       artifactName: "phase-6-rebuild-stale-sandbox",
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
+      env: commandEnv(hosted.env),
+      redactionValues: [hosted.apiKey],
       timeoutMs: 25 * 60_000,
     });
     expect(rebuild.exitCode, resultText(rebuild)).toBe(0);
@@ -146,8 +146,8 @@ test.skipIf(!shouldRunLiveE2E())(
 
     const cleanCheck = await host.nemoclaw(["upgrade-sandboxes", "--check"], {
       artifactName: "phase-7-upgrade-sandboxes-check-clean",
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
+      env: commandEnv(hosted.env),
+      redactionValues: [hosted.apiKey],
       timeoutMs: 120_000,
     });
     expect(cleanCheck.exitCode, resultText(cleanCheck)).toBe(0);

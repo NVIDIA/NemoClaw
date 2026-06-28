@@ -24,6 +24,14 @@ const headlessCheckPath = path.join(
   "checks",
   "07-deepagents-code-headless-inference.sh",
 );
+const tuiStartupCheckPath = path.join(
+  process.cwd(),
+  "test",
+  "e2e",
+  "e2e-cloud-experimental",
+  "checks",
+  "10-deepagents-code-tui-startup.sh",
+);
 const DCODE_CANONICAL_PATH =
   "/usr/local/bin:/opt/venv/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin";
 
@@ -109,12 +117,19 @@ function makeStartScriptFixture(tempDir: string): {
 } {
   const envFile = path.join(tempDir, "proxy-env.sh");
   const scriptPath = path.join(tempDir, "start.sh");
-  const fixture = readAgentFile("start.sh")
+  const original = readAgentFile("start.sh");
+  expect(original).toContain("local target=/tmp/nemoclaw-proxy-env.sh");
+  expect(original).toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
+  const fixture = original
     .replace("local target=/tmp/nemoclaw-proxy-env.sh", `local target="${envFile}"`)
     .replace(
       'tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"',
       `tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`,
     );
+  expect(fixture).toContain(`local target="${envFile}"`);
+  expect(fixture).toContain(`tmp="$(mktemp "${tempDir}/nemoclaw-proxy-env.XXXXXX")"`);
+  expect(fixture).not.toContain("local target=/tmp/nemoclaw-proxy-env.sh");
+  expect(fixture).not.toContain('tmp="$(mktemp /tmp/nemoclaw-proxy-env.XXXXXX)"');
   fs.writeFileSync(scriptPath, fixture, "utf8");
   fs.chmodSync(scriptPath, 0o755);
   return { envFile, scriptPath };
@@ -365,6 +380,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       ),
       "utf8",
     );
+    const tuiStartupCheck = fs.readFileSync(tuiStartupCheckPath, "utf8");
 
     expect(landlockCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
     expect(landlockCheck).toContain("touch /sandbox/.deepagents/deepagents-landlock-test");
@@ -386,7 +402,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("except urllib.error.URLError as exc:");
     expect(pythonEgressCheck).toContain("ERROR:URLError");
     expect(pythonEgressCheck).toContain("lacked denial evidence");
-    expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain("python_probe_source");
+    expect(pythonEgressCheck).toContain("base64 | tr -d");
+    expect(pythonEgressCheck).not.toContain("mktemp");
+    expect(pythonEgressCheck).toContain("base64 -d");
+    expect(pythonEgressCheck).toContain("${python_bin@Q} -c");
+    expect(pythonEgressCheck).toContain("${url@Q}");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
     );
@@ -412,6 +433,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("Case: Deep Agents Code dcode secret boundary");
     expect(secretBoundaryCheck).toContain("env OPENAI_API_KEY=");
     expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
+    expect(secretBoundaryCheck).toContain("dcode_secret_probe_runtime_env");
+    expect(secretBoundaryCheck).toContain("dcode_secret_probe_env_file");
+    expect(secretBoundaryCheck).toContain("remote_cmd=");
+    expect(secretBoundaryCheck).toContain("LOG_MARKER_FOUND:%s");
+    expect(secretBoundaryCheck).toContain("OpenShell rejects newline-bearing exec");
+    expect(secretBoundaryCheck).toContain("NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST");
+    expect(secretBoundaryCheck).toContain("NO_NEWLINE_IN_COMMAND");
+    expect(secretBoundaryCheck).toContain("DCODE_EXIT:%s\\\\n");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");
     expect(secretBoundaryCheck).toContain("NETWORK_LOG_PATTERN=");
@@ -429,6 +458,52 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_audit_logs");
     expect(secretBoundaryCheck).toContain("assert_no_rejected_interval_network_logs");
     expect(secretBoundaryCheck).toContain("sha256sum ${DEEPAGENTS_ENV_FILE@Q}");
+    expect(tuiStartupCheck).toContain("Case: Deep Agents Code interactive TUI startup");
+    expect(tuiStartupCheck).toContain("test -d /sandbox/.deepagents && command -v dcode");
+    expect(tuiStartupCheck).toContain("expect <<'EXPECT'");
+    expect(tuiStartupCheck).toContain(
+      "set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc",
+    );
+    expect(tuiStartupCheck).toContain("spawn {*}$cmd");
+    expect(tuiStartupCheck).not.toContain("-nocase -re {(deep agents|");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_DCODE_PROBE:deepagents");
+    expect(tuiStartupCheck).toContain("NEMOCLAW_DCODE_PROBE:other");
+    expect(tuiStartupCheck).toContain("unable to probe sandbox");
+    expect(tuiStartupCheck).toContain("unexpected sandbox probe output");
+    expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN"');
+    expect(tuiStartupCheck).toContain("-nocase -re $onboarding_pattern");
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"');
+    expect(tuiStartupCheck).toContain('send -- "\\033"');
+    expect(tuiStartupCheck).toContain("if {$saw_onboarding}");
+    expect(tuiStartupCheck).toContain('send -- "\\003"\nafter 250\ncatch {send -- "\\003"}');
+    expect(tuiStartupCheck).toContain('append_marker $markers "$expect_out(0,string)"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_READY"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"');
+    expect(tuiStartupCheck).toContain(
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',
+    );
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"');
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_MARKERS="$marker_capture_file"');
+    expect(tuiStartupCheck).toContain(
+      'cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file"',
+    );
+    expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
+      tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
+    );
+    expect(tuiStartupCheck).toContain('print_sanitized_capture_excerpt "$plain_capture_file"');
+    expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
+    expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
+    expect(tuiStartupCheck).toContain("is_tui_ready_capture");
+    expect(tuiStartupCheck).toContain("redact_secrets_in_file");
+    expect(tuiStartupCheck).toContain("trap cleanup_sensitive_captures EXIT");
+    expect(tuiStartupCheck).toContain("cleanup_sensitive_captures");
+    expect(tuiStartupCheck).toContain("${PREFIX}.sanitized.log");
+    expect(tuiStartupCheck).toContain("secret-shaped value found in sanitized TUI capture");
+    expect(tuiStartupCheck).toContain("nvapi-");
+    expect(tuiStartupCheck).toContain("sk-");
     const tavilyOptInCheck = fs.readFileSync(
       path.join(
         process.cwd(),
@@ -443,6 +518,10 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tavilyOptInCheck).toContain("policy-add tavily --dry-run");
     expect(tavilyOptInCheck).toContain("policy-add tavily --yes");
     expect(tavilyOptInCheck).toContain("https://api.tavily.com/");
+    expect(tavilyOptInCheck).toContain("python_probe_source");
+    expect(tavilyOptInCheck).toContain("base64 | tr -d");
+    expect(tavilyOptInCheck).toContain("python3 -c");
+    expect(tavilyOptInCheck).toContain("NEMOCLAW_E2E_TAVILY_SELF_TEST");
     expect(tavilyOptInCheck).toContain("/opt/venv/");
     expect(tavilyOptInCheck).toContain("managed Deep Agents Code python can reach Tavily");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
@@ -451,6 +530,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
+      "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
     ]);
   });
 

@@ -66,6 +66,32 @@ describe("runUpdateAction", () => {
     );
   });
 
+  it("--check renders NemoDeepAgents branding and installer guidance when the Deep Agents alias is active", async () => {
+    const log = vi.fn();
+
+    const result = await runUpdateAction(
+      { check: true },
+      {
+        currentVersion: () => "0.1.0",
+        env: { ...process.env, NEMOCLAW_AGENT: "dcode" },
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl: vi.fn(),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Current NemoDeepAgents version: 0.1.0"),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=langchain-deepagents-code bash",
+      ),
+    );
+  });
+
   it("does not run the installer for developer source checkouts", async () => {
     const error = vi.fn();
     const spawnSyncImpl = vi.fn();
@@ -224,6 +250,46 @@ describe("runUpdateAction", () => {
     expect(options?.env?.ENV).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
     expect(options?.env?.NEMOCLAW_INSTALL_TAG).toBeUndefined();
+  });
+
+  it("preserves the canonical Deep Agents agent selection while sanitizing installer env", async () => {
+    const spawnSyncImpl = vi.fn(
+      () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,
+    );
+    const log = vi.fn();
+
+    await runUpdateAction(
+      { yes: true },
+      {
+        currentVersion: () => "0.1.0",
+        env: {
+          ...process.env,
+          BASH_ENV: "/tmp/review-bash-env",
+          NEMOCLAW_AGENT: "langchain-deepagents-code",
+          NEMOCLAW_INSTALL_REF: "refs/heads/not-maintained",
+        },
+        getLatestVersion: () => "0.2.0",
+        isSourceCheckout: () => false,
+        log,
+        spawnSyncImpl,
+      },
+    );
+
+    const calls = spawnSyncImpl.mock.calls as unknown as Array<
+      [string, readonly string[], { env?: NodeJS.ProcessEnv }]
+    >;
+    const options = calls[0]?.[2];
+    expect(options?.env?.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
+    expect(options?.env?.BASH_ENV).toBeUndefined();
+    expect(options?.env?.NEMOCLAW_INSTALL_REF).toBeUndefined();
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining("Running maintained NemoDeepAgents installer"),
+    );
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(
+        "Installer completed. Run `nemo-deepagents upgrade-sandboxes --check`",
+      ),
+    );
   });
 
   it("preserves the Hermes agent selection while sanitizing installer env", async () => {

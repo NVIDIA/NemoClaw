@@ -97,8 +97,8 @@ export function createValidationRecoveryPromptHelpers(
         // Regex fallback: base64-safe token pattern (20+ chars, no spaces, mixed alphanum)
         /^[A-Za-z0-9_\-.]{20,}$/.test(choice);
       // validateNvidiaApiKeyValue is provider-aware: it only enforces the
-      // nvapi- prefix for NVIDIA credential envs, so passing it unconditionally
-      // here is safe for Anthropic/OpenAI/Gemini too.
+      // nvapi- prefix when credentialEnv === "NVIDIA_INFERENCE_API_KEY", so passing it
+      // unconditionally here is safe for Anthropic/OpenAI/Gemini too.
       const validator = (key: string) => deps.validateNvidiaApiKeyValue(key, credentialEnv);
       if (looksLikeToken) {
         console.log("  ⚠️  That looks like an API key — do not paste credentials here.");

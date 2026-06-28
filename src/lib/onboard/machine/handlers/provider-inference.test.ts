@@ -383,6 +383,192 @@ describe("handleProviderInferenceState", () => {
     );
   });
 
+  it("refreshes compatible-endpoint route on OpenClaw messaging resume", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      hydrateCredentialEnv: vi.fn(() => null),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.skipped).not.toHaveBeenCalledWith(
+      "inference",
+      "compatible-endpoint / nvidia/nemotron",
+    );
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "nvidia/nemotron",
+      "compatible-endpoint",
+      "https://integrate.api.nvidia.com/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, skipHostInferenceSmoke: true },
+    );
+    expect(calls.log).toHaveBeenCalledWith(
+      "  [resume] Refreshing compatible-endpoint inference route with the stored gateway credential.",
+    );
+  });
+
+  it("refreshes compatible-endpoint route when messaging is only recorded in the session plan", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      messagingPlan: {
+        schemaVersion: 1,
+        sandboxName: "my-assistant",
+        agent: "openclaw",
+        workflow: "rebuild",
+        channels: [
+          {
+            channelId: "telegram",
+            displayName: "Telegram",
+            authMode: "token-paste",
+            active: true,
+            selected: true,
+            configured: true,
+            disabled: false,
+            inputs: [],
+            hooks: [],
+          },
+        ],
+        disabledChannels: [],
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      hydrateCredentialEnv: vi.fn(() => null),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "nvidia/nemotron",
+      "compatible-endpoint",
+      "https://integrate.api.nvidia.com/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false, skipHostInferenceSmoke: true },
+    );
+  });
+
+  it("keeps the compatible-endpoint resume shortcut when no messaging channels are selected", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      hydrateCredentialEnv: vi.fn(() => null),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith(
+      "inference",
+      "compatible-endpoint / nvidia/nemotron",
+    );
+  });
+
+  it("keeps the compatible-endpoint resume shortcut for Hermes messaging", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      hydrateCredentialEnv: vi.fn(() => null),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      agent: { name: "hermes" },
+      selectedMessagingChannels: ["slack"],
+    });
+
+    expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith(
+      "inference",
+      "compatible-endpoint / nvidia/nemotron",
+    );
+  });
+
+  it("runs compatible-endpoint route refresh with host smoke when the credential is locally hydrated", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      hydrateCredentialEnv: vi.fn(() => "nvapi-test"),
+      isInferenceRouteReady: vi.fn(() => true),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+      selectedMessagingChannels: ["telegram"],
+    });
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "nvidia/nemotron",
+      "compatible-endpoint",
+      "https://integrate.api.nvidia.com/v1",
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+      { allowToolsIncompatible: false },
+    );
+    expect(calls.log).toHaveBeenCalledWith(
+      "  [resume] Refreshing compatible-endpoint inference route for messaging.",
+    );
+  });
+
   it("reconciles model router on resumed routed inference", async () => {
     const session = createSession({ provider: "nvidia-router", model: "router/model" });
     session.steps.provider_selection.status = "complete";

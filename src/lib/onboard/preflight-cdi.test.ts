@@ -2,13 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import through the compiled dist/ output so coverage is attributed to the
-// CLI build output that the ratchet measures.
-import {
-  assessHost,
-  planHostRemediation,
-  shouldEnforceCdiNvidiaGpuSpec,
-} from "../../../dist/lib/onboard/preflight";
+// Import source directly so tests cannot pass against a stale build.
+import { assessHost, planHostRemediation, shouldEnforceCdiNvidiaGpuSpec } from "./preflight";
 
 type HostAssessment = Parameters<typeof planHostRemediation>[0];
 

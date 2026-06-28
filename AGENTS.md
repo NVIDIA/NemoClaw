@@ -29,7 +29,7 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, target registry, and live runner (see `test/e2e/README.md`) |
 | `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
@@ -45,6 +45,10 @@ Package-specific guides:
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
+| Run fast source tests | `npm run test:fast` |
+| Run integration tests | `npm run test:integration` |
+| Run package contracts | `npm run test:package` |
+| Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
 | Run all linters | `make check` |
 | Run all hooks manually | `npx prek run --all-files` |
@@ -66,16 +70,23 @@ The `bin/` directory uses CommonJS intentionally for the launcher and a few comp
 
 ### Testing Strategy
 
-Tests are organized into three Vitest projects defined in `vitest.config.ts`:
+Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
-1. **`cli`** — `test/**/*.test.{js,ts}` — integration tests for CLI behavior
-2. **`plugin`** — `nemoclaw/src/**/*.test.ts` — unit tests co-located with source
-3. **`e2e-branch-validation`** — `test/e2e/brev-e2e.test.ts` — validates a branch from source on ephemeral Brev instance (requires `BREV_API_TOKEN`)
+1. **`cli`** — `src/**/*.test.ts` — CLI unit tests importing source
+2. **`integration`** — `test/**/*.test.{js,ts}` — root integration tests importing source; excludes the explicit lanes below
+3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
+4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
+5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
+6. **`e2e-support`** — fast tests for the E2E fixture/support layer
+7. **`e2e-live`** — opt-in live targets that mutate real external state
+8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
 - Root-level tests (`test/`) use ESM imports
 - Plugin tests use TypeScript and are co-located with their source files
+- Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
+- Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
 

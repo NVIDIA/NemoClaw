@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+import type { AgentDefinition } from "./defs";
+// Import source directly so tests cannot pass against a stale build.
 import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildOpenClawRecoveryScript,
   buildRecoveryScript,
-} from "../../../dist/lib/agent/runtime";
-import type { AgentDefinition } from "./defs";
+} from "./runtime";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {

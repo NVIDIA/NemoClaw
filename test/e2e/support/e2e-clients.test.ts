@@ -475,6 +475,42 @@ describe("E2E fixture clients", () => {
     );
   });
 
+  it("provider client builds reachability probes from trusted endpoints", async () => {
+    const runner = new FakeRunner();
+    runner.stdout = "204";
+    const provider = new ProviderClient(runner);
+    const endpoint = trustedProviderEndpoint("https://inference-api.nvidia.com/v1", {
+      allowedHosts: ["inference-api.nvidia.com"],
+    });
+
+    await expect(provider.probeReachability(endpoint)).resolves.toMatchObject({ stdout: "204" });
+
+    expect(runner.calls.at(-1)).toMatchObject({
+      command: "curl",
+      args: [
+        "-sS",
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "20",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "https://inference-api.nvidia.com/v1",
+      ],
+    });
+  });
+
+  it("provider endpoint validation rejects metadata SSRF targets before reachability probes", () => {
+    expect(() => trustedProviderEndpoint("http://169.254.169.254/latest/meta-data")).toThrow(
+      /private or link-local|blocked/,
+    );
+    expect(() =>
+      trustedProviderEndpoint("https://metadata.google.internal/computeMetadata/v1"),
+    ).toThrow(/blocked/);
+  });
+
   it("provider client reports invalid JSON without echoing response body", async () => {
     const runner = new FakeRunner();
     runner.stdout = "not-json with query-token-value";

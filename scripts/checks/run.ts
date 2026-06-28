@@ -36,6 +36,16 @@ const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/layer-import-boundaries.ts"],
   },
+  {
+    name: "no-test-dist-imports",
+    command: TSX,
+    args: ["scripts/checks/no-test-dist-imports.ts"],
+  },
+  {
+    name: "vitest-project-overlap",
+    command: TSX,
+    args: ["scripts/checks/vitest-project-overlap.ts"],
+  },
 ];
 
 function main(): void {

@@ -47,6 +47,10 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 
+const LEGACY_CREDENTIAL_ENV_ALIASES: Partial<Record<string, readonly string[]>> = {
+  NVIDIA_INFERENCE_API_KEY: ["NVIDIA_API_KEY"],
+};
+
 // Hard upper bound on the legacy credentials.json size we are willing to
 // read into memory. The largest realistic credential set NemoClaw has ever
 // shipped is well under 1 KiB; the cap exists purely so an attacker who
@@ -180,6 +184,14 @@ export function getCredential(key: string): string | null {
   return normalized || null;
 }
 
+function getLegacyCredentialAlias(envName: string): string | null {
+  for (const alias of LEGACY_CREDENTIAL_ENV_ALIASES[envName] ?? []) {
+    const value = getCredential(alias);
+    if (value) return value;
+  }
+  return null;
+}
+
 /**
  * Canonical entry point for provider credential resolution (PR #2306).
  * Resolves the credential for `envName` from `process.env`, falling back
@@ -200,10 +212,10 @@ export function getCredential(key: string): string | null {
  * guard inside the staging helper itself.
  */
 export function resolveProviderCredential(envName: string): string | null {
-  let value = getCredential(envName);
+  let value = getCredential(envName) || getLegacyCredentialAlias(envName);
   if (!value) {
     stageLegacyCredentialsToEnv();
-    value = getCredential(envName);
+    value = getCredential(envName) || getLegacyCredentialAlias(envName);
   }
   if (value) {
     process.env[envName] = value;
@@ -682,15 +694,17 @@ export async function readCredentialPrompt(
 }
 
 /**
- * Ensure the user-facing NVIDIA provider key (`NVIDIA_API_KEY`) is staged for
- * this process. Returns immediately if it is already in env, otherwise prompts
- * interactively (validating the `nvapi-` prefix) and stages the result.
- * Onboarding registers the value with the OpenShell gateway later in the flow.
+ * Ensure `NVIDIA_INFERENCE_API_KEY` is staged for this process. Returns immediately
+ * if it is already in env, otherwise prompts interactively (validating
+ * the `nvapi-` prefix) and stages the result. Onboarding registers the
+ * value with the OpenShell gateway later in the flow.
  */
 export async function ensureApiKey(): Promise<CredentialPromptIntent> {
-  let key = getCredential("NVIDIA_API_KEY");
+  let key =
+    getCredential("NVIDIA_INFERENCE_API_KEY") ||
+    getLegacyCredentialAlias("NVIDIA_INFERENCE_API_KEY");
   if (key) {
-    process.env.NVIDIA_API_KEY = key;
+    process.env.NVIDIA_INFERENCE_API_KEY = key;
     return { kind: "credential", value: key };
   }
 
@@ -727,8 +741,8 @@ export async function ensureApiKey(): Promise<CredentialPromptIntent> {
     break;
   }
 
-  saveCredential("NVIDIA_API_KEY", key);
-  process.env.NVIDIA_API_KEY = key;
+  saveCredential("NVIDIA_INFERENCE_API_KEY", key);
+  process.env.NVIDIA_INFERENCE_API_KEY = key;
   console.log("");
   console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
   console.log("  onboarding registers it with the gateway and nothing is written to disk.");

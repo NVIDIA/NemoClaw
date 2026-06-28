@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { isGatewayManagedCompatibleInference } from "../fixtures/ci-compatible-inference.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -15,8 +16,8 @@ import { ubuntuRepoDocker } from "../registry/matrix.ts";
 // OpenClaw sandbox, installs temporary DOCKER-USER DROP rules for the NVIDIA
 // endpoint IPs, drives `openclaw tui` through `openshell sandbox exec --tty`,
 // and requires a visible inference error plus an error status instead of the
-// now hands off to this live target without introducing shared framework or
-// registry helpers.
+// broken spinner+connected signature from #4434. This stays local to the live
+// target rather than introducing shared framework or registry helpers.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const DOCKERFILE_BASE = path.join(REPO_ROOT, "Dockerfile.base");
@@ -44,9 +45,12 @@ const CONNECTED_SPINNER_RE =
 const STATUS_LINE_RE =
   /(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\|\s*(connected|error)/i;
 const ERROR_STATUS_RE = /\|\s*error\b/i;
+const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
-  shouldRunLiveE2E() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1" ? test : test.skip;
+  shouldRunLiveE2E() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
+    ? test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)
+    : test.skip;
 
 type CommandResultText = { stdout: string; stderr: string };
 
@@ -133,6 +137,8 @@ runIssue4434LiveTest(
   "issue-4434: openclaw tui surfaces unreachable-inference errors and stops the connected spinner",
   { timeout: 120 * 60_000 },
   async ({ artifacts, cleanup, environment, host, onboard, sandbox, secrets, skip }) => {
+    // Hosted compatible inference is gateway-managed; this repro only blocks
+    // sandbox egress, so runIssue4434LiveTest skips that mode before setup.
     if (process.platform !== "linux") {
       skip("Linux host required for DOCKER-USER iptables repro");
     }
@@ -215,7 +221,8 @@ runIssue4434LiveTest(
       timeoutMs: 60_000,
     });
     expect(status.exitCode, resultText(status)).toBe(0);
-    expect(resultText(status)).toMatch(/inference.*healthy|healthy.*inference/i);
+    expect(resultText(status)).toMatch(/managed_inference|inference\.local/i);
+    expect(resultText(status)).toMatch(/Docker health:\s*healthy/i);
 
     const connectProbe = await host.nemoclaw([instance.sandboxName, "connect", "--probe-only"], {
       artifactName: "issue4434-connect-probe-before-block",

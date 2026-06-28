@@ -10,6 +10,7 @@ import {
   ADVISOR_OPENAI_COMPATIBLE_BASE_URL,
   DEFAULT_ADVISOR_MODEL,
   DEFAULT_ADVISOR_PROVIDER,
+  NEMOTRON_ULTRA_ADVISOR_MODEL,
   openAiAdvisorProviderConfig,
 } from "../tools/advisors/session.mts";
 import {
@@ -33,8 +34,11 @@ import {
   writeDeterministicContextArtifacts,
   writePromptArtifacts,
 } from "../tools/pr-review-advisor/analyze.mts";
-import { buildComment } from "../tools/pr-review-advisor/comment.mts";
-import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
+import {
+  buildComment,
+  normalizeCommentOptions,
+  readCommentArtifacts,
+} from "../tools/pr-review-advisor/comment.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 
@@ -164,11 +168,13 @@ describe("PR review advisor", () => {
 
     expect(DEFAULT_ADVISOR_PROVIDER).toBe("openai");
     expect(DEFAULT_ADVISOR_MODEL).toBe("openai/openai/gpt-5.5");
+    expect(NEMOTRON_ULTRA_ADVISOR_MODEL).toBe("nvidia/nvidia/nemotron-3-ultra");
     expect(config.apiKey).toBe("PR_REVIEW_ADVISOR_API_KEY");
     expect(config.baseUrl).toBe(ADVISOR_OPENAI_COMPATIBLE_BASE_URL);
-    expect(config.models[0]?.id).toBe(DEFAULT_ADVISOR_MODEL);
-    expect(config.models[0]?.reasoning).toBe(false);
-    expect(config.models[0]?.compat).toMatchObject({
+    const defaultModel = config.models.find((model) => model.id === DEFAULT_ADVISOR_MODEL);
+    const nemotronModel = config.models.find((model) => model.id === NEMOTRON_ULTRA_ADVISOR_MODEL);
+    expect(defaultModel?.reasoning).toBe(false);
+    expect(defaultModel?.compat).toMatchObject({
       supportsDeveloperRole: false,
       supportsReasoningEffort: false,
       supportsStore: false,
@@ -176,6 +182,8 @@ describe("PR review advisor", () => {
       supportsUsageInStreaming: false,
       maxTokensField: "max_tokens",
     });
+    expect(nemotronModel?.reasoning).toBe(false);
+    expect(nemotronModel?.compat).toMatchObject(defaultModel?.compat || {});
   });
 
   it("normalizes advisor output into the schema-owned metadata", () => {
@@ -653,6 +661,75 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(previous).toMatchObject({ headSha: "abc1234" });
   });
 
+  it("keeps parallel advisor previous-review markers isolated", () => {
+    const previous = extractPreviousAdvisorReview(
+      [
+        {
+          id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ndefault",
+        },
+        {
+          id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->\n<!-- head_sha: def5678; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nnemotron",
+        },
+      ],
+      new Set(["1", "2"]),
+      { marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" },
+    );
+
+    expect(previous).toMatchObject({
+      headSha: "def5678",
+      body: expect.stringContaining("nemotron"),
+    });
+  });
+
+  it("validates parallel advisor previous-review provenance with marker isolation", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input: unknown) => {
+      const url = String(input);
+      const runId = url.split("/").at(-1);
+      return {
+        ok: true,
+        json: async () => ({
+          name: "PR Review / Advisor",
+          head_sha: runId === "100" ? "def5678" : "abc1234",
+          event: "pull_request",
+          run_attempt: 1,
+          run_started_at: "2026-01-01T00:00:00Z",
+          updated_at: "2026-01-01T00:10:00Z",
+        }),
+      } as Response;
+    });
+
+    const previous = await collectTrustedPreviousAdvisorReview(
+      "NVIDIA/NemoClaw",
+      "token",
+      [
+        {
+          id: 1,
+          updated_at: "2026-01-01T00:05:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor -->\n<!-- head_sha: abc1234; recommendation: merge_after_fixes; run_id: 99; run_attempt: 1; comment_id: 1 -->\ndefault",
+        },
+        {
+          id: 2,
+          updated_at: "2026-01-01T00:06:00Z",
+          user: { login: "github-actions[bot]" },
+          body: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->\n<!-- head_sha: def5678; recommendation: merge_after_fixes; run_id: 100; run_attempt: 1; comment_id: 2 -->\nnemotron",
+        },
+      ],
+      { marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" },
+    );
+
+    expect(previous).toMatchObject({
+      headSha: "def5678",
+      body: expect.stringContaining("nemotron"),
+    });
+  });
+
   it("ignores spoofed previous advisor comments from untrusted authors", () => {
     const previous = extractPreviousAdvisorReview(
       [
@@ -1044,6 +1121,22 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).toContain("comment builder test");
     expect(comment).toContain("<!-- head_sha: abc123def456; recommendation: merge_after_fixes -->");
     expect(comment).toContain("## PR Review Advisor — Changes requested");
+    expect(
+      buildComment({
+        summary,
+        result,
+        marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
+        title: "PR Review Advisor (Nemotron Ultra)",
+      }),
+    ).toContain("## PR Review Advisor (Nemotron Ultra) — Changes requested");
+    expect(() =>
+      buildComment({
+        summary,
+        result,
+        marker: "<!-- not-the-advisor -->",
+        title: "PR Review Advisor",
+      }),
+    ).toThrow(/marker must be a safe/);
     expect(comment).toContain("**Merge posture:** Do not merge yet");
     expect(comment).toContain("**Primary next action:** Fix `PRA-1`: trusted-code boundary");
     expect(comment).toContain("### 🚨 Required before merge");
@@ -1324,6 +1417,63 @@ diff --git a/test/example.test.ts b/test/example.test.ts
     expect(comment).not.toContain("### injected <script>");
   });
 
+  it("validates configurable comment CLI fields and explicit artifacts", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-comment-"));
+    const defaultSummary = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor",
+      "pr-review-advisor-summary.md",
+    );
+    const laneSummary = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor-nemotron-ultra",
+      "pr-review-advisor-summary.md",
+    );
+    const laneResult = path.join(
+      tmp,
+      "artifacts",
+      "pr-review-advisor-nemotron-ultra",
+      "pr-review-advisor-final-result.json",
+    );
+    fs.mkdirSync(path.dirname(defaultSummary), { recursive: true });
+    fs.writeFileSync(defaultSummary, "# default lane\n");
+
+    try {
+      expect(
+        normalizeCommentOptions({
+          marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->",
+          title: "PR Review Advisor (Nemotron Ultra)",
+          label: "PR review advisor (Nemotron Ultra)",
+        }),
+      ).toMatchObject({ marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->" });
+      expect(() =>
+        normalizeCommentOptions({ marker: "<!-- other -->", title: "ok", label: "ok" }),
+      ).toThrow(/marker must be a safe/);
+      expect(() =>
+        normalizeCommentOptions({
+          marker: "<!-- nemoclaw-pr-review-advisor -->",
+          title: "bad\nheading",
+          label: "ok",
+        }),
+      ).toThrow(/title must be a non-empty single-line string/);
+      expect(() =>
+        readCommentArtifacts(laneSummary, laneResult, { summaryExplicit: true }),
+      ).toThrow(`No PR review advisor summary found at ${laneSummary}`);
+      fs.mkdirSync(path.dirname(laneSummary), { recursive: true });
+      fs.writeFileSync(laneSummary, "# nemotron lane\n");
+      expect(() =>
+        readCommentArtifacts(laneSummary, laneResult, {
+          summaryExplicit: true,
+          resultExplicit: true,
+        }),
+      ).toThrow(`No PR review advisor result found at ${laneResult}`);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes output that validates against the JSON schema", () => {
     const schema = loadAdvisorSchema();
     const ajv = new Ajv2020({ strict: false });
@@ -1332,73 +1482,5 @@ diff --git a/test/example.test.ts b/test/example.test.ts
 
     expect(schema["SPDX-License-Identifier"]).toBe("Apache-2.0");
     expect(validate(result)).toBe(true);
-  });
-
-  it("keeps the workflow inside the trusted-code boundary", () => {
-    expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
-  });
-
-  it("flags trusted-code boundary workflow regressions", () => {
-    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-workflow-"));
-    const workflowPath = path.join(tmp, "workflow.yaml");
-    fs.writeFileSync(
-      workflowPath,
-      `
-"on":
-  pull_request_target: {}
-permissions:
-  contents: write
-jobs:
-  review:
-    continue-on-error: true
-    steps:
-      - name: Checkout trusted advisor code (main)
-        uses: actions/checkout@v4
-        with:
-          repository: NVIDIA/NemoClaw
-          ref: main
-          path: advisor
-          persist-credentials: true
-      - name: Checkout PR workspace (read-only data)
-        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
-        with:
-          ref: refs/pull/\${{ github.event.pull_request.head.sha }}/merge
-          path: pr-workdir
-          persist-credentials: false
-      - name: Run PR review advisor
-        env:
-          PR_REVIEW_ADVISOR_API_KEY: \${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
-          OPENAI_API_KEY: \${{ secrets.OPENAI_API_KEY }}
-        run: |
-          cd "$ADVISOR_WORKDIR"
-          node "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json"
-`,
-    );
-
-    try {
-      const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
-      expect(errors).toEqual(
-        expect.arrayContaining([
-          "workflow must run on pull_request, not only trusted-target events",
-          "workflow must not run untrusted PR code under pull_request_target",
-          "workflow permissions.contents must be read",
-          "review job must not be globally continue-on-error",
-          "PR checkout must use the pull request head SHA as inert analysis data",
-          "Run PR review advisor must receive PR_REVIEW_ADVISOR_API_KEY only from secrets.PR_REVIEW_ADVISOR_API_KEY",
-          "Run PR review advisor must not receive OPENAI_API_KEY",
-        ]),
-      );
-      expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
-      expect(errors.some((error) => error.includes("persist-credentials=false"))).toBe(true);
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("reports workflow parse failures through boundary errors", () => {
-    const missingPath = path.join(ROOT, ".tmp-pr-advisor-missing", "workflow.yaml");
-    expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([
-      `failed to read or parse workflow: ${missingPath}`,
-    ]);
   });
 });

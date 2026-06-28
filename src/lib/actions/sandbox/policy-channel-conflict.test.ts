@@ -6,14 +6,9 @@
 // assert only on the mocked module boundaries — never on the private helper
 // names — so they survive a refactor of the internal conflict-check plumbing.
 //
-// Why dist + vi.spyOn (the rebuild-shields-finally.test.ts pattern): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`
-// (../../onboard, ../../onboard/providers, ./rebuild, ../../runner, ...). In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`, and those modules do extensionless sibling requires the TS
-// transform cannot resolve. So we require the COMPILED module + its real
-// compiled dependency modules from dist/ (one shared require cache) and
-// `vi.spyOn` the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 //
 // isNonInteractive is destructured at module load (`const { isNonInteractive }
 // = require("../../onboard")`), so it cannot be spied after load; it reads
@@ -25,12 +20,12 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
-// Real compiled dependency modules (shared require cache with the SUT).
+// Real source dependency modules (shared require cache with the SUT).
 const store = D("credentials/store.js");
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");

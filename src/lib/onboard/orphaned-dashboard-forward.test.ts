@@ -4,9 +4,9 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  tryCleanupOrphanedDashboardForward,
   type OrphanedDashboardForwardDeps,
-} from "../../../dist/lib/onboard/orphaned-dashboard-forward";
+  tryCleanupOrphanedDashboardForward,
+} from "./orphaned-dashboard-forward";
 
 function forwardListWith(
   entries: Array<{ sandbox: string; port: number; status?: string }>,

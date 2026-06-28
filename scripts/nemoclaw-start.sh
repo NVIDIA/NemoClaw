@@ -2080,32 +2080,28 @@ prepare_gateway_token_for_current_command() {
   fi
 }
 
-# Write an auth profile JSON for the provider key so the gateway can authenticate.
+# Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
 write_auth_profile() {
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ] && [ -n "${NVIDIA_API_KEY:-}" ]; then
+    export NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY"
+  fi
+
+  if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+    return
+  fi
+
   # Read the provider key from the NEMOCLAW_PROVIDER_KEY env var (exported at
   # Dockerfile:99 from the build-time ARG). This avoids parsing openclaw.json
   # and ensures the auth profile matches the provider key in the model config.
   # See: https://github.com/NVIDIA/NemoClaw/issues/1332
   local provider_key="${NEMOCLAW_PROVIDER_KEY:-inference}"
-  local credential_env="NVIDIA_INFERENCE_API_KEY"
 
-  case "$provider_key" in
-    nvidia | nvidia-prod | build)
-      credential_env="NVIDIA_API_KEY"
-      ;;
-  esac
-
-  if [ -z "${!credential_env:-}" ]; then
-    return
-  fi
-
-  python3 - "$provider_key" "$credential_env" <<'PYAUTH'
+  python3 - "$provider_key" <<'PYAUTH'
 import json
 import os
 import sys
 
 provider_key = sys.argv[1]
-credential_env = sys.argv[2]
 
 path = os.path.expanduser('~/.openclaw/agents/main/agent/auth-profiles.json')
 os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -2113,7 +2109,7 @@ json.dump({
     f'{provider_key}:manual': {
         'type': 'api_key',
         'provider': provider_key,
-        'keyRef': {'source': 'env', 'id': credential_env},
+        'keyRef': {'source': 'env', 'id': 'NVIDIA_INFERENCE_API_KEY'},
         'profileId': f'{provider_key}:manual',
     }
 }, open(path, 'w'))

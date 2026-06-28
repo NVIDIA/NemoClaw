@@ -51,8 +51,16 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e",
   "hermes-root-entrypoint-smoke",
   "jetson-nvmap-gpu",
+  "sandbox-rlimits-connect",
 ]);
-const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set(["jetson-nvmap-gpu"]);
+const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set([
+  "jetson-nvmap-gpu",
+  "sandbox-rlimits-connect",
+]);
+const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
+  "device-auth-health",
+  "model-router-provider-routed-inference",
+]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -502,6 +510,32 @@ function validateFreeStandingJobSelector(
   }
 }
 
+function validateGatewayGuardRecoveryJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["gateway-guard-recovery"]);
+  if (Object.keys(job).length === 0) return;
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
+  }
+}
+
+function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
+  return asSteps(job.steps).some(
+    (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
+  );
+}
+
+function validateHostedCompatibleInferenceFlag(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+): void {
+  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName)) return;
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push(`${jobName} job must enable hosted-compatible inference mode`);
+  }
+}
+
 function validateFreeStandingInventoryBoundary(
   errors: string[],
   jobs: WorkflowRecord,
@@ -525,6 +559,12 @@ function validateFreeStandingInventoryBoundary(
     }
 
     const jobEnv = asRecord(job.env);
+    if (
+      jobEnv.NEMOCLAW_RUN_LIVE_E2E === "1" &&
+      jobPassesNvidiaInferenceSecret(job)
+    ) {
+      validateHostedCompatibleInferenceFlag(errors, jobName, jobEnv);
+    }
     for (const secret of COMMON_SECRET_ENV_NAMES) {
       requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
     }
@@ -538,13 +578,13 @@ function validateFreeStandingInventoryBoundary(
           step,
           `${jobName} step '${step.name ?? step.uses}'`,
         );
-      }
-      if (stringValue(step.uses).startsWith("actions/upload-artifact@")) {
-        requireUploadPathDoesNotContain(
-          errors,
-          stringValue(asRecord(step.with).path),
-          "/tmp/",
-        );
+        if (stringValue(step.uses).startsWith("actions/upload-artifact@")) {
+          requireUploadPathDoesNotContain(
+            errors,
+            stringValue(asRecord(step.with).path),
+            "/tmp/",
+          );
+        }
       }
       if (/\$\{\{\s*secrets\./.test(stringValue(step.run))) {
         errors.push(
@@ -580,7 +620,7 @@ function validateFreeStandingInventoryCoverage(
     if (Object.keys(job).length === 0) continue;
     const jobIf = stringValue(job.if);
     const mappingIsRepresented =
-      jobIf.includes(`,${target},`) ||
+      jobIf.includes(`contains(format(',{0},', inputs.targets), ',${target},')`) ||
       (jobId === "hermes-e2e" &&
         jobIf.includes("needs.generate-matrix.outputs.hermes_selected"));
     if (!mappingIsRepresented) {
@@ -1601,12 +1641,6 @@ function validateRebuildOpenClawJob(
     errors,
     "rebuild-openclaw job",
     jobEnv,
-    "NVIDIA_API_KEY",
-  );
-  requireEnvDoesNotExposeSecret(
-    errors,
-    "rebuild-openclaw job",
-    jobEnv,
     "NVIDIA_INFERENCE_API_KEY",
   );
 
@@ -1614,12 +1648,6 @@ function validateRebuildOpenClawJob(
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
     if (step.name !== "Run OpenClaw rebuild live test") {
-      requireEnvDoesNotExposeSecret(
-        errors,
-        `rebuild-openclaw step '${step.name ?? step.uses ?? "<unnamed>"}'`,
-        asRecord(step.env),
-        "NVIDIA_API_KEY",
-      );
       requireEnvDoesNotExposeSecret(
         errors,
         `rebuild-openclaw step '${step.name ?? step.uses ?? "<unnamed>"}'`,
@@ -1710,9 +1738,12 @@ function validateRebuildOpenClawJob(
     "Run OpenClaw rebuild live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+  if (
+    runVitestEnv.NVIDIA_INFERENCE_API_KEY !==
+    "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
+  ) {
     errors.push(
-      "rebuild-openclaw step must receive NVIDIA_API_KEY from secrets",
+      "rebuild-openclaw step must receive NVIDIA_INFERENCE_API_KEY from secrets",
     );
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
@@ -1854,7 +1885,7 @@ function validateRebuildHermesJob(
         errors,
         stepName,
         stepEnv,
-        "NVIDIA_INFERENCE_API_KEY",
+        "NVIDIA_API_KEY",
       );
     }
     if (step.name !== "Authenticate to Docker Hub") {
@@ -2529,7 +2560,7 @@ function validateUpgradeStaleSandboxJob(
   for (const step of steps) {
     const stepName = `upgrade-stale-sandbox step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (step.name !== "Run upgrade stale sandbox live E2E test") {
+    if (step.name !== "Run upgrade stale sandbox live Vitest test") {
       requireEnvDoesNotExposeSecret(
         errors,
         stepName,
@@ -2656,7 +2687,7 @@ function validateUpgradeStaleSandboxJob(
     errors,
     jobName,
     steps,
-    "Run upgrade stale sandbox live E2E test",
+    "Run upgrade stale sandbox live Vitest test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
   if (
@@ -3615,7 +3646,7 @@ function validateDoubleOnboardJob(
     errors,
     jobName,
     steps,
-    "Run double-onboard live E2E test",
+    "Run double-onboard live Vitest test",
   );
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(
@@ -3633,7 +3664,7 @@ function validateDoubleOnboardJob(
     errors,
     jobName,
     steps,
-    "Upload double-onboard E2E artifacts",
+    "Upload double-onboard Vitest artifacts",
   );
   requireFullShaAction(errors, upload, "double-onboard upload-artifact");
   const uploadWith = asRecord(upload?.with);
@@ -3872,8 +3903,8 @@ function validateHermesE2EJob(
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
     errors.push("hermes-e2e job must set NEMOCLAW_AGENT=hermes");
   }
-  if (jobEnv.NEMOCLAW_MODEL !== "minimaxai/minimax-m2.7") {
-    errors.push("hermes-e2e job must pin the CI-safe Hermes model");
+  if (jobEnv.NEMOCLAW_MODEL !== undefined) {
+    errors.push("hermes-e2e job must use the shared hosted-compatible model default");
   }
   if (jobEnv.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS !== "60") {
     errors.push(
@@ -3890,7 +3921,7 @@ function validateHermesE2EJob(
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    if (step.name !== "Run Hermes live E2E test") {
+    if (step.name !== "Run Hermes live Vitest test") {
       requireEnvDoesNotExposeSecret(
         errors,
         `hermes-e2e step '${step.name ?? step.uses ?? "<unnamed>"}'`,
@@ -3935,7 +3966,7 @@ function validateHermesE2EJob(
     errors,
     jobName,
     steps,
-    "Run Hermes live E2E test",
+    "Run Hermes live Vitest test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
   if (
@@ -3962,7 +3993,7 @@ function validateHermesE2EJob(
     errors,
     jobName,
     steps,
-    "Upload Hermes live E2E artifacts",
+    "Upload Hermes live Vitest artifacts",
   );
   requireFullShaAction(errors, upload, "hermes-e2e upload-artifact");
   const uploadWith = asRecord(upload?.with);
@@ -5394,13 +5425,13 @@ function validateTunnelLifecycleJob(
     errors,
     "tunnel-lifecycle cloudflared prerequisite step",
     cloudflaredPrereqEnv,
-    "NVIDIA_INFERENCE_API_KEY",
+    "NVIDIA_API_KEY",
   );
   requireEnvDoesNotExposeSecret(
     errors,
     "tunnel-lifecycle cloudflared prerequisite step",
     cloudflaredPrereqEnv,
-    "NVIDIA_API_KEY",
+    "NVIDIA_INFERENCE_API_KEY",
   );
   requireRunContains(errors, cloudflaredPrereq, "cloudflared --version");
   if (cloudflaredPrereqEnv.CLOUDFLARED_VERSION !== TUNNEL_LIFECYCLE_CLOUDFLARED_VERSION) {
@@ -5424,11 +5455,7 @@ function validateTunnelLifecycleJob(
   requireRunContains(errors, cloudflaredPrereq, "sha256sum -c -");
   requireRunContains(errors, cloudflaredPrereq, "dpkg-deb -f");
   requireRunContains(errors, cloudflaredPrereq, "sudo dpkg -i");
-  requireRunContains(
-    errors,
-    cloudflaredPrereq,
-    "cloudflared version ${CLOUDFLARED_VERSION}",
-  );
+  requireRunContains(errors, cloudflaredPrereq, "cloudflared version ${CLOUDFLARED_VERSION}");
   requireRunDoesNotContain(errors, cloudflaredPrereq, "pkg.cloudflare.com");
   requireRunDoesNotContain(errors, cloudflaredPrereq, "cloudflare-main.gpg");
   requireRunDoesNotContain(errors, cloudflaredPrereq, "apt-cache madison");
@@ -5587,7 +5614,7 @@ function validateIssue2478CrashLoopRecoveryJob(
       stepEnv,
       "NVIDIA_INFERENCE_API_KEY",
     );
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_API_KEY");
+    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(
         errors,
@@ -5711,7 +5738,7 @@ function validateIssue2478CrashLoopRecoveryJob(
     errors,
     jobName,
     steps,
-    "Run issue #2478 crash-loop recovery live E2E test",
+    "Run issue #2478 crash-loop recovery live Vitest test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
   requireEnvDoesNotExposeSecret(
@@ -5849,32 +5876,32 @@ function validateChannelsAddRemoveJob(
   }
   if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
     errors.push(
-      "channels-add-remove-vitest job must enable hosted-compatible inference mode",
+      "channels-add-remove job must enable hosted-compatible inference mode",
     );
   }
   if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
     errors.push(
-      "channels-add-remove-vitest job must route hosted inference through the custom provider",
+      "channels-add-remove job must route hosted inference through the custom provider",
     );
   }
   if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
     errors.push(
-      "channels-add-remove-vitest job must use the hosted compatible inference endpoint",
+      "channels-add-remove job must use the hosted compatible inference endpoint",
     );
   }
   if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
     errors.push(
-      "channels-add-remove-vitest job must use the hosted Inference Hub model id",
+      "channels-add-remove job must use the hosted Inference Hub model id",
     );
   }
   if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
     errors.push(
-      "channels-add-remove-vitest job must set NEMOCLAW_COMPAT_MODEL to the hosted model id",
+      "channels-add-remove job must set NEMOCLAW_COMPAT_MODEL to the hosted model id",
     );
   }
   if (jobEnv.NEMOCLAW_PREFERRED_API !== "openai-completions") {
     errors.push(
-      "channels-add-remove-vitest job must prefer openai-completions for hosted inference",
+      "channels-add-remove job must prefer openai-completions for hosted inference",
     );
   }
   for (const secret of [
@@ -6016,7 +6043,7 @@ function validateChannelsAddRemoveJob(
   }
   if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(
-      "channels-add-remove-vitest step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
+      "channels-add-remove step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
     );
   }
   if (
@@ -6991,7 +7018,7 @@ function validateTelegramInjectionJob(
         errors,
         stepName,
         stepEnv,
-        "NVIDIA_API_KEY",
+        "NVIDIA_INFERENCE_API_KEY",
       );
     }
     if (step.name !== "Authenticate to Docker Hub") {
@@ -7611,6 +7638,7 @@ export function validateE2eWorkflowBoundary(
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
     errors.push("live job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
+  validateHostedCompatibleInferenceFlag(errors, "live", jobEnv);
   if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/live")) {
     errors.push(
       "live job must write artifacts under e2e-artifacts/live",
@@ -7830,6 +7858,7 @@ export function validateE2eWorkflowBoundary(
     "gateway-guard-recovery",
     "gateway-guard-recovery",
   );
+  validateGatewayGuardRecoveryJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7874,6 +7903,50 @@ export function validateE2eWorkflowBoundary(
   if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu", "jetson-nvmap-gpu")) {
     errors.push("jetson-nvmap-gpu job must run only when explicitly selected");
   }
+
+  const sandboxRlimitConnectJob = asRecord(jobs["sandbox-rlimits-connect"]);
+  if (sandboxRlimitConnectJob.needs !== "generate-matrix") {
+    errors.push("sandbox-rlimits-connect job must depend on generate-matrix");
+  }
+  if (
+    sandboxRlimitConnectJob.if !==
+    explicitOnlyFreeStandingJobIf(
+      "sandbox-rlimits-connect",
+      "sandbox-rlimits-connect",
+    )
+  ) {
+    errors.push("sandbox-rlimits-connect job must run only when explicitly selected");
+  }
+  const sandboxRlimitConnectEnv = asRecord(sandboxRlimitConnectJob.env);
+  if (sandboxRlimitConnectEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
+    errors.push("sandbox-rlimits-connect job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  }
+  if (sandboxRlimitConnectEnv.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
+    errors.push("sandbox-rlimits-connect job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1");
+  }
+  if (
+    sandboxRlimitConnectEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect"
+  ) {
+    errors.push("sandbox-rlimits-connect job must write artifacts under e2e-artifacts/live/sandbox-rlimits-connect");
+  }
+  const sandboxRlimitConnectSteps = asSteps(sandboxRlimitConnectJob.steps);
+  const sandboxRlimitConnectRun = namedStep(
+    sandboxRlimitConnectSteps,
+    "Run sandbox rlimit connect live test",
+  );
+  if (!sandboxRlimitConnectRun) {
+    errors.push("sandbox-rlimits-connect job missing step: Run sandbox rlimit connect live test");
+  } else {
+    const runScript = stringValue(sandboxRlimitConnectRun.run);
+    if (!runScript.includes("test/e2e/live/sandbox-rlimits-connect.test.ts")) {
+      errors.push("sandbox-rlimits-connect job must run sandbox-rlimits-connect.test.ts");
+    }
+    if (asRecord(sandboxRlimitConnectRun.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+      errors.push("sandbox-rlimits-connect step must receive NVIDIA_API_KEY from secrets");
+    }
+  }
+
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -8027,9 +8100,19 @@ export function validateE2eWorkflowBoundary(
         "step 'Post E2E target results to PR' run script must document the explicit Jetson jobs selector",
       );
     }
-    if (!reportScript.includes("targets=") || !reportScript.includes("jetson-nvmap-gpu")) {
+    if (!reportScript.includes("targets=${target}") || !reportScript.includes("jetson-nvmap-gpu")) {
       errors.push(
         "step 'Post E2E target results to PR' run script must document the explicit Jetson target selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect")) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must document the explicit rlimit jobs selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect")) {
+      errors.push(
+        "step 'Post E2E target results to PR' run script must document the explicit rlimit target selector",
       );
     }
     for (const forbidden of [

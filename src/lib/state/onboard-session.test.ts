@@ -14,18 +14,17 @@ import {
 } from "../../../test/helpers/onboard-legacy-step-mutation";
 
 const require = createRequire(import.meta.url);
-const distPath = require.resolve("../../../dist/lib/state/onboard-session");
-const eventsDistPath = require.resolve("../../../dist/lib/onboard/machine/events");
-const stepMutationDistPath = require.resolve("../../../dist/lib/state/onboard-step-mutation");
+const distPath = require.resolve("./onboard-session");
+const eventsDistPath = require.resolve("../onboard/machine/events");
+const stepMutationDistPath = require.resolve("./onboard-step-mutation");
 const originalHome = process.env.HOME;
-type OnboardSessionModule = typeof import("../../../dist/lib/state/onboard-session");
-type OnboardMachineEventsModule = typeof import("../../../dist/lib/onboard/machine/events");
-type OnboardMachineEvent = import("../../../dist/lib/onboard/machine/events").OnboardMachineEvent;
-type OnboardStepMutationModule = typeof import("../../../dist/lib/state/onboard-step-mutation");
+type OnboardSessionModule = typeof import("./onboard-session");
+type OnboardMachineEventsModule = typeof import("../onboard/machine/events");
+type OnboardMachineEvent = import("../onboard/machine/events").OnboardMachineEvent;
+type OnboardStepMutationModule = typeof import("./onboard-step-mutation");
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
-type NullableSessionUpdateKey =
-  import("../../../dist/lib/state/onboard-session").NullableSessionUpdateKey;
+type NullableSessionUpdateKey = import("./onboard-session").NullableSessionUpdateKey;
 type MessagingPlan = NonNullable<LoadedSession["messagingPlan"]>;
 type MessagingChannelId = MessagingPlan["channels"][number]["channelId"];
 let session: OnboardSessionModule;
@@ -118,9 +117,9 @@ beforeEach(() => {
   delete require.cache[distPath];
   delete require.cache[eventsDistPath];
   delete require.cache[stepMutationDistPath];
-  session = require("../../../dist/lib/state/onboard-session");
-  machineEvents = require("../../../dist/lib/onboard/machine/events");
-  stepMutation = require("../../../dist/lib/state/onboard-step-mutation");
+  session = require("./onboard-session");
+  machineEvents = require("../onboard/machine/events");
+  stepMutation = require("./onboard-step-mutation");
   machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   session.releaseOnboardLock();

@@ -4,16 +4,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_VLLM_MODEL,
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  DEFAULT_VLLM_MODEL,
   modelsForPlatform,
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
-} from "../../../dist/lib/inference/vllm-models";
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
+} from "./vllm-models";
 
 describe("vllm model registry", () => {
   it("returns null when NEMOCLAW_VLLM_MODEL is unset so the caller can fall back to the profile default", () => {

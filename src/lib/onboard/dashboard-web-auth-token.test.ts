@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
-import { loadAgent } from "../../../dist/lib/agent/defs";
-import { createOnboardDashboardHelpers } from "../../../dist/lib/onboard/dashboard";
+// Import source directly so tests cannot pass against a stale build.
+import { loadAgent } from "../agent/defs";
+import { createOnboardDashboardHelpers } from "./dashboard";
 
 // Minimal no-op deps; only runCaptureOpenshell matters for these tests.
 function makeHelpers(runCaptureOpenshell: (args: string[], opts?: unknown) => string | null) {

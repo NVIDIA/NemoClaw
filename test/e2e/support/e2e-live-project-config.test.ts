@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
+import config from "../../../vitest.config.ts";
+import { resolveE2ERetryCount } from "../../helpers/e2e-retries.ts";
+import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 import {
   shouldRunBranchValidationE2E,
   shouldRunInstallerIntegration,
   shouldRunLiveE2E,
 } from "../fixtures/live-project-gate.ts";
-import config from "../../../vitest.config.ts";
-import { resolveE2ERetryCount } from "../../helpers/e2e-retries.ts";
-import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 interface ProjectConfig {
   test?: {
@@ -52,10 +51,10 @@ function projectConfig(name: string): ProjectConfig {
   return project;
 }
 
-describe("gated E2E projects", () => {
-  it("selects gated project includes from the current process environment", () => {
+describe("gated E2E Vitest projects", () => {
+  it("keeps installer membership static and selects live includes from the environment", () => {
     expect(projectConfig("installer-integration").test?.include).toEqual(
-      shouldRunInstallerIntegration() ? INSTALLER_INTEGRATION_TESTS : [],
+      INSTALLER_INTEGRATION_TESTS,
     );
     expect(projectConfig("e2e-live").test?.include).toEqual(
       shouldRunLiveE2E() ? LIVE_E2E_TARGET_TESTS : [],
@@ -91,7 +90,7 @@ describe("gated E2E projects", () => {
     expect(shouldRunBranchValidationE2E({ NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1" })).toBe(true);
   });
 
-  it("configures automatic retries only for live E2E projects", () => {
+  it("configures automatic retries only for live E2E Vitest projects", () => {
     const expectedRetries = resolveE2ERetryCount();
 
     expect(projectConfig("cli").test?.retry).toBeUndefined();
@@ -116,7 +115,7 @@ describe("gated E2E projects", () => {
     expect(resolveE2ERetryCount({ CI: "1", NEMOCLAW_E2E_RETRIES: "invalid" })).toBe(2);
   });
 
-  it("sets the branch-validation sentinel in the reusable workflow Vitest step", () => {
+  it("sets the branch-validation sentinel in the reusable workflow live E2E step", () => {
     const workflow = readYaml<BranchValidationWorkflow>(
       ".github/workflows/e2e-branch-validation.yaml",
     );

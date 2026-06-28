@@ -16,6 +16,7 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const BLUEPRINT_RELPATH = path.join("nemoclaw-blueprint", "blueprint.yaml");
 const BLUEPRINT = path.join(REPO_ROOT, BLUEPRINT_RELPATH);
+const BASE_CONTEXT_SCRIPT_RELPATH = path.join("scripts", "lib", "sandbox-rlimits.sh");
 const TEST_SANDBOX_PREFIX = "e2e-upgrade-stale";
 export const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ??
@@ -43,9 +44,10 @@ function assertSafeSandboxName(): void {
   }
 }
 
-export function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
+export function commandEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
     ...buildAvailabilityProbeEnv(),
+    ...extra,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_REBUILD_VERBOSE: "1",
@@ -53,8 +55,6 @@ export function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(env, { NVIDIA_INFERENCE_API_KEY: apiKey });
-  return env;
 }
 
 export async function bestEffort(run: () => Promise<unknown>): Promise<void> {
@@ -94,6 +94,9 @@ function restoreFile(file: string, snapshot: FileSnapshot): void {
 function createOldBaseBuildContext(): string {
   const buildContext = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-upgrade-stale-base-"));
   fs.mkdirSync(path.join(buildContext, path.dirname(BLUEPRINT_RELPATH)), { recursive: true });
+  fs.mkdirSync(path.join(buildContext, path.dirname(BASE_CONTEXT_SCRIPT_RELPATH)), {
+    recursive: true,
+  });
   const original = fs.readFileSync(BLUEPRINT, "utf8");
   const minOpenClawVersion = /^(\s*min_openclaw_version:\s*).*/m;
   expect(
@@ -104,6 +107,10 @@ function createOldBaseBuildContext(): string {
     path.join(buildContext, BLUEPRINT_RELPATH),
     original.replace(minOpenClawVersion, `$1"${OLD_OPENCLAW_VERSION}"`),
     "utf8",
+  );
+  fs.copyFileSync(
+    path.join(REPO_ROOT, BASE_CONTEXT_SCRIPT_RELPATH),
+    path.join(buildContext, BASE_CONTEXT_SCRIPT_RELPATH),
   );
   return buildContext;
 }
@@ -201,7 +208,7 @@ export async function cleanupOldImage(host: HostCliClient): Promise<void> {
 
 export async function installCurrentNemoclaw(
   host: HostCliClient,
-  apiKey: string,
+  hosted: { apiKey: string; env: NodeJS.ProcessEnv },
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
@@ -211,8 +218,8 @@ export async function installCurrentNemoclaw(
           ? "phase-1-install-current-nemoclaw"
           : `phase-1-install-current-nemoclaw-attempt-${attempt}`,
       cwd: REPO_ROOT,
-      env: commandEnv(apiKey),
-      redactionValues: [apiKey],
+      env: commandEnv(hosted.env),
+      redactionValues: [hosted.apiKey],
       timeoutMs: 20 * 60_000,
     });
     const retry =

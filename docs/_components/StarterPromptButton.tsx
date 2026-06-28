@@ -80,7 +80,7 @@ Use this provider mapping for non-interactive setup:
 
 | User choice | \`NEMOCLAW_PROVIDER\` | Other required values |
 |---|---|---|
-| NVIDIA Endpoints | \`build\` | \`NVIDIA_API_KEY\` |
+| NVIDIA Endpoints | \`build\` | \`NVIDIA_INFERENCE_API_KEY\` |
 | OpenAI | \`openai\` | \`OPENAI_API_KEY\` |
 | Other OpenAI-compatible endpoint | \`custom\` | \`NEMOCLAW_ENDPOINT_URL\`, \`NEMOCLAW_MODEL\`, \`COMPATIBLE_API_KEY\` |
 | Anthropic | \`anthropic\` | \`ANTHROPIC_API_KEY\` |

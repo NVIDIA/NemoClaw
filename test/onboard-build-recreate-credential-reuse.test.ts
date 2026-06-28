@@ -29,7 +29,7 @@ describe("onboard build recreate credential reuse (#5441)", () => {
       const home = path.join(tmpDir, "home");
       const scriptPath = path.join(tmpDir, "build-recreate.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });
@@ -77,7 +77,7 @@ exit 1
 process.env.NEMOCLAW_NON_INTERACTIVE = "1";
 process.env.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE = "1";
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
-// Critically: NVIDIA_API_KEY is NOT set — the credential lives only
+// Critically: NVIDIA_INFERENCE_API_KEY is NOT set — the credential lives only
 // in the gateway, mirroring an interactive onboard that typed the key.
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 delete process.env.NVIDIA_API_KEY;
@@ -180,7 +180,7 @@ const { setupNim, setupInference } = require(${onboardPath});
       const home = path.join(tmpDir, "home");
       const scriptPath = path.join(tmpDir, "build-explicit.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       fs.mkdirSync(home, { recursive: true });
@@ -243,7 +243,7 @@ setupNim(null, null, null).catch((error) => {
         );
         assert.match(
           output,
-          /NVIDIA_API_KEY \(or NEMOCLAW_PROVIDER_KEY\) is required/,
+          /NVIDIA_INFERENCE_API_KEY \(or NEMOCLAW_PROVIDER_KEY\) is required/,
           `explicit build selection did not report the missing local key; output:\n${output}`,
         );
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";

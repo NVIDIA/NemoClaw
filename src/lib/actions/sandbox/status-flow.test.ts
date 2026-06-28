@@ -5,11 +5,15 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type ShowSandboxStatus =
-  typeof import("../../../../dist/lib/actions/sandbox/status")["showSandboxStatus"];
+type ShowSandboxStatus = typeof import("./status")["showSandboxStatus"];
 
 const requireDist = createRequire(import.meta.url);
-const statusModulePath = "../../../../dist/lib/actions/sandbox/status.js";
+const statusModulePath = "./status.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(statusModulePath);
+delete require.cache[requireDist.resolve(statusModulePath)];
 
 type StatusFlowHarness = {
   checkAgentVersionSpy: MockInstance;
@@ -54,17 +58,17 @@ function createStatusFlowHarness(
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-  const statusPreflight = requireDist("../../../../dist/lib/actions/sandbox/status-preflight.js");
-  const statusSnapshot = requireDist("../../../../dist/lib/actions/sandbox/status-snapshot.js");
-  const dockerHealth = requireDist("../../../../dist/lib/actions/sandbox/docker-health.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const nim = requireDist("../../../../dist/lib/inference/nim.js");
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const shields = requireDist("../../../../dist/lib/shields/index.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
+  const statusPreflight = requireDist("./status-preflight.js");
+  const statusSnapshot = requireDist("./status-snapshot.js");
+  const dockerHealth = requireDist("./docker-health.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const nim = requireDist("../../inference/nim.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const shields = requireDist("../../shields/index.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
 
   const lookup =
     options.lookupState === "missing"

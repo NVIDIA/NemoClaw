@@ -3486,10 +3486,10 @@ describe("provider placeholder refresh (#4251)", () => {
     const distPath = path.join(
       import.meta.dirname,
       "..",
-      "dist",
+      "src",
       "lib",
       "onboard",
-      "extra-placeholder-keys.js",
+      "extra-placeholder-keys.ts",
     );
     const { canonicalPlaceholderKeys } = require(distPath);
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();
@@ -4047,7 +4047,7 @@ describe("write_auth_profile (#1332)", () => {
     }
   });
 
-  it("is a no-op when the selected provider credential env is unset", () => {
+  it("is a no-op when NVIDIA_INFERENCE_API_KEY is unset", () => {
     const { home, authPath, status } = runWriteAuthProfile({});
     try {
       expect(status).toBe(0);

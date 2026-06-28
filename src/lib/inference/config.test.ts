@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
+// Import source directly so tests cannot pass against a stale build.
 import {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_HERMES_PROVIDER_MODEL,
@@ -21,7 +21,7 @@ import {
   planInferenceRouteReconcile,
   sanitizeRouteValueForDisplay,
   VLLM_LOCAL_CREDENTIAL_ENV,
-} from "../../../dist/lib/inference/config";
+} from "./config";
 
 describe("inference selection config", () => {
   it("exposes the curated cloud model picker options", () => {

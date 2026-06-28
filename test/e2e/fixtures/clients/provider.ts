@@ -36,6 +36,11 @@ export interface ProviderJsonResponse<T = unknown> {
   readonly result: ShellProbeResult;
 }
 
+export interface ProviderReachabilityOptions extends ShellProbeRunOptions {
+  readonly connectTimeoutSeconds?: number;
+  readonly curlMaxTimeSeconds?: number;
+}
+
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
 const BLOCKED_HOSTS = new Set(["169.254.169.254", "metadata.google.internal"]);
 
@@ -207,6 +212,28 @@ export class ProviderClient {
         artifactName: options.artifactName ?? `curl-${endpoint.artifactLabel}`,
         redactionValues: [...(options.redactionValues ?? []), ...endpoint.redactionValues],
       },
+    );
+  }
+
+  async probeReachability(
+    endpoint: TrustedProviderEndpoint,
+    options: ProviderReachabilityOptions = {},
+  ): Promise<ShellProbeResult> {
+    const { connectTimeoutSeconds = 10, curlMaxTimeSeconds = 20, ...runOptions } = options;
+    return await this.curl(
+      endpoint,
+      [
+        "-sS",
+        "--connect-timeout",
+        validateCurlMaxTimeSeconds(connectTimeoutSeconds),
+        "--max-time",
+        validateCurlMaxTimeSeconds(curlMaxTimeSeconds),
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+      ],
+      runOptions,
     );
   }
 

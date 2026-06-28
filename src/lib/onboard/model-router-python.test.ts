@@ -15,7 +15,7 @@ import {
   OVERRIDE_ENV_VAR,
   pickHostPython,
   prepareModelRouterVenv,
-} from "../../../dist/lib/onboard/model-router-python";
+} from "./model-router-python";
 
 function probeOk(version: readonly [number, number, number]) {
   return {

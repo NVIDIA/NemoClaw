@@ -347,7 +347,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       preloadPresent: false,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
-    expect(r.stdout).not.toContain("--require");
+    expect(r.stdout).not.toContain(r.preloadPath);
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 

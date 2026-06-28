@@ -11,10 +11,10 @@ import {
   isOllamaProviderPinned,
   runOllamaStartupOrGate,
   setOllamaAutostartDisabled,
-} from "../../../dist/lib/onboard/ollama-startup";
+} from "./ollama-startup";
 
-const wait = require("../../../dist/lib/core/wait");
-const runner = require("../../../dist/lib/runner");
+const wait = require("../core/wait");
+const runner = require("../runner");
 
 describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
   let originalWaitForHttp: typeof wait.waitForHttp;

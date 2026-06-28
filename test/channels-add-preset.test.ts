@@ -14,6 +14,8 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const j = (p: string) =>
+  JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
 
 function runScript(
   scriptBody: string,
@@ -87,7 +89,6 @@ function buildPreamble({
   presetMissingNetworkPolicies?: boolean;
   presetMalformedYaml?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -1577,7 +1578,6 @@ const ctx = module.exports;
 // is pinned regardless of OpenClaw/OpenShell runtime availability.
 describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
   function buildInteractivePreamble(): string {
-    const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
     return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -1840,12 +1840,12 @@ global.__testLog = "";
 describe("channel preset source-of-truth", () => {
   it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
     const { knownChannelNames } = require(
-      path.join(repoRoot, "dist", "lib", "sandbox", "channels.js"),
+      path.join(repoRoot, "src", "lib", "sandbox", "channels.ts"),
     ) as {
       knownChannelNames: () => string[];
     };
     const { loadPreset, parsePresetPolicyKeys } = require(
-      path.join(repoRoot, "dist", "lib", "policy", "index.js"),
+      path.join(repoRoot, "src", "lib", "policy", "index.ts"),
     ) as {
       loadPreset: (name: string) => string | null;
       parsePresetPolicyKeys: (content: string | null | undefined) => string[];

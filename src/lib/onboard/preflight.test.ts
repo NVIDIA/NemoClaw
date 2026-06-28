@@ -2,15 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import through compiled dist output so coverage lands on the file measured
-// by the ratchet: dist/lib/onboard/preflight.js.
+// Import source directly so tests cannot pass against a stale build.
 import {
   assessHost,
   checkPortAvailable,
+  dnsProbeName,
+  ensureProbeImageCached,
+  ensureSwap,
   getDockerBridgeGatewayIp,
   getMemoryInfo,
-  ensureSwap,
   isDockerUnderProvisioned,
+  isFatalContainerDnsProbeFailure,
   MIN_RECOMMENDED_DOCKER_CPUS,
   MIN_RECOMMENDED_DOCKER_MEM_GIB,
   parseDockerInfoCpus,
@@ -18,12 +20,9 @@ import {
   parseDockerStorageDriver,
   parseDockerUsesContainerdSnapshotter,
   planHostRemediation,
-  dnsProbeName,
-  ensureProbeImageCached,
-  isFatalContainerDnsProbeFailure,
   probeContainerDns,
   probeDockerBridgeContainerStart,
-} from "../../../dist/lib/onboard/preflight";
+} from "./preflight";
 
 function requireMemoryInfo(result: ReturnType<typeof getMemoryInfo>) {
   expect(result).not.toBeNull();
@@ -160,7 +159,7 @@ describe("checkPortAvailable", () => {
 
 describe("probePortAvailability", () => {
   // Import probePortAvailability directly for targeted testing
-  const { probePortAvailability } = require("../../../dist/lib/onboard/preflight");
+  const { probePortAvailability } = require("./preflight");
 
   it("returns ok when port is free (real net probe)", async () => {
     // Use a high ephemeral port unlikely to be in use

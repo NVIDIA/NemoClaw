@@ -13,16 +13,17 @@ skill:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.
+Telegram, Discord, Slack, WeChat, WhatsApp, and Microsoft Teams reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway resources.
 For token-based channels, NemoClaw registers credentials with OpenShell providers.
-WeChat captures a token through a host-side QR scan during onboarding.
+WeChat uses a host-side QR scan during onboarding to capture a token.
 WhatsApp pairs inside the sandbox through a QR scan and intentionally stores mutable session state there.
 Microsoft Teams uses Bot Framework credentials plus a public HTTPS webhook that forwards to the sandbox.
-NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
+NemoClaw writes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 <Warning title="Experimental Channels">
 WeChat, WhatsApp, and Microsoft Teams are experimental.
-WeChat and WhatsApp rely on QR-based pairing flows that are more fragile than token-based bots, and Microsoft Teams requires an externally reachable webhook path that depends on your host networking setup.
+WeChat and WhatsApp rely on QR-based pairing flows that are more fragile than token-based bots.
+Microsoft Teams requires an externally reachable webhook path that depends on your host networking setup.
 Interfaces, defaults, and supported features can change, and NVIDIA does not recommend these channels for production use.
 </Warning>
 
@@ -43,12 +44,13 @@ It only starts optional host services such as the cloudflared tunnel when that b
 `$$nemoclaw tunnel start` does not start Telegram, Discord, Slack, or other chat bridges.
 It only starts optional host services such as the cloudflared tunnel when that binary is present.
 </AgentOnly>
-For details, refer to [Commands](../reference/commands).
+Refer to [Commands](../reference/commands) for details.
 
 ## Prerequisites
 
 - A machine where you can run `$$nemoclaw onboard` (local or remote host that runs the gateway and sandbox).
-- A token or app credential set for each credential-based messaging platform you want to enable, a personal WeChat account on your phone for the host-side QR scan during onboarding, or a phone you can use to scan the QR code for WhatsApp pairing.
+- A token or app credential set for each credential-based messaging platform you want to enable.
+- A personal WeChat account on your phone for the host-side QR scan during onboarding, or a phone you can use to scan the QR code for WhatsApp pairing.
 - A network policy preset for each enabled channel, or equivalent custom egress rules.
 
 ## Channel Requirements
@@ -67,7 +69,7 @@ Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow th
 For Telegram group chats, disable privacy mode before testing group replies: in @BotFather, run `/setprivacy`, choose the bot, then choose **Disable**.
 After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting to that group.
 `TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user or private-chat IDs for DM access.
-For compatibility with older QA scripts, NemoClaw also treats `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` as aliases, but new automation should use `TELEGRAM_ALLOWED_IDS`.
+For compatibility with older QA scripts, NemoClaw also accepts `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` as aliases, but new automation should use `TELEGRAM_ALLOWED_IDS`.
 Keep these aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 NemoClaw defaults `TELEGRAM_GROUP_POLICY` to `open` for OpenClaw.
@@ -88,9 +90,10 @@ NemoClaw routes Discord REST and gateway traffic through the top-level managed p
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 NemoClaw validates both tokens before it saves Slack credentials or enables the channel.
-This validation calls the live Slack API (`auth.test` and `apps.connections.open`), so the tokens must belong to a real Slack app.
+This validation calls the live Slack APIs `auth.test` and `apps.connections.open`, so the tokens must belong to a real Slack app.
 If Slack rejects the tokens (for example, `invalid_auth` for placeholder or fake values), NemoClaw skips the Slack channel.
-Because the `slack` network policy preset is only applied for channels that are actually enabled, a skipped Slack channel also means the `slack` preset is not applied, so it does not appear as applied (`●`) in `$$nemoclaw <name> policy-list`.
+NemoClaw applies the `slack` network policy preset only for channels that are actually enabled.
+When Slack is skipped, NemoClaw does not apply the `slack` preset, so it does not appear as applied (`●`) in `$$nemoclaw <name> policy-list`.
 To exercise Slack channel setup and the `slack` policy preset with placeholder tokens in a restricted network or hermetic test environment, set `NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1` to skip the live credential probes; Slack token format checks still apply.
 Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
 Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling to those channels.
@@ -191,7 +194,8 @@ Then run onboarding:
 $$nemoclaw onboard
 ```
 
-Complete the rest of the wizard so the blueprint can create OpenShell providers where needed (for example `<sandbox>-telegram-bridge`, `<sandbox>-teams-bridge`, or `<sandbox>-wechat-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
+Complete the rest of the wizard so the blueprint can create OpenShell providers where needed, such as `<sandbox>-telegram-bridge`, `<sandbox>-teams-bridge`, or `<sandbox>-wechat-bridge`.
+The wizard also writes channel configuration into the image through `NEMOCLAW_MESSAGING_CHANNELS_B64` and starts the sandbox.
 
 ## Add Channels After Onboarding
 
@@ -213,14 +217,16 @@ $$nemoclaw my-assistant channels add whatsapp
 $$nemoclaw my-assistant channels add teams
 ```
 
-`channels add` collects whatever each channel needs.
+`channels add` collects the inputs each channel needs.
 It prompts for Telegram, Discord, Slack, and Microsoft Teams tokens and configuration, runs an interactive host-side QR scan for WeChat, and collects nothing for WhatsApp because pairing happens in-sandbox after rebuild.
 It registers bridge providers with the OpenShell gateway when it captures tokens, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
 `channels add` requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
 With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
-When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
+When the apply step fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials.
+It then exits without prompting for a rebuild.
+If any gateway-side step, such as provider detach or delete, fails, the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so you can clean up manually.
 When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers.
 It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
 Verify the gateway bridge before relying on the channel.
@@ -296,7 +302,7 @@ Use `channels remove wechat` first if you intend to acquire a fresh account.
 
 Running `channels add` for a channel that is already configured overwrites the stored tokens and registers the updated bridge provider.
 For WeChat the cached-token short-circuit applies.
-See [`channels add wechat`](#channels-add-wechat) for how to acquire a fresh account.
+Refer to [`channels add wechat`](#channels-add-wechat) for how to acquire a fresh account.
 Rebuild the sandbox after the update so the image reflects the current channel set.
 
 To remove a channel and clear its stored credentials, run:

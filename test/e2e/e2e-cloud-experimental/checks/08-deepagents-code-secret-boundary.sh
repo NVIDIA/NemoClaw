@@ -34,17 +34,17 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
-dcode_secret_probe() {
-  local command="$1"
-  sandbox_exec "
-tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX)
-${command} >\"\$tmp\" 2>&1
-status=\$?
-cat \"\$tmp\"
-rm -f \"\$tmp\"
-printf 'DCODE_EXIT:%s\n' \"\$status\"
-exit 0
-"
+dcode_secret_probe_runtime_env() {
+  # Keep this probe single-line: OpenShell rejects newline-bearing exec arguments.
+  local remote_cmd
+  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  sandbox_exec "$remote_cmd"
+}
+
+dcode_secret_probe_env_file() {
+  local remote_cmd
+  remote_cmd="tmp=\$(mktemp /tmp/dcode-secret-boundary.XXXXXX); dcode -n 'Reply with the single word PING' >\"\$tmp\" 2>&1; status=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf 'DCODE_EXIT:%s\\n' \"\$status\"; exit 0"
+  sandbox_exec "$remote_cmd"
 }
 
 make_log_marker() {
@@ -54,30 +54,16 @@ make_log_marker() {
 
 mark_sandbox_logs() {
   local marker="$1"
-  sandbox_exec "
-for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
-  if [ ! -e \"\$log\" ]; then
-    : > \"\$log\" 2>/dev/null || true
-  fi
-  printf '%s\n' ${marker@Q} >> \"\$log\" 2>/dev/null || true
-done
-" >/dev/null || true
+  local remote_cmd
+  remote_cmd="for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do if [ ! -e \"\$log\" ]; then : > \"\$log\" 2>/dev/null || true; fi; printf '%s\\n' ${marker@Q} >> \"\$log\" 2>/dev/null || true; done"
+  sandbox_exec "$remote_cmd" >/dev/null || true
 }
 
 sandbox_logs_since_marker() {
   local marker="$1"
-  sandbox_exec "
-found=0
-for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do
-  [ -r \"\$log\" ] || continue
-  if grep -Fq ${marker@Q} \"\$log\" 2>/dev/null; then
-    found=1
-    printf '== %s ==\n' \"\$log\"
-    awk -v marker=${marker@Q} 'found { print } index(\$0, marker) { found=1; next }' \"\$log\" 2>/dev/null || true
-  fi
-done
-printf 'LOG_MARKER_FOUND:%s\n' \"\$found\"
-"
+  local remote_cmd
+  remote_cmd="found=0; for log in /tmp/gateway.log /tmp/nemoclaw-start.log; do [ -r \"\$log\" ] || continue; if grep -Fq ${marker@Q} \"\$log\" 2>/dev/null; then found=1; printf '== %s ==\\n' \"\$log\"; awk -v marker=${marker@Q} 'found { print } index(\$0, marker) { found=1; next }' \"\$log\" 2>/dev/null || true; fi; done; printf 'LOG_MARKER_FOUND:%s\\n' \"\$found\""
+  sandbox_exec "$remote_cmd"
 }
 
 enable_openshell_audit_logs() {
@@ -191,6 +177,23 @@ assert_no_rejected_interval_audit_logs() {
 PASSED=0
 FAILED=0
 
+if [ "${NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST:-}" = "probe-command-shape" ]; then
+  sandbox_exec() {
+    case "$1" in
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        return 0
+        ;;
+    esac
+  }
+  dcode_secret_probe_runtime_env
+  exit 0
+fi
+
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"
   exit 0
@@ -202,7 +205,7 @@ enable_openshell_audit_logs
 runtime_log_marker="$(make_log_marker runtime-env)"
 runtime_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$runtime_log_marker"
-runtime_output="$(dcode_secret_probe "env OPENAI_API_KEY=${FAKE_SECRET@Q} dcode -n 'Reply with the single word PING'" || true)"
+runtime_output="$(dcode_secret_probe_runtime_env || true)"
 runtime_logs="$(sandbox_logs_since_marker "$runtime_log_marker" || true)"
 runtime_audit_logs="$(openshell_audit_logs_since_epoch "$runtime_audit_start" || true)"
 assert_secret_rejected "runtime environment injection" "$runtime_output" "OPENAI_API_KEY"
@@ -220,7 +223,7 @@ env_before_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{prin
 env_log_marker="$(make_log_marker env-file)"
 env_audit_start="$(($(date +%s) - 1))"
 mark_sandbox_logs "$env_log_marker"
-env_output="$(dcode_secret_probe "dcode -n 'Reply with the single word PING'" || true)"
+env_output="$(dcode_secret_probe_env_file || true)"
 env_logs="$(sandbox_logs_since_marker "$env_log_marker" || true)"
 env_audit_logs="$(openshell_audit_logs_since_epoch "$env_audit_start" || true)"
 env_after_hash="$(sandbox_exec "sha256sum ${DEEPAGENTS_ENV_FILE@Q} | awk '{print \$1}'" || true)"

@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-
+import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -26,9 +26,8 @@ import {
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
-import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
-import { getSandboxFailurePhase, isSandboxReady } from "../../../dist/lib/state/gateway";
+} from "./docker-gpu-patch";
+import { waitForCreatedSandboxReadyWithTrace } from "./sandbox-readiness-tracing";
 
 function inspectFixture(): DockerContainerInspect {
   return {

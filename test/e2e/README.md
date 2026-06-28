@@ -5,6 +5,9 @@
 
 Direct E2E coverage runs through Vitest.
 
+Interactive TUI targets require `expect`. The unified workflow installs it
+before those targets run; local runners must provide it themselves.
+
 - `.github/workflows/e2e.yaml` is the scheduled and manually
   dispatchable live target workflow.
 - `.github/workflows/e2e-branch-validation.yaml` provisions Brev instances and

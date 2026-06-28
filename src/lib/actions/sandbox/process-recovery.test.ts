@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 // Import from compiled dist for parity with the other CLI tests in this project.
 import {
   probeSandboxInferenceGatewayHealth,
   waitForRecoveredSandboxGateway,
-} from "../../../../dist/lib/actions/sandbox/process-recovery";
+} from "./process-recovery";
 
 describe("probeSandboxInferenceGatewayHealth — #3265 gateway-chain subprobe", () => {
   const makeExec =

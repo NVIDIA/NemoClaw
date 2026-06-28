@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- *
- * Preserves the legacy runtime boundary by onboarding a real OpenClaw sandbox,
+ * Onboards a real OpenClaw sandbox,
  * then invoking OpenClaw's in-sandbox cron model-provider preflight helper
  * directly against the onboarded managed provider whose base URL resolves via
  * inference.local. The cron CLI needs operator.admin scope, so this target
@@ -16,15 +15,18 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cron-preflight";
 validateSandboxName(SANDBOX_NAME);
-const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+const MODEL = process.env.NEMOCLAW_CRON_PREFLIGHT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 const PROBE_SOURCE = String.raw`

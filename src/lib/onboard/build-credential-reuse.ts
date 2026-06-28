@@ -29,7 +29,7 @@ export function resolveNonInteractiveBuildCredential(opts: {
   providerExistsInGateway: (name: string) => boolean;
 }): boolean {
   const { provider, helpUrl, recoveredFromSandbox, providerExistsInGateway } = opts;
-  const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
+  const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");
   if (resolvedNvidiaKey) {
     const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
     if (keyError) {

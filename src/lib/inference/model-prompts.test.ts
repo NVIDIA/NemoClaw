@@ -10,8 +10,8 @@ import {
   promptManualModelId,
   promptRemoteModel,
   promptVllmModel,
-} from "../../../dist/lib/inference/model-prompts";
-import { VLLM_MODELS, modelsForPlatform } from "../../../dist/lib/inference/vllm-models";
+} from "./model-prompts";
+import { modelsForPlatform, VLLM_MODELS } from "./vllm-models";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];
@@ -76,7 +76,7 @@ describe("model prompt helpers", () => {
 
     expect(result).toBe(BACK_TO_SELECTION);
     expect(errorLine).toHaveBeenCalledWith(
-      "  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.",
+      "  NVIDIA_INFERENCE_API_KEY is required before validating a custom NVIDIA Endpoints model.",
     );
   });
 

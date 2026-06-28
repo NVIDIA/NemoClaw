@@ -7,7 +7,7 @@ import {
   type DockerContainerInspect,
   getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxWithGpu,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
+} from "./docker-gpu-patch";
 
 function inspectFixture(): DockerContainerInspect {
   return {

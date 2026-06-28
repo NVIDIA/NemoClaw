@@ -10,13 +10,13 @@
  * at require-time and cannot be spied on in-process.
  */
 
-import { describe, it, expect } from "vitest";
-import path from "node:path";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
-import { spawnSync } from "node:child_process";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../..");
 const POLICIES_PATH = path.join(REPO_ROOT, "dist", "lib", "policy", "index.js");
 const RUNNER_PATH = path.join(REPO_ROOT, "dist", "lib", "runner.js");
 const CLI_PATH = path.join(REPO_ROOT, "bin", "nemoclaw.js");

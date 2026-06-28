@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
+import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
@@ -77,6 +78,7 @@ test.skipIf(!shouldRunLiveE2E())(
     cleanup,
     host,
     lifecycle,
+    provider,
     runtime,
     sandbox,
     secrets,
@@ -113,17 +115,19 @@ test.skipIf(!shouldRunLiveE2E())(
       skip("Docker is required for sandbox survival E2E");
     }
 
-    const modelsReachable = await host.command(
-      "curl",
-      ["-sf", "--max-time", "10", "https://inference-api.nvidia.com/v1/models"],
+    const endpointReachable = await provider.probeReachability(
+      trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
       {
-        artifactName: "prereq-inference-api-models",
+        artifactName: "prereq-inference-api-reachability",
         env: buildAvailabilityProbeEnv(),
         redactionValues: [apiKey],
-        timeoutMs: 15_000,
+        timeoutMs: 25_000,
       },
     );
-    expect(modelsReachable.exitCode, resultText(modelsReachable)).toBe(0);
+    const reachabilityStatus = endpointReachable.stdout.trim();
+    expect(endpointReachable.exitCode, resultText(endpointReachable)).toBe(0);
+    expect(["000", "401", "403"], resultText(endpointReachable)).not.toContain(reachabilityStatus);
+    expect(Number(reachabilityStatus), resultText(endpointReachable)).toBeLessThan(500);
     expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
 
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {

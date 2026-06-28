@@ -14,7 +14,7 @@ import {
   getVersionedBaseImageTags,
   parseGlibcVersion,
   versionGte,
-} from "../../dist/lib/sandbox-base-image";
+} from "./sandbox-base-image";
 
 const tmpRoots: string[] = [];
 const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));

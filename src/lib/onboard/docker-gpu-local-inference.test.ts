@@ -10,7 +10,7 @@ import {
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
-} from "../../../dist/lib/onboard/docker-gpu-local-inference";
+} from "./docker-gpu-local-inference";
 
 const HOST_NETWORK_ENV = { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };

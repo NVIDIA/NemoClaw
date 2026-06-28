@@ -802,7 +802,7 @@ jobs:
         env:
           JOBS: bad
         run: echo "\${{ inputs.pr_number }} \${{ inputs.targets }}"
-  live-targets:
+  live:
     runs-on: ubuntu-latest
     env:
       E2E_ARTIFACT_DIR: \${{ github.workspace }}/.e2e/live
@@ -958,11 +958,11 @@ jobs:
         run: echo skip build
       - name: Install OpenShell CLI
         run: echo skip install
-      - name: Run double-onboard live E2E test
+      - name: Run double-onboard live Vitest test
         env:
           DOCKERHUB_TOKEN: \${{ secrets.DOCKERHUB_TOKEN }}
         run: npx vitest run --project e2e-live "\${{ inputs.test_filter }}"
-      - name: Upload double-onboard E2E artifacts
+      - name: Upload double-onboard Vitest artifacts
         uses: actions/upload-artifact@v4
         with:
           name: double-onboard
@@ -982,13 +982,17 @@ jobs:
           "workflow_dispatch must not expose legacy test_filter input",
           "workflow missing generate-matrix job",
           "live job must run on the matrix runner",
+          "live job must enable hosted-compatible inference mode",
+          "live job env must not include NVIDIA_INFERENCE_API_KEY",
+          "step 'Run live E2E tests' run script must not interpolate dispatch inputs directly",
           "live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "artifact upload must set include-hidden-files: false",
+          "upload-artifact action must be pinned to a full commit SHA",
           "openshell-version-pin job must use the shared jobs selector condition",
           "network-policy job env must not include NVIDIA_INFERENCE_API_KEY",
           "network-policy step 'Install OpenShell' env must not include GITHUB_TOKEN",
           "double-onboard job env must not include DOCKERHUB_TOKEN",
-          "step 'Run double-onboard live E2E test' run script must not interpolate dispatch inputs directly",
+          "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e job",
           "workflow missing skill-agent job",
           "workflow missing diagnostics job",
@@ -1022,7 +1026,7 @@ jobs:
 
     try {
       expect(validateE2eWorkflowBoundary(workflowPath)).toContain(
-        "sandbox-rebuild job must use the shared jobs selector condition",
+        "free-standing inventory mapping sandbox-rebuild:sandbox-rebuild must match the workflow job selector",
       );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

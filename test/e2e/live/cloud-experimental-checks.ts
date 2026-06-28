@@ -12,6 +12,43 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const REQUIRED_CHECK_SKIP_PATTERN = /(^|\n).*\bSKIP\b/i;
 
+export type CloudExperimentalChecksEvidence = {
+  targetId: string;
+  sandboxName: string;
+  checkScripts: readonly string[];
+  terminalConnectHint?: {
+    agent: string;
+    interactiveCommand: string;
+    statusLine: string;
+    source: string;
+  };
+};
+
+const DEEPAGENTS_CODE_ONBOARDING = "cloud-langchain-deepagents-code";
+const DEEPAGENTS_CODE_TUI_CHECK =
+  "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh";
+const DEEPAGENTS_CODE_CONNECT_HINT = {
+  agent: "langchain-deepagents-code",
+  interactiveCommand: "dcode",
+  statusLine: "Interactive: dcode",
+  source: "agents/langchain-deepagents-code/manifest.yaml:runtime.interactive_command",
+};
+
+export function buildCloudExperimentalChecksEvidence(
+  targetId: string,
+  sandboxName: string,
+  checkScripts: readonly string[],
+): CloudExperimentalChecksEvidence {
+  return {
+    targetId,
+    sandboxName,
+    checkScripts,
+    ...(targetId === DEEPAGENTS_CODE_ONBOARDING && checkScripts.includes(DEEPAGENTS_CODE_TUI_CHECK)
+      ? { terminalConnectHint: DEEPAGENTS_CODE_CONNECT_HINT }
+      : {}),
+  };
+}
+
 export function buildCloudExperimentalCommandEnv(
   sandboxName: string,
   apiKey: string,
@@ -74,11 +111,10 @@ export async function runE2eCloudExperimentalChecks(
   context: Pick<E2ETargetFixtures, "artifacts" | "host" | "secrets">,
 ): Promise<void> {
   const apiKey = context.secrets.optional("NVIDIA_INFERENCE_API_KEY") ?? "";
-  await context.artifacts.writeJson("e2e-cloud-experimental-checks.json", {
-    targetId,
-    sandboxName,
-    checkScripts,
-  });
+  await context.artifacts.writeJson(
+    "e2e-cloud-experimental-checks.json",
+    buildCloudExperimentalChecksEvidence(targetId, sandboxName, checkScripts),
+  );
   await Promise.resolve(
     checkScripts.length > 0 ? assertDeepAgentsRuntimeObserved(sandboxName, context) : undefined,
   );

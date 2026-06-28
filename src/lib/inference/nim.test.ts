@@ -5,12 +5,12 @@ import { createRequire } from "module";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Import from compiled dist/ for coverage attribution.
-import * as nim from "../../../dist/lib/inference/nim";
+// Import source directly so tests cannot pass against a stale build.
+import * as nim from "./nim";
 
 const require = createRequire(import.meta.url);
-const NIM_DIST_PATH = require.resolve("../../../dist/lib/inference/nim");
-const RUNNER_PATH = require.resolve("../../../dist/lib/runner");
+const NIM_DIST_PATH = require.resolve("./nim");
+const RUNNER_PATH = require.resolve("../runner");
 const fs = require("fs");
 const NIM_API_KEY_ENV_KEYS = ["NGC_API_KEY", "NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"];
 function clearNimApiKeyEnv(): Array<[string, string | undefined]> {

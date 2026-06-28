@@ -1,23 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import {
-  execSync,
-  execFileSync,
   type ExecFileSyncOptionsWithStringEncoding,
+  execFileSync,
+  execSync,
 } from "node:child_process";
 import {
   existsSync,
-  mkdtempSync,
-  writeFileSync,
-  unlinkSync,
-  readFileSync,
   lstatSync,
+  mkdtempSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
+import { describe, expect, it } from "vitest";
+import { resolveOpenshell } from "../src/lib/adapters/openshell/resolve";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
 const RC_CLEAN_SCRIPT = join(import.meta.dirname, "../scripts/lib/clean_runtime_shell_env_shim.py");

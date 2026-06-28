@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- *
  * Preserves the real boundaries: repo CLI/version, debug archive
  * creation/extraction, credential redaction checks, install.sh/onboard,
  * Docker/OpenShell sandbox registration, sandbox exec for openclaw.json, host
@@ -17,13 +16,13 @@ import path from "node:path";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-diag-${process.pid}`;
-const DIAGNOSTICS_MODEL = process.env.NEMOCLAW_MODEL ?? "openai/gpt-oss-120b";
 const DEBUG_QUICK_TIMEOUT_MS = 30_000;
 const INSTALL_TIMEOUT_MS = 35 * 60_000;
 const TEST_TIMEOUT_MS = 55 * 60_000;
@@ -83,7 +82,6 @@ function testEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_MODEL: DIAGNOSTICS_MODEL,
     NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
     ...extra,
@@ -137,7 +135,8 @@ runDiagnosticsTest(
       "run `npm run build:cli` before live repo CLI targets",
     ).toBe(true);
 
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
     await artifacts.writeJson("target.json", {
       id: "diagnostics",
       runner: "vitest",
@@ -193,7 +192,7 @@ runDiagnosticsTest(
       fs.rmSync(home, { recursive: true, force: true });
     });
 
-    const env = testEnv(home, { NVIDIA_INFERENCE_API_KEY: apiKey });
+    const env = testEnv(home, hosted.env);
     await bestEffort(() =>
       host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
         artifactName: "pre-cleanup-nemoclaw-destroy-diagnostics",
@@ -355,7 +354,10 @@ runDiagnosticsTest(
       /nvapi-[A-Za-z0-9_-]{10,}/.test(credentialsText),
       "credentials list must not expose nvapi-shaped values",
     ).toBe(false);
-    expect(/nvidia-prod|No provider credentials registered/i.test(credentialsText)).toBe(true);
+    expect(
+      credentialsText.includes(hosted.providerName) ||
+        /No provider credentials registered/i.test(credentialsText),
+    ).toBe(true);
 
     await host.command("node", [CLI_ENTRYPOINT, "credentials", "list"], {
       artifactName: "diagnostics-credentials-list",
@@ -367,11 +369,11 @@ runDiagnosticsTest(
     let credentialsResetExercised = false;
     let postResetCredentialsListRedacted = false;
     let providerCredentialAbsentBeforeReset = false;
-    if (credentialsText.includes("nvidia-prod")) {
+    if (credentialsText.includes(hosted.providerName)) {
       credentialsResetExercised = true;
       const reset = await host.command(
         "node",
-        [CLI_ENTRYPOINT, "credentials", "reset", "nvidia-prod", "--yes"],
+        [CLI_ENTRYPOINT, "credentials", "reset", hosted.providerName, "--yes"],
         {
           artifactName: "diagnostics-credentials-reset",
           env,
@@ -380,12 +382,12 @@ runDiagnosticsTest(
         },
       );
       expect(reset.exitCode, resultText(reset)).toBe(0);
-      expect(resultText(reset)).toContain("Removed provider 'nvidia-prod'");
+      expect(resultText(reset)).toContain(`Removed provider '${hosted.providerName}'`);
 
       const rawPostResetList = runRawNodeCliForLeakAssertion(["credentials", "list"], env, 60_000);
       const postResetText = rawResultText(rawPostResetList);
       expect(rawPostResetList.status, redactForAssertion(postResetText, apiKey)).toBe(0);
-      expect(postResetText.includes("nvidia-prod")).toBe(false);
+      expect(postResetText.includes(hosted.providerName)).toBe(false);
       expect(
         postResetText.includes(apiKey),
         "post-reset credentials list must not expose the exact NVIDIA_INFERENCE_API_KEY",
@@ -405,9 +407,8 @@ runDiagnosticsTest(
     } else {
       providerCredentialAbsentBeforeReset = true;
       await artifacts.writeJson("credentials-reset.skip.json", {
-        provider: "nvidia-prod",
-        reason:
-          "credentials list reported no nvidia-prod provider credential after install/onboard",
+        provider: hosted.providerName,
+        reason: `credentials list reported no ${hosted.providerName} provider credential after install/onboard`,
         acceptedNoProviderStore: /No provider credentials registered/i.test(credentialsText),
       });
     }
@@ -415,7 +416,7 @@ runDiagnosticsTest(
     await artifacts.writeJson("target-result.json", {
       id: "diagnostics",
       sandboxName: SANDBOX_NAME,
-      model: DIAGNOSTICS_MODEL,
+      model: hosted.model,
       assertions: {
         versionPrintedSemver: /\d+\.\d+\.\d+/.test(resultText(version)),
         quickDebugArchiveCreated: fs.existsSync(quickArchive) && fs.statSync(quickArchive).size > 0,
