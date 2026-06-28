@@ -695,6 +695,7 @@ function ensureSandboxInferenceRoute(
   try {
     sb = registry.getSandbox(sandboxName);
     if (!sb) return { sandbox: null, routeHealthy: null };
+    // This projection is total; the catch below handles only later gateway and repair failures.
     inference = registry.getSandboxEntryInference(sb);
     if (inference.kind !== "configured") return { sandbox: sb, routeHealthy: null };
     const { provider, model } = inference;
