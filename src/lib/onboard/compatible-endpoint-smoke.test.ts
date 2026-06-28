@@ -231,6 +231,7 @@ fi
   });
 
   it("does not retry a parseable JSON HTTP 429 response", () => {
+    // Fail closed: a blind replay cannot honor Retry-After and amplifies overload.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-429-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);

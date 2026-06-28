@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Retry only connection/transfer propagation signals observed at this boundary.
+// Proxy, TLS, certificate, CA, and cipher failures stay terminal because blind
+// retries cannot repair their security or configuration cause.
 const TRANSIENT_CURL_EXIT_CODES = [6, 7, 28, 52, 55, 56] as const;
 const SUCCESS_HTTP_STATUS_MIN = 200;
 const SUCCESS_HTTP_STATUS_MAX = 299;
@@ -14,8 +17,9 @@ export function classifyCurlExit(code: number): "transient" | "permanent" {
 }
 
 export function isRetryableHttpStatus(status: number): boolean {
-  // Keep 429 terminal: this probe does not retain Retry-After, and retrying a
-  // rate-limited endpoint would add load without a server-directed delay.
+  // Keep 429 terminal: this probe does not retain Retry-After. A blind replay
+  // cannot honor service recovery and would amplify load during rate limiting;
+  // fail closed so an operator can retry onboarding after the limit clears.
   return status >= RETRYABLE_HTTP_STATUS_MIN && status <= RETRYABLE_HTTP_STATUS_MAX;
 }
 
