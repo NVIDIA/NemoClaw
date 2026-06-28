@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 type OnboardKnownHostsInternals = {
   pruneKnownHostsEntries: (contents: string) => string;
@@ -18,12 +18,10 @@ function isOnboardKnownHostsInternals(
   return value !== null && typeof value.pruneKnownHostsEntries === "function";
 }
 
-const loadedOnboardKnownHostsModule = await import("../dist/lib/onboard.js");
+const loadedOnboardKnownHostsModule = await import("../src/lib/onboard.js");
 const onboardKnownHostsInternals = isOnboardKnownHostsInternals(loadedOnboardKnownHostsModule)
   ? loadedOnboardKnownHostsModule
-  : isOnboardKnownHostsInternals(loadedOnboardKnownHostsModule.default)
-    ? loadedOnboardKnownHostsModule.default
-    : null;
+  : null;
 if (!isOnboardKnownHostsInternals(onboardKnownHostsInternals)) {
   throw new Error("Expected onboard internals to expose pruneKnownHostsEntries");
 }

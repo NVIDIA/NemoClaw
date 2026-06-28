@@ -7,8 +7,11 @@ import {
   type PublicTranslationResult,
   translatePublicGlobalArgv,
   translatePublicSandboxArgv,
-} from "./public-argv-translation";
-import { SANDBOX_ROUTE_OVERRIDES, sandboxRouteTokens } from "./public-route-metadata";
+} from "../../../dist/lib/cli/public-argv-translation";
+import {
+  SANDBOX_ROUTE_OVERRIDES,
+  sandboxRouteTokens,
+} from "../../../dist/lib/cli/public-route-metadata";
 
 function expectNative(
   result: PublicTranslationResult,
@@ -26,14 +29,14 @@ function expectNative(
 
 describe("public route/display separation", () => {
   afterEach(() => {
-    vi.doUnmock("./oclif-metadata");
+    vi.doUnmock("../../../dist/lib/cli/oclif-metadata");
     vi.resetModules();
   });
 
   it("keeps dispatch token selection independent from public display usage text", async () => {
     vi.resetModules();
-    vi.doMock("./oclif-metadata", async (importOriginal) => {
-      const actual = await importOriginal<typeof import("./oclif-metadata")>();
+    vi.doMock("../../../dist/lib/cli/oclif-metadata", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../../../dist/lib/cli/oclif-metadata")>();
       const realMetadata = actual.getRegisteredOclifCommandsMetadata();
       const withUsage = (commandId: string, usage: string) => {
         const metadata = realMetadata[commandId];
@@ -57,8 +60,8 @@ describe("public route/display separation", () => {
       };
     });
 
-    const dispatch = await import("./public-argv-translation");
-    const registry = await import("./command-registry");
+    const dispatch = await import("../../../dist/lib/cli/public-argv-translation");
+    const registry = await import("../../../dist/lib/cli/command-registry");
 
     expectNative(dispatch.translatePublicGlobalArgv("list", []), "list", []);
     expect(dispatch.translatePublicGlobalArgv("renamed-list", [])).toEqual({
@@ -345,7 +348,7 @@ describe("translatePublicSandboxArgv", () => {
     // command. A regression that deletes `src/commands/sandbox/agents.ts`
     // would make every `nemoclaw <name> agents`/`agents --help` invocation
     // fail with an unknown-command error.
-    const metadataModule = await import("./oclif-metadata");
+    const metadataModule = await import("../../../dist/lib/cli/oclif-metadata");
     const metadata = metadataModule.getRegisteredOclifCommandMetadata("sandbox:agents");
     expect(metadata, "sandbox:agents must be a registered oclif command").not.toBeNull();
     expect(metadata?.strict).toBe(false);

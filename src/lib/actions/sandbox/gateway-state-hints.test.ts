@@ -3,9 +3,9 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type GatewayStateModule = typeof import("../../../../dist/lib/actions/sandbox/gateway-state");
+type GatewayStateModule = typeof import("./gateway-state");
 
 const requireDist = createRequire(import.meta.url);
 
@@ -14,13 +14,13 @@ describe("printGatewayLifecycleHint multi-instance hints", () => {
   let getSandboxSpy: MockInstance;
 
   beforeEach(async () => {
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
+    const registry = requireDist("../../state/registry.js");
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue({
       name: "instance-a",
       gatewayName: "nemoclaw-8080",
       gatewayPort: 8080,
     });
-    gatewayState = requireDist("../../../../dist/lib/actions/sandbox/gateway-state.js");
+    gatewayState = requireDist("./gateway-state.js");
   });
 
   afterEach(() => {

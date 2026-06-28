@@ -9,6 +9,8 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
+  if?: string;
+  needs?: string | string[];
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;
@@ -23,6 +25,7 @@ export type WorkflowJob = {
 };
 
 export type WorkflowStep = {
+  "continue-on-error"?: boolean;
   id?: string;
   name?: string;
   if?: string;
@@ -70,6 +73,7 @@ export function loadE2eWorkflowContract(): {
   nightlyWorkflow: NightlyWorkflow;
   action: CompositeAction;
   cliCoverageShardAction: CompositeAction;
+  installAptAction: CompositeAction;
 } {
   return {
     runnerWorkflow: readYaml<RunnerWorkflow>(".github/workflows/e2e-script.yaml"),
@@ -78,6 +82,7 @@ export function loadE2eWorkflowContract(): {
     cliCoverageShardAction: readYaml<CompositeAction>(
       ".github/actions/ci-cli-coverage-shard/action.yaml",
     ),
+    installAptAction: readYaml<CompositeAction>(".github/actions/install-apt-packages/action.yaml"),
   };
 }
 

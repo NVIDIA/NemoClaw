@@ -80,7 +80,7 @@ describe("stale-dist-check", () => {
     expect(checkStaleDist(root)).toBeNull();
   });
 
-  it("warnIfStale writes a build:cli hint mentioning #1958", () => {
+  it("writes a build:cli hint mentioning the tracked issue in warnIfStale (#1958)", () => {
     writeFile(path.join(root, "dist", "lib", "foo.js"), "x", 1_000_000);
     writeFile(path.join(root, "src", "lib", "foo.ts"), "x", 5_000_000);
     const chunks: string[] = [];

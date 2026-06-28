@@ -183,8 +183,8 @@ fi
 
 if [ "$INTERACTIVE_INSTALL" = "1" ]; then
   # Interactive install via expect is not currently supported in the split
-  # tests. The original monolith inlined the expect heredoc; the standalone
-  # wrapper (expect-interactive-install.sh) was never self-contained.
+  # tests. The original monolith inlined the expect heredoc, but the split
+  # cloud-onboard test only supports non-interactive installs.
   # TODO(#2644): re-implement interactive install if needed.
   fail "Interactive install (RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=1) is not yet supported — use non-interactive mode"
   exit 1

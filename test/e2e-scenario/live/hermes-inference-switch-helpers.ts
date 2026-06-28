@@ -347,14 +347,20 @@ export function expectedApiMode(): string | undefined {
   ]).get(SWITCH_API);
 }
 
+// This live lane runs on ubuntu-latest and intentionally uses GNU grep's
+// POSIX ERE character classes; support tests pin the accepted scalar shapes.
+export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
+
+export function apiKeyShapeCommand(): string[] {
+  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+}
+
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {
-  return await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      "python3 - <<'PY'\nimport re\ntext=open('/sandbox/.hermes/config.yaml', encoding='utf-8').read()\nmatch=re.search(r'^\\s+api_key:\\s*[\\\"\\']?(sk-[^\\\"\\'\\s]+)', text, re.M)\nraise SystemExit(0 if match else 1)\nPY",
-    ),
-    { artifactName: "hermes-config-api-key-shape", env: env(), timeoutMs: 30_000 },
-  );
+  return await sandbox.exec(SANDBOX_NAME, apiKeyShapeCommand(), {
+    artifactName: "hermes-config-api-key-shape",
+    env: env(),
+    timeoutMs: 30_000,
+  });
 }
 
 export async function hashCheck(

@@ -14,8 +14,6 @@ const mocks = vi.hoisted(() => ({
   runInferenceGet: vi.fn(),
   runInferenceSet: vi.fn(),
   runOnboardAction: vi.fn(),
-  runSetupAction: vi.fn(),
-  runSetupSparkAction: vi.fn(),
   runUpgradeSandboxesAction: vi.fn(),
   showStatusCommand: vi.fn(),
 }));
@@ -39,8 +37,6 @@ vi.mock("../lib/actions/global", () => ({
   runBackupAllAction: mocks.runBackupAllAction,
   runGarbageCollectImagesAction: mocks.runGarbageCollectImagesAction,
   runOnboardAction: mocks.runOnboardAction,
-  runSetupAction: mocks.runSetupAction,
-  runSetupSparkAction: mocks.runSetupSparkAction,
   runUpgradeSandboxesAction: mocks.runUpgradeSandboxesAction,
 }));
 
@@ -70,16 +66,16 @@ vi.mock("../lib/actions/inference-get", () => ({
 
 import { InferenceGetError } from "../lib/actions/inference-get";
 import { InferenceSetError } from "../lib/actions/inference-set";
+import BackupAllCommand from "./backup-all";
+import GarbageCollectImagesCommand from "./gc";
 import InferenceGetCommand from "./inference/get";
 import InferenceSetCommand from "./inference/set";
 import ListCommand from "./list";
-import BackupAllCommand from "./backup-all";
-import GarbageCollectImagesCommand from "./gc";
-import UpgradeSandboxesCommand from "./upgrade-sandboxes";
 import OnboardCliCommand from "./onboard";
 import SetupCliCommand from "./setup";
 import SetupSparkCliCommand from "./setup-spark";
 import StatusCommand from "./status";
+import UpgradeSandboxesCommand from "./upgrade-sandboxes";
 
 const rootDir = process.cwd();
 
@@ -211,14 +207,20 @@ describe("global oclif command adapters", () => {
     });
   });
 
-  it("maps onboard-family flags into the compatibility action arguments", async () => {
+  it("maps onboard-family flags directly into the shared typed action", async () => {
     await OnboardCliCommand.run(["--name", "alpha", "--resume"], rootDir);
-    await SetupCliCommand.run(["--fresh"], rootDir);
+    await SetupCliCommand.run(["--name", "alpha", "--resume"], rootDir);
     await SetupSparkCliCommand.run(["--control-ui-port", "18080"], rootDir);
 
-    expect(mocks.runOnboardAction).toHaveBeenCalledWith(["--resume", "--name", "alpha"]);
-    expect(mocks.runSetupAction).toHaveBeenCalledWith(["--fresh"]);
-    expect(mocks.runSetupSparkAction).toHaveBeenCalledWith(["--control-ui-port", "18080"]);
+    expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ name: "alpha", resume: true }),
+    );
+    expect(mocks.runOnboardAction.mock.calls[1]).toEqual(mocks.runOnboardAction.mock.calls[0]);
+    expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({ "control-ui-port": 18080 }),
+    );
   });
 
   it("maps inference set flags into the inference action", async () => {

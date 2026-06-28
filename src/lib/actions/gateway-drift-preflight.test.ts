@@ -7,9 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import type { OpenShellStateRpcIssue } from "../adapters/openshell/gateway-drift";
 
-type BackupAll = typeof import("../../../dist/lib/actions/maintenance")["backupAll"];
-type UpgradeSandboxes =
-  typeof import("../../../dist/lib/actions/upgrade-sandboxes")["upgradeSandboxes"];
+type BackupAll = typeof import("./maintenance")["backupAll"];
+type UpgradeSandboxes = typeof import("./upgrade-sandboxes")["upgradeSandboxes"];
 
 const requireDist = createRequire(import.meta.url);
 
@@ -57,14 +56,14 @@ describe("gateway drift preflight for maintenance actions", () => {
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const gatewayDrift = requireDist("../../../dist/lib/adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../../dist/lib/adapters/openshell/runtime.js");
-    const registry = requireDist("../../../dist/lib/state/registry.js");
-    const sandboxState = requireDist("../../../dist/lib/state/sandbox.js");
-    const sandboxVersion = requireDist("../../../dist/lib/sandbox/version.js");
-    const upgradeDomain = requireDist("../../../dist/lib/domain/maintenance/upgrade.js");
-    const rebuild = requireDist("../../../dist/lib/actions/sandbox/rebuild.js");
-    const gatewayRuntime = requireDist("../../../dist/lib/gateway-runtime-action.js");
+    const gatewayDrift = requireDist("../adapters/openshell/gateway-drift.js");
+    const openshellRuntime = requireDist("../adapters/openshell/runtime.js");
+    const registry = requireDist("../state/registry.js");
+    const sandboxState = requireDist("../state/sandbox.js");
+    const sandboxVersion = requireDist("../sandbox/version.js");
+    const upgradeDomain = requireDist("../domain/maintenance/upgrade.js");
+    const rebuild = requireDist("./sandbox/rebuild.js");
+    const gatewayRuntime = requireDist("../gateway-runtime-action.js");
 
     detectPreflightIssueSpy = vi
       .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
@@ -113,8 +112,8 @@ describe("gateway drift preflight for maintenance actions", () => {
       vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined),
     );
 
-    ({ backupAll } = requireDist("../../../dist/lib/actions/maintenance.js"));
-    ({ upgradeSandboxes } = requireDist("../../../dist/lib/actions/upgrade-sandboxes.js"));
+    ({ backupAll } = requireDist("./maintenance.js"));
+    ({ upgradeSandboxes } = requireDist("./upgrade-sandboxes.js"));
   });
 
   afterEach(() => {
@@ -197,7 +196,7 @@ describe("gateway drift preflight for maintenance actions", () => {
   });
 
   it("backup-all skips sandboxes that are not in Ready phase", async () => {
-    const registry = requireDist("../../../dist/lib/state/registry.js");
+    const registry = requireDist("../state/registry.js");
     (registry.listSandboxes as ReturnType<typeof vi.fn>).mockReturnValue({
       sandboxes: [
         { name: "alpha", provider: "nvidia-prod", model: "nemotron" },

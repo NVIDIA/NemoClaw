@@ -316,7 +316,7 @@ function readSessionMessagingPlan(
   return readSession(fixture).messagingPlan;
 }
 
-describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
+describe("rebuild syncs agent from registry instead of a stale session (#2201)", () => {
   it("rebuild openclaw after hermes was onboarded last (reporter scenario)", {
     timeout: 60_000,
   }, () => {
@@ -361,7 +361,7 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
   });
 });
 
-describe("Issue #2301: rebuild forwards stored --from Dockerfile to onboard", () => {
+describe("rebuild forwards the stored --from Dockerfile to onboard (#2301)", () => {
   it("rebuild does not hit fromDockerfile conflict when session has a stored --from path", {
     timeout: 60_000,
   }, () => {

@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { loadAgent } from "../../../dist/lib/agent/defs";
-// Import from compiled dist/ so coverage is attributed correctly.
+import type { AgentDefinition } from "./defs";
+import { loadAgent } from "./defs";
+// Import source directly so tests cannot pass against a stale build.
 import {
   buildManualRecoveryCommand,
   buildRecoveryScript,
   getTerminalCommand,
   TERMINAL_AGENT_RECOVERY_SCRIPT,
-} from "../../../dist/lib/agent/runtime";
-import type { AgentDefinition } from "./defs";
+} from "./runtime";
 
 const terminalAgent = {
   name: "terminal-agent",

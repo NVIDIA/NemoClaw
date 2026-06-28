@@ -5,10 +5,10 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type GatewayRuntimeModule = typeof import("../../dist/lib/gateway-runtime-action");
+type GatewayRuntimeModule = typeof import("./gateway-runtime-action");
 
 const requireDist = createRequire(import.meta.url);
-const gatewayRuntimeModulePath = "../../dist/lib/gateway-runtime-action.js";
+const gatewayRuntimeModulePath = "./gateway-runtime-action.js";
 
 describe("gateway-runtime-action per-sandbox gateway routing", () => {
   let gatewayRuntime: GatewayRuntimeModule;
@@ -20,14 +20,14 @@ describe("gateway-runtime-action per-sandbox gateway routing", () => {
   beforeEach(() => {
     spies = [];
     delete require.cache[requireDist.resolve(gatewayRuntimeModulePath)];
-    const openshellRuntime = requireDist("../../dist/lib/adapters/openshell/runtime.js");
+    const openshellRuntime = requireDist("./adapters/openshell/runtime.js");
     captureSpy = vi.spyOn(openshellRuntime, "captureOpenshell");
     runSpy = vi.spyOn(openshellRuntime, "runOpenshell");
     spies.push(captureSpy, runSpy);
 
     // The recovery path also pokes onboard.startGatewayForRecovery via lazy
     // require(); stub it so the tests do not pull onboard's runtime in.
-    const onboard = requireDist("../../dist/lib/onboard.js");
+    const onboard = requireDist("./onboard.js");
     startGatewaySpy = vi
       .spyOn(onboard, "startGatewayForRecovery")
       .mockResolvedValue(undefined as never);

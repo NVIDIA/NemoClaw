@@ -6,16 +6,15 @@
 // channel manifests, so a non-messaging sandbox rebuild cannot
 // carry messaging-plan state into the Dockerfile patch step.
 //
-// Loaded from dist/ to match the rest of the rebuild test suite (runner.ts
-// loads './platform' via runtime CommonJS `require()` that vitest cannot
-// resolve from a TS source file). Run `npm run build:cli` first.
+// Loaded through the shared source require hook because the rebuild graph uses
+// runtime CommonJS dependencies that must share one cache for test spies.
 
 import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 const defs = D("agent/defs.js");
 const messaging = D("messaging/index.js") as {

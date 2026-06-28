@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import {
   containerCanReachHostLoopback,
@@ -13,7 +13,7 @@ import {
   inferContainerRuntime,
   isWsl,
   shouldPatchCoredns,
-} from "../dist/lib/platform";
+} from "../src/lib/platform";
 
 describe("platform helpers", () => {
   describe("isWsl", () => {
@@ -236,7 +236,7 @@ describe("platform helpers", () => {
       });
     });
 
-    it("discovers the bare ~/.colima/docker.sock layout (regression for #3503)", () => {
+    it("discovers the bare ~/.colima/docker.sock layout (#3503)", () => {
       // The reporter's Colima setup puts the socket at the top-level
       // ~/.colima/docker.sock rather than under ~/.colima/default/. Before
       // this fix, detection returned null and the gateway fell back to

@@ -5,19 +5,19 @@
 // Covers ARM64/non-TTY fallback paths where `openshell status` returns empty output.
 // See: https://github.com/NVIDIA/NemoClaw/issues/1711
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { mergeLivePolicyIntoSandboxOutput } from "../src/lib/actions/sandbox/gateway-state.js";
 import {
+  getGatewayReuseState,
+  getReportedGatewayName,
+  getSandboxStateFromOutputs,
+  hasActiveGatewayInfo,
+  hasStaleGateway,
   isGatewayConnected,
   isGatewayHealthy,
-  getGatewayReuseState,
-  getSandboxStateFromOutputs,
-  hasStaleGateway,
-  hasActiveGatewayInfo,
-  getReportedGatewayName,
-  shouldSelectNamedGatewayForReuse,
   parseSandboxPhase,
+  shouldSelectNamedGatewayForReuse,
 } from "../src/lib/state/gateway.js";
-import { mergeLivePolicyIntoSandboxOutput } from "../dist/lib/actions/sandbox/gateway-state.js";
 
 // Realistic CLI outputs
 const STATUS_CONNECTED = `
