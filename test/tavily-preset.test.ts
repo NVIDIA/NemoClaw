@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-import * as policies from "../dist/lib/policy";
+import * as policies from "../src/lib/policy";
 
 type TavilyEndpoint = {
   host: string;

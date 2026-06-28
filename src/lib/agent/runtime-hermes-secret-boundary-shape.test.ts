@@ -8,13 +8,13 @@
 // runtime-hermes-secret-boundary-behavioural.test.ts.
 
 import { describe, expect, it } from "vitest";
-import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "../../../dist/lib/agent/hermes-recovery-boundary";
+import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "./hermes-recovery-boundary";
+import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
 import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildRecoveryScript,
-} from "../../../dist/lib/agent/runtime";
-import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
+} from "./runtime";
 
 const VALIDATOR_PATH = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
 

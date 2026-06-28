@@ -18,8 +18,8 @@ import {
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
-    const sandboxConfigModule = await import("../../dist/lib/sandbox/config.js");
-    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+    const sandboxConfigModule = await import("../../src/lib/sandbox/config.js");
+    const { parseConfigGetArgs } = sandboxConfigModule as {
       parseConfigGetArgs: (
         args: string[],
       ) =>
@@ -169,7 +169,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("langchain-deepagents-code");
   });
 
-  it("--help exits 0", () => {
+  it("exits 0 for --help", () => {
     expect(run("--help").code).toBe(0);
   });
 
@@ -179,7 +179,7 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("-h exits 0", () => {
+  it("exits 0 for -h", () => {
     expect(run("-h").code).toBe(0);
   });
 

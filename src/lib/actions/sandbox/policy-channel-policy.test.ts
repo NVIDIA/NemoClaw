@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const D = (p: string) => requireDist(`../../${p}`);
 
 type PresetInfo = {
   name: string;

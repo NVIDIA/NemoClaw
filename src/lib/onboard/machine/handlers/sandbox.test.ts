@@ -124,9 +124,12 @@ function createDeps(
     stopStale: vi.fn(),
     createSandbox: vi.fn(async () => "my-assistant"),
     updateSandbox: vi.fn(),
-    complete: vi.fn(async () => createSession()),
+    complete: vi.fn(async (_stepName: string, updates: SessionUpdates) => {
+      Object.assign(session, updates);
+      return session;
+    }),
     skipped: vi.fn(),
-    recordSkip: vi.fn(async () => createSession()),
+    recordSkip: vi.fn(async () => session),
     repairEvent: vi.fn(async () => createSession()),
     error: vi.fn(),
     exit: vi.fn((code: number): never => {
@@ -271,6 +274,7 @@ describe("handleSandboxState", () => {
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,
     });
+    expect(result.session?.sandboxName).toBe("my-assistant");
     expect(result.stateResult).toEqual({
       type: "transition",
       next: "openclaw",
@@ -286,7 +290,12 @@ describe("handleSandboxState", () => {
       messagingPlan: makeMinimalPlan("saved", "openclaw", ["slack"]),
     });
     session.steps.sandbox.status = "complete";
-    const { deps, calls } = createDeps({ getSandboxReuseState: () => "ready" });
+    const skippedSession = createSession({ sandboxName: "saved-after-skip" });
+    const recordStateSkipped = vi.fn(async () => skippedSession);
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      recordStateSkipped,
+    });
 
     const result = await handleSandboxState({
       ...baseOptions(deps, session),
@@ -296,11 +305,12 @@ describe("handleSandboxState", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
-    expect(calls.recordSkip).toHaveBeenCalledWith("sandbox", {
+    expect(recordStateSkipped).toHaveBeenCalledWith("sandbox", {
       reason: "resume",
       sandboxName: "saved",
     });
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
+    expect(result.session).toBe(skippedSession);
   });
 
   it("removes registry state when messaging config drift forces sandbox recreation", async () => {

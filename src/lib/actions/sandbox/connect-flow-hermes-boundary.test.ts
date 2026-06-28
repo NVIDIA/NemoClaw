@@ -54,7 +54,7 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
         secretBoundaryReason: "raw-secret",
       },
     });
-    const agentRuntime = requireDist("../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
 
@@ -89,7 +89,7 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
         secretBoundaryReason: "raw-secret",
       },
     });
-    const agentRuntime = requireDist("../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
 
@@ -142,7 +142,7 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
         secretBoundaryReason: reason,
       },
     });
-    const agentRuntime = requireDist("../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
 

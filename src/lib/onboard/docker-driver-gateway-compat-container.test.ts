@@ -11,14 +11,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertCompatibleDockerDaemonReachable,
   prepareContainerizedDockerDriverGatewayLaunch,
-} from "../../../dist/lib/onboard/docker-driver-gateway-compat";
+} from "./docker-driver-gateway-compat";
 
 import {
   buildDockerDriverGatewayLaunch,
   buildDockerDriverGatewayRuntimeIdentity,
   prepareAndLogDockerDriverGatewayLaunch,
   resolveDriftGatewayBin,
-} from "../../../dist/lib/onboard/docker-driver-gateway-launch";
+} from "./docker-driver-gateway-launch";
 
 const PINNED_COMPAT_IMAGE_OVERRIDE = `registry.example/nemoclaw/gateway-compat:0.0.71@sha256:${"a".repeat(
   64,

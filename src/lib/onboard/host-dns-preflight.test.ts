@@ -10,11 +10,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import {
-  assertHostDnsHealthy,
-  printHostDnsRemediation,
-} from "../../../dist/lib/onboard/bridge-dns-preflight";
-import { isFatalHostDnsProbeFailure, probeHostDns } from "../../../dist/lib/onboard/preflight";
+import { assertHostDnsHealthy, printHostDnsRemediation } from "./bridge-dns-preflight";
+import { isFatalHostDnsProbeFailure, probeHostDns } from "./preflight";
 
 describe("probeHostDns (#4784)", () => {
   // The probe runs `node -e <resolver-script> <hostname>`. Inject a

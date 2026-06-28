@@ -8,10 +8,15 @@ import { type MockInstance, vi } from "vitest";
 
 import type { SecretBoundaryRefusalReason } from "../../src/lib/actions/sandbox/hermes-secret-boundary-recovery";
 
-type ConnectSandbox = typeof import("../../dist/lib/actions/sandbox/connect")["connectSandbox"];
+type ConnectSandbox = typeof import("../../src/lib/actions/sandbox/connect")["connectSandbox"];
 
 export const requireDist = createRequire(import.meta.url);
-export const connectModulePath = "../../dist/lib/actions/sandbox/connect.js";
+export const connectModulePath = "../../src/lib/actions/sandbox/connect.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(connectModulePath);
+delete require.cache[requireDist.resolve(connectModulePath)];
 
 export type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
@@ -66,22 +71,22 @@ export function createConnectHarness(options: ConnectHarnessOptions = {}): Conne
           signal: options.spawnSignal ?? null,
         } as never)) as never);
 
-  const runtime = requireDist("../../dist/lib/adapters/openshell/runtime.js");
-  const resolve = requireDist("../../dist/lib/adapters/openshell/resolve.js");
-  const agentRuntime = requireDist("../../dist/lib/agent/runtime.js");
-  const gatewayState = requireDist("../../dist/lib/actions/sandbox/gateway-state.js");
-  const processRecovery = requireDist("../../dist/lib/actions/sandbox/process-recovery.js");
-  const autoPairApproval = requireDist("../../dist/lib/actions/sandbox/auto-pair-approval.js");
+  const runtime = requireDist("../../src/lib/adapters/openshell/runtime.js");
+  const resolve = requireDist("../../src/lib/adapters/openshell/resolve.js");
+  const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
+  const gatewayState = requireDist("../../src/lib/actions/sandbox/gateway-state.js");
+  const processRecovery = requireDist("../../src/lib/actions/sandbox/process-recovery.js");
+  const autoPairApproval = requireDist("../../src/lib/actions/sandbox/auto-pair-approval.js");
   const connectVllmPreflight = requireDist(
-    "../../dist/lib/actions/sandbox/connect-vllm-preflight.js",
+    "../../src/lib/actions/sandbox/connect-vllm-preflight.js",
   );
   const gatewayFailureClassifier = requireDist(
-    "../../dist/lib/actions/sandbox/gateway-failure-classifier.js",
+    "../../src/lib/actions/sandbox/gateway-failure-classifier.js",
   );
-  const ollamaProxy = requireDist("../../dist/lib/inference/ollama/proxy.js");
-  const sandboxVersion = requireDist("../../dist/lib/sandbox/version.js");
-  const registry = requireDist("../../dist/lib/state/registry.js");
-  const sandboxSession = requireDist("../../dist/lib/state/sandbox-session.js");
+  const ollamaProxy = requireDist("../../src/lib/inference/ollama/proxy.js");
+  const sandboxVersion = requireDist("../../src/lib/sandbox/version.js");
+  const registry = requireDist("../../src/lib/state/registry.js");
+  const sandboxSession = requireDist("../../src/lib/state/sandbox-session.js");
 
   vi.spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit").mockImplementation(() => undefined);
   vi.spyOn(gatewayState, "ensureLiveSandboxOrExit").mockResolvedValue({

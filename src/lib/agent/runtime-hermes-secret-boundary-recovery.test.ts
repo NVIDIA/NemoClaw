@@ -6,8 +6,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "../../../dist/lib/agent/hermes-recovery-boundary";
-import { buildRecoveryScript } from "../../../dist/lib/agent/runtime";
+import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "./hermes-recovery-boundary";
+import { buildRecoveryScript } from "./runtime";
 import {
   createRecoveryPreloadHarnessPaths,
   type RecoveryPreloadHarnessPaths,

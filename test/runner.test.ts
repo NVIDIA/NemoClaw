@@ -9,9 +9,9 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import { redact, runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../src/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
+const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "1ef9a2b447a35391a6a0f417f4383d99f3e928e443cf86ed190002ec937a8871",
   cliLinuxArm64: "b86b33d9e7c960cd04bc99a9539964f1cb84ae4a9886dd437c0566b64e093390",
@@ -239,7 +239,7 @@ describe("runner env merging", () => {
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
-  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
     // Regression for the macOS Privoxy scenario: validateOllamaModel calls
     // runCaptureEx with a curl probe against http://localhost:11434. Before
     // the fix, runCaptureEx merged raw process.env (including the user's

@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import ResourcesCommand from "../../dist/commands/resources.js";
+import ResourcesCommand from "./resources.js";
 
 const rootDir = process.cwd();
 

@@ -23,7 +23,7 @@
 // and `npm run build` inside nemoclaw/ for the plugin side.
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -59,9 +59,9 @@ function loadHelper(modulePath: string, buildHint: string): NetworkHelper {
   }
 }
 
-const cliHelper = loadHelper("../dist/lib/private-networks", "`npm run build:cli`");
+const cliHelper = loadHelper("../../dist/lib/private-networks", "`npm run build:cli`");
 const pluginHelper = loadHelper(
-  "../nemoclaw/dist/blueprint/private-networks.js",
+  "../../nemoclaw/dist/blueprint/private-networks.js",
   "`npm run build` inside nemoclaw/",
 );
 
@@ -295,7 +295,7 @@ describe("CLI and plugin isPrivateHostname agree on every CIDR boundary", () => 
   ];
 
   for (const [addr, expected, label] of vectors) {
-    it(`${label}: ${addr} → ${String(expected)}`, () => {
+    it(`classifies ${label} at ${addr} as ${String(expected)}`, () => {
       expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
       expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
     });
@@ -332,7 +332,7 @@ describe("CLI and plugin isPrivateHostname agree on wrapper-level cases", () => 
   ];
 
   for (const [addr, expected, label] of extras) {
-    it(`${label}: ${JSON.stringify(addr)} → ${String(expected)}`, () => {
+    it(`classifies ${label} at ${JSON.stringify(addr)} as ${String(expected)}`, () => {
       expect(pluginHelper.isPrivateHostname(addr)).toBe(expected);
       expect(cliHelper.isPrivateHostname(addr)).toBe(expected);
     });

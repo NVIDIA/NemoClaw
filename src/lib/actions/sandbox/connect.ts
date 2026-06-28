@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import os from "node:os";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import {
   captureOpenshell,
@@ -17,6 +16,7 @@ import {
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { spawnExitCode } from "../../core/process-exit";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import {
   parseGatewayInference,
@@ -847,19 +847,6 @@ function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   }
 }
 
-function exitWithSpawnResult(result: SpawnLikeResult): void {
-  if (result.status !== null) {
-    process.exit(result.status);
-  }
-
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    process.exit(signalNumber ? 128 + signalNumber : 1);
-  }
-
-  process.exit(1);
-}
-
 function restoreInteractiveTerminal(): void {
   if (!process.stdin.isTTY) return;
 
@@ -893,7 +880,7 @@ function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult
     console.error("");
     console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
   }
-  exitWithSpawnResult(result);
+  process.exit(spawnExitCode(result));
 }
 
 export async function connectSandbox(

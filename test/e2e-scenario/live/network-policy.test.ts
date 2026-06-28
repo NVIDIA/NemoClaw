@@ -6,9 +6,8 @@
  *
  * This keeps the legacy contract real: onboarding a restricted OpenClaw
  * sandbox, mutating live OpenShell network policy from the NemoClaw CLI, and
- * probing egress from inside the sandbox. Helpers stay local to this file so
- * the security/policy anchor does not add a new framework or shared fixture
- * before repeated migration needs prove one is warranted.
+ * probing egress from inside the sandbox. The prompt-driving helper is kept
+ * separate so support tests can pin its command shape without live infra.
  */
 
 import fs from "node:fs";
@@ -23,6 +22,10 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import {
+  POLICY_ADD_EXPECT_SCRIPT,
+  requirePolicyPresetNumber,
+} from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -110,22 +113,29 @@ async function applyPresetInteractively(
   host: HostCliClient,
   preset: string,
 ): Promise<ShellProbeResult> {
-  const script = String.raw`
-set -euo pipefail
-preset_list="$(env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null 2>&1 || true)"
-preset_num="$(printf '%s\n' "$preset_list" | python3 -c 'import re,sys; preset=sys.argv[1]; text=sys.stdin.read(); m=re.search(r"(?m)^\s*(\d+)\).*" + re.escape(preset), text); print(m.group(1) if m else "")' "$NEMOCLAW_E2E_PRESET")"
-if [ -z "$preset_num" ]; then
-  printf 'preset %s not found in list:\n%s\n' "$NEMOCLAW_E2E_PRESET" "$preset_list" >&2
-  exit 1
-fi
-printf '%s\nY\n' "$preset_num" | env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add
-`;
-  const result = await host.command("bash", ["-lc", script], {
+  const listResult = await host.command(
+    "bash",
+    [
+      "-lc",
+      'env NEMOCLAW_NON_INTERACTIVE= node "$NEMOCLAW_E2E_CLI" "$NEMOCLAW_E2E_SANDBOX" policy-add </dev/null',
+    ],
+    {
+      artifactName: `policy-add-${preset}-interactive-list`,
+      env: baseEnv({
+        NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
+        NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
+      }),
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    },
+  );
+  const presetNumber = requirePolicyPresetNumber(text(listResult), preset);
+
+  const result = await host.command("expect", ["-c", POLICY_ADD_EXPECT_SCRIPT], {
     artifactName: `policy-add-${preset}-interactive`,
     env: baseEnv({
       NEMOCLAW_E2E_CLI: CLI_ENTRYPOINT,
       NEMOCLAW_E2E_SANDBOX: SANDBOX_NAME,
-      NEMOCLAW_E2E_PRESET: preset,
+      NEMOCLAW_E2E_PRESET_NUM: presetNumber,
     }),
     timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
   });
@@ -560,11 +570,25 @@ hello
       curlStatus(sandbox, "https://pypi.org/simple/le/", "tc-net-02-pypi-post", "-X POST"),
     ).resolves.toBe("403");
 
-    const slackBefore = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-before");
+    // Use Slack's non-redirecting API probe on the preset's actual API host;
+    // the marketing root can leave the slack.com allowlist during redirects.
+    const slackBefore = await fetchStatus(
+      sandbox,
+      "https://slack.com/api/api.test",
+      "tc-net-03-slack-before",
+    );
     expect(slackBefore).toMatch(/STATUS_403|ERROR_/);
     const slackApply = await applyPresetInteractively(host, "slack");
     expect(slackApply.exitCode, text(slackApply)).toBe(0);
-    const slackAfter = await fetchStatus(sandbox, "https://slack.com/", "tc-net-03-slack-after");
+    const slackPolicyList = await runNemoclaw(host, [SANDBOX_NAME, "policy-list"], {
+      artifactName: "tc-net-03-policy-list-slack",
+    });
+    expect(text(slackPolicyList)).toMatch(/● slack/);
+    const slackAfter = await fetchStatus(
+      sandbox,
+      "https://slack.com/api/api.test",
+      "tc-net-03-slack-after",
+    );
     expect(slackAfter).toMatch(/STATUS_200/);
 
     const atlassianBefore = await fetchStatus(

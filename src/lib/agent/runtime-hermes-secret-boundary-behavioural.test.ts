@@ -14,16 +14,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  __testing,
-  HERMES_SECRET_BOUNDARY_VALIDATOR_PATH,
-} from "../../../dist/lib/agent/hermes-recovery-boundary";
-import { buildRecoveryScript } from "../../../dist/lib/agent/runtime";
-import {
   createRecoveryPreloadHarnessPaths,
   type RecoveryPreloadHarnessPaths,
   rewriteRecoveryPreloadPaths,
 } from "../../../test/helpers/runtime-recovery-preload-test-helpers";
+import { __testing, HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "./hermes-recovery-boundary";
 import { hermesAgent } from "./hermes-recovery-boundary-fixtures";
+import { buildRecoveryScript } from "./runtime";
 
 function writeStub(dir: string, name: string, body: string) {
   const stub = path.join(dir, name);

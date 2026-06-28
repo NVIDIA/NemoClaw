@@ -7,11 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import type { Session } from "../../state/onboard-session";
 
-type RebuildSandbox =
-  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
+const rebuildModulePath = "./rebuild.js";
 
 function cloneSession(session: Session): Session {
   return JSON.parse(JSON.stringify(session));
@@ -44,22 +43,22 @@ describe("rebuild resume snapshot repair", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const gatewayDrift = requireDist("../../../../dist/lib/adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-    const sandboxList = requireDist("../../../../dist/lib/openshell-sandbox-list.js");
-    const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-    const agentDefs = requireDist("../../../../dist/lib/agent/defs.js");
-    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-    const onboardMod = requireDist("../../../../dist/lib/onboard.js");
-    const resumeRepair = requireDist("../../../../dist/lib/onboard/resume-machine-repair.js");
-    const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
-    const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
-    const sandboxState = requireDist("../../../../dist/lib/state/sandbox.js");
-    const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-    const destroy = requireDist("../../../../dist/lib/actions/sandbox/destroy.js");
-    const rebuildShields = requireDist("../../../../dist/lib/actions/sandbox/rebuild-shields.js");
-    const nim = requireDist("../../../../dist/lib/inference/nim.js");
+    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+    const sandboxList = requireDist("../../openshell-sandbox-list.js");
+    const resolve = requireDist("../../adapters/openshell/resolve.js");
+    const agentDefs = requireDist("../../agent/defs.js");
+    const agentRuntime = requireDist("../../agent/runtime.js");
+    const onboardMod = requireDist("../../onboard.js");
+    const resumeRepair = requireDist("../../onboard/resume-machine-repair.js");
+    const onboardSession = requireDist("../../state/onboard-session.js");
+    const registry = requireDist("../../state/registry.js");
+    const sandboxSession = requireDist("../../state/sandbox-session.js");
+    const sandboxState = requireDist("../../state/sandbox.js");
+    const sandboxVersion = requireDist("../../sandbox/version.js");
+    const destroy = requireDist("./destroy.js");
+    const rebuildShields = requireDist("./rebuild-shields.js");
+    const nim = requireDist("../../inference/nim.js");
 
     session = onboardSession.createSession({
       sandboxName: "alpha",

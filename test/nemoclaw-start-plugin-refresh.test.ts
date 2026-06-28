@@ -268,7 +268,7 @@ describe("plugin refresh log preparation", () => {
   });
 });
 
-describe("plugin registry refresh workaround (#2021, openclaw/openclaw#89606)", () => {
+describe("plugin registry refresh workaround for openclaw/openclaw#89606 (#2021)", () => {
   it("invokes `openclaw plugins registry --refresh` once the gateway reports ready", () => {
     const { result, refreshLog, callLog, tmpDir } = runRefreshBlock();
     try {

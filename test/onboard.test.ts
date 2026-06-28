@@ -7,13 +7,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import { appendHostProxyEnvArgs } from "../src/lib/onboard/host-proxy-env.js";
 import {
   isValidInferenceInputsOverride,
   maybePromptForInferenceInputCapability,
   shouldPromptForInferenceInputCapability,
-} from "../dist/lib/onboard/inference-input-capability.js";
-import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+} from "../src/lib/onboard/inference-input-capability.js";
+import { stageOptimizedSandboxBuildContext } from "../src/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
@@ -73,7 +73,7 @@ function isOnboardTestInternals(
   return value !== null && typeof value.getNavigationChoice === "function";
 }
 
-const loadedOnboardInternals = require("../dist/lib/onboard");
+const loadedOnboardInternals = require("../src/lib/onboard");
 const onboardTestInternals =
   typeof loadedOnboardInternals === "object" && loadedOnboardInternals !== null
     ? loadedOnboardInternals
@@ -233,7 +233,7 @@ describe("onboard helpers", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "gateway-diag.cjs");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
       fs.mkdirSync(fakeBin, { recursive: true });
       // Fake openshell:
@@ -437,7 +437,7 @@ startGateway(null).catch(() => {});
     }
   });
 
-  it("#2753: ignores an incomplete session sandbox name when checking resume conflicts", () => {
+  it("ignores an incomplete session sandbox name when checking resume conflicts (#2753)", () => {
     // A pre-fix on-disk session may carry sandboxName even though the
     // sandbox step never completed. Treating that as a conflict source
     // would block users from running `--resume --name <new>` to recover.
@@ -709,9 +709,9 @@ startGateway(null).catch(() => {});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -785,9 +785,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-reuse-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-hermes-reuse-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -867,11 +867,11 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bedrock-runtime-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-bedrock-runtime-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const adapterPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "bedrock-runtime-adapter.js"),
+      path.join(repoRoot, "src", "lib", "inference", "bedrock-runtime-adapter.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -990,27 +990,27 @@ const { setupInference } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
     const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sessionPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
+    const nimPath = JSON.stringify(path.join(repoRoot, "src", "lib", "inference", "nim.ts"));
     const gatewayStatePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "gateway.js"),
+      path.join(repoRoot, "src", "lib", "state", "gateway.ts"),
     );
     const dockerDriverPlatformPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "docker-driver-platform.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "docker-driver-platform.ts"),
     );
     const gatewayGpuPassthroughPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "gateway-gpu-passthrough.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "gateway-gpu-passthrough.ts"),
     );
     const onboardProbesPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "onboard-probes.js"),
+      path.join(repoRoot, "src", "lib", "inference", "onboard-probes.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1226,9 +1226,9 @@ const { onboard } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-update-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-hermes-update-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -1316,14 +1316,14 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-local-vllm-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-local-vllm-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1407,18 +1407,18 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-wsl-proxy-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-ollama-wsl-proxy-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
     const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
     );
     const proxyPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
     );
     const topologyPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "local-inference-topology.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1527,18 +1527,18 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-set-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "ollama-set-fail.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "src", "lib", "platform.ts"));
     const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
     );
     const proxyPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+      path.join(repoRoot, "src", "lib", "inference", "ollama", "proxy.ts"),
     );
     const topologyPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "local-inference-topology.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "local-inference-topology.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1681,11 +1681,11 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-set-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "vllm-set-fail.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const localInferencePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+      path.join(repoRoot, "src", "lib", "inference", "local.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1790,7 +1790,7 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const scriptPath = path.join(tmpDir, "inference-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     fs.writeFileSync(
       fakeOpenshell,
@@ -1849,7 +1849,7 @@ console.log(JSON.stringify({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-ready-"));
     const fakeOpenshell = path.join(tmpDir, "openshell");
     const scriptPath = path.join(tmpDir, "openclaw-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     fs.writeFileSync(
       fakeOpenshell,
@@ -1900,7 +1900,7 @@ console.log(JSON.stringify({
     const registryDir = path.join(tmpDir, ".nemoclaw");
     const registryFile = path.join(registryDir, "sandboxes.json");
     const scriptPath = path.join(tmpDir, "policy-ready-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
@@ -1959,9 +1959,9 @@ console.log(JSON.stringify({
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-anthropic-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-anthropic-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -2033,9 +2033,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-openai-update-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-openai-update-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -2104,11 +2104,11 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-auth-retry-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-auth-retry-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2194,11 +2194,11 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-apply-back-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-inference-apply-back-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2264,9 +2264,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "setup-resume-credential-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     // Pre-seed a pre-fix plaintext credentials.json. hydrateCredentialEnv
     // stages it non-destructively into process.env via
     // stageLegacyCredentialsToEnv(); the secure unlink only runs from the
@@ -2367,9 +2367,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-stale-sandbox-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "stale-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -2419,14 +2419,14 @@ console.log(JSON.stringify({ liveExists, sandbox: registry.getSandbox("my-assist
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-create-sandbox-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2568,20 +2568,20 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "agent-base-skip.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const agentOnboardPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "agent", "onboard.js"),
+      path.join(repoRoot, "src", "lib", "agent", "onboard.ts"),
     );
     const sandboxBaseImagePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "sandbox-base-image.js"),
+      path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2771,20 +2771,20 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "openclaw-base-resolve.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const buildContextPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "sandbox", "build-context.js"),
+      path.join(repoRoot, "src", "lib", "sandbox", "build-context.ts"),
     );
     const sandboxBaseImagePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "sandbox-base-image.js"),
+      path.join(repoRoot, "src", "lib", "sandbox-base-image.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -2929,14 +2929,14 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-remote-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3027,14 +3027,14 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-dashboard-port-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "dashboard-port-envargs.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3200,9 +3200,9 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "noninteractive-notready.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -3275,9 +3275,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-flag-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "recreate-flag.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -3312,7 +3312,7 @@ registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3382,11 +3382,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "recreate-backup.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sandboxStatePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3446,7 +3446,7 @@ sandboxState.restoreSandboxState = (name, backupPath) => {
   };
 };
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3526,11 +3526,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-skip-backup-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "recreate-skip-backup.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sandboxStatePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3577,7 +3577,7 @@ sandboxState.restoreSandboxState = () => {
   return { success: true, restoredDirs: [], failedDirs: [], restoredFiles: [], failedFiles: [] };
 };
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3647,11 +3647,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-notready-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "recreate-notready.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sandboxStatePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      path.join(repoRoot, "src", "lib", "state", "sandbox.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3716,7 +3716,7 @@ sandboxState.restoreSandboxState = (name, backupPath) => {
   };
 };
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3792,11 +3792,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-preserves-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "recreate-preserves.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const sessionModulePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -3842,7 +3842,7 @@ registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 childProcess.spawn = (...args) => {
@@ -3910,11 +3910,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-reuse-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "interactive-reuse.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4039,11 +4039,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-decline-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "interactive-decline.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4102,7 +4102,7 @@ registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // Mock prompt to return "y" (confirm recreate)
@@ -4181,11 +4181,11 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-interactive-notready-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "interactive-notready.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4227,7 +4227,7 @@ registry.updateSandbox = () => true;
 registry.setDefault = () => true;
 registry.removeSandbox = () => true;
 
-const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+const preflight = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"))});
 preflight.checkPortAvailable = async () => ({ ok: true });
 
 // User confirms recreation when prompted
@@ -4253,7 +4253,7 @@ childProcess.spawn = fakeSpawn;
 // childProcess object above does not reach it. Patch the cached module
 // directly so streamSandboxCreate (called by createSandbox) doesn't spawn
 // a real bash process that tries to hit a live gateway.
-const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "sandbox", "create-stream.js"))});
+const sandboxCreateStreamMod = require(${JSON.stringify(path.join(repoRoot, "src", "lib", "sandbox", "create-stream.ts"))});
 const _origStreamCreate = sandboxCreateStreamMod.streamSandboxCreate;
 sandboxCreateStreamMod.streamSandboxCreate = (command, env, options = {}) => {
   return _origStreamCreate(command, env, { ...options, spawnImpl: fakeSpawn });
@@ -4315,14 +4315,14 @@ const { createSandbox } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "create-sandbox-ready-check.js");
     const payloadPath = path.join(tmpDir, "payload.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -4447,9 +4447,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-forward-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "reuse-sandbox-forward.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -4533,9 +4533,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-get-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "inference-get-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -4603,9 +4603,9 @@ const { setupInference } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-inference-route-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "inference-route-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     writeOkOpenshell(fakeBin);
@@ -4667,7 +4667,7 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
   });
 
-  it("regression #1904: pullAndResolveBaseImageDigest uses sandbox-base registry", () => {
+  it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
     // Structural check: verify the constant matches the Dockerfile default
     // and does NOT reference the openshell-community registry.
     assert.ok(
@@ -4691,8 +4691,8 @@ const { setupInference } = require(${onboardPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "brave-abort-check.js");
     const outputPath = path.join(tmpDir, "outcome.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const outputPathLiteral = JSON.stringify(outputPath);
 
     fs.mkdirSync(fakeBin, { recursive: true });

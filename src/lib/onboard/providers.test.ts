@@ -20,7 +20,7 @@ const {
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
   upsertMessagingProviders,
-} = require("../../../dist/lib/onboard/providers") as {
+} = require("./providers") as {
   HOSTED_INFERENCE_ENDPOINT_URL: string;
   HOSTED_INFERENCE_MODEL: string;
   NON_INTERACTIVE_PROVIDER_ALIASES: Record<string, string>;

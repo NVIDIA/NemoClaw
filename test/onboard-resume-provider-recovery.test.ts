@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
-import { describe, it, expect, afterEach } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 type ProviderRecoveryInternals = {
   providerNameToOptionKey: (
@@ -27,7 +27,7 @@ function isProviderRecoveryInternals(value: object | null): value is ProviderRec
   );
 }
 
-const loadedOnboardModule = require("../dist/lib/onboard");
+const loadedOnboardModule = require("../src/lib/onboard");
 const onboardModule =
   typeof loadedOnboardModule === "object" && loadedOnboardModule !== null
     ? loadedOnboardModule
@@ -42,8 +42,8 @@ const {
   readRecordedNimContainer,
 } = onboardModule;
 
-const registry: typeof import("../dist/lib/state/registry") = require("../dist/lib/state/registry");
-const onboardSession: typeof import("../dist/lib/state/onboard-session") = require("../dist/lib/state/onboard-session");
+const registry: typeof import("../src/lib/state/registry") = require("../src/lib/state/registry");
+const onboardSession: typeof import("../src/lib/state/onboard-session") = require("../src/lib/state/onboard-session");
 
 // Force readLiveInference's defaultSandbox check to fail so unit tests that
 // expect null don't depend on whether openshell is on PATH.
@@ -310,7 +310,7 @@ describe("readRecordedProvider — live gateway fallback", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const home = path.join(tmpDir, "home");
     const scriptPath = path.join(tmpDir, "live-recovery.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(home, { recursive: true });
@@ -367,14 +367,14 @@ describe("setupNim provider recovery policy", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-fresh-provider-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "fresh-provider-recovery-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const sessionPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+      path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
     );
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -397,9 +397,6 @@ printf '%s' "$status"
     );
 
     const script = String.raw`
-const fs = require("fs");
-const path = require("path");
-const Module = require("module");
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
@@ -419,16 +416,8 @@ credentials.prompt = async (message) => {
   return "";
 };
 credentials.ensureApiKey = async () => {};
-
-const onboardFile = ${onboardPath};
-const source = fs.readFileSync(onboardFile, "utf-8");
-const injected = source + "\nmodule.exports.__setNonInteractive = (value) => { NON_INTERACTIVE = value; };";
-const onboardModule = new Module(onboardFile, module);
-onboardModule.filename = onboardFile;
-onboardModule.paths = Module._nodeModulePaths(path.dirname(onboardFile));
-onboardModule._compile(injected, onboardFile);
-
-const { setupNim, __setNonInteractive } = onboardModule.exports;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { setupNim } = require(${onboardPath});
 
 (async () => {
   for (const key of [
@@ -444,7 +433,6 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
   }
   process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-test";
   process.env.NEMOCLAW_MODEL = "nvidia/test-model";
-  __setNonInteractive(true);
   const originalLog = console.log;
   const originalError = console.error;
   const lines = [];
@@ -459,7 +447,7 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
     delete process.env.NEMOCLAW_PROVIDER;
     delete process.env.OPENAI_API_KEY;
     process.env.NEMOCLAW_MODEL = "nvidia/test-model";
-    __setNonInteractive(false);
+    delete process.env.NEMOCLAW_NON_INTERACTIVE;
     const interactive = await setupNim(null, "dcode-station", null, false);
     originalLog(JSON.stringify({ nonInteractive, explicitProvider, interactive, prompts, lines }));
   } finally {

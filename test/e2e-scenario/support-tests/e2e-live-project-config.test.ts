@@ -2,15 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
+import config from "../../../vitest.config.ts";
+import { resolveE2ERetryCount } from "../../helpers/e2e-retries.ts";
+import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 import {
   shouldRunBranchValidationE2E,
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
 } from "../fixtures/live-project-gate.ts";
-import config from "../../../vitest.config.ts";
-import { resolveE2ERetryCount } from "../../helpers/e2e-retries.ts";
-import { readYaml, type WorkflowStep } from "../../helpers/e2e-workflow-contract.ts";
 
 interface ProjectConfig {
   test?: {
@@ -53,9 +52,9 @@ function projectConfig(name: string): ProjectConfig {
 }
 
 describe("gated E2E Vitest projects", () => {
-  it("selects gated project includes from the current process environment", () => {
+  it("keeps installer membership static and selects live includes from the environment", () => {
     expect(projectConfig("installer-integration").test?.include).toEqual(
-      shouldRunInstallerIntegration() ? INSTALLER_INTEGRATION_TESTS : [],
+      INSTALLER_INTEGRATION_TESTS,
     );
     expect(projectConfig("e2e-scenarios-live").test?.include).toEqual(
       shouldRunLiveE2EScenarios() ? LIVE_E2E_SCENARIO_TESTS : [],

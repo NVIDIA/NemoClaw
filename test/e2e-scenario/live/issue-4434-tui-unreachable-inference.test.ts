@@ -5,10 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { isGatewayManagedCompatibleInference } from "../fixtures/ci-compatible-inference.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
 // Migrated from test/e2e/test-issue-4434-tui-unreachable-inference.sh.
@@ -46,9 +47,12 @@ const CONNECTED_SPINNER_RE =
 const STATUS_LINE_RE =
   /(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\|\s*(connected|error)/i;
 const ERROR_STATUS_RE = /\|\s*error\b/i;
+const HOSTED_INFERENCE_IS_GATEWAY_MANAGED = isGatewayManagedCompatibleInference();
 
 const runIssue4434LiveTest =
-  shouldRunLiveE2EScenarios() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1" ? test : test.skip;
+  shouldRunLiveE2EScenarios() && process.env.NEMOCLAW_ISSUE_4434_LIVE === "1"
+    ? test.skipIf(HOSTED_INFERENCE_IS_GATEWAY_MANAGED)
+    : test.skip;
 
 type CommandResultText = { stdout: string; stderr: string };
 
@@ -135,6 +139,8 @@ runIssue4434LiveTest(
   "issue-4434: openclaw tui surfaces unreachable-inference errors and stops the connected spinner",
   { timeout: 120 * 60_000 },
   async ({ artifacts, cleanup, environment, host, onboard, sandbox, secrets, skip }) => {
+    // Hosted compatible inference is gateway-managed; this repro only blocks
+    // sandbox egress, so runIssue4434LiveTest skips that mode before setup.
     if (process.platform !== "linux") {
       skip("Linux host required for DOCKER-USER iptables repro");
     }
