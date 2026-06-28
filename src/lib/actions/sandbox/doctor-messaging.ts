@@ -263,12 +263,43 @@ function configuredChannelsCheck(sandboxName: string, sb: SandboxEntry): DoctorC
   };
 }
 
+function activeChannelsFromEntry(sb: SandboxEntry): string[] {
+  const registered = registry.getConfiguredMessagingChannelsFromEntry(sb);
+  const disabled = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
+  return registered.filter((channel: string) => !disabled.has(channel));
+}
+
+function visibleConfigDoctorHint(
+  sandboxName: string,
+  channelName: string,
+  source: "persisted" | "default" | "invalid",
+): string | undefined {
+  if (source === "default") {
+    return `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to confirm the resolved value`;
+  }
+  if (source === "invalid") {
+    return `run \`${CLI_NAME} ${sandboxName} channels add ${channelName}\` to re-enter a valid value`;
+  }
+  return undefined;
+}
+
+function buildVisibleConfigDoctorCheck(
+  sandboxName: string,
+  channelName: string,
+  record: ReturnType<typeof collectVisibleConfigRecords>[number],
+): DoctorCheck {
+  const hint = visibleConfigDoctorHint(sandboxName, channelName, record.display.source);
+  return {
+    group: "Messaging",
+    label: record.input.label,
+    status: doctorStatusForDisplay(record.display.source),
+    detail: record.display.detail,
+    ...(hint === undefined ? {} : { hint }),
+  };
+}
+
 function messagingChannelConfigDoctorChecks(sandboxName: string, sb: SandboxEntry): DoctorCheck[] {
-  const registeredChannels = registry.getConfiguredMessagingChannelsFromEntry(sb);
-  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(sb));
-  const activeChannels = registeredChannels.filter(
-    (channel: string) => !disabledChannels.has(channel),
-  );
+  const activeChannels = activeChannelsFromEntry(sb);
   if (activeChannels.length === 0) return [];
   const plan = registry.getMessagingPlanFromEntry(sb);
   const agent = asMessagingAgent(sb.agent ?? "openclaw");
@@ -277,23 +308,8 @@ function messagingChannelConfigDoctorChecks(sandboxName: string, sb: SandboxEntr
     const diagnostic = getChannelStatusDiagnostic(channelName);
     if (!diagnostic || diagnostic.visibleConfigInputs.length === 0) continue;
     const records = collectVisibleConfigRecords(diagnostic, plan, channelName, agent);
-    for (const { input, display } of records) {
-      checks.push({
-        group: "Messaging",
-        label: input.label,
-        status: doctorStatusForDisplay(display.source),
-        detail: display.detail,
-        ...(display.source === "default"
-          ? {
-              hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to confirm the resolved value`,
-            }
-          : {}),
-        ...(display.source === "invalid"
-          ? {
-              hint: `run \`${CLI_NAME} ${sandboxName} channels add ${channelName}\` to re-enter a valid value`,
-            }
-          : {}),
-      });
+    for (const record of records) {
+      checks.push(buildVisibleConfigDoctorCheck(sandboxName, channelName, record));
     }
   }
   return checks;
