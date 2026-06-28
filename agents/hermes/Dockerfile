@@ -482,7 +482,7 @@ RUN mkdir -p /etc/nemoclaw \
 # Backward-compatible marker for host-side shields logic on older sandboxes.
 RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
-    && chmod 600 /sandbox/.hermes/.config-hash \
+    && chmod 640 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
 
 # OpenShell's macOS VM backend currently remaps extracted rootfs ownership to

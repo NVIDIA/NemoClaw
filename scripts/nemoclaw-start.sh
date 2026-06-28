@@ -1883,6 +1883,29 @@ PYMESSAGINGALIASES
   done <<<"$_rows"
 }
 
+node_options_has_require() {
+  local wanted="$1"
+  local previous=""
+  local token
+  local tokens=()
+  IFS=$' \t\n' read -r -a tokens <<<"${NODE_OPTIONS:-}"
+  for token in "${tokens[@]}"; do
+    if [ "$previous" = "--require" ] && [ "$token" = "$wanted" ]; then
+      return 0
+    fi
+    [ "$token" = "--require=$wanted" ] && return 0
+    previous="$token"
+  done
+  return 1
+}
+
+append_node_require_once() {
+  local wanted="$1"
+  if ! node_options_has_require "$wanted"; then
+    export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $wanted"
+  fi
+}
+
 install_messaging_runtime_preloads() {
   [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
   local _rows
@@ -1918,7 +1941,7 @@ PYMESSAGINGPRELOADS
       emit_sandbox_sourced_file "$_target" <"$_source"
       case ",$_inject_into," in
         *,boot,*)
-          export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_target"
+          append_node_require_once "$_target"
           ;;
       esac
       case ",$_inject_into," in
@@ -2627,15 +2650,9 @@ fi
 # preserved so errors surface promptly to users running short-lived tools.
 _SANDBOX_SAFETY_NET="/tmp/nemoclaw-sandbox-safety-net.js"
 _SANDBOX_SAFETY_NET_SOURCE="/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js"
-emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <"$_SANDBOX_SAFETY_NET_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET"
 
 _PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"
 _PROXY_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/http-proxy-fix.js"
-if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
-  emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <"$_PROXY_FIX_SOURCE"
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_PROXY_FIX_SCRIPT"
-fi
 
 # NVIDIA endpoint model-specific inference parameter injection
 # (NemoClaw#1193, NemoClaw#2051).
@@ -2662,8 +2679,6 @@ fi
 # regression proof, and removal condition.
 _NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"
 _NEMOTRON_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/nemotron-inference-fix.js"
-emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCRIPT"
 
 # mDNS / ciao network interface guard.
 # The @homebridge/ciao mDNS library calls os.networkInterfaces() which
@@ -2675,8 +2690,6 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_NEMOTRON_FIX_SCR
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2340
 _CIAO_GUARD_SCRIPT="/tmp/nemoclaw-ciao-network-guard.js"
 _CIAO_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js"
-emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIPT"
 
 # WebSocket CONNECT tunnel fix (NemoClaw#1570).
 # The `ws` library calls https.request() for wss:// WebSocket upgrades.
@@ -2688,12 +2701,6 @@ export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_CIAO_GUARD_SCRIP
 # script itself guards on the env var).
 _WS_FIX_SOURCE="/usr/local/lib/nemoclaw/preloads/ws-proxy-fix.js"
 _WS_FIX_SCRIPT="/tmp/nemoclaw-ws-proxy-fix.js"
-if [ -f "$_WS_FIX_SOURCE" ]; then
-  # Copy to /tmp so the sandbox user can read it — /usr/local/lib/ may be
-  # Landlock-restricted in some runtimes. Same pattern as the other preloads.
-  emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE"
-  export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_WS_FIX_SCRIPT"
-fi
 
 # ── Seccomp syscall guard ─────────────────────────────────────
 # OpenShell ≥0.0.36 seccomp policy blocks syscalls like getifaddrs
@@ -2708,8 +2715,38 @@ fi
 # seccomp-blocked syscalls affect all sandboxes, not just Slack ones.
 _SECCOMP_GUARD_SCRIPT="/tmp/nemoclaw-seccomp-guard.js"
 _SECCOMP_GUARD_SOURCE="/usr/local/lib/nemoclaw/preloads/seccomp-guard.js"
-emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE"
-export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT"
+
+# Stage the immutable, image-packaged preload set into /tmp. Startup and
+# authenticated PID 1 recovery share this exact path so a pod-recreate-style
+# /tmp wipe cannot drift from the initial security boundary. The shared emit
+# helper atomically replaces each target as root:root 0444 in root mode.
+install_core_runtime_preloads() {
+  emit_sandbox_sourced_file "$_SANDBOX_SAFETY_NET" <"$_SANDBOX_SAFETY_NET_SOURCE" || return 1
+  append_node_require_once "$_SANDBOX_SAFETY_NET"
+
+  if [ "${NODE_USE_ENV_PROXY:-}" = "1" ]; then
+    emit_sandbox_sourced_file "$_PROXY_FIX_SCRIPT" <"$_PROXY_FIX_SOURCE" || return 1
+    append_node_require_once "$_PROXY_FIX_SCRIPT"
+  fi
+
+  emit_sandbox_sourced_file "$_NEMOTRON_FIX_SCRIPT" <"$_NEMOTRON_FIX_SOURCE" || return 1
+  append_node_require_once "$_NEMOTRON_FIX_SCRIPT"
+
+  emit_sandbox_sourced_file "$_CIAO_GUARD_SCRIPT" <"$_CIAO_GUARD_SOURCE" || return 1
+  append_node_require_once "$_CIAO_GUARD_SCRIPT"
+
+  if [ -f "$_WS_FIX_SOURCE" ]; then
+    # Copy to /tmp so the sandbox user can read it under Landlock-constrained
+    # runtimes. The missing optional source keeps the historical no-op.
+    emit_sandbox_sourced_file "$_WS_FIX_SCRIPT" <"$_WS_FIX_SOURCE" || return 1
+    append_node_require_once "$_WS_FIX_SCRIPT"
+  fi
+
+  emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE" || return 1
+  append_node_require_once "$_SECCOMP_GUARD_SCRIPT"
+}
+
+install_core_runtime_preloads || exit 1
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
 # time a user connects via `openshell sandbox connect`. Dynamic connect-session
@@ -4300,6 +4337,38 @@ finally:
 PYLOCKS
 }
 
+openclaw_runtime_guard_chain_complete() {
+  local targets=(
+    "$_SANDBOX_SAFETY_NET"
+    "$_NEMOTRON_FIX_SCRIPT"
+    "$_CIAO_GUARD_SCRIPT"
+    "$_SECCOMP_GUARD_SCRIPT"
+    "$_RUNTIME_SHELL_ENV_FILE"
+  )
+  local target
+  [ "${NODE_USE_ENV_PROXY:-}" = "1" ] && targets+=("$_PROXY_FIX_SCRIPT")
+  [ -f "$_WS_FIX_SOURCE" ] && targets+=("$_WS_FIX_SCRIPT")
+  for target in "${targets[@]}"; do
+    [ -f "$target" ] && [ ! -L "$target" ] || return 1
+  done
+}
+
+restore_openclaw_runtime_guard_chain() {
+  if ! openclaw_runtime_guard_chain_complete; then
+    echo "[gateway-recovery] WARNING: /tmp guard chain missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)" >&2
+  fi
+
+  # Preserve startup ordering: immutable core preloads first, then the
+  # manifest-declared messaging layer, then the shell environment that refers
+  # to both. Permission validation is the final gate before any relaunch.
+  install_core_runtime_preloads || return 1
+  write_messaging_runtime_setup_plan || return 1
+  install_messaging_runtime_preloads || return 1
+  verify_messaging_runtime_secret_scans || return 1
+  write_runtime_shell_env || return 1
+  validate_nemoclaw_tmp_permissions || return 1
+}
+
 prepare_openclaw_gateway_restart() {
   OPENCLAW_RESTART_FAILURE_CODE=unsafe-config
   # Restart preflight is deliberately read-only. The gateway and sandbox code
@@ -4310,9 +4379,7 @@ prepare_openclaw_gateway_restart() {
   # serialized host config command before restart.
   run_openclaw_config_guard preflight-restart || return 1
   OPENCLAW_RESTART_FAILURE_CODE=preload-missing
-  install_messaging_runtime_preloads || return 1
-  verify_messaging_runtime_secret_scans || return 1
-  validate_nemoclaw_tmp_permissions || return 1
+  restore_openclaw_runtime_guard_chain || return 1
 }
 
 handle_openclaw_gateway_control_request() {

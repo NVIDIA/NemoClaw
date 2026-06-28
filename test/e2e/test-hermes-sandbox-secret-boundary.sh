@@ -393,12 +393,8 @@ assert_startup_rejects_runtime_env_entry() {
 }
 
 probe_runtime_api_server_key() {
-  docker run --rm --entrypoint /bin/bash "$IMAGE" -lc '
+  docker run --rm --entrypoint /usr/local/bin/nemoclaw-start "$IMAGE" /bin/bash -lc '
 set -euo pipefail
-if ! /usr/local/bin/nemoclaw-start true >/tmp/nemoclaw-start-api-key-probe.log 2>&1; then
-  cat /tmp/nemoclaw-start-api-key-probe.log >&2
-  exit 1
-fi
 python3 - <<'"'"'PY'"'"'
 import hashlib
 import json

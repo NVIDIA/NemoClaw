@@ -25,10 +25,11 @@ def write_process(
     namespace_path,
     effective_uid=0,
     inner_pid=1,
+    parent_pid=0,
 ):
     process_dir = os.path.join(proc_root, str(pid))
     os.makedirs(os.path.join(process_dir, "ns"))
-    fields = ["S"] + (["0"] * 18) + [str(start_time)]
+    fields = ["S", str(parent_pid)] + (["0"] * 17) + [str(start_time)]
     with open(os.path.join(process_dir, "stat"), "w", encoding="ascii") as stream:
         stream.write(f"{pid} (nemoclaw) {' '.join(fields)}\n")
     with open(os.path.join(process_dir, "cmdline"), "wb") as stream:
@@ -72,6 +73,48 @@ def scenario(
             os.stat(namespaces[expected_namespace]).st_ino,
         )
 
+def supervised_scenario(
+    processes,
+    supervisor_cmdline=b"/opt/openshell/bin/openshell-sandbox\0",
+    limit=32768,
+    required_pid=None,
+):
+    with tempfile.TemporaryDirectory() as root:
+        proc_root = os.path.join(root, "proc")
+        os.mkdir(proc_root)
+        namespace_path = os.path.join(root, "shared")
+        with open(namespace_path, "wb") as stream:
+            stream.write(b"shared")
+        write_process(
+            proc_root,
+            1,
+            "111111",
+            supervisor_cmdline,
+            namespace_path,
+            effective_uid=0,
+            inner_pid=1,
+            parent_pid=0,
+        )
+        for process in processes:
+            pid, start_time, cmdline, effective_uid, inner_pid, parent_pid = process
+            write_process(
+                proc_root,
+                pid,
+                start_time,
+                cmdline,
+                namespace_path,
+                effective_uid=effective_uid,
+                inner_pid=inner_pid,
+                parent_pid=parent_pid,
+            )
+        guard.PROC_ROOT = proc_root
+        guard.MAX_PROC_ENTRIES = limit
+        return guard._openshell_supervised_nonroot_start_is_live(
+            0,
+            1000,
+            required_pid,
+        )
+
 entrypoint = b"bash\0/usr/local/bin/nemoclaw-start\0"
 spoof = b"bash\0/tmp/nemoclaw-start-spoof\0"
 proof = {
@@ -90,6 +133,36 @@ proof = {
         (413, "999999", spoof, "other"),
     ], limit=1),
 }
+proof.update({
+    "openshell_supervised": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ]),
+    "openshell_wrong_supervisor": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ], supervisor_cmdline=b"/usr/bin/foreign-supervisor\0"),
+    "openshell_root_child": supervised_scenario([
+        (412, "424242", entrypoint, 0, 412, 1),
+    ]),
+    "openshell_nested_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 1, 1),
+    ]),
+    "openshell_non_direct_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 77),
+    ]),
+    "openshell_spoof": supervised_scenario([
+        (412, "424242", spoof, 1000, 412, 1),
+    ]),
+    "openshell_duplicate": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+        (413, "525252", entrypoint, 1000, 413, 1),
+    ]),
+    "openshell_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ], required_pid=412),
+    "openshell_wrong_required_child": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ], required_pid=413),
+})
 print(json.dumps(proof))
 `;
 
@@ -115,6 +188,15 @@ describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
       wrong_namespace: false,
       duplicate: false,
       bounded: false,
+      openshell_supervised: true,
+      openshell_wrong_supervisor: false,
+      openshell_root_child: false,
+      openshell_nested_child: false,
+      openshell_non_direct_child: false,
+      openshell_spoof: false,
+      openshell_duplicate: false,
+      openshell_required_child: true,
+      openshell_wrong_required_child: false,
     });
   });
 });

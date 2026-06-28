@@ -22,7 +22,7 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 // This is intentionally a direct live Vitest test, not a new registry layer:
 // the legacy contract is the real installer/onboard/runtime boundary for Hermes.
 // Vitest owns artifacts, cleanup, redaction, and timeouts while still spawning
-// `bash install.sh --non-interactive`, `nemoclaw`, `openshell`, sandbox exec,
+// `bash install.sh --non-interactive --fresh`, `nemoclaw`, `openshell`, sandbox exec,
 // direct NVIDIA Endpoints curl, and inference.local probes.
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -241,7 +241,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       id: "hermes-e2e",
       runner: "vitest",
       migratedFrom: "test/e2e/test-hermes-e2e.sh",
-      boundary: "install.sh --non-interactive + Hermes sandbox runtime",
+      boundary: "install.sh --non-interactive --fresh + Hermes sandbox runtime",
       sandboxName: SANDBOX_NAME,
       dashboardEnabled: hermesDashboardE2eEnabled(),
     });
@@ -308,7 +308,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     expect(Number(reachabilityStatus), resultText(providerReachability)).toBeLessThan(500);
 
     // Phase 2: real installer + non-interactive Hermes onboard.
-    const install = await host.command("bash", ["install.sh", "--non-interactive"], {
+    const install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName: "phase-2-install-hermes",
       cwd: REPO_ROOT,
       env,

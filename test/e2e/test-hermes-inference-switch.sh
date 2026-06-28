@@ -518,8 +518,8 @@ cd "$REPO" || {
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX="${NEMOCLAW_RECREATE_SANDBOX:-1}"
 
-info "Running install.sh --non-interactive for Hermes sandbox ${SANDBOX_NAME}..."
-bash install.sh --non-interactive --yes-i-accept-third-party-software >"$INSTALL_LOG" 2>&1 &
+info "Running install.sh --non-interactive --fresh for Hermes sandbox ${SANDBOX_NAME}..."
+bash install.sh --non-interactive --yes-i-accept-third-party-software --fresh >"$INSTALL_LOG" 2>&1 &
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
 tail_pid=$!

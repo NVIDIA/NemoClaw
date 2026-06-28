@@ -139,6 +139,11 @@ describe("Hermes doctor and config hash boundary", () => {
       "# Pin config hash at build time",
       "# Backward-compatible marker",
     ).replaceAll("/etc/nemoclaw", etcDir);
+    const compatHashCommand = dockerRunCommandBetween(
+      dockerfile,
+      "# Backward-compatible marker",
+      "# OpenShell's macOS VM backend",
+    );
 
     try {
       const doctorAndGenerate = spawnSync("bash", ["-c", doctorAndGenerateCommand], {
@@ -166,6 +171,17 @@ describe("Hermes doctor and config hash boundary", () => {
         timeout: 5000,
       });
       expect(verifyHash.status).toBe(0);
+
+      const compatHash = runDockerShell(compatHashCommand, sandboxRoot);
+      expect(compatHash.result.status).toBe(0);
+      expect(compatHash.result.stderr).toBe("");
+      expect(mode(path.join(hermesDir, ".config-hash"))).toBe("640");
+      const verifyCompatHash = spawnSync(
+        "sha256sum",
+        ["-c", path.join(hermesDir, ".config-hash")],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      expect(verifyCompatHash.status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

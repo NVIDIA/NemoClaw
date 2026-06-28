@@ -45,10 +45,14 @@ if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no
     module._startup_process_identity_is_live = lambda start_time, namespace_inode, effective_uid=0: (
         start_time == "424242" and namespace_inode == 424242
     )
-if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "installed-foreign-pid1", "installed-remapped", "installed-remapped-any-live", "startup-owner"}:
+if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "installed-foreign-pid1", "installed-remapped", "installed-remapped-any-live", "installed-openshell-supervised", "installed-openshell-stale-marker", "startup-owner"}:
     module.INSTALLED_HELPER_PATH = guard_path
 if failure == "installed-foreign-pid1":
     module._pid1_is_nemoclaw_start = lambda: False
+if failure in {"installed-openshell-supervised", "installed-openshell-stale-marker"}:
+    module._pid1_is_nemoclaw_start = lambda: False
+    module._openshell_supervised_nonroot_start_is_live = lambda root_uid, sandbox_uid, required_pid=None: True
+    module._startup_markers_absent = lambda identity: failure == "installed-openshell-supervised"
 if failure == "installed-remapped":
     module._pid1_is_nemoclaw_start = lambda: False
     module._startup_process_identity_is_live = lambda start_time, namespace_inode, effective_uid=0: (
@@ -1375,7 +1379,7 @@ describe("openclaw-config-guard", () => {
     );
   });
 
-  it("allows only the no-capability non-root PID 1 compatibility posture", () => {
+  it("allows only authenticated no-capability non-root startup postures", () => {
     const degraded = fixture();
     expect(runGuard("lock", degraded.configDir, "installed-nonroot-no-cap").status).toBe(0);
 
@@ -1385,6 +1389,22 @@ describe("openclaw-config-guard", () => {
     const blocked = runGuard("lock", optedIn.configDir, "installed-nonroot-not-ready");
     expect(blocked.status).toBe(1);
     expect(blocked.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "issue", code: "startup-not-ready" }),
+      ]),
+    );
+
+    const supervised = fixture();
+    expect(runGuard("lock", supervised.configDir, "installed-openshell-supervised").status).toBe(0);
+
+    const staleMarker = fixture();
+    const staleBlocked = runGuard(
+      "lock",
+      staleMarker.configDir,
+      "installed-openshell-stale-marker",
+    );
+    expect(staleBlocked.status).toBe(1);
+    expect(staleBlocked.lines).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ type: "issue", code: "startup-not-ready" }),
       ]),

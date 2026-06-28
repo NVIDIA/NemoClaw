@@ -277,10 +277,6 @@ if missing_config:
 
 const RUNTIME_API_KEY_PROBE_SCRIPT = String.raw`
 	set -euo pipefail
-	if ! /usr/local/bin/nemoclaw-start true >/tmp/nemoclaw-start-api-key-probe.log 2>&1; then
-	  cat /tmp/nemoclaw-start-api-key-probe.log >&2
-	  exit 1
-	fi
 	python3 - <<'PY'
 import hashlib
 import json
@@ -621,7 +617,16 @@ async function probeRuntimeApiServerKey(
   label: string,
 ): Promise<RuntimeApiKeyProbe> {
   const result = await probe.run(
-    ["run", "--rm", "--entrypoint", "/bin/bash", image, "-lc", RUNTIME_API_KEY_PROBE_SCRIPT],
+    [
+      "run",
+      "--rm",
+      "--entrypoint",
+      "/usr/local/bin/nemoclaw-start",
+      image,
+      "/bin/bash",
+      "-lc",
+      RUNTIME_API_KEY_PROBE_SCRIPT,
+    ],
     {
       artifactName: `runtime-api-server-key-${label}`,
       returnRaw: true,

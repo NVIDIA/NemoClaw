@@ -6,7 +6,7 @@
 #
 # Proves the COMPLETE Hermes user journey including agent selection, health
 # probe verification, and real inference through the sandbox. Uses the same
-# install.sh --non-interactive path as the OpenClaw E2E but passes
+# install.sh --non-interactive --fresh path as the OpenClaw E2E but passes
 # NEMOCLAW_AGENT=hermes to select the Hermes agent during onboarding.
 #
 # Prerequisites:
@@ -244,7 +244,7 @@ cd "$REPO" || {
   exit 1
 }
 
-info "Running install.sh --non-interactive with NEMOCLAW_AGENT=hermes..."
+info "Running install.sh --non-interactive --fresh with NEMOCLAW_AGENT=hermes..."
 info "This installs Node.js, openshell, NemoClaw, and runs onboard with Hermes agent."
 info "Expected duration: 10-15 minutes on first run (Hermes base image build)."
 
@@ -252,7 +252,7 @@ INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-install.log"
 # Write to a file instead of piping through tee. openshell's background
 # port-forward inherits pipe file descriptors, which prevents tee from exiting.
 # Use tail -f in the background for real-time output in CI logs.
-bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
+bash install.sh --non-interactive --fresh >"$INSTALL_LOG" 2>&1 &
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
 tail_pid=$!

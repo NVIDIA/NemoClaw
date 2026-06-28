@@ -46,6 +46,7 @@ MAX_PROC_BYTES = 1024 * 1024
 PROC_ROOT = "/proc"
 MAX_PROC_ENTRIES = 32768
 NEMOCLAW_START_ARGV = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
+OPENSHELL_SUPERVISOR_ARGV0 = b"/opt/openshell/bin/openshell-sandbox"
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 SHIELDS_TRANSITION_LEASE_SECONDS = 300
@@ -241,6 +242,29 @@ def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
     return any(argument in NEMOCLAW_START_ARGV for argument in raw.split(b"\0"))
 
 
+def _cmdline_is_openshell_supervisor(raw: bytes) -> bool:
+    arguments = raw.split(b"\0")
+    return bool(arguments and arguments[0] == OPENSHELL_SUPERVISOR_ARGV0)
+
+
+def _parse_process_parent_pid(raw: bytes) -> int | None:
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    closing_paren = text.rfind(")")
+    if closing_paren < 0:
+        return None
+    fields_after_comm = text[closing_paren + 2 :].split()
+    if len(fields_after_comm) <= 1:
+        return None
+    try:
+        parent_pid = int(fields_after_comm[1], 10)
+    except ValueError:
+        return None
+    return parent_pid if parent_pid >= 0 else None
+
+
 def _process_status_identity(raw: bytes) -> tuple[int, tuple[int, ...]] | None:
     try:
         lines = raw.decode("ascii").splitlines()
@@ -400,6 +424,170 @@ def _startup_process_identity_is_live(
             os.close(proc_root_fd)
 
 
+def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
+    proc_root_fd = -1
+    proc_pid_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        proc_pid_fd = _open_proc_pid(proc_root_fd, 1)
+        pinned_before = os.fstat(proc_pid_fd)
+        first_cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
+        )
+        first_status = _process_status_identity(
+            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        )
+        first_stat = _read_proc_pid_file(
+            proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
+        )
+        first_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        second_cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
+        )
+        second_status = _process_status_identity(
+            _read_proc_pid_file(proc_pid_fd, "status", f"{PROC_ROOT}/1/status")
+        )
+        second_stat = _read_proc_pid_file(
+            proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
+        )
+        second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        pinned_after = os.fstat(proc_pid_fd)
+        if not (
+            _cmdline_is_openshell_supervisor(first_cmdline)
+            and _cmdline_is_openshell_supervisor(second_cmdline)
+            and first_status is not None
+            and second_status is not None
+            and first_status[0] == expected_effective_uid
+            and second_status[0] == expected_effective_uid
+            and first_status[1][-1] == 1
+            and second_status[1][-1] == 1
+            and _parse_process_parent_pid(first_stat) == 0
+            and _parse_process_parent_pid(second_stat) == 0
+            and first_namespace_inode is not None
+            and first_namespace_inode == second_namespace_inode
+            and pinned_before.st_dev == pinned_after.st_dev
+            and pinned_before.st_ino == pinned_after.st_ino
+        ):
+            return None
+        return first_namespace_inode
+    except (OSError, UnsafePathError):
+        return None
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
+
+
+def _pinned_process_matches_supervised_nonroot_start(
+    proc_root_fd: int,
+    pid: str,
+    expected_namespace_inode: int,
+    expected_effective_uid: int,
+) -> bool:
+    proc_pid_fd = -1
+    try:
+        numeric_pid = int(pid, 10)
+        if numeric_pid <= 1:
+            return False
+        proc_pid_fd = _open_proc_pid(proc_root_fd, pid)
+        pinned_before = os.fstat(proc_pid_fd)
+        first_stat = _read_proc_pid_file(
+            proc_pid_fd, "stat", f"{PROC_ROOT}/{pid}/stat"
+        )
+        first_start_time = _parse_process_start_time(first_stat)
+        first_status = _process_status_identity(
+            _read_proc_pid_file(
+                proc_pid_fd, "status", f"{PROC_ROOT}/{pid}/status"
+            )
+        )
+        first_cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/{pid}/cmdline"
+        )
+        first_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        second_stat = _read_proc_pid_file(
+            proc_pid_fd, "stat", f"{PROC_ROOT}/{pid}/stat"
+        )
+        second_start_time = _parse_process_start_time(second_stat)
+        second_status = _process_status_identity(
+            _read_proc_pid_file(
+                proc_pid_fd, "status", f"{PROC_ROOT}/{pid}/status"
+            )
+        )
+        second_cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/{pid}/cmdline"
+        )
+        second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        pinned_after = os.fstat(proc_pid_fd)
+        return bool(
+            first_start_time is not None
+            and second_start_time is not None
+            and secrets.compare_digest(first_start_time, second_start_time)
+            and _parse_process_parent_pid(first_stat) == 1
+            and _parse_process_parent_pid(second_stat) == 1
+            and first_status is not None
+            and second_status is not None
+            and first_status[0] == expected_effective_uid
+            and second_status[0] == expected_effective_uid
+            and first_status[1][-1] == numeric_pid
+            and second_status[1][-1] == numeric_pid
+            and _cmdline_is_nemoclaw_start(first_cmdline)
+            and _cmdline_is_nemoclaw_start(second_cmdline)
+            and first_namespace_inode == expected_namespace_inode
+            and second_namespace_inode == expected_namespace_inode
+            and pinned_before.st_dev == pinned_after.st_dev
+            and pinned_before.st_ino == pinned_after.st_ino
+        )
+    except (OSError, UnsafePathError, ValueError):
+        return False
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+
+
+def _openshell_supervised_nonroot_start_is_live(
+    expected_root_uid: int,
+    expected_sandbox_uid: int,
+    required_pid: int | None = None,
+) -> bool:
+    namespace_inode = _openshell_supervisor_namespace(expected_root_uid)
+    if namespace_inode is None:
+        return False
+    proc_root_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        observed = 0
+        matches = 0
+        matched_pid: int | None = None
+        with os.scandir(proc_root_fd) as entries:
+            for entry in entries:
+                if not entry.name.isascii() or not entry.name.isdigit():
+                    continue
+                observed += 1
+                if observed > MAX_PROC_ENTRIES:
+                    return False
+                if _pinned_process_matches_supervised_nonroot_start(
+                    proc_root_fd,
+                    entry.name,
+                    namespace_inode,
+                    expected_sandbox_uid,
+                ):
+                    matches += 1
+                    matched_pid = int(entry.name, 10)
+                    if matches > 1:
+                        return False
+        return bool(
+            matches == 1
+            and (required_pid is None or matched_pid == required_pid)
+            and _openshell_supervisor_namespace(expected_root_uid) == namespace_inode
+        )
+    except OSError:
+        return False
+    finally:
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
+
+
 def _process_effective_uid(pid: int) -> int | None:
     proc_root_fd = -1
     proc_pid_fd = -1
@@ -426,7 +614,22 @@ def _process_effective_uid(pid: int) -> int | None:
     return values[1] if len(values) >= 2 else None
 
 
+def _startup_ready_marker_absent() -> bool:
+    try:
+        os.stat(HERMES_STARTUP_READY_FILE, follow_symlinks=False)
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return False
+
+
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
+    installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
+    try:
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+    except KeyError:
+        sandbox_uid = -1
     startup_actions = {
         "ensure-api-key",
         "refresh-hashes",
@@ -436,10 +639,20 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     }
     if action in startup_actions:
         if not _pid1_is_nemoclaw_start():
+            if (
+                installed_current
+                and startup_owner
+                and sandbox_uid >= 0
+                and _startup_ready_marker_absent()
+                and _openshell_supervised_nonroot_start_is_live(
+                    0, sandbox_uid, os.getppid()
+                )
+            ):
+                return
             # Local source fixtures have no NemoClaw PID 1 and exercise the
             # guard against temporary directories. The installed production
             # helper never treats that compatibility path as authority.
-            if os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD:
+            if installed_current:
                 raise UnsafePathError(
                     "Hermes runtime config guard refuses mutation under a foreign PID 1"
                 )
@@ -462,10 +675,18 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
     pid1_is_nemoclaw_start = _pid1_is_nemoclaw_start()
     startup_ready = _startup_ready_for_current_pid1()
     if not pid1_is_nemoclaw_start and not startup_ready:
+        if (
+            installed_current
+            and action in host_actions
+            and sandbox_uid >= 0
+            and _startup_ready_marker_absent()
+            and _openshell_supervised_nonroot_start_is_live(0, sandbox_uid)
+        ):
+            return
         # Local source fixtures retain the explicit compatibility path. The
         # installed helper requires either the direct entrypoint PID 1 or a
         # root-owned marker bound to the remapped live startup process.
-        if os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD:
+        if installed_current:
             raise UnsafePathError(
                 "Hermes runtime config guard refuses mutation under a foreign PID 1"
             )

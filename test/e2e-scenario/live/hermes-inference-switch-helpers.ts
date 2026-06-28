@@ -279,7 +279,7 @@ export async function installHermes(
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
     install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software", "--fresh"],
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,

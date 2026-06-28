@@ -700,6 +700,68 @@ print(json.dumps({"nonroot_allowed": nonroot_allowed, "root_error": root_error})
     });
   });
 
+  it("authenticates the markerless OpenShell supervisor topology narrowly", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+
+guard.__file__ = guard.INSTALLED_RUNTIME_CONFIG_GUARD
+guard._pid1_is_nemoclaw_start = lambda: False
+guard._startup_ready_for_current_pid1 = lambda: False
+guard._startup_ready_marker_absent = lambda: True
+guard.pwd.getpwnam = lambda _name: type("User", (), {"pw_uid": 1000})()
+guard.os.getppid = lambda: 4242
+guard._openshell_supervised_nonroot_start_is_live = lambda root_uid, sandbox_uid, required_pid=None: (
+    root_uid == 0
+    and sandbox_uid == 1000
+    and required_pid in {None, 4242}
+)
+
+try:
+    guard._validate_action_readiness("seal-restart", False)
+except guard.UnsafePathError:
+    host_allowed = False
+else:
+    host_allowed = True
+
+try:
+    guard._validate_action_readiness("ensure-api-key", True)
+except guard.UnsafePathError:
+    startup_allowed = False
+else:
+    startup_allowed = True
+
+try:
+    guard._validate_action_readiness("ensure-api-key", False)
+except guard.UnsafePathError:
+    startup_without_owner_allowed = False
+else:
+    startup_without_owner_allowed = True
+
+guard._startup_ready_marker_absent = lambda: False
+try:
+    guard._validate_action_readiness("seal-restart", False)
+except guard.UnsafePathError as exc:
+    stale_marker_error = str(exc)
+else:
+    stale_marker_error = ""
+
+print(json.dumps({
+    "host_allowed": host_allowed,
+    "startup_allowed": startup_allowed,
+    "startup_without_owner_allowed": startup_without_owner_allowed,
+    "stale_marker_error": stale_marker_error,
+}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      host_allowed: true,
+      startup_allowed: true,
+      startup_without_owner_allowed: false,
+      stale_marker_error: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+    });
+  });
+
   it("accepts direct legacy and namespace-remapped markers only for their live startup identity", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
