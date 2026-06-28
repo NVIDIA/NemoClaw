@@ -121,7 +121,7 @@ export type ManagedInferenceRouteResetDeps = {
   ) => boolean;
   runInferenceSet: (provider: string, model: string) => { status: number | null };
   probe: (sandboxName: string, options?: InferenceRouteProbeOptions) => SandboxInferenceRouteProbe;
-  printUnrecoverableInferenceRoute: (sandboxName: string, sb: SandboxEntry, detail: string) => void;
+  printUnrecoverableInferenceRoute: (sandboxName: string, route: string, detail: string) => void;
   log?: (message: string) => void;
   error?: (message: string) => void;
 };
@@ -607,16 +607,14 @@ function verifyLocalInferenceRouteDependencies(
 
 function printUnrecoverableInferenceRoute(
   sandboxName: string,
-  sb: SandboxEntry,
+  route: string,
   detail: string,
 ): void {
   console.error(
     `  Error: inference.local is still unavailable inside '${sandboxName}' after DNS and route repair.`,
   );
-  console.error(`  Route: ${sb.provider}/${sb.model}`);
-  if (detail) {
-    console.error(`  Last probe: ${detail}`);
-  }
+  console.error(`  Route: ${route}`);
+  if (detail) console.error(`  Last probe: ${detail}`);
   console.error(`  Run:  ${CLI_NAME} ${sandboxName} doctor`);
   console.error("  Connect is stopping because the sandbox inference route is known to be broken.");
 }
@@ -631,10 +629,11 @@ export function resetManagedInferenceRouteWithDeps(
   const inference = registry.getSandboxEntryInference(sb);
   if (inference.kind !== "configured") return false;
   const { provider, model } = inference;
+  const route = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
   const fail = (failureDetail: string, message?: string): false => {
     if (!quiet) {
       if (message) (deps.error ?? console.error)(message);
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, failureDetail);
+      deps.printUnrecoverableInferenceRoute(sandboxName, route, failureDetail);
     }
     return false;
   };
@@ -643,9 +642,7 @@ export function resetManagedInferenceRouteWithDeps(
     return fail(detail);
   }
 
-  if (!quiet) {
-    log(`  Resetting inference route to ${provider}/${model}.`);
-  }
+  if (!quiet) log(`  Resetting inference route to ${provider}/${model}.`);
   const resetResult = deps.runInferenceSet(provider, model);
   const resetFailed = resetResult.status !== 0;
   if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
@@ -657,9 +654,7 @@ export function resetManagedInferenceRouteWithDeps(
     delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
   });
   if (finalProbe.healthy) {
-    if (!quiet) {
-      log("  inference.local route repaired.");
-    }
+    if (!quiet) log("  inference.local route repaired.");
     return true;
   }
 
@@ -758,7 +753,11 @@ function ensureSandboxInferenceRoute(
     const detail = error instanceof Error && error.message ? error.message : String(error);
     if (!quiet) {
       console.error(`  Error: failed to verify or repair inference route: ${detail}`);
-      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      printUnrecoverableInferenceRoute(
+        sandboxName,
+        `${sanitizeRouteValueForDisplay(inference.provider)}/${sanitizeRouteValueForDisplay(inference.model)}`,
+        detail,
+      );
     }
     return { sandbox: sb, routeHealthy: false };
   }
