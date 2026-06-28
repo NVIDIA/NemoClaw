@@ -299,8 +299,14 @@ JSON
         $mode = "flags";
         next;
       }
-      if (/^\s*(ARGUMENTS|DESCRIPTION|EXAMPLES)\s*$/i || /^\s*$/) {
+      if (/^\s*(ARGUMENTS|DESCRIPTION|EXAMPLES)\s*$/i) {
         $mode = "";
+        next;
+      }
+      if (/^\s*$/) {
+        # Oclif separates flag entries with blank lines, while the custom
+        # one-line Usage format uses one to end its usage synopsis.
+        $mode = "" if $mode eq "usage";
         next;
       }
       emit_flags($_) if $mode;
