@@ -59,6 +59,8 @@ export interface OnboardDashboardDeps {
   isWsl(): boolean;
   redact(value: unknown): string;
   sleep(seconds: number): void;
+  /** Environment used to detect an SSH session for the port-forward hint. */
+  env?: NodeJS.ProcessEnv;
   // Sandbox-registry lookup used by `ensureDashboardForward` for the
   // cross-gateway dashboard port view. Tests inject a stub so the allocator
   // never reads the runner's real `~/.nemoclaw/sandboxes.json`; production
@@ -496,6 +498,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const sshForwardHint = buildSshForwardHintLines({
       port: chain.port,
       accessUrl: chain.accessUrl,
+      env: deps.env,
     });
     if (sshForwardHint) {
       console.log("");

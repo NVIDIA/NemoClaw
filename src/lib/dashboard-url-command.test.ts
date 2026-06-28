@@ -103,6 +103,30 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@10.6.76.40");
   });
 
+  it("appends the SSH hint in the plain-URL (session-auth) branch over SSH (#5925)", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => "should-not-fetch");
+
+    runDashboardUrlCommand(
+      "hermes",
+      { quiet: false },
+      {
+        fetchToken,
+        getSandbox: () => ({ agent: "hermes", dashboardPort: 18790 }),
+        getAgentDashboardAuth: () => "session",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 22", USER: "spark" },
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
+
+    expect(fetchToken).not.toHaveBeenCalled();
+    expect(sinks.out).toContain("  Dashboard URL:");
+    expect(sinks.out).toContain("  http://127.0.0.1:18790/");
+    expect(sinks.out).toContain("  Remote access (SSH session detected):");
+    expect(sinks.out).toContain("      ssh -L 18790:127.0.0.1:18790 spark@10.6.76.40");
+  });
+
   it("omits the SSH port-forward hint outside an SSH session", () => {
     const sinks = makeSinks();
     runDashboardUrlCommand(

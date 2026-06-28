@@ -17,6 +17,7 @@ import { isLoopbackHostname } from "../core/url-utils";
 
 const HOST_PLACEHOLDER = "<host>";
 const USER_PLACEHOLDER = "<user>";
+const DEFAULT_SSH_PORT = "22";
 
 /** Detect whether the current process is running inside an SSH session. */
 export function isSshSession(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -24,17 +25,26 @@ export function isSshSession(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 /**
- * Resolve the server (this host) address from `SSH_CONNECTION`, whose format is
- * `<client-ip> <client-port> <server-ip> <server-port>`. The third field is the
- * address the operator SSH'd into, which is exactly what belongs in the
- * `ssh -L` example. Returns null when unset or malformed so callers can fall
- * back to a placeholder.
+ * Best-effort SSH destination derived from `SSH_CONNECTION`, whose format is
+ * `<client-ip> <client-port> <server-ip> <server-port>`. Field 3 is the address
+ * the operator's client connected to and field 4 is the sshd port, so a
+ * non-default port can be surfaced as `-p <port>` to keep the example correct.
+ *
+ * This is a fallback heuristic, not the literal command the operator typed:
+ * `SSH_CONNECTION` cannot recover an SSH config alias, `ProxyJump`, or a NAT'd
+ * hostname. It is accurate for the common direct-SSH-into-the-host case this
+ * feature targets; otherwise callers fall back to the `<host>` placeholder.
+ * Returns null when unset or malformed.
  */
-function serverAddressFromSshConnection(value: string | undefined): string | null {
+function sshDestinationFromConnection(
+  value: string | undefined,
+): { host: string; port: string | null } | null {
   if (!value) return null;
   const parts = value.trim().split(/\s+/).filter(Boolean);
-  const serverIp = parts[2];
-  return serverIp && serverIp.length > 0 ? serverIp : null;
+  const host = parts[2];
+  if (!host) return null;
+  const port = parts[3] && /^\d+$/.test(parts[3]) ? parts[3] : null;
+  return { host, port };
 }
 
 /**
@@ -86,15 +96,20 @@ export function buildSshForwardHintLines(options: SshForwardHintOptions): string
   if (!accessUrlNeedsForward(options.accessUrl)) return null;
 
   const indent = options.indent ?? "  ";
-  const host = serverAddressFromSshConnection(env.SSH_CONNECTION) ?? HOST_PLACEHOLDER;
+  const destination = sshDestinationFromConnection(env.SSH_CONNECTION);
+  const host = destination?.host ?? HOST_PLACEHOLDER;
   const user = safeUser(env.USER ?? env.LOGNAME) ?? USER_PLACEHOLDER;
   const port = options.port;
+  // Preserve a non-default sshd port so the example stays copy-pastable for
+  // hosts reached on a custom port; the common port 22 case stays flag-free.
+  const portFlag =
+    destination?.port && destination.port !== DEFAULT_SSH_PORT ? `-p ${destination.port} ` : "";
   const openHint = options.openHint ?? "Then open the dashboard URL above in your local browser.";
 
   return [
     `${indent}Remote access (SSH session detected):`,
     `${indent}  On your workstation, run:`,
-    `${indent}    ssh -L ${port}:127.0.0.1:${port} ${user}@${host}`,
+    `${indent}    ssh ${portFlag}-L ${port}:127.0.0.1:${port} ${user}@${host}`,
     `${indent}  ${openHint}`,
   ];
 }

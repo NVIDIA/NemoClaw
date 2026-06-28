@@ -34,6 +34,16 @@ describe("ssh-forward-hint", () => {
       ]);
     });
 
+    it("preserves a non-default sshd port as -p in the example (#5925)", () => {
+      const lines = buildSshForwardHintLines({
+        port: 18790,
+        accessUrl: "http://127.0.0.1:18790",
+        env: { SSH_CONNECTION: "10.0.0.9 51000 10.6.76.40 2222", USER: "spark" },
+      });
+
+      expect(lines?.[2]).toBe("      ssh -p 2222 -L 18790:127.0.0.1:18790 spark@10.6.76.40");
+    });
+
     it("falls back to placeholders when host and user are unavailable", () => {
       const lines = buildSshForwardHintLines({
         port: 18790,

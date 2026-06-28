@@ -151,7 +151,8 @@ Forward the dashboard port from your workstation, substituting the port NemoClaw
 ssh -L 18789:127.0.0.1:18789 <user>@<remote-host>
 ```
 
-When you run `nemoclaw` over SSH, the install summary and `nemoclaw <sandbox> dashboard-url` print this command for you with the detected host and port. Then open the dashboard URL on your workstation.
+When you run `nemoclaw` over SSH, the install summary and `nemoclaw <sandbox> dashboard-url` print this command for you with the detected host and port.
+Then open the dashboard URL on your workstation.
 
 <Warning>
 On Brev, set `CHAT_UI_URL` in the launchable environment configuration so the installer can read it when it builds the sandbox image.
