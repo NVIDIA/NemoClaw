@@ -14,6 +14,8 @@ export function classifyCurlExit(code: number): "transient" | "permanent" {
 }
 
 export function isRetryableHttpStatus(status: number): boolean {
+  // Keep 429 terminal: this probe does not retain Retry-After, and retrying a
+  // rate-limited endpoint would add load without a server-directed delay.
   return status >= RETRYABLE_HTTP_STATUS_MIN && status <= RETRYABLE_HTTP_STATUS_MAX;
 }
 
@@ -22,6 +24,7 @@ export function isSuccessfulHttpStatus(status: number): boolean {
 }
 
 export function totalRetryBackoffSeconds(attempts: number, delaySeconds: number): number {
+  // Sum delaySeconds * i for each gap i between attempts: 5s + 10s for 3 attempts.
   return (delaySeconds * attempts * (attempts - 1)) / 2;
 }
 
