@@ -52,15 +52,20 @@ describe("Hermes stale OpenClaw guardrails", () => {
     fs.mkdirSync(sandboxRoot, { recursive: true });
 
     try {
-      const { result } = runDockerShell(
-        `BASE_IMAGE=localhost:5000/evil/hermes-base:latest; ${cleanupCommand}`,
-        sandboxRoot,
-      );
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain(
-        "unsupported Hermes BASE_IMAGE while stale .openclaw cleanup is present",
-      );
-      expect(result.stderr).toContain("localhost:5000/evil/hermes-base:latest");
+      for (const ref of [
+        "localhost:5000/evil/hermes-base:latest",
+        "nemoclaw-hermes-sandbox-base-local-evil:test",
+      ]) {
+        const { result } = runDockerShell(
+          `BASE_IMAGE=${JSON.stringify(ref)}; ${cleanupCommand}`,
+          sandboxRoot,
+        );
+        expect(result.status, ref).toBe(1);
+        expect(result.stderr, ref).toContain(
+          "unsupported Hermes BASE_IMAGE while stale .openclaw cleanup is present",
+        );
+        expect(result.stderr, ref).toContain(ref);
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -89,7 +94,10 @@ describe("Hermes stale OpenClaw guardrails", () => {
     fs.symlinkSync(path.join(legacyDataDir, "legacy.txt"), path.join(hermesDir, "legacy.txt"));
 
     try {
-      const { result } = runDockerShell(cleanupCommand, sandboxRoot);
+      const { result } = runDockerShell(
+        `BASE_IMAGE=nemoclaw-hermes-sandbox-base-local:test; ${cleanupCommand}`,
+        sandboxRoot,
+      );
       expect(result.status, result.stderr).toBe(0);
       expect(result.stderr).toBe("");
       expect(fs.existsSync(openclawDir)).toBe(false);
@@ -112,6 +120,7 @@ describe("Hermes stale OpenClaw guardrails", () => {
   it("Hermes stale OpenClaw verifier allows local verifier base refs without docker", () => {
     const allowedRefs = [
       "nemoclaw-hermes-base-local",
+      "nemoclaw-hermes-sandbox-base-local:test",
       "nemoclaw-hermes-stale-openclaw-dir-base:test",
       "nemoclaw-hermes-stale-openclaw-link-base:test",
     ];
@@ -139,6 +148,7 @@ describe("Hermes stale OpenClaw guardrails", () => {
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base\\bad",
       "localhost:5000/evil",
       "malicious:tag",
+      "nemoclaw-hermes-sandbox-base-local-evil:test",
       "ghcr.io/evil/image@sha256:deadbeef",
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:invalid",
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",

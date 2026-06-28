@@ -42,6 +42,7 @@ require_safe_image_ref() {
       ;;
   esac
   if [[ "$ref" == nemoclaw-hermes-base-local ]] \
+    || [[ "$ref" == nemoclaw-hermes-sandbox-base-local:* ]] \
     || [[ "$ref" == nemoclaw-hermes-stale-openclaw-dir-base:* ]] \
     || [[ "$ref" == nemoclaw-hermes-stale-openclaw-link-base:* ]]; then
     return 0

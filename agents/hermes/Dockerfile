@@ -260,8 +260,9 @@ USER root
 # NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST is the removal trigger: update or remove
 # this cleanup when the Dockerfile's default pinned Hermes base digest advances
 # past the stale layout. Official GHCR bases must be digest-pinned while this
-# temporary repair exists; local and verifier-built bases are intentionally
-# exempt because their digest is not an upstream publication boundary. OpenShell
+# temporary repair exists; canonical local and verifier-built bases are
+# intentionally exempt because their digest is not an upstream publication
+# boundary. OpenShell
 # starts the sandbox as the sandbox user, so runtime migration cannot rely on
 # root privileges inside the pod. Regression coverage lives in
 # scripts/verify-hermes-stale-openclaw-image.sh.
@@ -288,7 +289,7 @@ RUN set -eu; \
             echo "ERROR: use an immutable Hermes base digest while stale .openclaw cleanup is present; BASE_IMAGE=$BASE_IMAGE" >&2; \
             exit 1; \
             ;; \
-        nemoclaw-hermes-base-local | nemoclaw-hermes-stale-openclaw-dir-base:* | nemoclaw-hermes-stale-openclaw-link-base:*) \
+        nemoclaw-hermes-base-local | nemoclaw-hermes-sandbox-base-local:* | nemoclaw-hermes-stale-openclaw-dir-base:* | nemoclaw-hermes-stale-openclaw-link-base:*) \
             ;; \
         *) \
             echo "ERROR: unsupported Hermes BASE_IMAGE while stale .openclaw cleanup is present; BASE_IMAGE=${BASE_IMAGE:-unset}" >&2; \

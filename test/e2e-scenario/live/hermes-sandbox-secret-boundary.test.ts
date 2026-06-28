@@ -678,7 +678,7 @@ liveTest(
     const baseImage =
       process.env.NEMOCLAW_HERMES_BASE_IMAGE ??
       process.env.HERMES_BASE_IMAGE ??
-      `nemoclaw-hermes-secret-boundary-base:${runId}`;
+      `nemoclaw-hermes-sandbox-base-local:secret-boundary-${runId}`;
     const managedImage =
       process.env.NEMOCLAW_HERMES_MANAGED_TEST_IMAGE ??
       `nemoclaw-hermes-secret-boundary-managed:${runId}`;
