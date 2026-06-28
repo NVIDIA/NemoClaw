@@ -15,12 +15,18 @@ export interface CompileTelegramPlanOptions {
   readonly envOverrides: Readonly<Record<string, string | undefined>>;
   readonly sandboxName?: string;
   readonly agent?: MessagingAgentId;
+  readonly isInteractive?: boolean;
 }
 
 export async function compileTelegramPlanForTests(
   options: CompileTelegramPlanOptions,
 ): Promise<SandboxMessagingPlan> {
-  const { envOverrides, sandboxName = "alpha", agent = "openclaw" } = options;
+  const {
+    envOverrides,
+    sandboxName = "alpha",
+    agent = "openclaw",
+    isInteractive = true,
+  } = options;
   const planner = new MessagingWorkflowPlanner(
     createBuiltInChannelManifestRegistry(),
     createBuiltInMessagingHookRegistry({
@@ -51,7 +57,7 @@ export async function compileTelegramPlanForTests(
       sandboxName,
       agent,
       workflow: "onboard",
-      isInteractive: true,
+      isInteractive,
       configuredChannels: ["telegram"],
     }),
   );

@@ -451,6 +451,51 @@ describe("runSandboxDoctor flow", () => {
     });
   });
 
+  it("reads Telegram visible config from a non-interactive compact registry entry through the real plan reader", async () => {
+    const harness = createDoctorHarness();
+    const registryMessaging = requireDist("../../state/registry-messaging.js");
+    const realGetMessagingPlanFromEntry = registryMessaging.getMessagingPlanFromEntry;
+    const compiledPlan = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
+      isInteractive: false,
+    });
+    const onDisk = registryMessaging.serializeSandboxMessagingStateForDisk({
+      schemaVersion: 1,
+      plan: compiledPlan,
+    });
+    expect(onDisk).toBeDefined();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+      messaging: onDisk,
+    });
+    const registry = requireDist("../../state/registry.js");
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(registry, "getMessagingPlanFromEntry").mockImplementation((entry) =>
+      realGetMessagingPlanFromEntry(entry),
+    );
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const messagingChecks = (report?.checks ?? []).filter((check) => check.group === "Messaging");
+
+    expect(messagingChecks.find((check) => check.label === "Telegram group policy")).toMatchObject({
+      status: "ok",
+      detail: "allowlist",
+    });
+    expect(
+      messagingChecks.find((check) => check.label === "Telegram group mention mode"),
+    ).toMatchObject({
+      status: "ok",
+      detail: "all group messages (TELEGRAM_REQUIRE_MENTION=0)",
+    });
+  });
+
   it("rejects mutating --fix when JSON output was requested", async () => {
     const harness = createDoctorHarness();
 
