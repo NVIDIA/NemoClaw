@@ -6,8 +6,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
-import { validateE2eVitestScenariosWorkflowBoundary } from "./workflow-boundary.mts";
-
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-vitest-scenarios.yaml");
 const JOB_NAME = "sandbox-operations-vitest";
@@ -60,9 +58,11 @@ function requireStepOrder(
   }
 }
 
-export function validateSandboxOperationsWorkflow(workflow: SandboxOperationsWorkflow): string[] {
+export function validateSandboxOperationsWorkflow(workflow: {
+  jobs: Record<string, unknown>;
+}): string[] {
   const errors: string[] = [];
-  const job = workflow.jobs[JOB_NAME] ?? {};
+  const job = (workflow.jobs[JOB_NAME] ?? {}) as WorkflowJob;
   const jobEnv = job.env ?? {};
   const steps = job.steps ?? [];
 
@@ -143,13 +143,4 @@ export function validateSandboxOperationsWorkflow(workflow: SandboxOperationsWor
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 
   return errors;
-}
-
-export function validateSandboxOperationsWorkflowBoundary(
-  workflowPath = DEFAULT_WORKFLOW_PATH,
-): string[] {
-  return [
-    ...validateE2eVitestScenariosWorkflowBoundary(workflowPath),
-    ...validateSandboxOperationsWorkflow(readSandboxOperationsWorkflow(workflowPath)),
-  ];
 }
