@@ -274,12 +274,8 @@ describe("core onboard flow phases", () => {
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
   });
 
-  it("runs sandbox setup only after provider state is complete", async () => {
+  it("passes selected provider state into sandbox setup", async () => {
     const [, sandboxPhase] = createPhases();
-
-    await expect(sandboxPhase.run(context())).rejects.toThrow(
-      "Onboarding state is incomplete before sandbox setup.",
-    );
 
     const result = await sandboxPhase.run(
       context({

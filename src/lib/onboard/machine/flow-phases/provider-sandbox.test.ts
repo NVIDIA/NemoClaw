@@ -40,8 +40,9 @@ function context(
 
 describe("provider/sandbox flow phases", () => {
   it("maps provider inference context updates and ordered FSM results", async () => {
-    const phase = createProviderInferencePhase(async () => ({
+    const phase = createProviderInferencePhase(async (current) => ({
       context: {
+        ...current,
         session: createSession(),
         sandboxName: "my-assistant",
         provider: "nvidia-prod",
@@ -73,8 +74,9 @@ describe("provider/sandbox flow phases", () => {
     const branchResult = branchTo("openclaw", {
       metadata: { sandboxName: "my-assistant", state: "sandbox" },
     });
-    const phase = createSandboxPhase(async () => ({
+    const phase = createSandboxPhase(async (current) => ({
       context: {
+        ...current,
         session: createSession(),
         sandboxName: "my-assistant",
         webSearchConfig: null,
@@ -98,8 +100,9 @@ describe("provider/sandbox flow phases", () => {
   });
 
   it("rejects sandbox phase execution before sandbox GPU config is selected", async () => {
-    const runSandbox = vi.fn(async () => ({
+    const runSandbox = vi.fn(async (current) => ({
       context: {
+        ...current,
         session: createSession(),
         sandboxName: "my-assistant",
         webSearchConfig: null,
