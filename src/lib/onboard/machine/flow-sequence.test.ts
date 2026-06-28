@@ -229,7 +229,12 @@ describe("onboard flow phase sequence", () => {
     });
 
     const run = await runOnboardSequenceWithRunner({
-      context: context(),
+      context: context({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        fromDockerfile: "Dockerfile",
+        hermesToolGateways: ["local"],
+        selectedMessagingChannels: ["slack"],
+      }),
       runtime: createRuntime(initialSession),
       phases,
     });
@@ -243,6 +248,13 @@ describe("onboard flow phase sequence", () => {
       provider: "nvidia",
       model: "model",
       sandboxName: "my-assistant",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: "Dockerfile",
+      gpu: { type: "nvidia" },
+      sandboxGpuConfig: { mode: "0" },
+      gpuPassthrough: true,
+      hermesToolGateways: ["local"],
+      selectedMessagingChannels: ["slack"],
     });
   });
 });

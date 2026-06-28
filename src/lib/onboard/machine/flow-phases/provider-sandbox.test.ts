@@ -39,8 +39,8 @@ function context(
 }
 
 describe("provider/sandbox flow phases", () => {
-  it("maps provider inference context updates and ordered FSM results", async () => {
-    const phase = createProviderInferencePhase(async (current) => ({
+  it("passes full context and results through the shared handoff", async () => {
+    const providerPhase = createProviderInferencePhase(async (current) => ({
       context: {
         ...current,
         session: createSession(),
@@ -57,24 +57,10 @@ describe("provider/sandbox flow phases", () => {
       },
       result: [advanceTo("inference"), advanceTo("sandbox")],
     }));
-
-    const result = await phase.run(context());
-
-    expect(phase.state).toBe("provider_selection");
-    expect(result.context).toMatchObject({
-      sandboxName: "my-assistant",
-      provider: "nvidia-prod",
-      model: "model",
-      preferredInferenceApi: "openai-responses",
-    });
-    expect(result.result).toEqual([advanceTo("inference"), advanceTo("sandbox")]);
-  });
-
-  it("maps sandbox context updates and branch result", async () => {
     const branchResult = branchTo("openclaw", {
       metadata: { sandboxName: "my-assistant", state: "sandbox" },
     });
-    const phase = createSandboxPhase(async (current) => ({
+    const runSandbox = vi.fn(async (current) => ({
       context: {
         ...current,
         session: createSession(),
@@ -85,18 +71,36 @@ describe("provider/sandbox flow phases", () => {
       },
       result: branchResult,
     }));
+    const sandboxPhase = createSandboxPhase(runSandbox);
 
-    const result = await phase.run(
-      context({ model: "model", provider: "nvidia-prod", sandboxGpuConfig: { mode: "0" } }),
+    const providerResult = await providerPhase.run(
+      context({ fromDockerfile: "Dockerfile", selectedMessagingChannels: ["slack"] }),
     );
+    const sandboxResult = await sandboxPhase.run(providerResult.context);
 
-    expect(phase.state).toBe("sandbox");
-    expect(result.context).toMatchObject({
+    expect(providerPhase.state).toBe("provider_selection");
+    expect(sandboxPhase.state).toBe("sandbox");
+    expect(runSandbox).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "model",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        fromDockerfile: "Dockerfile",
+        sandboxGpuConfig: { mode: "0" },
+        selectedMessagingChannels: ["slack"],
+      }),
+    );
+    expect(sandboxResult.context).toMatchObject({
       sandboxName: "my-assistant",
+      provider: "nvidia-prod",
+      model: "model",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: "Dockerfile",
       selectedMessagingChannels: ["telegram"],
       webSearchSupported: true,
     });
-    expect(result.result).toEqual(branchResult);
+    expect(providerResult.result).toEqual([advanceTo("inference"), advanceTo("sandbox")]);
+    expect(sandboxResult.result).toEqual(branchResult);
   });
 
   it.each([
