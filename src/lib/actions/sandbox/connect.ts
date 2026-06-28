@@ -403,8 +403,9 @@ function reapplyVmInferenceRoute(
   sandboxName: string,
   sb: SandboxEntry | null,
 ): SandboxInferenceRouteProbe | null {
-  if (!sb?.provider || !sb.model) return null;
-  runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
+  const inference = sb ? registry.getSandboxEntryInference(sb) : null;
+  if (inference?.kind !== "configured") return null;
+  runOpenshell(buildInferenceSetArgs(inference.provider, inference.model), {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
@@ -627,44 +628,28 @@ export function resetManagedInferenceRouteWithDeps(
   deps: ManagedInferenceRouteResetDeps,
 ): boolean {
   const log = deps.log ?? console.log;
-  const error = deps.error ?? console.error;
-  if (!sb.provider || !sb.model) return false;
-
-  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
+  const inference = registry.getSandboxEntryInference(sb);
+  if (inference.kind !== "configured") return false;
+  const { provider, model } = inference;
+  const fail = (failureDetail: string, message?: string): false => {
     if (!quiet) {
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
+      if (message) (deps.error ?? console.error)(message);
+      deps.printUnrecoverableInferenceRoute(sandboxName, sb, failureDetail);
     }
     return false;
+  };
+
+  if (!deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+    return fail(detail);
   }
 
   if (!quiet) {
-    log(`  Resetting inference route to ${sb.provider}/${sb.model}.`);
+    log(`  Resetting inference route to ${provider}/${model}.`);
   }
-  const resetResult = deps.runInferenceSet(sb.provider, sb.model);
-  if (resetResult.status !== 0) {
-    const finalProbe = deps.probe(sandboxName, {
-      attempts: INFERENCE_ROUTE_POST_REPAIR_PROBE_ATTEMPTS,
-      delayMs: INFERENCE_ROUTE_POST_REPAIR_PROBE_DELAY_MS,
-    });
-    if (finalProbe.healthy) {
-      if (!quiet) {
-        log("  inference.local route repaired.");
-      }
-      return true;
-    }
-
-    if (!quiet) {
-      error("  Error: failed to reset the OpenShell inference route.");
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail || detail);
-    }
-    return false;
-  }
-
-  if (!deps.verifyLocalInferenceRouteDependencies(sb.provider, { quiet })) {
-    if (!quiet) {
-      deps.printUnrecoverableInferenceRoute(sandboxName, sb, detail);
-    }
-    return false;
+  const resetResult = deps.runInferenceSet(provider, model);
+  const resetFailed = resetResult.status !== 0;
+  if (!resetFailed && !deps.verifyLocalInferenceRouteDependencies(provider, { quiet })) {
+    return fail(detail);
   }
 
   const finalProbe = deps.probe(sandboxName, {
@@ -678,10 +663,10 @@ export function resetManagedInferenceRouteWithDeps(
     return true;
   }
 
-  if (!quiet) {
-    deps.printUnrecoverableInferenceRoute(sandboxName, sb, finalProbe.detail);
-  }
-  return false;
+  return fail(
+    resetFailed ? finalProbe.detail || detail : finalProbe.detail,
+    resetFailed ? "  Error: failed to reset the OpenShell inference route." : undefined,
+  );
 }
 
 function resetManagedInferenceRoute(
@@ -711,71 +696,72 @@ function ensureSandboxInferenceRoute(
   { quiet = false }: { quiet?: boolean } = {},
 ): SandboxInferenceRouteEnsureResult {
   let sb: SandboxEntry | null = null;
+  let inference: ReturnType<typeof registry.getSandboxEntryInference> | null = null;
   try {
     sb = registry.getSandbox(sandboxName);
-    if (sb && sb.provider && sb.model) {
-      const live = parseGatewayInference(
-        captureOpenshell(["inference", "get"], {
-          ignoreError: true,
-          timeout: OPENSHELL_PROBE_TIMEOUT_MS,
-        }).output,
-      );
-      const plan = planInferenceRouteReconcile(live, { provider: sb.provider, model: sb.model });
-      if (plan.kind !== "aligned") {
-        if (plan.kind === "diverged") {
-          // Shared gateway: re-point loudly (even when quiet) — silent revert was
-          // #3726. Values sanitized: registry/gateway strings are untrusted.
-          const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
-          const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
-          const recordedRoute = `${sanitizeRouteValueForDisplay(sb.provider)}/${sanitizeRouteValueForDisplay(sb.model)}`;
-          console.error(
-            `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
-              `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
-          );
-          console.error(
-            `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
-              `${liveProvider}/${liveModel}, set it the supported way:${R}`,
-          );
-          console.error(
-            `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
-          );
-        } else if (!quiet) {
-          // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
-          console.log(
-            `  Setting inference route to ${sb.provider}/${sb.model} for sandbox '${sandboxName}'`,
-          );
-        }
-        const swapResult = runOpenshell(buildInferenceSetArgs(sb.provider, sb.model), {
-          ignoreError: true,
-          timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
-        });
-        if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
-          console.error(
-            `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
-          );
-        }
+    if (!sb) return { sandbox: null, routeHealthy: null };
+    inference = registry.getSandboxEntryInference(sb);
+    if (inference.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    const { provider, model } = inference;
+    const live = parseGatewayInference(
+      captureOpenshell(["inference", "get"], {
+        ignoreError: true,
+        timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+      }).output,
+    );
+    const plan = planInferenceRouteReconcile(live, { provider, model });
+    if (plan.kind !== "aligned") {
+      if (plan.kind === "diverged") {
+        // Shared gateway: re-point loudly (even when quiet) — silent revert was
+        // #3726. Values sanitized: registry/gateway strings are untrusted.
+        const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
+        const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
+        const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
+        console.error(
+          `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
+            `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
+        );
+        console.error(
+          `  ${YW}Aligning the gateway to ${recordedRoute}. To keep ` +
+            `${liveProvider}/${liveModel}, set it the supported way:${R}`,
+        );
+        console.error(
+          `    ${CLI_NAME} inference set --provider ${liveProvider} --model ${liveModel} --sandbox ${sandboxName}`,
+        );
+      } else if (!quiet) {
+        // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
+        console.log(
+          `  Setting inference route to ${provider}/${model} for sandbox '${sandboxName}'`,
+        );
       }
-      const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, { quiet });
-      if (!repairResult.healthy && repairResult.repairAttempted) {
-        const resetResult = resetManagedInferenceRoute(sandboxName, sb, {
-          detail: repairResult.detail,
-          quiet,
-        });
-        return { sandbox: sb, routeHealthy: resetResult };
+      const swapResult = runOpenshell(buildInferenceSetArgs(provider, model), {
+        ignoreError: true,
+        timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+      });
+      if (swapResult.status !== 0 && (plan.kind === "diverged" || !quiet)) {
+        console.error(
+          `  ${YW}Warning: failed to switch inference route — connect will proceed anyway.${R}`,
+        );
       }
-      return { sandbox: sb, routeHealthy: repairResult.healthy };
     }
+    const repairResult = repairSandboxInferenceRouteIfNeeded(sandboxName, sb, { quiet });
+    if (!repairResult.healthy && repairResult.repairAttempted) {
+      const resetResult = resetManagedInferenceRoute(sandboxName, sb, {
+        detail: repairResult.detail,
+        quiet,
+      });
+      return { sandbox: sb, routeHealthy: resetResult };
+    }
+    return { sandbox: sb, routeHealthy: repairResult.healthy };
   } catch (error) {
-    if (sb?.provider && sb.model) {
-      const detail = error instanceof Error && error.message ? error.message : String(error);
-      if (!quiet) {
-        console.error(`  Error: failed to verify or repair inference route: ${detail}`);
-        printUnrecoverableInferenceRoute(sandboxName, sb, detail);
-      }
-      return { sandbox: sb, routeHealthy: false };
+    if (!sb || inference?.kind !== "configured") return { sandbox: sb, routeHealthy: null };
+    const detail = error instanceof Error && error.message ? error.message : String(error);
+    if (!quiet) {
+      console.error(`  Error: failed to verify or repair inference route: ${detail}`);
+      printUnrecoverableInferenceRoute(sandboxName, sb, detail);
     }
+    return { sandbox: sb, routeHealthy: false };
   }
-  return { sandbox: sb, routeHealthy: null };
 }
 
 function ensureSandboxInferenceRouteOrExit(
