@@ -29,6 +29,9 @@ export type EndpointValidationResult =
 export interface InferenceSelectionValidationDeps {
   isNonInteractive(): boolean;
   agentProductName(): string;
+  getCredential?: typeof getCredential;
+  probeAnthropicEndpoint?: typeof probeAnthropicEndpoint;
+  probeOpenAiLikeEndpoint?: typeof probeOpenAiLikeEndpoint;
   promptValidationRecovery(
     label: string,
     recovery: ReturnType<typeof getProbeRecovery>,
@@ -81,6 +84,10 @@ export interface InferenceSelectionValidationHelpers {
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
+  const resolveCredential = deps.getCredential ?? getCredential;
+  const runAnthropicProbe = deps.probeAnthropicEndpoint ?? probeAnthropicEndpoint;
+  const runOpenAiLikeProbe = deps.probeOpenAiLikeEndpoint ?? probeOpenAiLikeEndpoint;
+
   function exitNonInteractiveValidationFailure(): never {
     process.exitCode = 1;
     (process.exit as (code?: number) => void)(1);
@@ -112,8 +119,8 @@ export function createInferenceSelectionValidationHelpers(
       allowHostDockerInternal?: boolean;
     } = {},
   ): Promise<EndpointValidationResult> {
-    const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
-    const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options);
+    const apiKey = credentialEnv ? resolveCredential(credentialEnv) : "";
+    const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, options);
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
@@ -147,8 +154,8 @@ export function createInferenceSelectionValidationHelpers(
     retryMessage = "Please choose a provider/model again.",
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const apiKey = getCredential(credentialEnv);
-    const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
+    const apiKey = resolveCredential(credentialEnv);
+    const probe = runAnthropicProbe(endpointUrl, model, apiKey);
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
@@ -177,8 +184,8 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const apiKey = getCredential(credentialEnv);
-    const probe = probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, {
+    const apiKey = resolveCredential(credentialEnv);
+    const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       requireResponsesToolCalling: true,
       skipResponsesProbe: shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
       probeStreaming: true,
@@ -217,8 +224,8 @@ export function createInferenceSelectionValidationHelpers(
     credentialEnv: string,
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
-    const apiKey = getCredential(credentialEnv);
-    const probe = probeAnthropicEndpoint(endpointUrl, model, apiKey);
+    const apiKey = resolveCredential(credentialEnv);
+    const probe = runAnthropicProbe(endpointUrl, model, apiKey);
     if (probe.ok) {
       console.log(`  ${probe.label} available — ${deps.agentProductName()} will use ${probe.api}.`);
       return { ok: true, api: probe.api };
