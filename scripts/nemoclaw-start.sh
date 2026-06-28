@@ -4383,6 +4383,34 @@ prepare_openclaw_gateway_restart() {
   restore_openclaw_runtime_guard_chain || return 1
 }
 
+retire_openclaw_supervised_gateway() {
+  local pid="$1"
+  local expected_identity="$2"
+  local reap_status=0
+
+  # A recover request can arrive after the respawn loop has already reaped the
+  # failed child and entered its backoff. Only the canonical stopped state may
+  # bypass retirement; every nonzero tracked PID must still be stopped or
+  # identity-safely reaped before a replacement is launched.
+  [ "${GATEWAY_PID:-0}" = "$pid" ] \
+    && [ "${GATEWAY_PID_START_IDENTITY:-}" = "$expected_identity" ] \
+    || return 1
+  if [ "$pid" = "0" ] \
+    && [ -z "$expected_identity" ] \
+    && [ -z "${SANDBOX_WAIT_PID:-}" ]; then
+    return 0
+  fi
+  if openclaw_supervised_pid_is_live "$pid" "$expected_identity" \
+    && stop_openclaw_supervised_gateway "$pid" "$expected_identity"; then
+    return 0
+  fi
+  openclaw_reap_exited_gateway || reap_status=$?
+  [ "$reap_status" -eq 0 ] \
+    && [ "${GATEWAY_PID:-0}" = "0" ] \
+    && [ -z "${GATEWAY_PID_START_IDENTITY:-}" ] \
+    && [ -z "${SANDBOX_WAIT_PID:-}" ]
+}
+
 handle_openclaw_gateway_control_request() {
   gateway_control_take_request || return 1
   local old_pid="${GATEWAY_PID:-0}"
@@ -4419,7 +4447,7 @@ handle_openclaw_gateway_control_request() {
     return 1
   fi
 
-  if ! stop_openclaw_supervised_gateway "$old_pid" "$old_identity"; then
+  if ! retire_openclaw_supervised_gateway "$old_pid" "$old_identity"; then
     restore_openclaw_restart_config || true
     gateway_control_fail internal "$old_pid"
     return 1

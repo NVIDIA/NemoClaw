@@ -464,6 +464,7 @@ describe("gateway serving watchdog (#4710)", () => {
         extractShellFunction(src, "refresh_openclaw_supervised_child_pids"),
         extractShellFunction(src, "mark_openclaw_gateway_stopped"),
         extractShellFunction(src, "stop_openclaw_gateway_fail_closed"),
+        extractShellFunction(src, "retire_openclaw_supervised_gateway"),
         extractShellFunction(src, "handle_openclaw_gateway_control_request"),
         "handle_openclaw_gateway_control_request",
       ].join("\n"),

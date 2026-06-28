@@ -133,6 +133,28 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
       exitCode: recoveryResult.exitCode,
     });
   });
+  // Capture PID 1 and gateway evidence before the exit-code assertion can
+  // abort the scenario and cleanup destroys the sandbox.
+  await sandbox.exec(
+    instance.sandboxName,
+    [
+      "sh",
+      "-c",
+      "printf '%s\\n' '== entrypoint log ==' ; " +
+        "tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true; " +
+        "printf '%s\\n' '== gateway log ==' ; " +
+        "tail -n 300 /tmp/gateway.log 2>&1 || true; " +
+        "printf '%s\\n' '== supervisor status ==' ; " +
+        "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
+    ],
+    {
+      artifactName: "gateway-recovery-diagnostics",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+      },
+    },
+  );
   expect(
     recoveryResult.exitCode,
     `connect --probe-only recovery failed\nstdout:\n${recoveryResult.stdout}\nstderr:\n${recoveryResult.stderr}`,
