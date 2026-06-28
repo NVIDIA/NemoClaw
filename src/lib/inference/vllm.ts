@@ -62,9 +62,9 @@ function nemotronNanoModel(): VllmModelDef {
   return match;
 }
 
-function qwen27bFP8Model(): VllmModelDef {
-  const match = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b");
-  if (!match) throw new Error("vllm-models registry is missing the qwen3.6-27b entry");
+function deepseekV4FlashModel(): VllmModelDef {
+  const match = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash");
+  if (!match) throw new Error("vllm-models registry is missing the deepseek-v4-flash entry");
   return match;
 }
 
@@ -144,7 +144,7 @@ const STATION_PROFILE: VllmProfile = {
   name: "DGX Station",
   platform: "station",
   image: VLLM_IMAGES.ngc2605Post1,
-  defaultModel: qwen27bFP8Model(),
+  defaultModel: deepseekV4FlashModel(),
   containerName: "nemoclaw-vllm",
   dockerRunFlags: SPARK_PROFILE.dockerRunFlags,
   buildDockerRunFlags: () => {

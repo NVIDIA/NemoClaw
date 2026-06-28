@@ -1756,6 +1756,61 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hermes-dashboard-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-dashboard,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-dashboard"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-dashboard
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-dashboard
+      NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes dashboard live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes dashboard live Vitest artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-dashboard
+          path: e2e-artifacts/vitest/hermes-dashboard/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   hermes-discord-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-discord-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-discord,') }}
@@ -5674,6 +5729,7 @@ jobs:
         sessions-agents-cli-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,
+        hermes-dashboard-vitest,
         hermes-slack-vitest,
         hermes-discord-vitest,
         hermes-root-entrypoint-smoke-vitest,
