@@ -772,9 +772,7 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(
-      /Telegram group policy:\s+invalid persisted value \(unsupported type\)/,
-    );
+    expect(dump).toMatch(/Telegram group policy:\s+invalid persisted value \(unsupported type\)/);
     expect(dump).toMatch(
       /Telegram group mention mode:\s+invalid persisted value \(unsupported type\)/,
     );
