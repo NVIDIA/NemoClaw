@@ -19,6 +19,8 @@ export interface HostClientOptions {
 
 const GATEWAY_ALREADY_ABSENT =
   /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
+const GATEWAY_REMOVE_UNSUPPORTED =
+  /unrecognized subcommand ['"]remove['"]|unknown command ['"]remove['"]/i;
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -135,6 +137,9 @@ export class HostCliClient {
       artifactName: `${artifactName}-remove`,
     });
     if (remove.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(remove))) return;
+    if (!GATEWAY_REMOVE_UNSUPPORTED.test(resultText(remove))) {
+      assertExitZero(remove, `cleanup gateway registration ${gatewayName}`);
+    }
 
     // Remove this fallback once the supported OpenShell floor no longer
     // includes builds whose local-registration verb was `gateway destroy`.

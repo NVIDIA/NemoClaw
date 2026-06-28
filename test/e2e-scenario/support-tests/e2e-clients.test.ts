@@ -180,6 +180,17 @@ describe("E2E fixture clients", () => {
     ]);
   });
 
+  it("host client does not hide a current gateway remove failure behind the legacy verb", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupGatewayRegistration("nemoclaw")).rejects.toThrow(
+      "cleanup gateway registration nemoclaw failed: permission denied",
+    );
+    expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+  });
+
   it("host client surfaces an unexpected legacy gateway cleanup failure", async () => {
     const runner = new FakeRunner();
     runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
