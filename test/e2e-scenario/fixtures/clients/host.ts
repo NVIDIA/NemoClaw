@@ -7,15 +7,18 @@ import { trustedShellCommand } from "../shell-probe.ts";
 import {
   artifactLabel,
   assertExitZero,
+  type CommandRunner,
   outputContainsSandbox,
   resultText,
-  type CommandRunner,
 } from "./command.ts";
 
 export interface HostClientOptions {
   cliPath?: string;
   cwd?: string;
 }
+
+const GATEWAY_ALREADY_ABSENT =
+  /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i;
 
 export class HostCliClient {
   private readonly runner: CommandRunner;
@@ -120,6 +123,27 @@ export class HostCliClient {
       return;
     }
     assertExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
+  }
+
+  async cleanupGatewayRegistration(
+    gatewayName: string,
+    options: ShellProbeRunOptions = {},
+  ): Promise<void> {
+    const artifactName = options.artifactName ?? `cleanup-gateway-${artifactLabel(gatewayName)}`;
+    const remove = await this.command("openshell", ["gateway", "remove", gatewayName], {
+      ...options,
+      artifactName: `${artifactName}-remove`,
+    });
+    if (remove.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(remove))) return;
+
+    // Remove this fallback once the supported OpenShell floor no longer
+    // includes builds whose local-registration verb was `gateway destroy`.
+    const destroy = await this.command("openshell", ["gateway", "destroy", "-g", gatewayName], {
+      ...options,
+      artifactName: `${artifactName}-legacy-destroy`,
+    });
+    if (destroy.exitCode === 0 || GATEWAY_ALREADY_ABSENT.test(resultText(destroy))) return;
+    assertExitZero(destroy, `cleanup gateway registration ${gatewayName}`);
   }
 
   async bestEffortCleanupSandbox(
