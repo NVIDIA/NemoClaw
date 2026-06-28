@@ -14,7 +14,7 @@ const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(he
 
 function withPrivilegedExecMocks<T>(
   deps: {
-    dockerCapture: (args: readonly string[]) => string;
+    dockerCapture: (args: readonly string[], options?: { timeout?: number }) => string;
     getSandbox: (name: string) => { name?: string; openshellDriver?: string | null } | null;
     listSandboxes: () => {
       sandboxes?: Array<{ name?: string | null }>;
@@ -137,6 +137,40 @@ describe("privileged sandbox exec routing", () => {
         ]);
       },
     );
+  });
+
+  it("bounds direct sandbox container discovery", () => {
+    const discoveryCalls: Array<{
+      args: readonly string[];
+      timeout: number | undefined;
+    }> = [];
+
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: (args, options) => {
+          discoveryCalls.push({ args, timeout: options?.timeout });
+          return "openshell-alpha\n";
+        },
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        expect(privilegedSandboxExecArgv("alpha", ["id"])).toEqual([
+          "exec",
+          "--user",
+          "root",
+          "openshell-alpha",
+          "id",
+        ]);
+      },
+    );
+
+    expect(discoveryCalls).toEqual([
+      {
+        args: ["ps", "--format", "{{.Names}}"],
+        timeout: 5000,
+      },
+    ]);
   });
 
   it("fails before docker discovery when the sandbox registry entry is unavailable", () => {

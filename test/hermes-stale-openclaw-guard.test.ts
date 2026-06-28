@@ -109,9 +109,12 @@ describe("Hermes stale OpenClaw guardrails", () => {
     }
   });
 
-  it("Hermes stale OpenClaw verifier allows local verifier base refs without docker", () => {
+  it("allows local verifier and live-test base refs without invoking Docker", () => {
     const allowedRefs = [
       "nemoclaw-hermes-base-local",
+      "nemoclaw-hermes-sandbox-base-local:test",
+      "nemoclaw-hermes-root-entrypoint-base:test",
+      "nemoclaw-hermes-secret-boundary-base:test",
       "nemoclaw-hermes-stale-openclaw-dir-base:test",
       "nemoclaw-hermes-stale-openclaw-link-base:test",
     ];
@@ -139,6 +142,9 @@ describe("Hermes stale OpenClaw guardrails", () => {
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base\\bad",
       "localhost:5000/evil",
       "malicious:tag",
+      "nemoclaw-hermes-sandbox-base-local",
+      "nemoclaw-hermes-root-entrypoint-base",
+      "nemoclaw-hermes-secret-boundary-base",
       "ghcr.io/evil/image@sha256:deadbeef",
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:invalid",
       "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",

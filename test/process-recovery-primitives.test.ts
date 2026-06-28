@@ -320,38 +320,47 @@ describe("executeSandboxExecCommand", () => {
   it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
     const childProcess = requireSource("node:child_process");
     const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "OpenShell transport preamble\n",
       stderr: "",
     } as never);
-    const dockerSpawnSync = vi
-      .spyOn(dockerExec, "dockerSpawnSync")
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "abc123\topenshell-hermes-box\n",
-        stderr: "",
-      } as never)
-      .mockReturnValueOnce({
-        status: 0,
-        stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
-        stderr: "",
-      } as never);
+    const privilegedArgv = vi
+      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
+      .mockReturnValue([
+        "exec",
+        "--user",
+        "root",
+        "openshell-hermes-box-generated",
+        "sh",
+        "-c",
+        "marked-command",
+      ]);
+    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
+      stderr: "",
+    } as never);
 
     const result = withFakeOpenshellBinary(() =>
       executeSandboxExecCommand("hermes-box", "echo SECRET_BOUNDARY_OK"),
     );
 
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(dockerSpawnSync.mock.calls[0]?.[0]).toEqual(["ps", "--format", "{{.ID}}\t{{.Names}}"]);
-    expect(dockerSpawnSync.mock.calls[1]?.[0]).toEqual([
-      "exec",
-      "-u",
-      "root",
-      "abc123",
+    expect(privilegedArgv).toHaveBeenCalledWith("hermes-box", [
       "sh",
       "-c",
       expect.stringContaining("echo SECRET_BOUNDARY_OK"),
+    ]);
+    expect(dockerSpawnSync.mock.calls[0]?.[0]).toEqual([
+      "exec",
+      "--user",
+      "root",
+      "openshell-hermes-box-generated",
+      "sh",
+      "-c",
+      "marked-command",
     ]);
   });
 });

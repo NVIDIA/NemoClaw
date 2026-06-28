@@ -202,35 +202,14 @@ function parseSandboxCommandResult(
   };
 }
 
-function findLocalDockerSandboxContainer(sandboxName: string): string | null {
-  const expectedName = `openshell-${sandboxName}`;
-  try {
-    const result = dockerSpawnSync(["ps", "--format", "{{.ID}}\t{{.Names}}"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 5000,
-    });
-    if (result.error || result.status !== 0) return null;
-    for (const line of String(result.stdout || "").split(/\r?\n/)) {
-      const [id = "", names = ""] = line.split("\t");
-      const containerNames = names.split(",").map((name) => name.trim());
-      if (id && containerNames.includes(expectedName)) return id;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
 function executeLocalDockerSandboxCommand(
   sandboxName: string,
   markedCommand: string,
   timeout: number,
 ): SandboxCommandResult | null {
-  const containerId = findLocalDockerSandboxContainer(sandboxName);
-  if (!containerId) return null;
   try {
-    const result = dockerSpawnSync(["exec", "-u", "root", containerId, "sh", "-c", markedCommand], {
+    const argv = privilegedSandboxExecArgv(sandboxName, ["sh", "-c", markedCommand]);
+    const result = dockerSpawnSync(argv, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
       timeout,

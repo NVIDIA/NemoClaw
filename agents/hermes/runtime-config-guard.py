@@ -43,6 +43,9 @@ MAX_RUNTIME_PLAN_BYTES = 4 * 1024 * 1024
 MAX_RESTART_STATE_BYTES = 32 * 1024 * 1024
 MAX_MUTATION_LOCK_BYTES = 16 * 1024
 MAX_PROC_BYTES = 1024 * 1024
+PROC_ROOT = "/proc"
+MAX_PROC_ENTRIES = 32768
+NEMOCLAW_START_ARGV = (b"nemoclaw-start", b"/usr/local/bin/nemoclaw-start")
 SEALED_FILE_NAMES = ("config.yaml", ".env", ".config-hash")
 RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 SHIELDS_TRANSITION_LEASE_SECONDS = 300
@@ -177,19 +180,242 @@ def _deadline_expired(_signum: int, _frame: object) -> None:
     raise UnsafePathError("Hermes runtime config guard exceeded its deadline")
 
 
-def _pid1_is_nemoclaw_start() -> bool:
+def _open_proc_root() -> int:
+    return os.open(
+        PROC_ROOT,
+        os.O_RDONLY | _directory_flag() | _no_follow_flag() | _cloexec_flag(),
+    )
+
+
+def _open_proc_pid(proc_root_fd: int, pid: int | str) -> int:
+    return os.open(
+        str(pid),
+        os.O_RDONLY | _directory_flag() | _no_follow_flag() | _cloexec_flag(),
+        dir_fd=proc_root_fd,
+    )
+
+
+def _read_proc_pid_file(
+    proc_pid_fd: int, name: str, display_path: str
+) -> bytes:
+    fd = os.open(
+        name,
+        os.O_RDONLY | _no_follow_flag() | _cloexec_flag(),
+        dir_fd=proc_pid_fd,
+    )
     try:
-        cmdline = _read_proc_file("/proc/1/cmdline").split(b"\0")
-    except (FileNotFoundError, PermissionError):
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(4096, MAX_PROC_BYTES + 1 - total))
+            if not chunk:
+                return b"".join(chunks)
+            total += len(chunk)
+            if total > MAX_PROC_BYTES:
+                raise UnsafePathError(
+                    f"refusing oversized proc entry: {display_path}"
+                )
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+
+
+def _proc_pid_namespace_inode(proc_pid_fd: int) -> int | None:
+    ns_fd = -1
+    try:
+        ns_fd = os.open(
+            "ns",
+            os.O_RDONLY | _directory_flag() | _no_follow_flag() | _cloexec_flag(),
+            dir_fd=proc_pid_fd,
+        )
+        inode = os.stat("pid", dir_fd=ns_fd, follow_symlinks=True).st_ino
+        return inode if inode > 0 else None
+    except OSError:
+        return None
+    finally:
+        if ns_fd >= 0:
+            os.close(ns_fd)
+
+
+def _cmdline_is_nemoclaw_start(raw: bytes) -> bool:
+    return any(argument in NEMOCLAW_START_ARGV for argument in raw.split(b"\0"))
+
+
+def _process_status_identity(raw: bytes) -> tuple[int, tuple[int, ...]] | None:
+    try:
+        lines = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return None
+    uid_fields: list[str] | None = None
+    namespace_pids: tuple[int, ...] | None = None
+    for line in lines:
+        if line.startswith("Uid:"):
+            uid_fields = line.removeprefix("Uid:").split()
+        elif line.startswith("NSpid:"):
+            try:
+                namespace_pids = tuple(
+                    int(value, 10) for value in line.removeprefix("NSpid:").split()
+                )
+            except ValueError:
+                return None
+    if uid_fields is None or len(uid_fields) != 4 or not namespace_pids:
+        return None
+    try:
+        effective_uid = int(uid_fields[1], 10)
+    except ValueError:
+        return None
+    if effective_uid < 0 or any(pid <= 0 for pid in namespace_pids):
+        return None
+    return effective_uid, namespace_pids
+
+
+def _pid1_is_nemoclaw_start() -> bool:
+    proc_root_fd = -1
+    proc_pid_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        proc_pid_fd = _open_proc_pid(proc_root_fd, 1)
+        cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
+        )
+    except (OSError, UnsafePathError):
         return False
-    return any(b"nemoclaw-start" in argument for argument in cmdline)
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
+    return _cmdline_is_nemoclaw_start(cmdline)
+
+
+def _pinned_process_matches_startup_identity(
+    proc_root_fd: int,
+    pid: str,
+    expected_start_time: str,
+    expected_namespace_inode: int,
+    expected_effective_uid: int,
+) -> bool:
+    proc_pid_fd = -1
+    try:
+        proc_pid_fd = _open_proc_pid(proc_root_fd, pid)
+        pinned_before = os.fstat(proc_pid_fd)
+        first_start_time = _parse_process_start_time(
+            _read_proc_pid_file(
+                proc_pid_fd, "stat", f"{PROC_ROOT}/{pid}/stat"
+            )
+        )
+        if first_start_time is None or not secrets.compare_digest(
+            first_start_time, expected_start_time
+        ):
+            return False
+        first_status = _process_status_identity(
+            _read_proc_pid_file(
+                proc_pid_fd, "status", f"{PROC_ROOT}/{pid}/status"
+            )
+        )
+        if (
+            first_status is None
+            or first_status[0] != expected_effective_uid
+            or first_status[1][-1] != 1
+        ):
+            return False
+        cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/{pid}/cmdline"
+        )
+        if not _cmdline_is_nemoclaw_start(cmdline):
+            return False
+        first_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        if first_namespace_inode != expected_namespace_inode:
+            return False
+        second_start_time = _parse_process_start_time(
+            _read_proc_pid_file(
+                proc_pid_fd, "stat", f"{PROC_ROOT}/{pid}/stat"
+            )
+        )
+        second_cmdline = _read_proc_pid_file(
+            proc_pid_fd, "cmdline", f"{PROC_ROOT}/{pid}/cmdline"
+        )
+        second_status = _process_status_identity(
+            _read_proc_pid_file(
+                proc_pid_fd, "status", f"{PROC_ROOT}/{pid}/status"
+            )
+        )
+        second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
+        pinned_after = os.fstat(proc_pid_fd)
+        return bool(
+            second_start_time is not None
+            and secrets.compare_digest(second_start_time, expected_start_time)
+            and second_status is not None
+            and second_status[0] == expected_effective_uid
+            and second_status[1][-1] == 1
+            and _cmdline_is_nemoclaw_start(second_cmdline)
+            and second_namespace_inode == expected_namespace_inode
+            and pinned_before.st_dev == pinned_after.st_dev
+            and pinned_before.st_ino == pinned_after.st_ino
+        )
+    except (OSError, UnsafePathError):
+        return False
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+
+
+def _startup_process_identity_is_live(
+    expected_start_time: str,
+    expected_namespace_inode: int,
+    expected_effective_uid: int = 0,
+) -> bool:
+    if (
+        not re.fullmatch(r"[0-9]+", expected_start_time)
+        or expected_namespace_inode <= 0
+    ):
+        return False
+    proc_root_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        observed = 0
+        matches = 0
+        with os.scandir(proc_root_fd) as entries:
+            for entry in entries:
+                if not entry.name.isascii() or not entry.name.isdigit():
+                    continue
+                observed += 1
+                if observed > MAX_PROC_ENTRIES:
+                    return False
+                if _pinned_process_matches_startup_identity(
+                    proc_root_fd,
+                    entry.name,
+                    expected_start_time,
+                    expected_namespace_inode,
+                    expected_effective_uid,
+                ):
+                    matches += 1
+                    if matches > 1:
+                        return False
+        return matches == 1
+    except OSError:
+        return False
+    finally:
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
 
 
 def _process_effective_uid(pid: int) -> int | None:
+    proc_root_fd = -1
+    proc_pid_fd = -1
     try:
-        status = _read_proc_file(f"/proc/{pid}/status").decode("utf-8")
-    except (FileNotFoundError, PermissionError, UnicodeDecodeError):
+        proc_root_fd = _open_proc_root()
+        proc_pid_fd = _open_proc_pid(proc_root_fd, pid)
+        status = _read_proc_pid_file(
+            proc_pid_fd, "status", f"{PROC_ROOT}/{pid}/status"
+        ).decode("utf-8")
+    except (OSError, UnsafePathError, UnicodeDecodeError):
         return None
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
     uid_line = next(
         (line for line in status.splitlines() if line.startswith("Uid:")), ""
     )
@@ -201,16 +427,6 @@ def _process_effective_uid(pid: int) -> int | None:
 
 
 def _validate_action_readiness(action: str, startup_owner: bool) -> None:
-    if not _pid1_is_nemoclaw_start():
-        # Local source fixtures have no NemoClaw PID 1 and exercise the guard
-        # against temporary directories. The production entrypoint must never
-        # turn an unreadable, replaced, or foreign PID 1 into authorization for
-        # root config mutation merely because the expected cmdline is absent.
-        if os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD:
-            raise UnsafePathError(
-                "Hermes runtime config guard refuses mutation under a foreign PID 1"
-            )
-        return
     startup_actions = {
         "ensure-api-key",
         "refresh-hashes",
@@ -219,6 +435,15 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
         "recover-prestate-lock",
     }
     if action in startup_actions:
+        if not _pid1_is_nemoclaw_start():
+            # Local source fixtures have no NemoClaw PID 1 and exercise the
+            # guard against temporary directories. The installed production
+            # helper never treats that compatibility path as authority.
+            if os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD:
+                raise UnsafePathError(
+                    "Hermes runtime config guard refuses mutation under a foreign PID 1"
+                )
+            return
         if not startup_owner or os.getppid() != 1:
             raise UnsafePathError(
                 f"{action} is restricted to the Hermes PID 1 startup transaction"
@@ -234,6 +459,17 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
         "abort-shields-transition",
         "run-state-dir-transition",
     }
+    pid1_is_nemoclaw_start = _pid1_is_nemoclaw_start()
+    startup_ready = _startup_ready_for_current_pid1()
+    if not pid1_is_nemoclaw_start and not startup_ready:
+        # Local source fixtures retain the explicit compatibility path. The
+        # installed helper requires either the direct entrypoint PID 1 or a
+        # root-owned marker bound to the remapped live startup process.
+        if os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD:
+            raise UnsafePathError(
+                "Hermes runtime config guard refuses mutation under a foreign PID 1"
+            )
+        return
     if (
         action
         in {
@@ -246,7 +482,7 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
         and os.getppid() == 1
     ):
         return
-    if action in host_actions and not _startup_ready_for_current_pid1():
+    if action in host_actions and not startup_ready:
         # The macOS VM compatibility path runs NemoClaw PID 1 without root and
         # cannot publish a root-owned readiness lease. It also cannot exercise
         # the privileged root transaction; allow the historical best-effort
@@ -261,9 +497,6 @@ def _validate_action_readiness(action: str, startup_owner: bool) -> None:
 
 
 def _startup_ready_for_current_pid1() -> bool:
-    start_time = _process_start_time(1)
-    if start_time is None:
-        return False
     try:
         opened = _open_regular(HERMES_STARTUP_READY_FILE)
     except (FileNotFoundError, UnsafePathError):
@@ -281,16 +514,33 @@ def _startup_ready_for_current_pid1() -> bool:
             text = opened.read_bytes(MAX_HASH_BYTES).decode("ascii")
         except UnicodeDecodeError:
             return False
-        return secrets.compare_digest(text, f"v1 {start_time}\n")
+        legacy = re.fullmatch(r"v1 ([0-9]+)\n", text)
+        if legacy:
+            # Version 1 has no PID-namespace identity and is safe only when
+            # the helper directly observes the NemoClaw entrypoint as PID 1.
+            start_time = _process_start_time(1)
+            return bool(
+                start_time is not None
+                and _pid1_is_nemoclaw_start()
+                and secrets.compare_digest(legacy.group(1), start_time)
+            )
+        current = re.fullmatch(r"v2 ([0-9]+) ([0-9]+)\n", text)
+        if not current:
+            return False
+        namespace_inode = int(current.group(2), 10)
+        return _startup_process_identity_is_live(
+            current.group(1), namespace_inode
+        )
     finally:
         opened.close()
 
 
 def publish_startup_ready() -> None:
     start_time = _process_start_time(1)
-    if start_time is None:
+    namespace_inode = _process_namespace_inode(1)
+    if start_time is None or namespace_inode is None:
         raise UnsafePathError("cannot identify Hermes PID 1 for startup readiness")
-    payload = f"v1 {start_time}\n".encode("ascii")
+    payload = f"v2 {start_time} {namespace_inode}\n".encode("ascii")
     try:
         opened = _open_regular(HERMES_STARTUP_READY_FILE)
     except FileNotFoundError:
@@ -805,10 +1055,10 @@ def _acquire_mutation_lock(
         os.close(parent_fd)
 
 
-def _process_start_time(pid: int) -> str | None:
+def _parse_process_start_time(raw: bytes) -> str | None:
     try:
-        text = _read_proc_file(f"/proc/{pid}/stat").decode("utf-8")
-    except (FileNotFoundError, PermissionError, UnicodeDecodeError):
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
         return None
     closing_paren = text.rfind(")")
     if closing_paren < 0:
@@ -818,6 +1068,39 @@ def _process_start_time(pid: int) -> str | None:
     if len(fields_after_comm) <= 19:
         return None
     return fields_after_comm[19]
+
+
+def _process_start_time(pid: int) -> str | None:
+    proc_root_fd = -1
+    proc_pid_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        proc_pid_fd = _open_proc_pid(proc_root_fd, pid)
+        raw = _read_proc_pid_file(proc_pid_fd, "stat", f"{PROC_ROOT}/{pid}/stat")
+    except (OSError, UnsafePathError):
+        return None
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
+    return _parse_process_start_time(raw)
+
+
+def _process_namespace_inode(pid: int) -> int | None:
+    proc_root_fd = -1
+    proc_pid_fd = -1
+    try:
+        proc_root_fd = _open_proc_root()
+        proc_pid_fd = _open_proc_pid(proc_root_fd, pid)
+        return _proc_pid_namespace_inode(proc_pid_fd)
+    except OSError:
+        return None
+    finally:
+        if proc_pid_fd >= 0:
+            os.close(proc_pid_fd)
+        if proc_root_fd >= 0:
+            os.close(proc_root_fd)
 
 
 def _read_proc_file(path: str) -> bytes:

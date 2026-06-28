@@ -9,6 +9,8 @@ type SandboxEntry = {
   openshellDriver?: string | null;
 };
 
+const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
+
 function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
@@ -93,7 +95,9 @@ function expectedDirectContainerPattern(sandboxName: string): string {
 
 function findDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"]);
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
+    timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
+  });
   return selectDirectSandboxContainer(sandboxName, output, names);
 }
 

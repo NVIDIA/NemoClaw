@@ -40,11 +40,28 @@ module.NODE_BINARY_PATH = os.environ.get("NEMOCLAW_TEST_NODE_PATH", module.NODE_
 module.JSON5_MODULE_PATH = os.environ.get("NEMOCLAW_TEST_JSON5_PATH", module.JSON5_MODULE_PATH)
 if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "startup-owner", "old-image-no-cap"}:
     module._pid1_is_nemoclaw_start = lambda: True
-    module._process_start_time = lambda pid: "test-pid1-start" if pid == 1 else None
-if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "installed-foreign-pid1", "startup-owner"}:
+    module._process_start_time = lambda pid: "424242" if pid == 1 else None
+    module._process_namespace_inode = lambda pid: 424242 if pid == 1 else None
+    module._startup_process_identity_is_live = lambda start_time, namespace_inode, effective_uid=0: (
+        start_time == "424242" and namespace_inode == 424242
+    )
+if failure in {"installed-current", "installed-not-ready", "installed-nonroot-no-cap", "installed-nonroot-not-ready", "installed-foreign-pid1", "installed-remapped", "installed-remapped-any-live", "startup-owner"}:
     module.INSTALLED_HELPER_PATH = guard_path
 if failure == "installed-foreign-pid1":
     module._pid1_is_nemoclaw_start = lambda: False
+if failure == "installed-remapped":
+    module._pid1_is_nemoclaw_start = lambda: False
+    module._startup_process_identity_is_live = lambda start_time, namespace_inode, effective_uid=0: (
+        start_time == "424242" and namespace_inode == 424242
+    )
+if failure == "installed-remapped-any-live":
+    module._pid1_is_nemoclaw_start = lambda: False
+    module._startup_process_identity_is_live = lambda start_time, namespace_inode, effective_uid=0: (
+        (start_time, namespace_inode) in {
+            ("424242", 424242),
+            ("525252", 525252),
+        }
+    )
 if failure in {"installed-not-ready", "installed-current"}:
     module._pid1_effective_uid = lambda: identity.root_uid
 if failure in {"installed-nonroot-no-cap", "installed-nonroot-not-ready"}:
@@ -1336,6 +1353,26 @@ describe("openclaw-config-guard", () => {
     expect(runGuard("lock", current.configDir, "installed-current").status).toBe(1);
     expect(runGuard("publish-startup-ready", current.configDir, "startup-owner").status).toBe(0);
     expect(runGuard("lock", current.configDir, "installed-current").status).toBe(0);
+    expect(runGuard("lock", current.configDir, "installed-remapped").status).toBe(0);
+
+    const readyPath = path.join(current.root, ".nemoclaw-test", "ready.json");
+    fs.writeFileSync(
+      readyPath,
+      `${JSON.stringify({
+        pid: 1,
+        pidNamespaceInode: 525252,
+        pidStartTime: "525252",
+        version: 2,
+      })}\n`,
+    );
+    fs.chmodSync(readyPath, 0o600);
+    const splitLease = runGuard("lock", current.configDir, "installed-remapped-any-live");
+    expect(splitLease.status).toBe(1);
+    expect(splitLease.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "issue", code: "startup-not-ready" }),
+      ]),
+    );
   });
 
   it("allows only the no-capability non-root PID 1 compatibility posture", () => {

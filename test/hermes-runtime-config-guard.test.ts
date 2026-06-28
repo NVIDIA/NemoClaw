@@ -645,15 +645,27 @@ except guard.UnsafePathError as exc:
     installed_error = str(exc)
 else:
     installed_error = ""
+guard._startup_ready_for_current_pid1 = lambda: True
+try:
+    guard._validate_action_readiness("seal-restart", False)
+except guard.UnsafePathError:
+    remapped_allowed = False
+else:
+    remapped_allowed = True
 finally:
     guard.__file__ = source_entrypoint
-print(json.dumps({"source_allowed": source_allowed, "installed_error": installed_error}))
+print(json.dumps({
+    "source_allowed": source_allowed,
+    "installed_error": installed_error,
+    "remapped_allowed": remapped_allowed,
+}))
 `);
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       source_allowed: true,
       installed_error: "Hermes runtime config guard refuses mutation under a foreign PID 1",
+      remapped_allowed: true,
     });
   });
 
@@ -688,7 +700,7 @@ print(json.dumps({"nonroot_allowed": nonroot_allowed, "root_error": root_error})
     });
   });
 
-  it("accepts only the marker bound to the current PID 1 start time", () => {
+  it("accepts direct legacy and namespace-remapped markers only for their live startup identity", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json
 from types import SimpleNamespace
@@ -703,21 +715,38 @@ class FakeOpen:
         pass
 
 guard._process_start_time = lambda pid: "424242" if pid == 1 else None
+guard._pid1_is_nemoclaw_start = lambda: True
 payload = b"v1 111111\\n"
 guard._open_regular = lambda _path: FakeOpen(payload)
 stale = guard._startup_ready_for_current_pid1()
 payload = b"v1 424242\\n"
-current = guard._startup_ready_for_current_pid1()
+legacy_current = guard._startup_ready_for_current_pid1()
 payload = b"v1 424242\\nextra"
 malformed = guard._startup_ready_for_current_pid1()
-print(json.dumps({"stale": stale, "current": current, "malformed": malformed}))
+guard._pid1_is_nemoclaw_start = lambda: False
+guard._startup_process_identity_is_live = lambda start_time, namespace_inode: (
+    start_time == "424242" and namespace_inode == 515151
+)
+payload = b"v2 424242 515151\\n"
+remapped_current = guard._startup_ready_for_current_pid1()
+payload = b"v2 424242 616161\\n"
+remapped_stale = guard._startup_ready_for_current_pid1()
+print(json.dumps({
+    "stale": stale,
+    "legacy_current": legacy_current,
+    "malformed": malformed,
+    "remapped_current": remapped_current,
+    "remapped_stale": remapped_stale,
+}))
 `);
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
       stale: false,
-      current: true,
+      legacy_current: true,
       malformed: false,
+      remapped_current: true,
+      remapped_stale: false,
     });
   });
 
@@ -727,6 +756,7 @@ import json
 
 captured = {}
 guard._process_start_time = lambda pid: "987654" if pid == 1 else None
+guard._process_namespace_inode = lambda pid: 424242 if pid == 1 else None
 guard._open_regular = lambda _path: (_ for _ in ()).throw(FileNotFoundError())
 
 def capture(path, data, **kwargs):
@@ -746,7 +776,7 @@ print(json.dumps(captured))
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      data: "v1 987654\n",
+      data: "v2 987654 424242\n",
       mode: 0o600,
       uid: 0,
       gid: 0,
