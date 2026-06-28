@@ -46,6 +46,11 @@ const CHECKS: readonly CheckCommand[] = [
     command: TSX,
     args: ["scripts/checks/vitest-project-overlap.ts"],
   },
+  {
+    name: "test-title-style",
+    command: TSX,
+    args: ["scripts/checks/test-title-style.ts"],
+  },
 ];
 
 function main(): void {

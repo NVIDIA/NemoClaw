@@ -281,7 +281,7 @@ module.exports = {
 `;
 }
 
-describe("channels add applies matching policy preset (issue #3437)", () => {
+describe("channels add applies a matching policy preset (#3437)", () => {
   it("plans channel enrollment through the messaging manifest workflow", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
@@ -1576,7 +1576,7 @@ const ctx = module.exports;
 // startup breadcrumb confirmation or an actionable warning. These tests
 // drive the verifier through stubbed sandbox-exec output so the contract
 // is pinned regardless of OpenClaw/OpenShell runtime availability.
-describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
+describe("channels add verifies bridge startup after rebuild (#4314, #4390)", () => {
   function buildInteractivePreamble(): string {
     return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});

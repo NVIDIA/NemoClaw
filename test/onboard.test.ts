@@ -437,7 +437,7 @@ startGateway(null).catch(() => {});
     }
   });
 
-  it("#2753: ignores an incomplete session sandbox name when checking resume conflicts", () => {
+  it("ignores an incomplete session sandbox name when checking resume conflicts (#2753)", () => {
     // A pre-fix on-disk session may carry sandboxName even though the
     // sandbox step never completed. Treating that as a conflict source
     // would block users from running `--resume --name <new>` to recover.
@@ -4667,7 +4667,7 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
   });
 
-  it("regression #1904: pullAndResolveBaseImageDigest uses sandbox-base registry", () => {
+  it("uses the sandbox-base registry in pullAndResolveBaseImageDigest (#1904)", () => {
     // Structural check: verify the constant matches the Dockerfile default
     // and does NOT reference the openshell-community registry.
     assert.ok(

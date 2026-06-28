@@ -156,7 +156,7 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
   });
 
-  it("#2753: refuses non-interactive --resume when sandbox step never completed and no name is provided", () => {
+  it("refuses non-interactive --resume when the sandbox step never completed and no name is provided (#2753)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-no-name-"));
     const localBin = path.join(home, "bin");
     const nemoclawDir = path.join(home, ".nemoclaw");
@@ -180,7 +180,7 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("--name <sandbox>")).toBeTruthy();
   });
 
-  it("#2753: whitespace-only NEMOCLAW_SANDBOX_NAME does not satisfy the resume guard", () => {
+  it("does not let whitespace-only NEMOCLAW_SANDBOX_NAME satisfy the resume guard (#2753)", () => {
     // The env-var ingest pipeline trims and rejects whitespace-only values
     // before populating requestedSandboxName, so the guard sees no recovered
     // name and fires correctly.

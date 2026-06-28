@@ -30,7 +30,7 @@ if (!isOnboardValidationInternals(onboardValidationInternals)) {
 }
 const { getValidationProbeCurlArgs } = onboardValidationInternals;
 
-describe("WSL2 inference verification timeouts (issue #987)", () => {
+describe("WSL2 inference verification timeouts (#987)", () => {
   describe("getValidationProbeCurlArgs", () => {
     it("returns standard timeouts on non-WSL platforms", () => {
       expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([

@@ -47,7 +47,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("cleanupStaleHostFiles (post-upgrade sweep, #3105)", () => {
+describe("cleanupStaleHostFiles post-upgrade sweep (#3105)", () => {
   it("removes an empty legacy credentials.json and logs the removal", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-"));
     const credsDir = path.join(home, ".nemoclaw");

@@ -45,6 +45,7 @@ Package-specific guides:
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
+| Render behavior-oriented test tree | `npm run test:spec` |
 | Run fast source tests | `npm run test:fast` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
@@ -87,6 +88,7 @@ When writing tests:
 - Plugin tests use TypeScript and are co-located with their source files
 - Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
 - Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
 

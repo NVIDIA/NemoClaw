@@ -62,6 +62,15 @@ describe("Regression E2E workflow contract", () => {
     expect(runText).toContain("npx vitest run --project e2e-live");
   });
 
+  it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {
+    const job = workflow.jobs?.["model-router-provider-routed-inference-e2e"];
+    const runStep = job?.steps?.find(
+      (step) => step.name === "Run Model Router provider-routed inference E2E test",
+    );
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
+  });
+
   it("runs OpenClaw plugin runtime-deps EXDEV through a secret-free Vitest lane", () => {
     const job = workflow.jobs?.["openclaw-plugin-runtime-exdev-e2e"];
     const steps = job?.steps ?? [];

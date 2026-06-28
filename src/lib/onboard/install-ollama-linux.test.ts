@@ -99,7 +99,7 @@ describe("decideInstallOllamaLinuxMode", () => {
     expect(decideInstallOllamaLinuxMode(opts)).toBe("system");
   });
 
-  it("returns user-local when non-interactive without passwordless sudo (issue #4114 repro)", () => {
+  it("returns user-local when non-interactive without passwordless sudo (#4114)", () => {
     const opts = makeOpts({
       canSudoNonInteractive: () => false,
       isNonInteractive: () => true,

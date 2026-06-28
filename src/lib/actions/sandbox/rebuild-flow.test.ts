@@ -554,7 +554,7 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint while ignoring hostile ambient values for PRA-4 (#5735)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
     // be absent during recreate so onboard --resume uses the validated session

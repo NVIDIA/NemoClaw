@@ -125,7 +125,7 @@ describe("mergeTailLogLines", () => {
     expect(mergeTailLogLines(["[1] a\n"], 0)).toBe("[1] a\n");
   });
 
-  it("caps the merged output at maxLines (closes #4100)", () => {
+  it("caps the merged output at maxLines (#4100)", () => {
     const gateway = ["[1] g1", "[3] g2", "[5] g3"].join("\n") + "\n";
     const openshell = ["[2] o1", "[4] o2", "[6] o3"].join("\n") + "\n";
     const merged = mergeTailLogLines([gateway, openshell], 3);

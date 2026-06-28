@@ -121,7 +121,7 @@ function seedTightenedConfigTree(): { tmpDir: string; configDir: string; configF
   return { tmpDir, configDir, configFile };
 }
 
-describe("#4538 raw `openclaw doctor --fix` mutable-perm restore", () => {
+describe("raw `openclaw doctor --fix` mutable-perm restore (#4538)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   it("restore helper re-asserts 2770/660 after the tree is tightened to 700/600", () => {
@@ -362,7 +362,7 @@ function resolveSandboxImage(): string | null {
 }
 
 describe.skipIf(!RUN_DOCKER_E2E || !dockerAvailable())(
-  "#4538 reporter workflow E2E (real sandbox image, raw openclaw doctor --fix)",
+  "reporter workflow E2E with a real sandbox image and raw openclaw doctor --fix (#4538)",
   () => {
     it("restores 2770/660 after a connect-shell `openclaw doctor --fix`", () => {
       const image = resolveSandboxImage();

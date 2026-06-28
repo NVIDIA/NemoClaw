@@ -121,6 +121,7 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make format` | Auto-format TypeScript and Python source |
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
 | `npm test` | Build package artifacts and run every non-live Vitest project |
+| `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
 | `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
 | `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
 | `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
@@ -131,6 +132,18 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `npm run docs:preview:watch` | Publish branch-based Fern previews when docs files change |
 | `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
+
+### Test Titles as Behavioral Documentation
+
+Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
+titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
+issue references in a final suffix such as `(#1234)`. Prefer
+`it("reticulates splines correctly (#1234)")` over
+`it("#1234 fixes spline reticulation")`.
+
+Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
+`npm run test:titles:check` to enforce the objective title-shape conventions without attempting to
+lint subjective English grammar.
 
 ### Git hooks (prek)
 

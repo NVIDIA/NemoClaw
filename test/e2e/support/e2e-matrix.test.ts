@@ -135,7 +135,7 @@ describe("live E2E target matrix", () => {
     ]);
   });
 
-  it("--emit-live-matrix prints a single-line JSON array for supported live E2E targets", () => {
+  it("prints a single-line JSON array of supported live E2E targets for --emit-live-matrix", () => {
     const result = runEmitLiveMatrix();
     expect(result.status, result.stderr).toBe(0);
     const lines = result.stdout.trim().split("\n");
@@ -148,7 +148,7 @@ describe("live E2E target matrix", () => {
     ]);
   });
 
-  it("--emit-live-matrix honors explicit target selections", () => {
+  it("honors explicit target selections for --emit-live-matrix", () => {
     const result = runEmitLiveMatrix(["--targets", "ubuntu-repo-cloud-hermes"]);
     expect(result.status, result.stderr).toBe(0);
     const parsed = JSON.parse(result.stdout.trim());

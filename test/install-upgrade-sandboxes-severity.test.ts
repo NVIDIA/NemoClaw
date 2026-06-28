@@ -95,7 +95,7 @@ describe("install.sh print_done — auto-upgrade severity (#5735)", () => {
   });
 });
 
-describe("install.sh finalize_install — fatal exit on failed auto-upgrade (#5735 PRA-5)", () => {
+describe("install.sh finalize_install fatal exit on failed auto-upgrade for PRA-5 (#5735)", () => {
   it("exits zero and prints the clean banner when no upgrade failed", () => {
     const result = runFinalizeInstall(false);
     expect(result.status, result.stderr).toBe(0);

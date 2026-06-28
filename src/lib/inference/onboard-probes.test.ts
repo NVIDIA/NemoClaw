@@ -445,7 +445,7 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  describe("retriable HTTP statuses (issues #2980, #3033)", () => {
+  describe("retriable HTTP statuses (#2980, #3033)", () => {
     it("retries 429 (rate limit)", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
     });
@@ -465,7 +465,7 @@ describe("OpenAI-compatible inference probes", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(200)).toBe(false);
     });
 
-    it("recovers when an upstream 502 clears on retry (regression #2980)", () => {
+    it("recovers when an upstream 502 clears on retry (#2980)", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-502-probe-"));
       const fakeBin = path.join(tmpDir, "bin");
       const counter = path.join(tmpDir, "counter");

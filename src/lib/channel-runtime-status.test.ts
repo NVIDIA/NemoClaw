@@ -311,7 +311,7 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("flags a configured channel as not-running when the gateway log never mentions it (#4156 reporter case)", () => {
+  it("flags a configured channel as not-running when the gateway log never mentions it in the reporter case (#4156)", () => {
     // Reporter symptom: openclaw.json had the telegram block but the
     // dashboard rendered "No channels found." This is the failure mode —
     // configured but the OpenClaw runtime never logged anything for it.

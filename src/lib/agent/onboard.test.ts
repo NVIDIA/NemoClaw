@@ -95,7 +95,7 @@ const buildUrlsLoopback = (token: string | null, port: number): string[] => {
   return [`http://127.0.0.1:${port}/${hash}`];
 };
 
-describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)", () => {
+describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   const noteSpy = vi.fn();
 

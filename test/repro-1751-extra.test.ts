@@ -40,7 +40,7 @@ afterEach(() => {
   }
 });
 
-describe("Issue #1751 — GPU passthrough session persistence", () => {
+describe("GPU passthrough session persistence (#1751)", () => {
   it("filterSafeUpdates: gpuPassthrough=true is propagated to safe", () => {
     session.saveSession(session.createSession());
     markStepCompleteLegacy(session, stepMutation, "provider_selection", { gpuPassthrough: true });
