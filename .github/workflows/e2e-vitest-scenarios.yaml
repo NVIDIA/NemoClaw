@@ -4167,6 +4167,8 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      # Open permits the scenario's inference/log probes; TC-SBX-11 separately
+      # proves that sandbox-to-sandbox network isolation remains enforced.
       NEMOCLAW_POLICY_TIER: "open"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -4185,6 +4187,11 @@ jobs:
 
       - name: Build CLI
         run: npm run build:cli
+
+      - name: Verify CLI launcher
+        run: |
+          test -x "${NEMOCLAW_CLI_BIN}"
+          "${NEMOCLAW_CLI_BIN}" --version
 
       - name: Install OpenShell CLI
         run: |

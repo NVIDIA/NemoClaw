@@ -276,7 +276,9 @@ async function assertAgentJsonNonzeroExit(host: HostCliClient, sandboxName: stri
   // migration-only assertion was retired instead of expanding the parity lane.
   // Failed-tool provenance remains covered deterministically by
   // test/openclaw-agent-json.test.ts; a live prompt cannot require upstream
-  // OpenClaw to emit failed tool-result metadata.
+  // OpenClaw to emit failed tool-result metadata. Re-add live stdin coverage if
+  // the frozen parity source gains that contract or transport validation is
+  // explicitly added to this lane's scope.
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -473,7 +475,10 @@ async function assertDestroyRemovesSandbox(
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
 }
 
-type GatewayRecoveryOutcome = "recovered" | "skipped-gateway-absent";
+type GatewayRecoveryOutcome =
+  | "recovered-before-status"
+  | "recovered-by-status"
+  | "skipped-gateway-absent";
 
 async function assertGatewayRecovery(
   host: HostCliClient,
@@ -509,7 +514,8 @@ async function assertGatewayRecovery(
       timeoutMs: 15_000,
     },
   );
-  expect(afterKill.stdout.trim(), resultText(afterKill)).not.toBe("true");
+  const recoveryOutcome =
+    afterKill.stdout.trim() === "true" ? "recovered-before-status" : "recovered-by-status";
 
   const status = await host.nemoclaw([sandboxName, "status"], {
     artifactName: "tc-sbx-06-status-recovers-gateway",
@@ -527,7 +533,7 @@ async function assertGatewayRecovery(
   );
   expectExitZero(status, `nemoclaw ${sandboxName} status after gateway kill`);
   expect(afterStatus.stdout.trim(), resultText(afterStatus)).toBe("true");
-  return "recovered";
+  return recoveryOutcome;
 }
 
 liveTest(

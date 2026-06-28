@@ -81,6 +81,9 @@ export function validateSandboxOperationsWorkflow(workflow: {
       errors.push(`${JOB_NAME} must not expose ${variable} at job scope`);
     }
   }
+  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
+    errors.push(`${JOB_NAME} must use the stable bin/nemoclaw.js CLI launcher`);
+  }
 
   const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {};
   if (!FULL_SHA_ACTION.test(checkout.uses ?? "")) {
@@ -107,6 +110,10 @@ export function validateSandboxOperationsWorkflow(workflow: {
     requireRunContains(errors, install, `-u ${variable}`);
   }
   requireRunContains(errors, install, "bash scripts/install-openshell.sh");
+
+  const verifyLauncher = findStep(job, "Verify CLI launcher");
+  requireRunContains(errors, verifyLauncher, 'test -x "${NEMOCLAW_CLI_BIN}"');
+  requireRunContains(errors, verifyLauncher, '"${NEMOCLAW_CLI_BIN}" --version');
 
   const configure = findStep(job, "Configure isolated Docker auth directory");
   requireRunContains(
@@ -150,6 +157,8 @@ export function validateSandboxOperationsWorkflow(workflow: {
     }
   }
 
+  requireStepOrder(errors, steps, "Build CLI", verifyLauncher.name ?? "");
+  requireStepOrder(errors, steps, verifyLauncher.name ?? "", "Install OpenShell CLI");
   requireStepOrder(errors, steps, "Install OpenShell CLI", configure.name ?? "");
   requireStepOrder(errors, steps, configure.name ?? "", authenticate.name ?? "");
   requireStepOrder(errors, steps, authenticate.name ?? "", "Run sandbox operations live test");

@@ -106,6 +106,26 @@ describe("sandbox operations workflow boundary", () => {
 
   it.each([
     {
+      label: "a non-launcher CLI path",
+      mutate: (source: string) =>
+        mutateSandboxOperationsJob(source, (jobSource) =>
+          jobSource.replace(
+            "      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js",
+            "      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/dist/nemoclaw.js",
+          ),
+        ),
+      expected: "sandbox-operations-vitest must use the stable bin/nemoclaw.js CLI launcher",
+    },
+    {
+      label: "a missing CLI launcher preflight",
+      mutate: (source: string) =>
+        mutateSandboxOperationsJob(source, (jobSource) =>
+          jobSource.replace('          test -x "${NEMOCLAW_CLI_BIN}"', "          true"),
+        ),
+      expected:
+        "sandbox-operations-vitest step 'Verify CLI launcher' must run: test -x \"${NEMOCLAW_CLI_BIN}\"",
+    },
+    {
       label: "Docker credentials at job scope",
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
