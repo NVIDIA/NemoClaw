@@ -314,7 +314,10 @@ except Exception as exc:
         % (exc, len(body.encode("utf-8", errors="replace")), status_detail),
         file=sys.stderr,
     )
-    sys.exit(1)
+    retryable_gateway_error = bool(
+        status_match and 500 <= int(status_match.group(1)) <= 599
+    )
+    sys.exit(3 if can_retry and retryable_gateway_error else 1)
 
 choices = data.get("choices")
 choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
@@ -361,7 +364,11 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
 
   write_payload "$max_tokens"
   status=0
-  run_smoke_request || status=$?
+  request_failed=0
+  run_smoke_request || {
+    status=$?
+    request_failed=1
+  }
   if [ "$status" -eq 0 ]; then
     can_retry=0
     if [ "$attempt" -lt "$SMOKE_ATTEMPTS" ]; then
@@ -371,6 +378,9 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   fi
   if [ "$status" -eq 0 ]; then
     exit 0
+  fi
+  if [ "$request_failed" -eq 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then
+    exit "$status"
   fi
   if [ "$attempt" -ge "$SMOKE_ATTEMPTS" ]; then
     exit "$status"
