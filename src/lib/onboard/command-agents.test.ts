@@ -72,6 +72,12 @@ describe("onboard --agents", () => {
     );
     const previous = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
     delete process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
+    const restoreEnvironment =
+      previous === undefined
+        ? () => delete process.env.NEMOCLAW_EXTRA_AGENTS_JSON
+        : () => {
+            process.env.NEMOCLAW_EXTRA_AGENTS_JSON = previous;
+          };
     let observedRaw: string | undefined;
     const runOnboard = vi.fn(async () => {
       observedRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
@@ -92,8 +98,7 @@ describe("onboard --agents", () => {
         agentDir: "/sandbox/.openclaw/agents/alpha",
       });
     } finally {
-      if (previous === undefined) delete process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
-      else process.env.NEMOCLAW_EXTRA_AGENTS_JSON = previous;
+      restoreEnvironment();
     }
   });
 });
