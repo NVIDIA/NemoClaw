@@ -750,6 +750,40 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     );
   });
 
+  it("redacts a non-scalar persisted Telegram value rather than echoing raw JSON", async () => {
+    const tamperedObject = { allow: ["@one", "@two"], smuggled: "secret-id" };
+    const tamperedArray = ["1", "0"];
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      sandbox: entry(["telegram"]),
+      appliedPresets: ["telegram"],
+      channelInputs: {
+        telegram: [
+          {
+            inputId: "groupPolicy",
+            value: tamperedObject as unknown as MessagingSerializableValue,
+          },
+          {
+            inputId: "requireMention",
+            value: tamperedArray as unknown as MessagingSerializableValue,
+          },
+        ],
+      },
+    });
+    await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    const dump = out_lines.join("\n");
+    expect(dump).toMatch(
+      /Telegram group policy:\s+invalid persisted value \(unsupported type\)/,
+    );
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+invalid persisted value \(unsupported type\)/,
+    );
+    expect(dump).not.toMatch(/secret-id/);
+    expect(dump).not.toMatch(/smuggled/);
+    expect(dump).not.toMatch(/@one/);
+    expect(dump).not.toMatch(/"1"/);
+  });
+
   it("renders Telegram inputs from a plan compiled out of process env through the command path", async () => {
     const plan = await compileTelegramPlanForTests({
       TELEGRAM_GROUP_POLICY: "allowlist",

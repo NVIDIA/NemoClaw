@@ -30,7 +30,7 @@ export interface VisibleChannelConfigInput {
   readonly label: string;
   readonly envKey?: string;
   readonly defaultValue?: string;
-  readonly validValues?: readonly string[];
+  readonly validValues: readonly string[];
   readonly valueDisplay?: Readonly<Record<string, string>>;
   readonly agentApplicability?: readonly MessagingAgentId[];
 }
@@ -75,7 +75,7 @@ function collectVisibleConfigInputs(
         label,
         ...(input.envKey ? { envKey: input.envKey } : {}),
         ...(input.defaultValue !== undefined ? { defaultValue: input.defaultValue } : {}),
-        ...(input.validValues ? { validValues: [...input.validValues] } : {}),
+        validValues: [...input.validValues],
         ...(input.valueDisplay ? { valueDisplay: { ...input.valueDisplay } } : {}),
         ...(input.agentApplicability ? { agentApplicability: [...input.agentApplicability] } : {}),
       } satisfies VisibleChannelConfigInput,
@@ -104,6 +104,7 @@ export function resolveVisibleConfigDisplay(
   input: VisibleChannelConfigInput,
   planInput: SandboxMessagingInputReference | undefined,
 ): VisibleConfigDisplay | null {
+  if (input.validValues.length === 0) return null;
   const planInputPresent = planInput !== undefined;
   const rawValue = planInput?.value;
   const persistedScalar =
@@ -113,7 +114,7 @@ export function resolveVisibleConfigDisplay(
       return invalidPersistedDisplay(input, "unsupported type");
     }
     const valueText = stringifyScalar(rawValue);
-    if (input.validValues && !input.validValues.includes(valueText)) {
+    if (!input.validValues.includes(valueText)) {
       return invalidPersistedDisplay(input, `expected: ${input.validValues.join(" | ")}`);
     }
     const mapped = input.valueDisplay?.[valueText];
@@ -126,13 +127,7 @@ export function resolveVisibleConfigDisplay(
     return { detail: valueText, source: "persisted" };
   }
   if (planInputPresent) {
-    // The plan persisted this input but the value is null or empty. Don't
-    // silently swap in the manifest default — surface the boundary state
-    // so the operator can re-enter a valid value.
-    return invalidPersistedDisplay(
-      input,
-      input.validValues ? `expected: ${input.validValues.join(" | ")}` : "present but empty",
-    );
+    return invalidPersistedDisplay(input, `expected: ${input.validValues.join(" | ")}`);
   }
   if (input.defaultValue !== undefined) {
     const mapped = input.valueDisplay?.[input.defaultValue];
