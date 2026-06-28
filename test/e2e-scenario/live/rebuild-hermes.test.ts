@@ -426,8 +426,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,
     });
-    install.exitCode === 0 ||
-      (await artifacts.writeText("phase-1-install-nonzero-note.txt", resultText(install)));
+    expectExitZero(install, "NemoClaw install.sh");
 
     const cliProbe = await host.command(
       "bash",
@@ -440,6 +439,14 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       },
     );
     expectExitZero(cliProbe, "NemoClaw/OpenShell installed by install.sh");
+
+    const gatewayProbe = await host.command("openshell", ["gateway", "info", "-g", "nemoclaw"], {
+      artifactName: "phase-1-gateway-probe",
+      env: testEnv(apiKey),
+      redactionValues,
+      timeoutMs: 30_000,
+    });
+    expectExitZero(gatewayProbe, "NemoClaw install must leave a reusable 'nemoclaw' gateway");
 
     const deleteCurrentSandbox = await host.command(
       "openshell",
