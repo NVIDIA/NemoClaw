@@ -3,7 +3,7 @@
 
 import type { SpawnSyncReturns } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   captureOpenshellCommand,
@@ -50,6 +50,10 @@ function exitWithCode(code: number): never {
 }
 
 describe("openshell helpers", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("strips ANSI sequences", () => {
     expect(stripAnsi("\u001b[32mConnected\u001b[0m")).toBe("Connected");
   });
@@ -119,41 +123,29 @@ describe("openshell helpers", () => {
   });
 
   it("can replace the parent environment for credential-bearing OpenShell commands", () => {
-    const previous = process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
-    process.env.NEMOCLAW_TEST_UNRELATED_SECRET = "must-not-leak";
+    vi.stubEnv("NEMOCLAW_TEST_UNRELATED_SECRET", "must-not-leak");
     let observedEnv: NodeJS.ProcessEnv | undefined;
-    try {
-      runOpenshellCommand("openshell", ["provider", "create"], {
-        replaceEnv: true,
-        env: { PATH: "/safe/bin", MCP_TOKEN: "selected-secret" },
-        spawnSyncImpl: (_command, _args, options) => {
-          observedEnv = options.env;
-          return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
-        },
-      });
-    } finally {
-      if (previous === undefined) delete process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
-      else process.env.NEMOCLAW_TEST_UNRELATED_SECRET = previous;
-    }
+    runOpenshellCommand("openshell", ["provider", "create"], {
+      replaceEnv: true,
+      env: { PATH: "/safe/bin", MCP_TOKEN: "selected-secret" },
+      spawnSyncImpl: (_command, _args, options) => {
+        observedEnv = options.env;
+        return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+      },
+    });
 
     expect(observedEnv).toEqual({ PATH: "/safe/bin", MCP_TOKEN: "selected-secret" });
   });
 
   it("filters unrelated parent secrets from ordinary OpenShell commands", () => {
-    const previous = process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
-    process.env.NEMOCLAW_TEST_UNRELATED_SECRET = "must-not-leak";
+    vi.stubEnv("NEMOCLAW_TEST_UNRELATED_SECRET", "must-not-leak");
     let observedEnv: NodeJS.ProcessEnv | undefined;
-    try {
-      runOpenshellCommand("openshell", ["status"], {
-        spawnSyncImpl: (_command, _args, options) => {
-          observedEnv = options.env;
-          return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
-        },
-      });
-    } finally {
-      if (previous === undefined) delete process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
-      else process.env.NEMOCLAW_TEST_UNRELATED_SECRET = previous;
-    }
+    runOpenshellCommand("openshell", ["status"], {
+      spawnSyncImpl: (_command, _args, options) => {
+        observedEnv = options.env;
+        return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+      },
+    });
 
     expect(observedEnv?.NEMOCLAW_TEST_UNRELATED_SECRET).toBeUndefined();
     expect(observedEnv?.PATH).toBe(process.env.PATH);

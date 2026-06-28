@@ -19,6 +19,7 @@ import * as processRecovery from "./process-recovery";
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("parses provider type and credential keys without values", () => {
@@ -203,32 +204,23 @@ alpha-mcp-slack   generic  1                 0
   });
 
   it("fails detach verification when the strict OpenShell exec is unavailable", () => {
-    const previousTimeout = process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS;
-    process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "1";
+    vi.stubEnv("NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS", "1");
     const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
     vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
 
-    try {
-      expect(() =>
-        waitForDetachedMcpCredential("alpha", {
-          server: "github",
-          agent: "openclaw",
-          adapter: "mcporter",
-          url: "https://mcp.example.test/mcp",
-          env: ["GITHUB_TOKEN"],
-          providerName: "alpha-mcp-github-0123456789abcdef",
-          providerId: "11111111-2222-4333-8444-555555555555",
-          policyName: "mcp-bridge-github",
-          addedAt: "2026-06-01T00:00:00.000Z",
-        }),
-      ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
-    } finally {
-      if (previousTimeout === undefined) {
-        delete process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS;
-      } else {
-        process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = previousTimeout;
-      }
-    }
+    expect(() =>
+      waitForDetachedMcpCredential("alpha", {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      }),
+    ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
     expect(exec).toHaveBeenCalledWith(
       "alpha",

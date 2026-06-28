@@ -29,6 +29,7 @@ type RuntimeRecovery = {
 };
 type RuntimeBridgeRunOptions = {
   env?: Record<string, string | undefined>;
+  replaceEnv?: boolean;
   stdio?: unknown;
   ignoreError?: boolean;
   timeout?: number;
@@ -162,7 +163,13 @@ describe("credentials oclif commands", () => {
     expect(calls).toEqual([
       {
         args: ["provider", "list", "--names"],
-        opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+        opts: {
+          env: expect.any(Object),
+          ignoreError: true,
+          replaceEnv: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30_000,
+        },
       },
     ]);
     expect(output.stdout).toContain("openai-prod");
@@ -228,7 +235,13 @@ describe("credentials oclif commands", () => {
     expect(calls).toEqual([
       {
         args: ["provider", "delete", "nvidia-prod"],
-        opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+        opts: {
+          env: expect.any(Object),
+          ignoreError: true,
+          replaceEnv: true,
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30_000,
+        },
       },
     ]);
     expect(output.stdout).toContain("Removed provider 'nvidia-prod'");
