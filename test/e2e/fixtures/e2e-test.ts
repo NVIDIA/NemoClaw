@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, test as base } from "vitest";
+import { test as base, expect } from "vitest";
 
-import { createArtifactSink, type ArtifactSink } from "./artifacts.ts";
+import { type ArtifactSink, createArtifactSink } from "./artifacts.ts";
+import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {
   GatewayClient,
   HostCliClient,
@@ -11,7 +12,6 @@ import {
   SandboxClient,
   StateClient,
 } from "./clients/index.ts";
-import { assertCleanupPassed, CleanupRegistry } from "./cleanup.ts";
 import {
   EnvironmentPhaseFixture,
   LifecyclePhaseFixture,
@@ -40,8 +40,11 @@ export interface E2ETargetFixtures {
 }
 
 export const test = base.extend<E2ETargetFixtures>({
-  artifacts: async ({ task }, use) => {
-    const artifacts = createArtifactSink(task.name);
+  secrets: async ({ skip }, use) => {
+    await use(new SecretStore(process.env, skip));
+  },
+  artifacts: async ({ task, secrets }, use) => {
+    const artifacts = createArtifactSink(task.name, process.cwd(), secrets.redactionValues());
     await artifacts.ensureRoot();
     try {
       await use(artifacts);
@@ -51,9 +54,6 @@ export const test = base.extend<E2ETargetFixtures>({
         rootDir: artifacts.rootDir,
       });
     }
-  },
-  secrets: async ({ skip }, use) => {
-    await use(new SecretStore(process.env, skip));
   },
   cleanup: async ({ artifacts, secrets }, use) => {
     const cleanup = new CleanupRegistry((text) => secrets.redact(text));

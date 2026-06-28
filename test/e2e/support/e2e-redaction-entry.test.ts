@@ -93,10 +93,18 @@ describe("fixture redaction entry point", () => {
     expect(out).not.toContain(canonical);
   });
 
-  it("redacts fake hosted inference keys from representative uploaded artifacts", async () => {
+  it("redacts raw secrets at the uploaded artifact sink", async () => {
     const fakeHostedKey = "fake-hosted-inference-key-for-artifact-scan";
+    const fakeDockerToken = "fake-docker-token-for-artifact-scan";
+    const generatedGatewayToken = "generated-gateway-token-for-artifact-scan";
+    const fakeGitHubToken = `ghp_${"g".repeat(36)}`;
+    const fakeMessagingToken = ["xox", "b-1234567890-abcdefghij"].join("");
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-artifact-redaction-"));
-    const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/redaction-smoke"));
+    const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/redaction-smoke"), [
+      fakeHostedKey,
+      fakeDockerToken,
+    ]);
+    artifacts.addRedactionValues([generatedGatewayToken]);
     await artifacts.ensureRoot();
     const secrets = new SecretStore(
       { NVIDIA_INFERENCE_API_KEY: fakeHostedKey },
@@ -113,17 +121,16 @@ describe("fixture redaction entry point", () => {
     const directArtifactPaths = await Promise.all([
       artifacts.writeJson("run-plan.json", {
         targetId: "redaction-smoke",
-        note: secrets.redact(`plan saw ${fakeHostedKey}`),
+        note: `plan saw ${fakeHostedKey}`,
+        githubToken: fakeGitHubToken,
       }),
       artifacts.writeJson("target-result.json", {
         id: "redaction-smoke",
-        output: secrets.redact(`result saw ${fakeHostedKey}`),
+        output: `result saw ${fakeDockerToken}`,
+        messagingToken: fakeMessagingToken,
       }),
-      artifacts.writeText(
-        "actions/redacted-action.log",
-        secrets.redact(`action saw ${fakeHostedKey}`),
-      ),
-      artifacts.writeText("logs/redacted-live.log", secrets.redact(`log saw ${fakeHostedKey}`)),
+      artifacts.writeText("actions/redacted-action.log", `action saw ${fakeHostedKey}`),
+      artifacts.writeText("logs/redacted-live.log", `log saw ${generatedGatewayToken}`),
     ]);
     const result = await probe.run(
       trustedShellCommand({
@@ -147,8 +154,18 @@ describe("fixture redaction entry point", () => {
 
     expect(result.stdout).toContain("[REDACTED]");
     expect(result.stderr).toContain("[REDACTED]");
-    expect(uploadedTexts.join("\n")).not.toContain(fakeHostedKey);
-    expect(uploadedTexts.join("\n")).toContain("[REDACTED]");
+    const uploadedText = uploadedTexts.join("\n");
+    for (const secret of [
+      fakeHostedKey,
+      fakeDockerToken,
+      generatedGatewayToken,
+      fakeGitHubToken,
+      fakeMessagingToken,
+    ]) {
+      expect(uploadedText).not.toContain(secret);
+    }
+    expect(uploadedText).toContain("[REDACTED]");
+    expect(uploadedText).toContain("<REDACTED>");
     expect(
       uploadedPaths.map((artifactPath) => path.relative(artifacts.rootDir, artifactPath)),
     ).toEqual(
