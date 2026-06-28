@@ -186,6 +186,7 @@ export function createInferenceSelectionValidationHelpers(
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
     const reasoningEnabled = process.env.NEMOCLAW_REASONING === "true";
+    // Reasoning-only compatible endpoints often reject Responses, tool-call, and streaming probes.
     const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
       requireResponsesToolCalling: !reasoningEnabled,
       skipResponsesProbe:

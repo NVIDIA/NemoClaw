@@ -237,11 +237,14 @@ Route, configuration, and authentication failures still fail immediately.
 ### Non-Interactive Setup
 
 Set the following environment variables for scripted or CI/CD deployments.
+Set `NEMOCLAW_REASONING=true` when the compatible endpoint serves a reasoning-only model.
+Onboarding also accepts `1`, `yes`, `y`, and `on` as true aliases, then stores the normalized `true` or `false` value.
 
 ```bash
 NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
   NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  NEMOCLAW_REASONING=true \
   COMPATIBLE_API_KEY=dummy \
   $$nemoclaw onboard --non-interactive
 ```
@@ -251,6 +254,7 @@ NEMOCLAW_PROVIDER=custom \
 | `NEMOCLAW_PROVIDER` | Set to `custom` for an OpenAI-compatible endpoint. |
 | `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
 | `NEMOCLAW_MODEL` | Model ID as reported by the server. |
+| `NEMOCLAW_REASONING` | Set to `true` for a reasoning-only compatible endpoint model. Defaults to `false`. |
 | `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
 
 ### Selecting the API Path
