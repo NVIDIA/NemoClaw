@@ -99,7 +99,11 @@ describe("provider/sandbox flow phases", () => {
     expect(result.result).toEqual(branchResult);
   });
 
-  it("rejects sandbox phase execution before sandbox GPU config is selected", async () => {
+  it.each([
+    "model",
+    "provider",
+    "sandboxGpuConfig",
+  ] as const)("rejects sandbox phase execution before %s is selected (#5938)", async (missingField) => {
     const runSandbox = vi.fn(async (current) => ({
       context: {
         ...current,
@@ -112,10 +116,16 @@ describe("provider/sandbox flow phases", () => {
       result: branchTo("openclaw"),
     }));
     const phase = createSandboxPhase(runSandbox);
+    const incomplete = context({
+      model: "model",
+      provider: "nvidia-prod",
+      sandboxGpuConfig: { mode: "0" },
+    });
+    incomplete[missingField] = null;
 
-    await expect(
-      phase.run(context({ model: "model", provider: "nvidia-prod", sandboxGpuConfig: null })),
-    ).rejects.toThrow(/Onboarding state is incomplete before sandbox setup\./);
+    await expect(phase.run(incomplete)).rejects.toThrow(
+      /Onboarding state is incomplete before sandbox setup\./,
+    );
     expect(runSandbox).not.toHaveBeenCalled();
   });
 });

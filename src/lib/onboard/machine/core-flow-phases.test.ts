@@ -208,6 +208,12 @@ describe("core onboard flow phases", () => {
       sandboxName: "created-sandbox",
       model: "nvidia/test",
       provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: null,
+      gpu: { platform: "linux" },
+      sandboxGpuConfig: { mode: "cdi" },
+      gpuPassthrough: true,
       hermesToolGateways: ["local"],
       preferredInferenceApi: "chat",
       nimContainer: "nim-test",
@@ -241,7 +247,7 @@ describe("core onboard flow phases", () => {
 
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
-    const [providerPhase] = createPhases({
+    const [providerPhase, sandboxPhase] = createPhases({
       providerDeps: {
         ensureResumeProviderReady: vi.fn(async () => ({
           forceInferenceSetup: false,
@@ -285,6 +291,17 @@ describe("core onboard flow phases", () => {
       { allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
+
+    const sandboxResult = await sandboxPhase.run(result.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "hermes",
+      credentialEnv: "HERMES_API_KEY",
+      hermesToolGateways: ["nous-web"],
+      sandboxGpuConfig: { mode: "cdi" },
+    });
   });
 
   it("uses the strict runner for fresh provider selection sessions", async () => {
