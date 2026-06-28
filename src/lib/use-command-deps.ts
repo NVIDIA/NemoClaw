@@ -45,6 +45,8 @@ export function runUseCommand(sandboxName: string, deps: UseCommandDeps): UseCom
   }
   const updated = deps.setDefault(sandboxName);
   if (!updated) {
+    // setDefault rechecks existence under the registry lock. Refresh after a
+    // concurrent removal so the not-found diagnostic reflects post-lock state.
     const refreshed = deps.listSandboxes();
     return {
       outcome: "not-found",
