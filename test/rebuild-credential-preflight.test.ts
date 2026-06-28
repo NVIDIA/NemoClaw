@@ -616,7 +616,7 @@ describe("atomic rebuild (#2273)", () => {
     it.each([
       ["ollama-local"],
       ["vllm-local"],
-    ])("migrates legacy %s sandbox off OPENAI_API_KEY (GH #2519)", (provider) => {
+    ])("migrates a legacy %s sandbox off OPENAI_API_KEY (#2519)", (provider) => {
       // Pre-fix sandboxes recorded credentialEnv="OPENAI_API_KEY" even
       // though local inference never actually needed it. After the fix,
       // the wizard records null. Rebuild must accept the legacy value,

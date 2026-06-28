@@ -1040,7 +1040,7 @@ describe("probeContainerDns", () => {
     expect(isFatalContainerDnsProbeFailure(result)).toBe(true);
   });
 
-  it("downgrades unrelated docker output (no resolver evidence) from fatal resolution_failed to inconclusive error (#3630 CodeRabbit)", () => {
+  it("downgrades unrelated docker output without resolver evidence from fatal resolution_failed to an inconclusive error per CodeRabbit review (#3630)", () => {
     // No "Server:" header — nslookup never produced a resolver response.
     // The output is some docker-side message unrelated to DNS, so we
     // must not abort onboarding with the systemd-resolved remediation.
@@ -1183,7 +1183,7 @@ describe("probeContainerDns", () => {
     expect(isFatalContainerDnsProbeFailure(result)).toBe(true);
   });
 
-  it("classifies a wedged Docker daemon (inspect_unavailable) as fatal docker_daemon_unreachable (#3630 codex review)", () => {
+  it("classifies a wedged Docker daemon with inspect_unavailable as fatal docker_daemon_unreachable per Codex review (#3630)", () => {
     const result = probeContainerDns({
       ensureImageCachedOverride: {
         ok: false,
@@ -1196,7 +1196,7 @@ describe("probeContainerDns", () => {
     expect(isFatalContainerDnsProbeFailure(result)).toBe(true);
   });
 
-  it("does not treat a registry TCP timeout (i/o timeout on :443) as a fatal DNS failure (#3630 codex review)", () => {
+  it("does not treat a registry TCP timeout on port 443 as a fatal DNS failure per Codex review (#3630)", () => {
     // dial tcp <ip>:443 errors are TCP connectivity, NOT DNS — must not
     // be routed to UDP:53/systemd-resolved remediation.
     const result = probeContainerDns({
@@ -1303,7 +1303,7 @@ describe("probeContainerDns", () => {
     expect(seenScript).toContain("nslookup pinned-test.invalid");
   });
 
-  it("rejects shell metacharacters in probeName to prevent sh -c injection (#3630 CodeRabbit)", () => {
+  it("rejects shell metacharacters in probeName to prevent sh -c injection per CodeRabbit review (#3630)", () => {
     const injections = [
       "x; touch /tmp/pwned",
       "x && touch /tmp/pwned",
@@ -1415,7 +1415,7 @@ describe("probeDockerBridgeContainerStart", () => {
     expect(result.exitCode).toBe(125);
   });
 
-  it("does not misclassify unrelated 'veth' mentions as fatal veth_unsupported (#3630 CodeRabbit)", () => {
+  it("does not misclassify unrelated 'veth' mentions as fatal veth_unsupported per CodeRabbit review (#3630)", () => {
     // Output references "veth" in passing — without the bridge-create
     // signature, it must stay on the generic-error path, not the fatal
     // Jetson remediation path.
@@ -1432,7 +1432,7 @@ describe("probeDockerBridgeContainerStart", () => {
     expect(result.reason).not.toBe("veth_unsupported");
   });
 
-  it("does not misclassify generic 'operation not supported' errors as veth_unsupported (#3630 CodeRabbit)", () => {
+  it("does not misclassify generic 'operation not supported' errors as veth_unsupported per CodeRabbit review (#3630)", () => {
     // Generic OS-level "operation not supported" (e.g., from a cgroup
     // mount or unrelated syscall) must not be promoted to fatal veth.
     const result = probeDockerBridgeContainerStart({
@@ -1448,7 +1448,7 @@ describe("probeDockerBridgeContainerStart", () => {
     expect(result.reason).not.toBe("veth_unsupported");
   });
 
-  it("flags bridge container kill-by-signal (no timeout) as reason 'killed' (#3630 CodeRabbit)", () => {
+  it("flags a bridge container killed by signal without a timeout as reason 'killed' per CodeRabbit review (#3630)", () => {
     const result = probeDockerBridgeContainerStart({
       executionOverride: {
         stdout: "",
@@ -1507,7 +1507,7 @@ describe("probeDockerBridgeContainerStart", () => {
     expect(seenOpts?.timeout).toBe(20_000);
   });
 
-  it("reports image_pull_failed (not bridge timeout) when the busybox pre-pull times out (#3630 codex review)", () => {
+  it("reports image_pull_failed instead of bridge timeout when the busybox pre-pull times out per Codex review (#3630)", () => {
     const result = probeDockerBridgeContainerStart({
       ensureImageCachedOverride: {
         ok: false,
@@ -1533,7 +1533,7 @@ describe("probeDockerBridgeContainerStart", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("reports a wedged Docker daemon (inspect_unavailable) as fatal docker_daemon_unreachable (#3630 codex review)", () => {
+  it("reports a wedged Docker daemon with inspect_unavailable as fatal docker_daemon_unreachable per Codex review (#3630)", () => {
     const result = probeDockerBridgeContainerStart({
       ensureImageCachedOverride: {
         ok: false,
@@ -1565,7 +1565,7 @@ describe("ensureProbeImageCached", () => {
     expect(result.alreadyCached).toBe(true);
   });
 
-  it("classifies an inspect spawn timeout (ETIMEDOUT) as inspect_unavailable without falling through to pull (#3630 CodeRabbit)", () => {
+  it("classifies an ETIMEDOUT inspect spawn as inspect_unavailable without falling through to pull per CodeRabbit review (#3630)", () => {
     const result = ensureProbeImageCached("busybox:latest", {
       inspectProbeImpl: () => ({
         stdout: "",
@@ -1584,7 +1584,7 @@ describe("ensureProbeImageCached", () => {
     expect(result.reason).toBe("inspect_unavailable");
   });
 
-  it("classifies 'Cannot connect to the Docker daemon' inspect stderr as inspect_unavailable (#3630 codex review)", () => {
+  it("classifies 'Cannot connect to the Docker daemon' inspect stderr as inspect_unavailable per Codex review (#3630)", () => {
     const result = ensureProbeImageCached("busybox:latest", {
       inspectProbeImpl: () => ({
         stdout: "",
@@ -1799,7 +1799,7 @@ describe("isDockerUnderProvisioned", () => {
   });
 });
 
-describe("assessHost — container runtime resource detection (regression #2514)", () => {
+describe("assessHost container runtime resource detection (#2514)", () => {
   it("flags default Colima (2 CPU / 2 GiB) as under-provisioned", () => {
     const result = assessHost({
       platform: "darwin",

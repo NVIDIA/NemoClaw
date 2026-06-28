@@ -399,7 +399,7 @@ describe("planInferenceRouteReconcile", () => {
     expect(planInferenceRouteReconcile(null, recorded)).toEqual({ kind: "repair" });
   });
 
-  it("flags divergence when the gateway model differs (the #3726 case)", () => {
+  it("flags divergence when the gateway model differs (#3726)", () => {
     const live = {
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",

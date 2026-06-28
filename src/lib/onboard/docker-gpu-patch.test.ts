@@ -764,7 +764,7 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     );
   });
 
-  it("regression manifest: host.openshell.internal + google.com + gateway.discord.gg + integrate.api.nvidia.com (#3579 manager spec)", () => {
+  it("includes every hostname from the manager-provided regression manifest (#3579)", () => {
     // The four hostnames called out in #3579's manager-provided spec:
     //   host.openshell.internal      → resolved via --add-host (mount namespace)
     //   google.com                   → public DNS via embedded Docker resolver

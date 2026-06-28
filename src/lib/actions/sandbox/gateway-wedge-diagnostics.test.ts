@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 // Import from compiled dist for parity with the other CLI tests in this project.
 import { collectGatewayWedgeDiagnostics, sanitizeWedgeLogLine } from "./gateway-wedge-diagnostics";
 
-describe("collectGatewayWedgeDiagnostics — #4710 wedge signature", () => {
+describe("collectGatewayWedgeDiagnostics wedge signature (#4710)", () => {
   it("returns the matching gateway.log lines, trimmed", () => {
     const lines = collectGatewayWedgeDiagnostics("my-sandbox", () => ({
       status: 0,

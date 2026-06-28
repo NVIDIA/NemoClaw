@@ -135,7 +135,7 @@ describe("inventory commands", () => {
     expect(getLiveInference).not.toHaveBeenCalled();
   });
 
-  it("shows agent as 'unknown' for a gateway-recovered sandbox (#5714), not the OpenClaw default", async () => {
+  it("shows agent as 'unknown' instead of the OpenClaw default for a gateway-recovered sandbox (#5714)", async () => {
     const inventory = await getSandboxInventory({
       recoverRegistryEntries: async () => ({
         sandboxes: [

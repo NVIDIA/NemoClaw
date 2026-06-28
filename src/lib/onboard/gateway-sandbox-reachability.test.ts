@@ -125,7 +125,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.detail).toContain("operation not supported");
   });
 
-  it("does not misclassify unrelated 'veth' or 'operation not supported' output as veth_unsupported (#3630 CodeRabbit)", async () => {
+  it("does not misclassify unrelated 'veth' or 'operation not supported' output as veth_unsupported per CodeRabbit review (#3630)", async () => {
     // Generic veth status lines, or `operation not supported` from
     // other syscalls (mount, ioctl, etc.) must fall through to the
     // existing inconclusive path, not be reported as fatal Jetson veth.
@@ -215,7 +215,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.reason).toBe("tcp_failed");
   });
 
-  it("downgrades a slow-registry pre-pull timeout to probe_unavailable (not fatal probe_timeout) (#3630 codex review)", async () => {
+  it("downgrades a slow-registry pre-pull timeout to probe_unavailable instead of fatal probe_timeout per Codex review (#3630)", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => ({ subnet: "172.19.0.0/16", gatewayIp: "172.19.0.1" }),
       usesHostGatewayRouteImpl: () => false,
@@ -231,7 +231,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.detail).toContain("timed out");
   });
 
-  it("classifies docker-daemon-connect failures from the probe run as fatal docker_daemon_unreachable (#3630 CodeRabbit)", async () => {
+  it("classifies docker-daemon-connect failures from the probe run as fatal docker_daemon_unreachable per CodeRabbit review (#3630)", async () => {
     // The image-cache pre-pull succeeded (or was bypassed), but the
     // actual `docker run` probe failed with the daemon-down signature.
     // This must surface as docker_daemon_unreachable (fatal), not slip
@@ -278,7 +278,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.reason).toBe("docker_daemon_unreachable");
   });
 
-  it("escalates inspect_unavailable to fatal docker_daemon_unreachable (#3630 codex review)", async () => {
+  it("escalates inspect_unavailable to fatal docker_daemon_unreachable per Codex review (#3630)", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => ({ subnet: "172.19.0.0/16", gatewayIp: "172.19.0.1" }),
       usesHostGatewayRouteImpl: () => false,
@@ -294,7 +294,7 @@ describe("isSandboxBridgeGatewayReachable", () => {
     expect(result.detail).toContain("Cannot connect to the Docker daemon");
   });
 
-  it("uses inspect-specific fallback detail when inspect_unavailable has no details (#3630 CodeRabbit)", async () => {
+  it("uses inspect-specific fallback detail when inspect_unavailable has no details per CodeRabbit review (#3630)", async () => {
     const result = await isSandboxBridgeGatewayReachable({
       inspectNetworkImpl: () => ({ subnet: "172.19.0.0/16", gatewayIp: "172.19.0.1" }),
       usesHostGatewayRouteImpl: () => false,
@@ -408,7 +408,7 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
     expect(msg).toContain("enable integration for this distro");
   });
 
-  it("uses cliDisplayName() and cliName() in fatal messages instead of hardcoded NemoClaw branding (#3630 CodeRabbit)", () => {
+  it("uses cliDisplayName() and cliName() in fatal messages instead of hardcoded branding per CodeRabbit review (#3630)", () => {
     const savedAgent = process.env.NEMOCLAW_AGENT;
     const savedInvoked = process.env.NEMOCLAW_INVOKED_AS;
     process.env.NEMOCLAW_AGENT = "hermes";

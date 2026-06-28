@@ -9,7 +9,7 @@ import {
   waitForRecoveredSandboxGateway,
 } from "./process-recovery";
 
-describe("probeSandboxInferenceGatewayHealth — #3265 gateway-chain subprobe", () => {
+describe("probeSandboxInferenceGatewayHealth gateway-chain subprobe (#3265)", () => {
   const makeExec =
     (stdout: string, status = 0) =>
     async () => ({ status, stdout, stderr: "" });
@@ -58,7 +58,7 @@ describe("probeSandboxInferenceGatewayHealth — #3265 gateway-chain subprobe", 
   });
 });
 
-describe("waitForRecoveredSandboxGateway — #4710 settle-window confirm", () => {
+describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", () => {
   const ENV_KEYS = [
     "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",

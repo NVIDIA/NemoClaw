@@ -346,7 +346,7 @@ process.exit = (code) => {
   return JSON.parse(lastBraceLine);
 }
 
-describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
+describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
   it("Scenario A: stopped Ollama + flag set → no spawn, warning, falls back to DEFAULT_OLLAMA_MODEL", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
@@ -526,7 +526,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     assert.equal(payload.sentinelTripped, false);
   });
 
-  it("Scenario G (#4365): pinned-provider runner crash exits instead of looping on Ollama model selection", {
+  it("exits instead of looping on Ollama model selection after a pinned-provider runner crash in scenario G (#4365)", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // Reporter's second-step: Ollama responds, user reaches model selection,
@@ -565,7 +565,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
     );
   });
 
-  it("Scenario H (#4365): pinned-provider runner crash also exits when NEMOCLAW_PROVIDER uses a casing variant", {
+  it("exits after a pinned-provider runner crash with a casing variant in scenario H (#4365)", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // NEMOCLAW_PROVIDER=OLLAMA is accepted by getNonInteractiveProvider's

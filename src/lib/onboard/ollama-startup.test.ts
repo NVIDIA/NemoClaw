@@ -16,7 +16,7 @@ import {
 const wait = require("../core/wait");
 const runner = require("../runner");
 
-describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
+describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   let originalWaitForHttp: typeof wait.waitForHttp;
   let originalRunShell: typeof runner.runShell;
   let originalProviderEnv: string | undefined;

@@ -64,7 +64,7 @@ describe("lib/resolve-openshell", () => {
     ).toBe("/usr/local/bin/openshell");
   });
 
-  it("falls back to /opt/homebrew/bin (Apple Silicon Homebrew prefix, #5334)", () => {
+  it("falls back to the Apple Silicon Homebrew prefix at /opt/homebrew/bin (#5334)", () => {
     expect(
       resolveOpenshell({
         commandVResult: null,

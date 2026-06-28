@@ -402,7 +402,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example");
   });
 
-  it("includes portless origin for reverse-proxy access (Fixes #3000)", () => {
+  it("includes a portless origin for reverse-proxy access (#3000)", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:18789",
     });
@@ -844,7 +844,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
   });
 
-  it("disables heartbeat when set to 0m (NemoClaw#2880)", () => {
+  it("disables heartbeat when set to 0m (#2880)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
     expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
   });

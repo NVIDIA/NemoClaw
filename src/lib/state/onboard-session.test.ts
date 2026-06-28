@@ -476,7 +476,7 @@ describe("onboard session", () => {
   // disk and the next rebuild preflight demanded a credential the current
   // sandbox did not need.
 
-  it("clears credentialEnv when provider-selection update passes null (GH #2625)", () => {
+  it("clears credentialEnv when a provider-selection update passes null (#2625)", () => {
     // Seed with a prior remote-provider onboard state.
     session.saveSession(session.createSession());
     markStepCompleteLegacy(session, stepMutation, "provider_selection", {

@@ -176,7 +176,7 @@ describe("service environment", () => {
     });
   });
 
-  describe("GIT_SSL_CAINFO for proxy CA trust (issue #2270)", () => {
+  describe("GIT_SSL_CAINFO for proxy CA trust (#2270)", () => {
     const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;
 
     it("entrypoint exports GIT_SSL_CAINFO when SSL_CERT_FILE points to a real file", () => {
@@ -380,7 +380,7 @@ describe("service environment", () => {
     });
   });
 
-  describe("XDG and tool cache redirects (issue #804)", () => {
+  describe("XDG and tool cache redirects (#804)", () => {
     it("entrypoint pre-creates redirected dirs and restricts GNUPGHOME permissions", () => {
       const scriptPath = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
       const src = readFileSync(scriptPath, "utf-8");
@@ -438,7 +438,7 @@ describe("service environment", () => {
     });
   });
 
-  describe("proxy environment variables (issue #626)", () => {
+  describe("proxy environment variables (#626)", () => {
     // The proxy persistence block calls emit_sandbox_sourced_file from the
     // shared library. Wrappers that execute the extracted block must source it.
     const sandboxInitSource = `source ${JSON.stringify(join(import.meta.dirname, "../scripts/lib/sandbox-init.sh"))}`;

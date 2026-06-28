@@ -98,7 +98,7 @@ describe("printSandboxCreateRecoveryHints", () => {
   // This recovery path runs ONLY after the OpenShell upload failure is
   // classified; ordinary x86_64 happy-path onboards never reach it. The tests
   // below assert that branch deterministically by injecting platform/arch.
-  it("prints the local-registry workaround with the preserved built image tag for the #3266 upload 404", () => {
+  it("prints the local-registry workaround with the preserved built image tag for an upload 404 (#3266)", () => {
     printSandboxCreateRecoveryHints(
       [
         "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
@@ -128,7 +128,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("onboard --resume");
   });
 
-  it("adds the Linux ARM64 (aarch64) note for the #3266 upload 404 only on Linux arm64", () => {
+  it("adds the Linux ARM64 note for an upload 404 only on Linux arm64 (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "arm64",
@@ -136,7 +136,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("known limitation on Linux ARM64 (aarch64)");
   });
 
-  it("omits the ARM64 note for the #3266 upload 404 on x86_64 hosts", () => {
+  it("omits the ARM64 note for an upload 404 on x86_64 hosts (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "x64",

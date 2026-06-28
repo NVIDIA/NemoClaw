@@ -464,8 +464,8 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
   });
 });
 
-describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () => {
-  it("removes an empty {} legacy file (regression #3105)", async () => {
+describe("removeLegacyCredentialsFileIfEmpty post-upgrade cleanup (#3105)", () => {
+  it("removes an empty legacy file containing {} (#3105)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");

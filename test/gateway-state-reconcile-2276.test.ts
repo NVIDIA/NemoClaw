@@ -419,7 +419,7 @@ describe("Scenario 4: connect — select fails, sandbox still NotFound", () => {
 });
 
 // ─── Scenario 5 ─── exact #2276 repro: registry entry still present ────────
-describe("Scenario 5: #2276 repro — failed connect must leave registry entry intact", () => {
+describe("failed connect leaves the registry entry intact in scenario 5 (#2276)", () => {
   it("after a failed connect triggered by drifted gateway, entry is still present", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -710,7 +710,7 @@ describe("Scenario 12: skill install — wrong gateway active yields guidance, n
 // (a) locates the preserved entry (no "does not exist"), (b) does NOT dead-end
 // at "Cannot back up state", and (c) reports the stale state and proceeds to
 // recreate from the preserved registry metadata instead of aborting.
-describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover", () => {
+describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
   it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
     timeout: TIMEOUT_MS,
   }, () => {

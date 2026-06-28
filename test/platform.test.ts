@@ -236,7 +236,7 @@ describe("platform helpers", () => {
       });
     });
 
-    it("discovers the bare ~/.colima/docker.sock layout (regression for #3503)", () => {
+    it("discovers the bare ~/.colima/docker.sock layout (#3503)", () => {
       // The reporter's Colima setup puts the socket at the top-level
       // ~/.colima/docker.sock rather than under ~/.colima/default/. Before
       // this fix, detection returned null and the gateway fell back to
