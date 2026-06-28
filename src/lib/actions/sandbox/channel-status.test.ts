@@ -736,7 +736,11 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       sandbox: compactEntry,
       appliedPresets: ["telegram"],
     });
-    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
+    useRealMessagingPlanReader(
+      deps as {
+        getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null;
+      },
+    );
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -758,7 +762,11 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       sandbox: compactEntry,
       appliedPresets: ["telegram"],
     });
-    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
+    useRealMessagingPlanReader(
+      deps as {
+        getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null;
+      },
+    );
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -778,7 +786,11 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       sandbox: tamperedEntry,
       appliedPresets: ["telegram"],
     });
-    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
+    useRealMessagingPlanReader(
+      deps as {
+        getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null;
+      },
+    );
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -804,7 +816,11 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       sandbox: tamperedEntry,
       appliedPresets: ["telegram"],
     });
-    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
+    useRealMessagingPlanReader(
+      deps as {
+        getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null;
+      },
+    );
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram group policy:\s+invalid persisted value \(unsupported type\)/);

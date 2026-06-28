@@ -157,7 +157,12 @@ export interface CompactTelegramEntryBundle {
 export async function compactTelegramEntryFromEnv(
   options: CompactTelegramEntryOptions,
 ): Promise<CompactTelegramEntryBundle> {
-  const { tamperedInputs, sandboxName = "alpha", agentName = "openclaw", ...compileOptions } = options;
+  const {
+    tamperedInputs,
+    sandboxName = "alpha",
+    agentName = "openclaw",
+    ...compileOptions
+  } = options;
   const compiled = await compileTelegramPlanForTests(compileOptions);
   const baseOnDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
   const messagingOnDisk = tamperedInputs
