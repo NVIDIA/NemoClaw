@@ -113,12 +113,21 @@ PY
 select_initial_pairing_request() {
 python3 - 3<&0 <<'PY'
 import json, os
+from pathlib import Path
 state=json.load(os.fdopen(3))
 def norm(v): return str(v or '').strip()
 def is_cli(e): return norm(e.get('clientMode')).lower() == 'cli' or 'cli' in norm(e.get('clientId')).lower()
+def roles(e): return {norm(r) for r in (e.get('roles') or [e.get('role')]) if norm(r)}
+def scopes(e): return {norm(s) for s in (e.get('scopes') or e.get('requestedScopes') or []) if norm(s)}
+identity=json.loads((Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw') / 'identity' / 'device.json').read_text(encoding='utf-8'))
+identity_device_id=norm(identity.get('deviceId'))
 paired={norm(e.get('deviceId')) for e in state.get('paired') or [] if isinstance(e, dict)}
 for req in sorted([e for e in state.get('pending') or [] if isinstance(e, dict)], key=lambda e:e.get('ts') or 0, reverse=True):
-    if is_cli(req) and norm(req.get('deviceId')) not in paired and norm(req.get('requestId')):
+    requested=scopes(req)
+    if (is_cli(req) and roles(req) == {'operator'} and requested == {'operator.pairing'}
+            and norm(req.get('deviceId')) == identity_device_id
+            and identity_device_id not in paired and norm(req.get('requestId'))
+            and norm(req.get('publicKey'))):
         print(norm(req.get('requestId')))
         raise SystemExit(0)
 raise SystemExit(1)
@@ -280,71 +289,165 @@ PY
 }
 
 approve_request() {
-  local request_id="$1" approve_output approve_log
-  approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
-  approve_log="/tmp/issue4462-approve-$request_id.log"
-  printf '%s\n' "$approve_output" >"$approve_log"
-  python3 - "$request_id" "$approve_log" <<'PY'
+  local request_id="$1" approve_output approve_log approve_rc=0 snapshot
+  snapshot="/tmp/issue4462-approve-$request_id.request.json"
+  umask 077
+  if ! python3 - "$request_id" >"$snapshot" <<'PY'
 import json, os, sys
 from pathlib import Path
 
 want=sys.argv[1]
-raw=open(sys.argv[2], encoding='utf-8').read()
-dec=json.JSONDecoder()
-approved=None
-for idx,ch in enumerate(raw):
-    if ch != '{':
-        continue
-    try:
-        doc,_=dec.raw_decode(raw[idx:])
-    except Exception:
-        continue
-    if doc.get('requestId') == want:
-        approved=doc
-        break
-if approved is None:
-    print(raw, file=sys.stderr)
-    raise SystemExit(1)
-
-device=approved.get('device') if isinstance(approved.get('device'), dict) else {}
-device_id=str(device.get('deviceId') or '').strip()
-if not device_id:
-    raise SystemExit('approval response did not include a device id')
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
+allowed={'operator.pairing','operator.read','operator.write'}
+
+def norm(value): return str(value or '').strip()
+def load(name):
+    try: value=json.loads((root / 'devices' / name).read_text(encoding='utf-8'))
+    except FileNotFoundError: return {}
+    return value if isinstance(value, dict) else {}
+def normalize(values):
+    result={norm(value) for value in values if norm(value)}
+    if 'operator.write' in result: result.add('operator.read')
+    return result
+def scope_views(value, keys):
+    views=[]
+    for key in keys:
+        if key not in value: continue
+        if not isinstance(value[key], list): raise SystemExit(f'{key} is not a scope list')
+        views.append(normalize(value[key]))
+    return views
+def canonical_scopes(value, keys, label):
+    views=scope_views(value, keys)
+    if not views or any(not view or not view.issubset(allowed) for view in views):
+        raise SystemExit(f'unsafe {label} scope representation')
+    if any(view != views[0] for view in views[1:]):
+        raise SystemExit(f'divergent {label} scope representations')
+    return views[0]
+def roles(value):
+    result={norm(role) for role in (value.get('roles') or []) if norm(role)}
+    if norm(value.get('role')): result.add(norm(value.get('role')))
+    return result
+
+pending=load('pending.json')
+request=next((item for item in pending.values() if isinstance(item, dict) and norm(item.get('requestId')) == want), None)
+if request is None: raise SystemExit(f'missing pending request {want}')
+device_id=norm(request.get('deviceId'))
+public_key=norm(request.get('publicKey'))
+is_cli=norm(request.get('clientMode')).lower() == 'cli' or 'cli' in norm(request.get('clientId')).lower()
+if not device_id or not public_key or not is_cli or roles(request) != {'operator'}:
+    raise SystemExit('refusing non-CLI/non-operator pairing request')
+requested=canonical_scopes(request, ('scopes','requestedScopes'), 'requested')
+
+paired=load('paired.json')
+existing=next((item for item in paired.values() if isinstance(item, dict) and norm(item.get('deviceId')) == device_id), None)
+if existing is None:
+    if requested != {'operator.pairing'}:
+        raise SystemExit('first pairing request is not pairing-only')
+    expected=requested
+else:
+    if norm(existing.get('publicKey')) != public_key or roles(existing) != {'operator'}:
+        raise SystemExit('scope upgrade does not match the paired operator device')
+    baseline=canonical_scopes(existing, ('scopes','approvedScopes'), 'existing paired')
+    expected=baseline | requested
+    if not {'operator.read','operator.write'}.intersection(requested) or expected == baseline:
+        raise SystemExit('request is not an operator scope upgrade')
+
 identity=json.loads((root / 'identity' / 'device.json').read_text(encoding='utf-8'))
-if str(identity.get('deviceId') or '').strip() != device_id:
-    raise SystemExit('approved device does not match the persisted CLI identity')
-paired=json.loads((root / 'devices' / 'paired.json').read_text(encoding='utf-8'))
-paired_device=next((value for value in paired.values() if isinstance(value, dict) and str(value.get('deviceId') or '').strip() == device_id), None)
-if paired_device is None:
-    raise SystemExit('approved device is missing from paired state')
-tokens=paired_device.get('tokens') if isinstance(paired_device.get('tokens'), dict) else {}
+if norm(identity.get('deviceId')) != device_id:
+    raise SystemExit('request does not match the persisted CLI identity')
+print(json.dumps({
+    'requestId': want,
+    'deviceId': device_id,
+    'publicKey': public_key,
+    'clientId': norm(request.get('clientId')),
+    'clientMode': norm(request.get('clientMode')),
+    'expectedScopes': sorted(expected),
+}, sort_keys=True))
+PY
+  then
+    rm -f "$snapshot"
+    return 1
+  fi
+  set +e
+  approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
+  approve_rc=$?
+  set -e
+  approve_log="/tmp/issue4462-approve-$request_id.log"
+  printf '%s\n' "$approve_output" >"$approve_log"
+  python3 - "$snapshot" "$approve_rc" "$approve_log" <<'PY'
+import json, os, sys
+from pathlib import Path
+
+snapshot=json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+approve_rc=int(sys.argv[2])
+approve_log=Path(sys.argv[3])
+root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
+allowed={'operator.pairing','operator.read','operator.write'}
+
+def norm(value): return str(value or '').strip()
+def fail(message):
+    if approve_log.exists(): print(approve_log.read_text(encoding='utf-8'), file=sys.stderr)
+    raise SystemExit(f'{message} (approve rc={approve_rc})')
+def load(path):
+    try: value=json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError: return {}
+    return value if isinstance(value, dict) else {}
+def normalize(values):
+    result={norm(value) for value in values if norm(value)}
+    if 'operator.write' in result: result.add('operator.read')
+    return result
+def canonical_scopes(value, keys):
+    views=[]
+    for key in keys:
+        if key not in value: continue
+        if not isinstance(value[key], list): fail(f'{key} is not a scope list')
+        views.append(normalize(value[key]))
+    if not views or any(not view or not view.issubset(allowed) for view in views): fail('unsafe scope representation')
+    if any(view != views[0] for view in views[1:]): fail('divergent scope representations')
+    return views[0]
+def roles(value):
+    result={norm(role) for role in (value.get('roles') or []) if norm(role)}
+    if norm(value.get('role')): result.add(norm(value.get('role')))
+    return result
+
+device_id=snapshot['deviceId']
+pending=load(root / 'devices' / 'pending.json')
+if any(isinstance(item, dict) and norm(item.get('deviceId')) == device_id for item in pending.values()):
+    fail('pairing request did not converge')
+paired=load(root / 'devices' / 'paired.json')
+device=next((value for value in paired.values() if isinstance(value, dict) and norm(value.get('deviceId')) == device_id), None)
+if device is None or norm(device.get('publicKey')) != snapshot['publicKey']:
+    fail('approval did not produce the exact requested device')
+if roles(device) != {'operator'}:
+    fail('approved device has a non-operator role')
+is_cli=norm(device.get('clientMode')).lower() == 'cli' or 'cli' in norm(device.get('clientId')).lower()
+if not is_cli: fail('approved device is not a CLI client')
+expected=set(snapshot['expectedScopes'])
+if canonical_scopes(device, ('scopes','approvedScopes')) != expected:
+    fail('approved device scopes do not match the reviewed request')
+tokens=device.get('tokens') if isinstance(device.get('tokens'), dict) else {}
 operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
-if not isinstance(operator.get('token'), str) or not operator.get('token'):
-    raise SystemExit('approved device has no operator token')
+if norm(operator.get('role')) != 'operator' or canonical_scopes(operator, ('scopes',)) != expected:
+    fail('approved device token scopes do not match the reviewed request')
+token=norm(operator.get('token'))
+if not token or token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN')):
+    fail('approval did not produce a distinct real device token')
+identity=load(root / 'identity' / 'device.json')
+if norm(identity.get('deviceId')) != device_id:
+    fail('approved device does not match the persisted CLI identity')
 auth_path=root / 'identity' / 'device-auth.json'
-try:
-    auth=json.loads(auth_path.read_text(encoding='utf-8'))
-except FileNotFoundError:
-    auth={}
-if not isinstance(auth, dict) or auth.get('deviceId') != device_id:
-    auth={'version': 1, 'deviceId': device_id, 'tokens': {}}
-auth_tokens=auth.get('tokens') if isinstance(auth.get('tokens'), dict) else {}
-auth_tokens['operator']={
-    'token': operator['token'],
-    'role': 'operator',
-    'scopes': operator.get('scopes') or [],
-    'updatedAtMs': operator.get('updatedAtMs') or operator.get('rotatedAtMs') or operator.get('createdAtMs'),
-}
-auth['version']=1
-auth['deviceId']=device_id
-auth['tokens']=auth_tokens
 auth_path.parent.mkdir(parents=True, exist_ok=True)
 tmp=auth_path.with_name('.device-auth.json.tmp')
+auth={'version': 1, 'deviceId': device_id, 'tokens': {'operator': {
+    'token': token,
+    'role': 'operator',
+    'scopes': sorted(expected),
+    'updatedAtMs': operator.get('updatedAtMs') or operator.get('rotatedAtMs') or operator.get('createdAtMs'),
+}}}
 tmp.write_text(json.dumps(auth, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 os.chmod(tmp, 0o600)
 os.replace(tmp, auth_path)
-print(json.dumps({'deviceId': device_id, 'requestId': want}, sort_keys=True))
+print(device_id)
 PY
 }
 
@@ -358,10 +461,12 @@ printf '%s\n' "$initial_list_rc" >/tmp/issue4462-devices-list.rc
 state="$(state_json)"
 initial_request_id="$(printf '%s' "$state" | select_initial_pairing_request 2>/dev/null || true)"
 if [ -n "$initial_request_id" ]; then
-  echo "DIRECT_LOCAL_BOOTSTRAP_PENDING request=$initial_request_id rc=$initial_list_rc" >&2
-  exit 5
+  echo "ISSUE_4462_STAGE=approve-initial-pairing request=$initial_request_id"
+  paired_device_id="$(approve_request "$initial_request_id")"
+  state="$(state_json)"
+else
+  paired_device_id="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
 fi
-paired_device_id="$(printf '%s' "$state" | select_paired_cli_device 2>/dev/null || true)"
 if [ -z "$paired_device_id" ]; then
   echo "NO_INITIAL_PAIRED_CLI_DEVICE rc=$initial_list_rc" >&2
   exit 5
