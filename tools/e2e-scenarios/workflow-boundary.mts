@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -7470,6 +7471,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 ): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
+  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
