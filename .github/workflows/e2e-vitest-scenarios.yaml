@@ -794,6 +794,8 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gpu-e2e-vitest,') || contains(format(',{0},', inputs.scenarios), ',gpu-e2e,') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    # The 55 minute install command includes a cold 40 minute model pull;
+    # 35 minutes remain for runner setup, assertions, artifacts, and cleanup.
     timeout-minutes: 90
     env:
       FREE_STANDING_VITEST_JOB: "1"
@@ -5669,6 +5671,7 @@ jobs:
         run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
+        if: github.ref == 'refs/heads/main'
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: docker.io
@@ -5711,8 +5714,10 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          docker logout docker.io || true
-          rm -rf "${DOCKER_CONFIG}"
+          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install" ]]; then
+            docker logout docker.io || true
+            rm -rf -- "${DOCKER_CONFIG}"
+          fi
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the

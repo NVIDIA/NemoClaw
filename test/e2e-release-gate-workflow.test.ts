@@ -19,12 +19,14 @@ const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
 describe("release gate workflow resource contracts", () => {
   it("runs the strict hosted TUI correlation probe after the longest hosted jobs", () => {
     const job = nightlyWorkflow.jobs["openclaw-tui-chat-correlation-e2e"];
-
-    expect(job.needs).toEqual([
+    const dependencies = [
       "token-rotation-e2e",
       "channels-stop-start-openclaw-e2e",
       "channels-stop-start-hermes-e2e",
-    ]);
+    ];
+
+    expect(job.needs).toEqual(dependencies);
+    for (const dependency of dependencies) expect(nightlyWorkflow.jobs).toHaveProperty(dependency);
     expect(job.if).toContain("always()");
     expect(job.if).toContain(",openclaw-tui-chat-correlation-e2e,");
   });
@@ -57,6 +59,7 @@ describe("release gate workflow resource contracts", () => {
       'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"',
     );
     expect(auth?.uses).toBe("docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee");
+    expect(auth?.if).toBe("github.ref == 'refs/heads/main'");
     expect(auth?.with).toMatchObject({
       registry: "docker.io",
       username: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -71,7 +74,10 @@ describe("release gate workflow resource contracts", () => {
       stepIndex("Run Spark install live test"),
     );
     expect(cleanup?.if).toBe("always()");
+    expect(cleanup?.run).toContain(
+      '"${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install"',
+    );
     expect(cleanup?.run).toContain("docker logout docker.io || true");
-    expect(cleanup?.run).toContain('rm -rf "${DOCKER_CONFIG}"');
+    expect(cleanup?.run).toContain('rm -rf -- "${DOCKER_CONFIG}"');
   });
 });

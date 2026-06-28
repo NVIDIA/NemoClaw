@@ -2250,6 +2250,8 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',gpu-e2e,'))
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    # A cold runner may spend up to 40 minutes pulling the 35B model;
+    # 15 minutes remain for install/assertions and 5 minutes for cleanup.
     timeout-minutes: 60
     env:
       NEMOCLAW_NON_INTERACTIVE: "1"
