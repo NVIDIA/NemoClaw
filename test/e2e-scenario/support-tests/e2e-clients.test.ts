@@ -6,17 +6,17 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-
-import { assertExitZero, type CommandRunner } from "../fixtures/clients/index.ts";
 import {
+  assertExitZero,
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   ProviderClient,
   SandboxClient,
   StateClient,
-  trustedSandboxShellScript,
-  trustedProviderEndpoint,
   type TrustedSandboxShellScript,
+  trustedProviderEndpoint,
+  trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -30,12 +30,21 @@ interface RunnerCall {
   options?: ShellProbeRunOptions;
 }
 
+type FakeRunnerResponse = Partial<
+  Pick<ShellProbeResult, "exitCode" | "signal" | "stderr" | "stdout">
+>;
+
 class FakeRunner implements CommandRunner {
   readonly calls: RunnerCall[] = [];
+  readonly responses: FakeRunnerResponse[] = [];
   stdout = "";
   stderr = "";
   exitCode: number | null = 0;
   signal: NodeJS.Signals | null = null;
+
+  enqueue(response: FakeRunnerResponse): void {
+    this.responses.push(response);
+  }
 
   async run(
     command: TrustedShellCommand,
@@ -46,13 +55,14 @@ class FakeRunner implements CommandRunner {
       args: [...command.args],
       options,
     });
+    const response = this.responses.shift();
     return {
       command: [command.command, ...command.args],
-      exitCode: this.exitCode,
-      signal: this.signal,
+      exitCode: response?.exitCode === undefined ? this.exitCode : response.exitCode,
+      signal: response?.signal === undefined ? this.signal : response.signal,
       timedOut: false,
-      stdout: this.stdout,
-      stderr: this.stderr,
+      stdout: response?.stdout ?? this.stdout,
+      stderr: response?.stderr ?? this.stderr,
       artifacts: {
         stdout: "/tmp/stdout.txt",
         stderr: "/tmp/stderr.txt",
@@ -98,6 +108,98 @@ describe("E2E fixture clients", () => {
       { command: "nemoclaw", args: ["assistant", "status"] },
       { command: "nemoclaw", args: ["assistant", "destroy", "--yes"] },
     ]);
+  });
+
+  it.each([
+    "Error: sandbox assistant not found",
+    "no such sandbox: assistant",
+  ])("host client accepts canonical already-absent cleanup output: %s", async (stderr) => {
+    const runner = new FakeRunner();
+    runner.exitCode = 1;
+    runner.stderr = stderr;
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupSandbox("assistant")).resolves.toBeUndefined();
+  });
+
+  it("host client surfaces unexpected sandbox cleanup failures", async () => {
+    const runner = new FakeRunner();
+    runner.exitCode = 1;
+    runner.stderr = "permission denied";
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupSandbox("assistant")).rejects.toThrow(
+      "cleanup destroy sandbox assistant failed: permission denied",
+    );
+  });
+
+  it("host client removes a current OpenShell gateway registration", async () => {
+    const runner = new FakeRunner();
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupGatewayRegistration("nemoclaw");
+
+    expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+  });
+
+  it("host client falls back to the legacy gateway destroy verb", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
+    runner.enqueue({ exitCode: 0 });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupGatewayRegistration("nemoclaw");
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["gateway", "remove", "nemoclaw"],
+      ["gateway", "destroy", "-g", "nemoclaw"],
+    ]);
+  });
+
+  it("host client accepts an already-absent gateway without a legacy fallback", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "No gateway metadata found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupGatewayRegistration("nemoclaw");
+
+    expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+  });
+
+  it("host client accepts an already-absent legacy gateway registration", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
+    runner.enqueue({ exitCode: 1, stderr: "No gateway metadata found" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await host.cleanupGatewayRegistration("nemoclaw");
+
+    expect(runner.calls.map((call) => call.args)).toEqual([
+      ["gateway", "remove", "nemoclaw"],
+      ["gateway", "destroy", "-g", "nemoclaw"],
+    ]);
+  });
+
+  it("host client does not hide a current gateway remove failure behind the legacy verb", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupGatewayRegistration("nemoclaw")).rejects.toThrow(
+      "cleanup gateway registration nemoclaw failed: permission denied",
+    );
+    expect(runner.calls.map((call) => call.args)).toEqual([["gateway", "remove", "nemoclaw"]]);
+  });
+
+  it("host client surfaces an unexpected legacy gateway cleanup failure", async () => {
+    const runner = new FakeRunner();
+    runner.enqueue({ exitCode: 2, stderr: "unrecognized subcommand 'remove'" });
+    runner.enqueue({ exitCode: 1, stderr: "permission denied" });
+    const host = new HostCliClient(runner, { cliPath: "nemoclaw" });
+
+    await expect(host.cleanupGatewayRegistration("nemoclaw")).rejects.toThrow(
+      "cleanup gateway registration nemoclaw failed: permission denied",
+    );
   });
 
   it("host client propagates cwd, env, and timeout options", async () => {
