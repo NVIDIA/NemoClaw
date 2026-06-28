@@ -1138,7 +1138,7 @@ describe("service environment", () => {
       }
     });
 
-    it("regression #2109: proxy-env.sh includes NODE_OPTIONS --require when NODE_USE_ENV_PROXY=1", () => {
+    it("includes NODE_OPTIONS --require in proxy-env.sh when NODE_USE_ENV_PROXY=1 (#2109)", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-http-fix-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-http-fix-env-${process.pid}.sh`);
@@ -1182,7 +1182,7 @@ describe("service environment", () => {
       }
     });
 
-    it("regression #2109: proxy-env.sh does NOT include NODE_OPTIONS when NODE_USE_ENV_PROXY is unset", () => {
+    it("omits NODE_OPTIONS from proxy-env.sh when NODE_USE_ENV_PROXY is unset (#2109)", () => {
       const fakeDataDir = join(tmpdir(), `nemoclaw-http-noop-test-${process.pid}`);
       execFileSync("mkdir", ["-p", fakeDataDir]);
       const tmpFile = join(tmpdir(), `nemoclaw-http-noop-env-${process.pid}.sh`);

@@ -862,7 +862,7 @@ exit 1
   // (the installer's user-local location) but PATH from a non-interactive shell does
   // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
   // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
-  describe("issue 4224: spawnSync openshell ENOENT in non-interactive shells", () => {
+  describe("spawnSync openshell ENOENT in non-interactive shells (#4224)", () => {
     let tmpHome: string;
     let fakeOpenshell: string;
     let origHome: string | undefined;
@@ -1003,7 +1003,7 @@ exit 1
     });
   });
 
-  describe("issue 4586: preset apply must not overwrite a live policy that could not be read", () => {
+  describe("preset apply must not overwrite a live policy that could not be read (#4586)", () => {
     const registryModule = requireForTest(
       path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;
@@ -1104,7 +1104,7 @@ exit 1
     });
   });
 
-  describe("issue 4510: policy-add --from-file false success when the sandbox is absent from the registry", () => {
+  describe("policy-add --from-file false success when the sandbox is absent from the registry (#4510)", () => {
     const registryModule = requireForTest(
       path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
     ) as Record<string, any>;

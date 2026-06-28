@@ -121,7 +121,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
   return pythonPath;
 }
 
-describe("issue #5667: hosted inference default model namespace", () => {
+describe("hosted inference default model namespace (#5667)", () => {
   // Snapshot the whole environment and restore it wholesale so the teardown
   // stays linear (no per-key conditional): clear every key, then repopulate
   // from the snapshot. Keys added during a test are dropped; original values

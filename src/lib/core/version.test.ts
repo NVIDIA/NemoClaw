@@ -66,7 +66,7 @@ describe("lib/version", () => {
     rmSync(join(testDir, ".version"));
   });
 
-  it("regression #1239: returns .version even when package.json is stale", () => {
+  it("returns .version even when package.json is stale (#1239)", () => {
     // npm-published tarballs ship with a stale package.json version (0.1.0)
     // and a .version file stamped from the git tag at publish time. The
     // installed CLI must report the .version contents, not the package.json

@@ -229,7 +229,7 @@ describe("runner env merging", () => {
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
-  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
     // Regression for the macOS Privoxy scenario: validateOllamaModel calls
     // runCaptureEx with a curl probe against http://localhost:11434. Before
     // the fix, runCaptureEx merged raw process.env (including the user's

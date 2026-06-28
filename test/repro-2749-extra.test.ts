@@ -43,7 +43,7 @@ function listPolicyFiles(): string[] {
   return files;
 }
 
-describe("Issue #2749 — additional coverage on top of existing tls:terminate guard", () => {
+describe("additional coverage for the existing tls:terminate guard (#2749)", () => {
   it("PARSE SAFETY: every policy YAML input still parses after deletions", () => {
     for (const file of listPolicyFiles()) {
       const content = fs.readFileSync(file, "utf-8");

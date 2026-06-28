@@ -153,7 +153,7 @@ function callGetGatewayPresets(
   return JSON.parse(stdout.trim());
 }
 
-describe("issue #2010 — policy state inconsistency", () => {
+describe("policy state inconsistency (#2010)", () => {
   describe("getGatewayPresets — matching logic", () => {
     it("returns telegram when gateway has telegram policy loaded", () => {
       const result = callGetGatewayPresets(buildGatewayYaml(["telegram"]));

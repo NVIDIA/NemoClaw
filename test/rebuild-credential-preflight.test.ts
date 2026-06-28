@@ -359,7 +359,7 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
   }
 }
 
-describe("Issue #2273: atomic rebuild", () => {
+describe("atomic rebuild (#2273)", () => {
   describe("Layer 2: preflight credential check", () => {
     it("cancels interactive rebuild before credential preflight or backup on non-affirmative input", {
       timeout: 60_000,

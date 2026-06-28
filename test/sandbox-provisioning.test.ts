@@ -1338,7 +1338,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);

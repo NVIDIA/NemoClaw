@@ -3125,7 +3125,7 @@ exit 0`,
     return { result, args };
   }
 
-  it("#2670: ACCEPT_THIRD_PARTY_SOFTWARE=1 alone clears the notice in non-TTY mode", () => {
+  it("clears the notice in non-TTY mode with ACCEPT_THIRD_PARTY_SOFTWARE=1 alone (#2670)", () => {
     const { result, args } = callShowUsageNotice({
       // Simulates curl|bash mode: stdin is not a TTY, NON_INTERACTIVE is unset,
       // and only --yes-i-accept-third-party-software was passed.
@@ -3160,7 +3160,7 @@ exit 0`,
     expect(output).not.toMatch(/\/dev\/tty/);
   });
 
-  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+  it("includes a working curl|bash example users can copy-paste in the error message (#3058)", () => {
     // The reporter on #3058 hit this error with `curl ... | bash` on a
     // non-TTY box and was left guessing how to combine the env var with
     // the documented one-liner. The fix surfaces the exact invocations
@@ -3772,7 +3772,7 @@ sys.exit(exit_code)
     return runInstallerWithTty(answer, "tty");
   }
 
-  it("#2671: headless curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+  it("exits 1 before phase 1 for headless curl|bash with no flags and installs nothing (#2671)", () => {
     const { result, phases } = runInstaller({});
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;

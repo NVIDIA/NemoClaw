@@ -356,13 +356,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 
-  it("#3256: emits gateway.port from a non-default CHAT_UI_URL port", () => {
+  it("emits gateway.port from a non-default CHAT_UI_URL port (#3256)", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18790" });
     expect(config.gateway.port).toBe(18790);
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18790"]);
   });
 
-  it("#3256: lets NEMOCLAW_DASHBOARD_PORT drive gateway.port when set", () => {
+  it("lets NEMOCLAW_DASHBOARD_PORT drive gateway.port when set (#3256)", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "",
       NEMOCLAW_DASHBOARD_PORT: "18790",
@@ -616,7 +616,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
-  it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
+  it("routes Discord gateway traffic through OpenClaw's managed proxy (#3894)", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -1818,13 +1818,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins.entries.xai.enabled).toBe(false);
   });
 
-  it("#4246: enables the discord plugin entry when Discord channel is configured", () => {
+  it("enables the discord plugin entry when Discord is configured (#4246)", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.plugins.entries.discord).toEqual({ enabled: true });
   });
 
-  it("#4246: omits the discord plugin entry when Discord channel is not configured", () => {
+  it("omits the discord plugin entry when Discord is not configured (#4246)", () => {
     const config = runConfigScript();
     expect(config.plugins.entries.discord).toBeUndefined();
   });

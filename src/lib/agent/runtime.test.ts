@@ -215,7 +215,7 @@ describe("buildRecoveryScript", () => {
   // swallowed sourcing errors via `2>/dev/null`, leaving respawned gateways
   // guard-less and crash-looping on the next library error from ciao,
   // model-pricing, or anything else hitting a sandboxed syscall.
-  describe("#2478 hardened library-guard preload chain", () => {
+  describe("hardened library-guard preload chain (#2478)", () => {
     it("sources the generated recovery env after validating the gateway env file", () => {
       const script = buildRecoveryScript(minimalAgent, 19000);
       expect(script).toContain("_nemoclaw_validate_recovery_proxy_env /tmp/nemoclaw-proxy-env.sh");
