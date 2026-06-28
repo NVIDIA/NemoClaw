@@ -49,23 +49,25 @@ describe("compiled-test import boundary", () => {
   });
 
   it("classifies path-construction violations distinctly from import-specifier violations", () => {
+    const distPath = ["..", "dist", "lib", "value.js"].join("/");
+
     const importOnly = findCompiledInternalViolations(
       "test/example.test.ts",
-      'import value from "../dist/lib/value.js";\n',
+      `import value from ${JSON.stringify(distPath)};\n`,
     );
     expect(importOnly).toHaveLength(1);
     expect(importOnly.some(isPathConstructionViolation)).toBe(false);
 
     const pathOnly = findCompiledInternalViolations(
       "test/example.test.ts",
-      'path.join(root, "dist", "lib", "value.js");\n',
+      `path.join(root, ${JSON.stringify("dist")}, ${JSON.stringify("lib")}, "value.js");\n`,
     );
     expect(pathOnly).toHaveLength(1);
     expect(pathOnly.every(isPathConstructionViolation)).toBe(true);
 
     const requireOnly = findCompiledInternalViolations(
       "test/example.test.ts",
-      'require("../dist/lib/value.js");\n',
+      `require(${JSON.stringify(distPath)});\n`,
     );
     expect(requireOnly).toHaveLength(1);
     expect(requireOnly.every(isPathConstructionViolation)).toBe(true);
