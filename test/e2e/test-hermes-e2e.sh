@@ -610,21 +610,34 @@ section "Phase 5: Live inference"
 
 # ── Test 5a: Direct hosted inference endpoint ──
 info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
-api_response=$(curl -s --max-time 30 \
-  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
-  -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' "$HOSTED_INFERENCE_MODEL")" 2>/dev/null) || true
-
-if [ -n "$api_response" ]; then
-  api_content=$(echo "$api_response" | parse_chat_content 2>/dev/null) || true
-  if grep -qi "PONG" <<<"$api_content"; then
-    pass "[LIVE] Direct API: model responded with PONG"
-  else
-    fail "[LIVE] Direct API: expected PONG, got: ${api_content:0:200}"
+api_response=""
+api_content=""
+for attempt in 1 2 3; do
+  max_tokens=1024
+  if [ "$attempt" -eq 1 ]; then
+    max_tokens=256
   fi
+  api_response="$(curl -sS --max-time 90 \
+    -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+    -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":%s}' "$HOSTED_INFERENCE_MODEL" "$max_tokens")" 2>/dev/null || true)"
+  api_content="$(printf '%s' "$api_response" | parse_chat_content 2>/dev/null || true)"
+  if grep -qi "PONG" <<<"$api_content"; then
+    break
+  fi
+  if [ "$attempt" -lt 3 ]; then
+    info "[LIVE] Direct API attempt ${attempt}/3 did not return PONG; retrying..."
+    sleep $((5 * attempt))
+  fi
+done
+
+if grep -qi "PONG" <<<"$api_content"; then
+  pass "[LIVE] Direct API: model responded with PONG"
+elif [ -n "$api_response" ]; then
+  fail "[LIVE] Direct API: expected PONG after 3 attempts, got: ${api_content:0:200}"
 else
-  fail "[LIVE] Direct API: empty response from curl"
+  fail "[LIVE] Direct API: empty response from curl after 3 attempts"
 fi
 
 # ── Test 5b: Inference through the sandbox (THE definitive test) ──

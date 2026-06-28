@@ -109,6 +109,8 @@ ${bodyForCall}
     expect(script).toContain("https://inference.local/v1/chat/completions");
     expect(script).toContain("INITIAL_MAX_TOKENS=256");
     expect(script).toContain("RETRY_MAX_TOKENS=1024");
+    expect(script).toContain("SMOKE_ATTEMPTS=3");
+    expect(script).toContain("SMOKE_RETRY_DELAY_SECONDS=5");
     expect(script).toContain("MODEL='provider/model'\\'''");
   });
 
@@ -131,8 +133,10 @@ fi
 `,
     );
     const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 2,
       configPath,
       initialMaxTokens: 32,
+      retryDelaySeconds: 0,
       retryMaxTokens: 512,
     });
 
@@ -143,6 +147,57 @@ fi
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
     expect(result.stderr).toContain("exhausted max_tokens=32 in reasoning_content");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("retries a transient non-JSON gateway response", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-transient-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '<html><head><title>504 Gateway Time-out</title></head></html>'
+else
+  printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+fi
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stderr).toContain("inference.local returned non-JSON response");
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("fails after the bounded transient retry budget", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-exhausted-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      "printf '%s\\n' '<html><head><title>504 Gateway Time-out</title></head></html>'",
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(result.stderr).toContain("smoke attempt 2/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("3");
   });
 
   it("reports a model-output budget problem when the retry also has no assistant content", () => {
@@ -158,8 +213,10 @@ JSON
 `,
     );
     const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 2,
       configPath,
       initialMaxTokens: 32,
+      retryDelaySeconds: 0,
       retryMaxTokens: 64,
     });
 
