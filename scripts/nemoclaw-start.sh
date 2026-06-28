@@ -1938,7 +1938,7 @@ PYMESSAGINGPRELOADS
         return 1
       fi
       [ -n "$_install_message" ] && printf '%s\n' "$_install_message" >&2
-      emit_sandbox_sourced_file "$_target" <"$_source"
+      emit_sandbox_sourced_file "$_target" <"$_source" || return 1
       case ",$_inject_into," in
         *,boot,*)
           append_node_require_once "$_target"
@@ -1954,9 +1954,10 @@ PYMESSAGINGPRELOADS
   fi
 
   if [ "${#_connect_preloads[@]}" -gt 0 ]; then
-    printf '%s\n' "${_connect_preloads[@]}" | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE"
+    printf '%s\n' "${_connect_preloads[@]}" \
+      | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE" || return 1
   else
-    : | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE"
+    : | emit_sandbox_sourced_file "$_MESSAGING_CONNECT_PRELOADS_FILE" || return 1
   fi
 }
 
