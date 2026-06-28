@@ -18,9 +18,13 @@ describe("onboard --agents", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-"));
     const manifestPath = path.join(tmpDir, "agents.yaml");
     fs.writeFileSync(manifestPath, "agents: []\n");
+    const relativeManifestPath = path.relative(process.cwd(), manifestPath);
 
-    const result = resolveOnboardOptions({ agents: manifestPath }, { env: {}, exit: exitWithCode });
-    expect(result.agentsManifest).toBe(manifestPath);
+    const result = resolveOnboardOptions(
+      { agents: relativeManifestPath },
+      { env: {}, exit: exitWithCode },
+    );
+    expect(result.agentsManifest).toBe(path.resolve(relativeManifestPath));
   });
 
   it("rejects a missing manifest", () => {

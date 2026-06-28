@@ -102,8 +102,9 @@ describe("onboard command options", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-"));
     const dockerfilePath = path.join(tmpDir, "Custom.Dockerfile");
     fs.writeFileSync(dockerfilePath, "FROM scratch\n");
+    const relativeDockerfilePath = path.relative(process.cwd(), dockerfilePath);
 
-    expect(resolve({ from: dockerfilePath }).fromDockerfile).toBe(dockerfilePath);
+    expect(resolve({ from: relativeDockerfilePath }).fromDockerfile).toBe(relativeDockerfilePath);
   });
 
   it("rejects missing and non-file Dockerfile paths before onboarding", () => {
