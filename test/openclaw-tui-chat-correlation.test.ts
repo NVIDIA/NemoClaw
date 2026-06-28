@@ -255,6 +255,10 @@ function buildFailureSummary(
   );
 }
 
+// Frozen historical #2603 trace: it intentionally retains the original
+// tool-triggering wait prompt so the classifier keeps covering the observed
+// broken gateway behavior. The live repro below uses deterministic no-tools
+// prompts instead.
 const capturedIssue2603Trace: Issue2603Trace = {
   sentRuns: [
     {
@@ -475,6 +479,10 @@ ws.on("open", async () => {
     await request("chat.history", { sessionKey, limit: 20 });
 
     const sentRuns = [];
+    // This guard measures websocket run correlation, not tool execution. Keep
+    // the prompts tool-free so a model-selected tool cannot replace the reply;
+    // the strict empty-final, missing-reply, and history assertions below still
+    // fail if the instruction is ignored and the expected reply is lost.
     const messages = [
       ["A2603", "A2603-REPLY", "A2603: First task. Reply exactly A2603-REPLY and nothing else. Do not use tools."],
       ["B2603", "B2603-REPLY", "B2603: Second task. Reply exactly B2603-REPLY and nothing else. Do not use tools."],
