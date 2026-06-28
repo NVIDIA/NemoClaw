@@ -24,9 +24,6 @@ const EXCLUDED_PREFIXES = [
   "test/e2e-scenario/live/",
   // This is the sole non-live lane allowed to import compiled package artifacts.
   "test/package-contract/",
-  // Spawn-only fixture: constructs dist/ string paths to inject into a child
-  // node process via require.cache, never imports them in this test process.
-  "src/lib/onboard/inference-selection-validation.test.ts",
 ];
 
 function repoPath(absolutePath: string): string {
