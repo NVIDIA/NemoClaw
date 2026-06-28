@@ -248,8 +248,10 @@ try {
     expect(parsed.outcome).toBe("success");
   });
 
-  itPowerShell("stops when WSL repair succeeds without reboot but status remains unavailable", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "stops when WSL repair succeeds without reboot but status remains unavailable",
+    () => {
+      const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -298,23 +300,26 @@ try {
 } | ConvertTo-Json -Depth 5 -Compress
 `);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("Automatic WSL repair completed, but WSL still could not be verified.");
-    expect(result.stdout).toContain("Still unavailable after repair.");
-    expect(result.stdout).toContain(
-      "Offline install docs: https://learn.microsoft.com/en-us/windows/wsl/install#offline-install",
-    );
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.nativeCalls).toEqual([
-      ["wsl.exe", "--status"],
-      ["wsl.exe", "--install --no-distribution"],
-      ["wsl.exe", "--status"],
-    ]);
-    expect(parsed.statusCalls).toBe(2);
-    expect(parsed.outcome).toContain("wsl --install --no-distribution completed");
-    expect(parsed.outcome).toContain("wsl --status");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain(
+        "Automatic WSL repair completed, but WSL still could not be verified.",
+      );
+      expect(result.stdout).toContain("Still unavailable after repair.");
+      expect(result.stdout).toContain(
+        "Offline install docs: https://learn.microsoft.com/en-us/windows/wsl/install#offline-install",
+      );
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.nativeCalls).toEqual([
+        ["wsl.exe", "--status"],
+        ["wsl.exe", "--install --no-distribution"],
+        ["wsl.exe", "--status"],
+      ]);
+      expect(parsed.statusCalls).toBe(2);
+      expect(parsed.outcome).toContain("wsl --install --no-distribution completed");
+      expect(parsed.outcome).toContain("wsl --status");
+    },
+  );
 
   itPowerShell("prints repair instructions when automatic WSL repair fails", () => {
     const result = runPowerShellHarness(`
@@ -365,9 +370,15 @@ try {
     expect(result.stdout).toContain("Attempting WSL repair: wsl --install --no-distribution");
     expect(result.stdout).toContain("Automatic WSL repair did not complete.");
     const normalizedStdout = result.stdout.replace(/\r\n/g, "\n");
-    expect(normalizedStdout).toContain("Forbidden (403).\n\nAutomatic WSL repair did not complete.");
-    expect(normalizedStdout).not.toMatch(/Forbidden \(403\)\.\n(?:[ \t]*\n){2,}Automatic WSL repair/);
-    expect(result.stdout).toContain("The command 'wsl --install --no-distribution' exited with code 1.");
+    expect(normalizedStdout).toContain(
+      "Forbidden (403).\n\nAutomatic WSL repair did not complete.",
+    );
+    expect(normalizedStdout).not.toMatch(
+      /Forbidden \(403\)\.\n(?:[ \t]*\n){2,}Automatic WSL repair/,
+    );
+    expect(result.stdout).toContain(
+      "The command 'wsl --install --no-distribution' exited with code 1.",
+    );
     expect(result.stdout).toContain("The online WSL installer returned Forbidden (403)");
     expect(result.stdout).toContain(
       "Offline install docs: https://learn.microsoft.com/en-us/windows/wsl/install#offline-install",
@@ -542,10 +553,8 @@ Ensure-UbuntuWsl
     },
   );
 
-  itPowerShell(
-    "requests reboot when Ubuntu install exits before distro registration",
-    () => {
-      const result = runPowerShellHarness(`
+  itPowerShell("requests reboot when Ubuntu install exits before distro registration", () => {
+    const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -600,29 +609,30 @@ try {
 } | ConvertTo-Json -Compress
 `);
 
-      expect(result.status).toBe(0);
-      expect(result.stderr).toBe("");
-      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-      expect(result.stdout).toContain("WSL install output:");
-      expect(result.stdout).toContain(
-        "The requested operation is successful. Changes will not be effective until the system is rebooted.",
-      );
-      expect(result.stdout).toContain("Ubuntu installer command exited. This window will close automatically.");
-      expect(result.stdout).toContain("Windows PowerShell transcript");
-      expect(result.stdout).toContain("Username:");
-      expect(result.stdout).toContain("Machine:");
-      expect(result.stdout).toContain("Host Application:");
-      expect(result.stdout).toContain("PSVersion:");
-      expect(parsed.statusMessages).toContain(
-        "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
-      );
-      expect(parsed.statusMessages).toContain(
-        "WARN:A reboot is required before WSL can finish registering the distro.",
-      );
-      expect(parsed.requestReboot).toBe(true);
-      expect(parsed.outcome).toContain("REBOOT_REQUESTED");
-    },
-  );
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+    expect(result.stdout).toContain("WSL install output:");
+    expect(result.stdout).toContain(
+      "The requested operation is successful. Changes will not be effective until the system is rebooted.",
+    );
+    expect(result.stdout).toContain(
+      "Ubuntu installer command exited. This window will close automatically.",
+    );
+    expect(result.stdout).toContain("Windows PowerShell transcript");
+    expect(result.stdout).toContain("Username:");
+    expect(result.stdout).toContain("Machine:");
+    expect(result.stdout).toContain("Host Application:");
+    expect(result.stdout).toContain("PSVersion:");
+    expect(parsed.statusMessages).toContain(
+      "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
+    );
+    expect(parsed.statusMessages).toContain(
+      "WARN:A reboot is required before WSL can finish registering the distro.",
+    );
+    expect(parsed.requestReboot).toBe(true);
+    expect(parsed.outcome).toContain("REBOOT_REQUESTED");
+  });
 
   itPowerShell("reports failed Ubuntu install output in the main window", () => {
     const result = runPowerShellHarness(`
