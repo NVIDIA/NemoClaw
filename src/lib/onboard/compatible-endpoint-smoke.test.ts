@@ -238,7 +238,7 @@ fi
       tmpDir,
       String.raw`
 printf '%s\n' '__HTTP_STATUS__=429'
-printf '%s\n' '{"error":{"message":"rate limited"}}'
+printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
 `,
     );
     const script = buildCompatibleEndpointSandboxSmokeScript(model, {
@@ -250,7 +250,8 @@ printf '%s\n' '{"error":{"message":"rate limited"}}'
     const result = runSmokeScript(script, tmpDir, binDir);
 
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain("did not contain non-empty choices[0].message.content");
+    expect(result.stdout).not.toContain("INFERENCE_SMOKE_OK");
+    expect(result.stderr).toContain("terminal HTTP 429");
     expect(result.stderr).not.toContain("retrying in");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });

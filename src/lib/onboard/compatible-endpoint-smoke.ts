@@ -8,6 +8,7 @@ import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
 import {
   buildCompatibleEndpointSmokeRequestScript,
   RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
+  SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION,
   totalRetryBackoffSeconds,
 } from "./smoke-retry-classifier";
 
@@ -302,6 +303,7 @@ with open(status_path, "r", encoding="utf-8") as f:
 if len(http_status) != 3 or not http_status.isdigit():
     print("inference.local returned invalid curl HTTP status metadata", file=sys.stderr)
     sys.exit(1)
+http_status_code = int(http_status)
 response_bytes = os.path.getsize(path)
 try:
     with open(path, "r", encoding="utf-8") as f:
@@ -324,7 +326,14 @@ if retryable_http_error:
     )
     sys.exit(3 if can_retry else 1)
 
-# HTTP 429 stays terminal because this probe does not retain Retry-After metadata.
+if not (${SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION}):
+    print(
+        "inference.local returned terminal HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 choices = data.get("choices")
 choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
 message = choice.get("message") if isinstance(choice.get("message"), dict) else {}

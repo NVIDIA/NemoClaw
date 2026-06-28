@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCurlExit,
   isRetryableHttpStatus,
+  isSuccessfulHttpStatus,
   totalRetryBackoffSeconds,
 } from "./smoke-retry-classifier";
 
@@ -22,6 +23,13 @@ describe("compatible endpoint smoke retry classifier", () => {
     expect(isRetryableHttpStatus(599)).toBe(true);
     expect(isRetryableHttpStatus(429)).toBe(false);
     expect(isRetryableHttpStatus(600)).toBe(false);
+  });
+
+  it("accepts only HTTP 2xx statuses", () => {
+    expect(isSuccessfulHttpStatus(200)).toBe(true);
+    expect(isSuccessfulHttpStatus(299)).toBe(true);
+    expect(isSuccessfulHttpStatus(199)).toBe(false);
+    expect(isSuccessfulHttpStatus(300)).toBe(false);
   });
 
   it("computes triangular retry backoff", () => {

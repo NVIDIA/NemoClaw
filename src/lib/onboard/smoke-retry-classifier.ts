@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const TRANSIENT_CURL_EXIT_CODES = [6, 7, 28, 52, 55, 56] as const;
+const SUCCESS_HTTP_STATUS_MIN = 200;
+const SUCCESS_HTTP_STATUS_MAX = 299;
 const RETRYABLE_HTTP_STATUS_MIN = 500;
 const RETRYABLE_HTTP_STATUS_MAX = 599;
 
@@ -15,11 +17,16 @@ export function isRetryableHttpStatus(status: number): boolean {
   return status >= RETRYABLE_HTTP_STATUS_MIN && status <= RETRYABLE_HTTP_STATUS_MAX;
 }
 
+export function isSuccessfulHttpStatus(status: number): boolean {
+  return status >= SUCCESS_HTTP_STATUS_MIN && status <= SUCCESS_HTTP_STATUS_MAX;
+}
+
 export function totalRetryBackoffSeconds(attempts: number, delaySeconds: number): number {
   return (delaySeconds * attempts * (attempts - 1)) / 2;
 }
 
-export const RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION = `http_status.isdigit() and ${RETRYABLE_HTTP_STATUS_MIN} <= int(http_status) <= ${RETRYABLE_HTTP_STATUS_MAX}`;
+export const RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION = `${RETRYABLE_HTTP_STATUS_MIN} <= http_status_code <= ${RETRYABLE_HTTP_STATUS_MAX}`;
+export const SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION = `${SUCCESS_HTTP_STATUS_MIN} <= http_status_code <= ${SUCCESS_HTTP_STATUS_MAX}`;
 
 export function buildCompatibleEndpointSmokeRequestScript(): string {
   const transientExitPattern = TRANSIENT_CURL_EXIT_CODES.join(" | ");
