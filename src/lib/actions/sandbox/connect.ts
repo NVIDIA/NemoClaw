@@ -706,12 +706,12 @@ function ensureSandboxInferenceRoute(
     );
     const plan = planInferenceRouteReconcile(live, { provider, model });
     if (plan.kind !== "aligned") {
+      const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
       if (plan.kind === "diverged") {
         // Shared gateway: re-point loudly (even when quiet) — silent revert was
         // #3726. Values sanitized: registry/gateway strings are untrusted.
         const liveProvider = sanitizeRouteValueForDisplay(plan.live.provider);
         const liveModel = sanitizeRouteValueForDisplay(plan.live.model);
-        const recordedRoute = `${sanitizeRouteValueForDisplay(provider)}/${sanitizeRouteValueForDisplay(model)}`;
         console.error(
           `  ${YW}Warning: gateway inference route (${liveProvider}/${liveModel}) ` +
             `differs from the recorded route for sandbox '${sandboxName}' (${recordedRoute}).${R}`,
@@ -725,9 +725,7 @@ function ensureSandboxInferenceRoute(
         );
       } else if (!quiet) {
         // plan.kind === "repair": empty gateway, genuine repair — quiet-aware.
-        console.log(
-          `  Setting inference route to ${provider}/${model} for sandbox '${sandboxName}'`,
-        );
+        console.log(`  Setting inference route to ${recordedRoute} for sandbox '${sandboxName}'`);
       }
       const swapResult = runOpenshell(buildInferenceSetArgs(provider, model), {
         ignoreError: true,
