@@ -10,8 +10,55 @@ import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-docker
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
-type LegacyDataFixture = false | "content" | "directory-symlink" | "entry-symlink";
-type OpenClawFixture = false | "directory" | "symlink";
+type LegacyDataFixture = "none" | "content" | "directory-symlink" | "entry-symlink";
+type OpenClawFixture = "none" | "directory" | "symlink";
+
+interface FixturePaths {
+  hermesDir: string;
+  legacyDataDir: string;
+  legacyTarget: string;
+  openclawDir: string;
+  openclawTarget: string;
+}
+
+const legacyDataSetups = {
+  none: () => undefined,
+  content: ({ hermesDir, legacyDataDir }: FixturePaths) => {
+    fs.mkdirSync(path.join(legacyDataDir, "sessions"), { recursive: true });
+    fs.writeFileSync(path.join(legacyDataDir, "sessions", "legacy.json"), "{}\n");
+    fs.writeFileSync(path.join(legacyDataDir, "legacy.txt"), "legacy\n");
+    fs.symlinkSync(path.join(legacyDataDir, "sessions"), path.join(hermesDir, "sessions"));
+    fs.symlinkSync(path.join(legacyDataDir, "legacy.txt"), path.join(hermesDir, "legacy.txt"));
+    fs.mkdirSync(path.join(hermesDir, "profiles"), { recursive: true });
+    fs.symlinkSync(
+      path.join(legacyDataDir, "sessions"),
+      path.join(hermesDir, "profiles", "legacy-sessions"),
+    );
+  },
+  "directory-symlink": ({ legacyDataDir, legacyTarget }: FixturePaths) => {
+    fs.mkdirSync(legacyTarget, { recursive: true });
+    fs.writeFileSync(path.join(legacyTarget, "sentinel"), "keep\n");
+    fs.symlinkSync(legacyTarget, legacyDataDir, "dir");
+  },
+  "entry-symlink": ({ legacyDataDir, legacyTarget }: FixturePaths) => {
+    fs.mkdirSync(legacyDataDir, { recursive: true });
+    fs.writeFileSync(legacyTarget, "keep\n");
+    fs.symlinkSync(legacyTarget, path.join(legacyDataDir, "linked-entry"));
+  },
+} satisfies Record<LegacyDataFixture, (paths: FixturePaths) => void>;
+
+const openclawSetups = {
+  none: () => undefined,
+  directory: ({ openclawDir }: FixturePaths) => {
+    fs.mkdirSync(openclawDir, { recursive: true });
+    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+  },
+  symlink: ({ openclawDir, openclawTarget }: FixturePaths) => {
+    fs.mkdirSync(openclawTarget, { recursive: true });
+    fs.writeFileSync(path.join(openclawTarget, "sentinel"), "keep\n");
+    fs.symlinkSync(openclawTarget, openclawDir, "dir");
+  },
+} satisfies Record<OpenClawFixture, (paths: FixturePaths) => void>;
 
 function readText(filePath: string): string {
   return fs.readFileSync(filePath, "utf-8");
@@ -19,8 +66,8 @@ function readText(filePath: string): string {
 
 function runFinalLayout({
   baseImage = "nemoclaw-hermes-base-local",
-  legacyData = false,
-  openclaw = false,
+  legacyData = "none",
+  openclaw = "none",
 }: {
   baseImage?: string;
   legacyData?: LegacyDataFixture;
@@ -39,35 +86,9 @@ function runFinalLayout({
   fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
   fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
 
-  if (legacyData === "content") {
-    fs.mkdirSync(path.join(legacyDataDir, "sessions"), { recursive: true });
-    fs.writeFileSync(path.join(legacyDataDir, "sessions", "legacy.json"), "{}\n");
-    fs.writeFileSync(path.join(legacyDataDir, "legacy.txt"), "legacy\n");
-    fs.symlinkSync(path.join(legacyDataDir, "sessions"), path.join(hermesDir, "sessions"));
-    fs.symlinkSync(path.join(legacyDataDir, "legacy.txt"), path.join(hermesDir, "legacy.txt"));
-    fs.mkdirSync(path.join(hermesDir, "profiles"), { recursive: true });
-    fs.symlinkSync(
-      path.join(legacyDataDir, "sessions"),
-      path.join(hermesDir, "profiles", "legacy-sessions"),
-    );
-  } else if (legacyData === "directory-symlink") {
-    fs.mkdirSync(legacyTarget, { recursive: true });
-    fs.writeFileSync(path.join(legacyTarget, "sentinel"), "keep\n");
-    fs.symlinkSync(legacyTarget, legacyDataDir, "dir");
-  } else if (legacyData === "entry-symlink") {
-    fs.mkdirSync(legacyDataDir, { recursive: true });
-    fs.writeFileSync(legacyTarget, "keep\n");
-    fs.symlinkSync(legacyTarget, path.join(legacyDataDir, "linked-entry"));
-  }
-
-  if (openclaw === "directory") {
-    fs.mkdirSync(openclawDir, { recursive: true });
-    fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
-  } else if (openclaw === "symlink") {
-    fs.mkdirSync(openclawTarget, { recursive: true });
-    fs.writeFileSync(path.join(openclawTarget, "sentinel"), "keep\n");
-    fs.symlinkSync(openclawTarget, openclawDir, "dir");
-  }
+  const fixturePaths = { hermesDir, legacyDataDir, legacyTarget, openclawDir, openclawTarget };
+  legacyDataSetups[legacyData](fixturePaths);
+  openclawSetups[openclaw](fixturePaths);
 
   const layoutCommand = dockerRunCommandBetween(
     dockerfile,
@@ -94,17 +115,22 @@ describe("Hermes final image layout", () => {
     }
   });
 
-  it.each([
-    "directory",
-    "symlink",
-  ] as const)("rejects retired OpenClaw state represented as a %s", (openclaw) => {
-    const run = runFinalLayout({ openclaw });
+  it("rejects retired OpenClaw state represented as a directory", () => {
+    const run = runFinalLayout({ openclaw: "directory" });
     try {
       expect(run.result.status).toBe(1);
       expect(run.result.stderr).toContain("contains retired OpenClaw state");
-      if (openclaw === "symlink") {
-        expect(readText(path.join(run.openclawTarget, "sentinel"))).toBe("keep\n");
-      }
+    } finally {
+      fs.rmSync(run.tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects retired OpenClaw state represented as a symlink without following it", () => {
+    const run = runFinalLayout({ openclaw: "symlink" });
+    try {
+      expect(run.result.status).toBe(1);
+      expect(run.result.stderr).toContain("contains retired OpenClaw state");
+      expect(readText(path.join(run.openclawTarget, "sentinel"))).toBe("keep\n");
     } finally {
       fs.rmSync(run.tmp, { recursive: true, force: true });
     }
