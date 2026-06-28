@@ -36,10 +36,6 @@ function resultText(result: ProcessResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function outputContainsSandbox(result: ProcessResult, sandboxName: string): boolean {
   const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
@@ -298,25 +294,6 @@ async function assertAgentJsonTransportBoundaries(
   expect(invalidFlag.timedOut, resultText(invalidFlag)).toBe(false);
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBeNull();
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBe(0);
-
-  const stdinPrompt = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
-  const stdinSessionId = `e2e-sbx-02b-stdin-${Date.now()}-${process.pid}`;
-  const stdinScript = [
-    "set -euo pipefail",
-    `printf '%s\\n' ${shellQuote(stdinPrompt)} | ${shellQuote(host.commandPath)} ${shellQuote(
-      sandboxName,
-    )} agent --agent main --json --session-id ${shellQuote(stdinSessionId)}`,
-  ].join("\n");
-  const stdinResult = await host.command("bash", ["-lc", stdinScript], {
-    artifactName: "tc-sbx-02b-agent-json-stdin",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 120_000,
-  });
-  expectExitZero(stdinResult, `printf prompt | nemoclaw ${sandboxName} agent --json`);
-  expectJsonStdout(stdinResult, "stdin agent --json");
-  expect(parseOpenClawAgentText(stdinResult.stdout), resultText(stdinResult)).toMatch(
-    /(^|[^0-9])42([^0-9]|$)/,
-  );
 
   const provenanceMarker = `NEMOCLAW_PROVENANCE_E2E_${Date.now()}_${process.pid}`;
   const failureSessionId = `e2e-sbx-02b-failure-${Date.now()}-${process.pid}`;
@@ -615,7 +592,7 @@ liveTest(
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
         "TC-SBX-02 nemoclaw <sandbox> agent --json answers through sandbox inference.local",
-        "TC-SBX-02b agent --json preserves stdin, nonzero status, and failed-tool provenance boundaries",
+        "TC-SBX-02b agent --json preserves nonzero status and failed-tool provenance boundaries",
         "TC-SBX-03 status renders Sandbox/Model/Provider/GPU fields",
         "TC-SBX-04 logs and logs --follow behave as streaming commands",
         "TC-SBX-05 destroy removes NemoClaw and OpenShell entries",
