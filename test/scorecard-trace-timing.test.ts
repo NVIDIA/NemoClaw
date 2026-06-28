@@ -113,7 +113,12 @@ function traceGithubFixture(options: {
     },
     paginate: async (endpoint: symbol, args: Record<string, any>) => {
       const handler = paginateHandlers.get(endpoint);
-      return (handler ?? (() => { throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`); }))(args);
+      return (
+        handler ??
+        (() => {
+          throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`);
+        })
+      )(args);
     },
   };
 
