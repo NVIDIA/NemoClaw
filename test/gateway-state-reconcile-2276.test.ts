@@ -534,7 +534,7 @@ describe("Scenario 8: gateway info fails — safe default, registry preserved", 
 
 // ─── Scenario 9 ─── openshell status empty / malformed ─────────────────────
 describe("Scenario 9: empty or malformed status — registry untouched", () => {
-  it("empty status + gateway info missing → registry preserved, no removal", {
+  it("preserves the registry without removal when status is empty and gateway info is missing", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({
@@ -557,7 +557,7 @@ describe("Scenario 9: empty or malformed status — registry untouched", () => {
     assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
   });
 
-  it("malformed status + malformed gateway info → registry preserved", {
+  it("preserves the registry when status and gateway info are malformed", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({

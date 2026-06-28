@@ -1267,7 +1267,7 @@ describe("onboard session", () => {
     expect(loaded.wechatConfig).toBeNull();
   });
 
-  it("createSession with messagingPlan override", () => {
+  it("creates a session with a messagingPlan override", () => {
     const plan = makeMessagingPlan("my-assistant", ["telegram", "slack"]);
     const created = session.createSession({ messagingPlan: plan });
     expect(created.messagingPlan).toEqual(plan);

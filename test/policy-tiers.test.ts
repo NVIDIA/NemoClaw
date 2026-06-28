@@ -71,7 +71,7 @@ describe("tiers", () => {
       expect(listTiers()).toHaveLength(3);
     });
 
-    it("tiers are ordered restricted → balanced → open", () => {
+    it("orders tiers as restricted, balanced, then open", () => {
       const names = listTiers().map((tier: Tier) => tier.name);
       expect(names).toEqual(["restricted", "balanced", "open"]);
     });
