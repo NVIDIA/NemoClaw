@@ -5672,6 +5672,8 @@ jobs:
 
       - name: Authenticate to Docker Hub
         if: github.ref == 'refs/heads/main'
+        # Authentication only accelerates pulls; anonymous pulls remain valid.
+        continue-on-error: true
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: docker.io

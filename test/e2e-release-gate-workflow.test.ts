@@ -17,7 +17,7 @@ const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
 );
 
 describe("release gate workflow resource contracts", () => {
-  it("runs the strict hosted TUI correlation probe after the longest hosted jobs", () => {
+  it("runs the strict hosted TUI correlation probe after peak hosted lifecycle jobs", () => {
     const job = nightlyWorkflow.jobs["openclaw-tui-chat-correlation-e2e"];
     const dependencies = [
       "token-rotation-e2e",
@@ -60,6 +60,7 @@ describe("release gate workflow resource contracts", () => {
     );
     expect(auth?.uses).toBe("docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee");
     expect(auth?.if).toBe("github.ref == 'refs/heads/main'");
+    expect(auth?.["continue-on-error"]).toBe(true);
     expect(auth?.with).toMatchObject({
       registry: "docker.io",
       username: "${{ secrets.DOCKERHUB_USERNAME }}",

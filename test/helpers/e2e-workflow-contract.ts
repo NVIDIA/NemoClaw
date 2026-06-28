@@ -25,6 +25,7 @@ export type WorkflowJob = {
 };
 
 export type WorkflowStep = {
+  "continue-on-error"?: boolean;
   id?: string;
   name?: string;
   if?: string;

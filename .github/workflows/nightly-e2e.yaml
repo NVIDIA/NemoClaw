@@ -409,7 +409,7 @@ jobs:
   openclaw-tui-chat-correlation-e2e:
     # Keep this strict hosted-correlation probe out of the peak inference burst.
     # Selective dispatches skip unselected dependencies, so always() preserves
-    # targeted execution while the full gate waits for the longest hosted jobs.
+    # targeted execution while the full gate waits for the peak hosted jobs.
     needs:
       - token-rotation-e2e
       - channels-stop-start-openclaw-e2e
