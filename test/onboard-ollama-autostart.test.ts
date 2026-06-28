@@ -347,7 +347,7 @@ process.exit = (code) => {
 }
 
 describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
-  it("Scenario A: stopped Ollama + flag set → no spawn, warning, falls back to DEFAULT_OLLAMA_MODEL", {
+  it("avoids spawning stopped Ollama, warns, and falls back to DEFAULT_OLLAMA_MODEL with the flag in scenario A", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -403,7 +403,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     );
   });
 
-  it("Scenario B: stopped Ollama + flag NOT set → existing spawn path preserved", {
+  it("preserves the existing spawn path for stopped Ollama without the flag in scenario B", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -436,7 +436,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     );
   });
 
-  it("Scenario C (flag unset): Ollama already running → behavior unchanged, no spawn, no warning", {
+  it("leaves running Ollama unchanged without spawning or warning when the flag is unset in scenario C", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -465,7 +465,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     assert.equal(payload.sentinelTripped, true);
   });
 
-  it("Scenario C (flag set): Ollama already running + flag set → no warning, no spawn", {
+  it("avoids warning or spawning when Ollama is running and the flag is set in scenario C", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -486,7 +486,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     assert.equal(payload.sentinelTripped, true);
   });
 
-  it("Scenario D: non-interactive + flag set → no process.exit, warning, model = DEFAULT_OLLAMA_MODEL", {
+  it("warns and selects DEFAULT_OLLAMA_MODEL without process.exit in non-interactive scenario D", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     const payload = runOllamaAutostartScenario({
@@ -597,7 +597,7 @@ describe("nemoclaw onboard --no-ollama-autostart (#3751)", () => {
     );
   });
 
-  it("Scenario E: stopped Ollama + flag NOT set + NEMOCLAW_PROVIDER=ollama + waitForHttp timeout → process.exit, no selectionLoop re-entry", {
+  it("exits without re-entering selectionLoop after an Ollama waitForHttp timeout in scenario E", {
     timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS,
   }, () => {
     // Reporter scenario: provider pinned via env, gate not set, Ollama

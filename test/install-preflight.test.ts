@@ -414,7 +414,7 @@ exit 98
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
 
-  it("--help exits 0 and shows install usage", () => {
+  it("exits 0 and shows install usage for --help", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -449,7 +449,7 @@ exit 98
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
-  it("--version exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for --version", () => {
     const result = spawnSync("bash", [INSTALLER, "--version"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -461,7 +461,7 @@ exit 98
     expect(output).not.toMatch(/0\.1\.0/);
   });
 
-  it("-v exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for -v", () => {
     const result = spawnSync("bash", [INSTALLER, "-v"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -982,7 +982,7 @@ fi`,
   // #2430: --fresh is the escape hatch. Even with a session file on disk
   // (failed or otherwise), the installer should skip the auto-resume check
   // and let the onboard command create a new session.
-  it("--fresh skips auto-resume regardless of session state (#2430)", () => {
+  it("skips auto-resume with --fresh regardless of session state (#2430)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-fresh-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -2900,7 +2900,7 @@ describe("installer flag parsing", () => {
     expect(output).toMatch(/NemoClaw Installer/); // usage was printed
   });
 
-  it("--help shows NEMOCLAW_INSTALL_TAG in environment section", () => {
+  it("shows NEMOCLAW_INSTALL_TAG in the --help environment section", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -3855,7 +3855,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--non-interactive alone with a controlling TTY still stops before phase 1", () => {
+  it("stops before phase 1 for --non-interactive alone with a controlling TTY", () => {
     const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
       NEMOCLAW_NON_INTERACTIVE: "1",
     });
@@ -3871,7 +3871,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
+  it("clears the fail-fast gate with --yes-i-accept-third-party-software alone", () => {
     // The flag implies non-interactive intent (set by main() before the
     // preflight check), so it must clear the gate AND let the install
     // progress past preflight into phase 1 — assert phases is non-empty
@@ -3883,7 +3883,7 @@ sys.exit(exit_code)
     expect(phases).not.toBe("");
   });
 
-  it("--non-interactive alone does not clear the fail-fast gate", () => {
+  it("does not clear the fail-fast gate with --non-interactive alone", () => {
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);

@@ -77,7 +77,7 @@ describe("nemohermes alias", () => {
     expect(stat.mode & 0o100).not.toBe(0);
   });
 
-  it("--version outputs nemohermes branding", () => {
+  it("outputs nemohermes branding for --version", () => {
     const { code, out } = runHermes("--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemohermes v[\d.]+/);

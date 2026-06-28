@@ -83,7 +83,7 @@ describe("nemo-deepagents alias", () => {
     expect(stat.mode & 0o100).not.toBe(0);
   });
 
-  it("--version outputs nemo-deepagents branding", () => {
+  it("outputs nemo-deepagents branding for --version", () => {
     const { code, out } = runDeepAgents("--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemo-deepagents v[\d.]+/);

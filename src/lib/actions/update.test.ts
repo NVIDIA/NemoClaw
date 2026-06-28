@@ -15,7 +15,7 @@ import {
 } from "./update";
 
 describe("runUpdateAction", () => {
-  it("--check reports update availability without running the installer", async () => {
+  it("reports update availability without running the installer for --check", async () => {
     const spawnSyncImpl = vi.fn();
     const log = vi.fn();
 
@@ -42,7 +42,7 @@ describe("runUpdateAction", () => {
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Latest maintained version: 0.2.0"));
   });
 
-  it("--check renders NemoHermes branding and installer guidance when the Hermes alias is active", async () => {
+  it("renders NemoHermes branding and installer guidance for --check when the Hermes alias is active", async () => {
     const log = vi.fn();
 
     const result = await runUpdateAction(
@@ -66,7 +66,7 @@ describe("runUpdateAction", () => {
     );
   });
 
-  it("--check renders NemoDeepAgents branding and installer guidance when the Deep Agents alias is active", async () => {
+  it("renders NemoDeepAgents branding and installer guidance for --check when the Deep Agents alias is active", async () => {
     const log = vi.fn();
 
     const result = await runUpdateAction(
@@ -173,7 +173,7 @@ describe("runUpdateAction", () => {
     );
   });
 
-  it("--yes runs the maintained installer without prompting", async () => {
+  it("runs the maintained installer without prompting for --yes", async () => {
     const prompt = vi.fn(async () => "no");
     const spawnSyncImpl = vi.fn(
       () => ({ status: 0, stdout: "", stderr: "", signal: null }) as never,

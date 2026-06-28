@@ -1098,7 +1098,7 @@ describe("service environment", () => {
       }
     });
 
-    it("[simulation] sourcing proxy-env.sh overrides narrow NO_PROXY and no_proxy", () => {
+    it("overrides narrow NO_PROXY and no_proxy while sourcing proxy-env.sh in simulation", () => {
       const fakeDataDir = mkdtempSync(join(tmpdir(), "nemoclaw-bashi-test-"));
       try {
         const envContent = [

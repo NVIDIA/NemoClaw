@@ -530,7 +530,7 @@ describe("onboard command", () => {
     expect(errors.join("\n")).toContain("1024-65535");
   });
 
-  it("--control-ui-port takes precedence over CHAT_UI_URL env", () => {
+  it("gives --control-ui-port precedence over the CHAT_UI_URL env", () => {
     const result = parseOnboardArgs(
       ["--control-ui-port", "19000"],
       "--yes-i-accept-third-party-software",
@@ -578,7 +578,7 @@ describe("onboard command", () => {
     expect(errors.join("\n")).toContain("mutually exclusive");
   });
 
-  it("--help includes --control-ui-port in usage", async () => {
+  it("includes --control-ui-port in --help usage", async () => {
     const lines: string[] = [];
     await runOnboardCommand({
       args: ["--help"],
@@ -731,7 +731,7 @@ describe("onboard command", () => {
     expect(errors.join("\n")).not.toContain("Unknown onboard option(s)");
   });
 
-  it("--help advertises --no-ollama-autostart in the usage output", async () => {
+  it("advertises --no-ollama-autostart in the --help usage output", async () => {
     const lines: string[] = [];
     await runOnboardCommand({
       args: ["--help"],
