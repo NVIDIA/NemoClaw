@@ -5,11 +5,19 @@
 // non-default agent (e.g. Hermes) is selected via --agent flag or
 // NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
 
+import crypto from "node:crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { dockerBuild, dockerCapture, dockerImageInspect } from "../adapters/docker";
+import {
+  dockerBuild,
+  dockerCapture,
+  dockerImageInspect,
+  dockerImageInspectFormat,
+  dockerRmi,
+  dockerTag,
+} from "../adapters/docker";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
 import { getAgentBranding } from "../cli/branding";
 import type { JsonObject as LooseObject } from "../core/json-types";
@@ -42,6 +50,60 @@ export interface OnboardContext {
 }
 
 const HERMES_MCP_RUNTIME_PROBE_OK = "nemoclaw-hermes-mcp-runtime-ok";
+
+export function getAgentSandboxBaseImageEnvVar(agentName: string): string {
+  return `NEMOCLAW_${agentName.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`;
+}
+
+function immutableLocalBaseImageTag(agentName: string, imageId: string): string {
+  const match = imageId.trim().match(/^sha256:([0-9a-f]{64})$/i);
+  if (!match) {
+    throw new Error(`Docker returned an invalid image ID for ${agentName} base image`);
+  }
+  return `nemoclaw-${agentName}-sandbox-base-local:image-${match[1].toLowerCase()}`;
+}
+
+export function pinAgentSandboxBaseImageRef(agentName: string, imageRef: string): string {
+  if (imageRef.includes("@sha256:")) return imageRef;
+  const imageId = dockerImageInspectFormat("{{.Id}}", imageRef, { ignoreError: true });
+  const pinnedRef = immutableLocalBaseImageTag(agentName, imageId);
+  if (imageRef === pinnedRef) return pinnedRef;
+  const tagResult = dockerTag(imageRef, pinnedRef, { ignoreError: true });
+  if (tagResult.error || tagResult.status !== 0) {
+    const detail = tagResult.error
+      ? `: ${tagResult.error.message}`
+      : ` (exit ${tagResult.status ?? "unknown"})`;
+    throw new Error(`Failed to pin ${agentName} base image${detail}`);
+  }
+  return pinnedRef;
+}
+
+function hermesFinalDockerfileAcceptsBase(agent: AgentDefinition, imageRef: string): boolean {
+  if (agent.name !== "hermes") return true;
+  if (
+    imageRef === "nemoclaw-hermes-base-local" ||
+    /^nemoclaw-hermes-(?:root-entrypoint-base|sandbox-base-local|secret-boundary-base|stale-openclaw-dir-base|stale-openclaw-link-base):[^\s]+$/.test(
+      imageRef,
+    )
+  ) {
+    return true;
+  }
+  if (!imageRef.startsWith("ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:")) return false;
+  const finalDockerfile = agent.dockerfilePath;
+  if (!finalDockerfile) return false;
+  let dockerfile: string;
+  try {
+    dockerfile = fs.readFileSync(finalDockerfile, "utf8");
+  } catch {
+    return false;
+  }
+  const tracked = dockerfile.match(
+    /^ARG NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST=(sha256:[0-9a-f]{64})$/m,
+  )?.[1];
+  return (
+    tracked !== undefined && imageRef === `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${tracked}`
+  );
+}
 
 /**
  * Verify that a Hermes base contains both the MCP SDK and Hermes' native
@@ -99,40 +161,81 @@ export function ensureAgentBaseImage(
 
   const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
   const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
+  const localBaseImageTag = buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT);
+  const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agent.name);
+  const validateImage = agent.name === "hermes" ? hermesBaseImageSupportsMcp : undefined;
+  const validationDescription =
+    agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined;
+  const resolutionOptions = {
+    imageName: baseImageName,
+    dockerfilePath: baseDockerfile,
+    localTag: localBaseImageTag,
+    envVar: overrideEnvVar,
+    label: `${agent.displayName} sandbox base image`,
+    requireOpenshellSandboxAbi: process.platform === "linux",
+    rootDir: ROOT,
+    validateImage,
+    validationDescription,
+  };
+  const resolveExactImage = (imageRef: string) =>
+    resolveSandboxBaseImage({
+      ...resolutionOptions,
+      localTag: imageRef,
+      env: {
+        ...process.env,
+        [overrideEnvVar]: imageRef,
+        NEMOCLAW_SANDBOX_BASE_LOCAL_BUILD: "0",
+      },
+    });
   const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
   if (forceBaseImageRebuild) {
+    const forceBuildTag = `nemoclaw-${agent.name}-sandbox-base-local:build-${process.pid}-${crypto.randomBytes(8).toString("hex")}`;
     console.log(`  Rebuilding ${agent.displayName} base image...`);
-    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
+    const buildResult = dockerBuild(baseDockerfile, forceBuildTag, ROOT, {
       ignoreError: true,
       stdio: ["ignore", "inherit", "inherit"],
     });
     if (buildResult.error || buildResult.status !== 0) {
+      dockerRmi(forceBuildTag, { ignoreError: true, suppressOutput: true });
       const detail = buildResult.error
         ? `: ${buildResult.error.message}`
         : ` (exit ${buildResult.status ?? "unknown"})`;
       throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
     }
-    console.log(`  \u2713 Base image built: ${baseImageTag}`);
-    return { imageTag: baseImageTag, built: true };
+    try {
+      const pinnedBaseImageTag = pinAgentSandboxBaseImageRef(agent.name, forceBuildTag);
+      const resolved = resolveExactImage(pinnedBaseImageTag);
+      if (!resolved) {
+        throw new Error(
+          `Built ${agent.displayName} base image failed the required runtime compatibility checks`,
+        );
+      }
+      if (!hermesFinalDockerfileAcceptsBase(agent, pinnedBaseImageTag)) {
+        throw new Error(
+          `Hermes final image does not accept base image ref '${pinnedBaseImageTag}'; use the tracked official digest or a repository-built local base`,
+        );
+      }
+      console.log(`  \u2713 Base image built: ${pinnedBaseImageTag}`);
+      return { imageTag: pinnedBaseImageTag, built: true };
+    } finally {
+      dockerRmi(forceBuildTag, { ignoreError: true, suppressOutput: true });
+    }
   }
 
-  const resolved = resolveSandboxBaseImage({
-    imageName: baseImageName,
-    dockerfilePath: baseDockerfile,
-    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
-    envVar: `NEMOCLAW_${agent.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`,
-    label: `${agent.displayName} sandbox base image`,
-    requireOpenshellSandboxAbi: process.platform === "linux",
-    rootDir: ROOT,
-    validateImage: agent.name === "hermes" ? hermesBaseImageSupportsMcp : undefined,
-    validationDescription:
-      agent.name === "hermes" ? "the required MCP Streamable HTTP runtime" : undefined,
-  });
+  const explicitOverride = process.env[overrideEnvVar]?.trim();
+  const resolved = explicitOverride
+    ? resolveExactImage(explicitOverride)
+    : resolveSandboxBaseImage(resolutionOptions);
   if (resolved && !forceBaseImageRebuild) {
+    if (!hermesFinalDockerfileAcceptsBase(agent, resolved.ref)) {
+      throw new Error(
+        `Hermes final image does not accept base image ref '${resolved.ref}'; use the tracked official digest or a repository-built local base`,
+      );
+    }
     console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
     return { imageTag: resolved.ref, built: false };
   }
-  if (!resolved && process.platform === "linux" && !forceBaseImageRebuild) {
+  if (!resolved && (process.platform === "linux" || validateImage) && !forceBaseImageRebuild) {
     throw new Error(
       `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
     );

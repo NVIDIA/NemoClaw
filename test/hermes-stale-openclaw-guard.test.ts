@@ -66,6 +66,42 @@ describe("Hermes stale OpenClaw guardrails", () => {
     }
   });
 
+  it("Hermes stale cleanup allows repository-built local base images", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const cleanupCommand = dockerRunCommandContaining(dockerfile, STALE_CLEANUP_SIGNATURE);
+    const allowedRefs = [
+      "nemoclaw-hermes-base-local",
+      "nemoclaw-hermes-root-entrypoint-base:test",
+      "nemoclaw-hermes-sandbox-base-local:test",
+      "nemoclaw-hermes-secret-boundary-base:test",
+      "nemoclaw-hermes-stale-openclaw-dir-base:test",
+      "nemoclaw-hermes-stale-openclaw-link-base:test",
+    ];
+
+    for (const ref of allowedRefs) {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-local-base-"));
+      const sandboxRoot = path.join(tmp, "sandbox");
+      const hermesDir = path.join(sandboxRoot, ".hermes");
+      fs.mkdirSync(hermesDir, { recursive: true });
+      fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n", {
+        mode: 0o600,
+      });
+      fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n", {
+        mode: 0o600,
+      });
+
+      try {
+        const { result } = runDockerShell(
+          `BASE_IMAGE=${JSON.stringify(ref)}; ${cleanupCommand}`,
+          sandboxRoot,
+        );
+        expect(result.status, `${ref}\n${result.stdout}\n${result.stderr}`).toBe(0);
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("Hermes stale cleanup succeeds for a non-symlink stale OpenClaw directory", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-stale-success-"));
@@ -83,8 +119,12 @@ describe("Hermes stale OpenClaw guardrails", () => {
     fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
     fs.writeFileSync(path.join(legacyDataDir, "sessions", "legacy.json"), "{}\n");
     fs.writeFileSync(path.join(legacyDataDir, "legacy.txt"), "legacy\n");
-    fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n", { mode: 0o600 });
-    fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n", { mode: 0o600 });
+    fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n", {
+      mode: 0o600,
+    });
+    fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n", {
+      mode: 0o600,
+    });
     fs.symlinkSync(path.join(legacyDataDir, "sessions"), path.join(hermesDir, "sessions"));
     fs.symlinkSync(path.join(legacyDataDir, "legacy.txt"), path.join(hermesDir, "legacy.txt"));
 

@@ -138,6 +138,75 @@ export function buildMcpBridgePolicyYaml(
   });
 }
 
+type GeneratedPolicyRegistrationState = {
+  policy: registry.CustomPolicyEntry;
+  state: "match" | "absent" | "drift" | null;
+  confirmed: boolean;
+};
+
+function withoutPendingContent(
+  policy: registry.CustomPolicyEntry,
+  content = policy.content,
+): registry.CustomPolicyEntry {
+  const { pendingContent: _pendingContent, ...confirmed } = policy;
+  return { ...confirmed, content };
+}
+
+function persistGeneratedPolicyRegistration(
+  sandboxName: string,
+  policy: registry.CustomPolicyEntry,
+): void {
+  if (!registry.addCustomPolicy(sandboxName, policy)) {
+    throw new McpBridgeError(
+      `Could not persist ownership for generated MCP policy '${policy.name}'.`,
+    );
+  }
+}
+
+/**
+ * Resolve a crash-interrupted generated-policy transition against the effective
+ * gateway policy. `content` remains the last confirmed value while
+ * `pendingContent` reserves the desired value, so either side of the mutation
+ * can be recognized safely after process death.
+ */
+function reconcileGeneratedPolicyRegistration(
+  sandboxName: string,
+  policy: registry.CustomPolicyEntry,
+): GeneratedPolicyRegistrationState {
+  const pendingContent = policy.pendingContent;
+  if (pendingContent === undefined) {
+    return {
+      policy,
+      state: policies.getPresetContentGatewayState(sandboxName, policy.content),
+      confirmed: true,
+    };
+  }
+  if (!pendingContent) {
+    return { policy, state: "drift", confirmed: false };
+  }
+
+  const pendingState = policies.getPresetContentGatewayState(sandboxName, pendingContent);
+  if (pendingState === "match") {
+    const confirmedPolicy = withoutPendingContent(policy, pendingContent);
+    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy);
+    return { policy: confirmedPolicy, state: "match", confirmed: true };
+  }
+
+  // A new add has no older confirmed value; content equals the reservation.
+  // Only an absent key is safe to retry.
+  if (pendingContent === policy.content) {
+    return { policy, state: pendingState, confirmed: false };
+  }
+
+  const confirmedState = policies.getPresetContentGatewayState(sandboxName, policy.content);
+  if (confirmedState === "match" || (confirmedState === "absent" && pendingState === "absent")) {
+    const confirmedPolicy = withoutPendingContent(policy);
+    persistGeneratedPolicyRegistration(sandboxName, confirmedPolicy);
+    return { policy: confirmedPolicy, state: confirmedState, confirmed: true };
+  }
+  return { policy, state: confirmedState === null ? null : "drift", confirmed: false };
+}
+
 export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
@@ -146,18 +215,20 @@ export function applyGeneratedPolicy(
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
   const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
-  const previousPolicy = registry
+  const registeredPolicy = registry
     .getCustomPolicies(sandboxName)
     .find(
       (policy) =>
         policy.name === entry.policyName && policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE,
     );
+  let previousPolicy: registry.CustomPolicyEntry | undefined;
+  let previousPolicyConfirmed = false;
   let ownsExistingPolicyKey = false;
-  if (previousPolicy) {
-    const previousState = policies.getPresetContentGatewayState(
-      sandboxName,
-      previousPolicy.content,
-    );
+  if (registeredPolicy) {
+    const reconciled = reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy);
+    previousPolicy = reconciled.policy;
+    previousPolicyConfirmed = reconciled.confirmed;
+    const previousState = reconciled.state;
     if (previousState !== "absent" && previousState !== "match") {
       throw new McpBridgeError(
         `Generated MCP policy '${entry.policyName}' has drifted or could not be inspected against its recorded content. Refusing to replace the live key.`,
@@ -167,7 +238,7 @@ export function applyGeneratedPolicy(
     // process died, so an absent key is safe to create. A present key is safe
     // to replace only after its full content matches that ownership record.
     ownsExistingPolicyKey = previousState === "match";
-  } else if (!previousPolicy) {
+  } else {
     const unownedState = policies.getPresetContentGatewayState(sandboxName, content);
     if (unownedState !== "absent") {
       throw new McpBridgeError(
@@ -176,18 +247,27 @@ export function applyGeneratedPolicy(
     }
   }
 
-  // Reserve/update ownership before the live gateway mutation. This avoids a
-  // successful policy set followed by a registry-write failure leaving an
-  // unowned live key that neither rollback nor retry can safely touch.
-  const ownershipRecorded = registry.addCustomPolicy(sandboxName, {
-    name: entry.policyName,
-    content,
-    sourcePath: MCP_BRIDGE_POLICY_SOURCE,
-  });
-  if (!ownershipRecorded) {
-    throw new McpBridgeError(
-      `Could not reserve ownership for generated MCP policy '${entry.policyName}'.`,
-    );
+  // Preserve the last confirmed content while reserving a changed desired
+  // value. For a brand-new key, content and pendingContent are intentionally
+  // equal so an absent live key remains recognizable as an uncommitted add.
+  let reservation: registry.CustomPolicyEntry;
+  if (
+    previousPolicy &&
+    previousPolicy.content === content &&
+    (previousPolicy.pendingContent === undefined || previousPolicy.pendingContent === content)
+  ) {
+    reservation = previousPolicy;
+  } else if (previousPolicy) {
+    reservation = { ...withoutPendingContent(previousPolicy), pendingContent: content };
+    persistGeneratedPolicyRegistration(sandboxName, reservation);
+  } else {
+    reservation = {
+      name: entry.policyName,
+      content,
+      pendingContent: content,
+      sourcePath: MCP_BRIDGE_POLICY_SOURCE,
+    };
+    persistGeneratedPolicyRegistration(sandboxName, reservation);
   }
   const ok = policies.applyPresetContent(sandboxName, entry.policyName, content, {
     custom: { sourcePath: MCP_BRIDGE_POLICY_SOURCE },
@@ -195,17 +275,31 @@ export function applyGeneratedPolicy(
     nonFatal: true,
     skipRegistryUpdate: true,
   });
-  if (ok === false) {
-    const after = policies.getPresetContentGatewayState(sandboxName, content);
-    if (after !== "match") {
-      if (previousPolicy) {
-        registry.addCustomPolicy(sandboxName, previousPolicy);
-      } else {
-        registry.removeCustomPolicyByName(sandboxName, entry.policyName);
-      }
-    }
-    throw new McpBridgeError(`Failed to apply generated MCP policy '${entry.policyName}'.`);
+  // `policy set --wait` proves that a submitted revision loaded, but OpenShell
+  // also returns success for unchanged and concurrently superseded revisions.
+  // Confirm that the effective policy still contains our exact generated entry.
+  const activeState = policies.getPresetContentGatewayState(sandboxName, content);
+  if (ok !== false && activeState === "match") {
+    persistGeneratedPolicyRegistration(sandboxName, withoutPendingContent(reservation, content));
+    return;
   }
+
+  if (previousPolicyConfirmed && previousPolicy) {
+    const previousState = policies.getPresetContentGatewayState(
+      sandboxName,
+      previousPolicy.content,
+    );
+    if (previousState === "match" || (previousState === "absent" && activeState === "absent")) {
+      persistGeneratedPolicyRegistration(sandboxName, withoutPendingContent(previousPolicy));
+    }
+  } else if (activeState === "absent") {
+    registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+  }
+  const detail =
+    activeState === "match" ? "the update command failed" : `effective state: ${activeState}`;
+  throw new McpBridgeError(
+    `Failed to activate generated MCP policy '${entry.policyName}' (${detail}).`,
+  );
 }
 
 function generatedPolicyContent(entry: McpBridgeEntry): string {
@@ -220,9 +314,13 @@ export function assertGeneratedPolicyMutationSafe(
   const registeredPolicy = registry
     .getCustomPolicies(sandboxName)
     .find((policy) => policy.name === entry.policyName);
-  const content = registeredPolicy?.content ?? generatedPolicyContent(entry);
-  const state = policies.getPresetContentGatewayState(sandboxName, content);
   const owned = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
+  const reconciled =
+    registeredPolicy && owned
+      ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
+      : undefined;
+  const content = reconciled?.policy.content ?? generatedPolicyContent(entry);
+  const state = reconciled?.state ?? policies.getPresetContentGatewayState(sandboxName, content);
   if (state === "absent") return;
   if (!owned || state !== "match") {
     throw new McpBridgeError(
@@ -240,15 +338,21 @@ export function removeGeneratedPolicy(
   const registeredPolicy = registry
     .getCustomPolicies(sandboxName)
     .find((policy) => policy.name === policyName);
-  const content = registeredPolicy?.content ?? generatedPolicyContent(entry);
-  const gatewayState = policies.getPresetContentGatewayState(sandboxName, content);
+  const ownsRegistration = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
+  const reconciled =
+    registeredPolicy && ownsRegistration
+      ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
+      : undefined;
+  const effectiveRegistration = reconciled?.policy ?? registeredPolicy;
+  const content = effectiveRegistration?.content ?? generatedPolicyContent(entry);
+  const gatewayState =
+    reconciled?.state ?? policies.getPresetContentGatewayState(sandboxName, content);
   if (gatewayState === "absent") {
-    if (registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE) {
+    if (ownsRegistration) {
       registry.removeCustomPolicyByName(sandboxName, policyName);
     }
     return;
   }
-  const ownsRegistration = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
   if (!ownsRegistration || gatewayState !== "match") {
     if (options.bestEffort) return;
     throw new McpBridgeError(
@@ -283,5 +387,16 @@ export function getPolicyPresence(
   if (!entry?.policyName) return false;
   const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
   if (!registeredPolicy) return null;
-  return policies.presetContentMatchesGateway(sandboxName, registeredPolicy.content);
+  const confirmedState = policies.getPresetContentGatewayState(
+    sandboxName,
+    registeredPolicy.content,
+  );
+  if (confirmedState === "match") return true;
+  const pendingContent = registeredPolicy.pendingContent;
+  if (typeof pendingContent !== "string" || pendingContent.length === 0) {
+    return confirmedState === null ? null : false;
+  }
+  const pendingState = policies.getPresetContentGatewayState(sandboxName, pendingContent);
+  if (pendingState === "match") return true;
+  return confirmedState === null || pendingState === null ? null : false;
 }

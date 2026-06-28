@@ -94,16 +94,6 @@ for tool in curl python3 npm sha256sum tar sed realpath; do
   }
 done
 
-image_ref_without_tag() {
-  local ref="$1"
-  local basename="${ref##*/}"
-  if [[ "$basename" == *:* ]]; then
-    printf '%s\n' "${ref%:*}"
-    return
-  fi
-  printf '%s\n' "$ref"
-}
-
 gh_api() {
   local url="$1"
   local -a auth=()
@@ -449,9 +439,8 @@ if [[ "$DO_REBUILD" == 1 ]]; then
   # locally built images have no registry digest to pin to — the ID-derived
   # tag guarantees the rebuild uses exactly the image built above.
   base_image_id="$(docker image inspect -f '{{.Id}}' "$BASE_REF")"
-  base_image_id_short="${base_image_id#sha256:}"
-  base_image_id_short="${base_image_id_short:0:12}"
-  pin_tag="$(image_ref_without_tag "$BASE_REF"):${TAG#v}-${base_image_id_short}"
+  base_image_id_hex="${base_image_id#sha256:}"
+  pin_tag="nemoclaw-hermes-sandbox-base-local:image-${base_image_id_hex}"
   docker tag "$BASE_REF" "$pin_tag"
   echo ""
   echo "Rebuilding sandbox against ${pin_tag} (image ID ${base_image_id})…"

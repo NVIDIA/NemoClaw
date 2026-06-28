@@ -14,11 +14,10 @@ export const REQUIRED_OPENSHELL_MCP_FEATURES = [
 
 export const REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE = OPENSHELL_MCP_POLICY_CAPABILITY_MARKER;
 
-// OpenShell current main has no structured feature-attestation response. Scan
-// installed artifacts before onboarding and check the running sandbox binary
-// again before an MCP mutation. Policy application remains the authoritative
-// schema/behavior check; version alone is insufficient for mixed-component
-// installations.
+// OpenShell current main has no structured installed-feature response. Scan the
+// installed artifacts before onboarding; the running supervisor is validated
+// later by applying the actual generated MCP policy with `policy set --wait`.
+// Version alone is insufficient for mixed-component installations.
 
 export function hasRequiredOpenshellMessagingFeatures(options: {
   openshellBin: string | null;

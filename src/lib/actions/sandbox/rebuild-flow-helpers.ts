@@ -5,9 +5,16 @@ import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import { ensureAgentBaseImage } from "../../agent/onboard";
+import { loadAgent } from "../../agent/defs";
+import {
+  ensureAgentBaseImage,
+  getAgentSandboxBaseImageEnvVar,
+  pinAgentSandboxBaseImageRef,
+} from "../../agent/onboard";
+import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -17,9 +24,6 @@ import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
-import { loadAgent } from "../../agent/defs";
-import { CLI_NAME } from "../../cli/branding";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import {
   getReconciledSandboxGatewayState,
   printGatewayLifecycleHint,
@@ -32,6 +36,12 @@ export type RebuildSandboxEntry = registry.SandboxEntry & { agents?: unknown[] }
 export type RebuildLiveState = {
   staleRecovery: boolean;
   staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+};
+
+export type RebuildAgentBaseImagePreflight = {
+  ok: boolean;
+  imageRef: string | null;
+  overrideEnvVar: string | null;
 };
 
 export async function resolveRebuildLiveState(
@@ -153,12 +163,20 @@ export function openRebuildShieldsWindowForState(
 export function ensureRebuildAgentBaseImage(
   rebuildAgent: string | null,
   bail: (msg: string, code?: number) => never,
-): boolean {
-  if (!rebuildAgent) return true;
+): RebuildAgentBaseImagePreflight {
+  if (!rebuildAgent) return { ok: true, imageRef: null, overrideEnvVar: null };
   const agentDef = loadAgent(rebuildAgent);
+  const overrideEnvVar = getAgentSandboxBaseImageEnvVar(agentDef.name);
+  const hasExplicitOverride = Boolean(process.env[overrideEnvVar]?.trim());
   try {
-    ensureAgentBaseImage(agentDef, { forceBaseImageRebuild: true });
-    return true;
+    const result = ensureAgentBaseImage(agentDef, {
+      forceBaseImageRebuild: !hasExplicitOverride,
+    });
+    const imageRef =
+      hasExplicitOverride && result.imageTag
+        ? pinAgentSandboxBaseImageRef(agentDef.name, result.imageTag)
+        : result.imageTag;
+    return { ok: true, imageRef, overrideEnvVar };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("");
@@ -167,8 +185,30 @@ export function ensureRebuildAgentBaseImage(
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(message);
-    return false;
+    return { ok: false, imageRef: null, overrideEnvVar: null };
   }
+}
+
+export function pinRebuildAgentBaseImageForRecreate(
+  preflight: RebuildAgentBaseImagePreflight,
+  env: NodeJS.ProcessEnv = process.env,
+): () => void {
+  const { imageRef, overrideEnvVar } = preflight;
+  if (!preflight.ok || !imageRef || !overrideEnvVar) return () => undefined;
+
+  const hadPriorValue = Object.hasOwn(env, overrideEnvVar);
+  const priorValue = env[overrideEnvVar];
+  env[overrideEnvVar] = imageRef;
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    if (hadPriorValue && priorValue !== undefined) {
+      env[overrideEnvVar] = priorValue;
+    } else {
+      delete env[overrideEnvVar];
+    }
+  };
 }
 
 export function backupSandboxStateForRebuild(

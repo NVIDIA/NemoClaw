@@ -366,7 +366,8 @@ bridge.addMcpBridge("alpha", {
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain("injected registry write failure");
-    expect(calls).toContain("provider delete");
+    expect(calls).not.toContain("provider create");
+    expect(calls).not.toContain("provider delete");
     expect(calls).not.toContain("policy set");
   });
 

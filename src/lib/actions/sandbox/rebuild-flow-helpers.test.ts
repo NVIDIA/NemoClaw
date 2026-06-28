@@ -19,6 +19,11 @@ function loadRebuildFlowHelpers(): RebuildFlowHelpersModule {
   return requireDist(rebuildFlowHelpersPath);
 }
 
+// Warm the CommonJS dependency graph outside the first test's timeout. Tests
+// still reload this entry module after installing dependency spies.
+loadRebuildFlowHelpers();
+delete require.cache[requireDist.resolve(rebuildFlowHelpersPath)];
+
 function loadSandboxState(): SandboxStateModule {
   return requireDist(sandboxStatePath);
 }
@@ -72,6 +77,104 @@ function makeBail(): (msg: string, code?: number) => never {
     throw new Error(`bail: ${msg}`);
   };
 }
+
+describe("rebuild agent base image preflight", () => {
+  const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
+  let priorOverride: string | undefined;
+
+  beforeEach(() => {
+    priorOverride = process.env[overrideEnvVar];
+    delete process.env[overrideEnvVar];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (priorOverride === undefined) delete process.env[overrideEnvVar];
+    else process.env[overrideEnvVar] = priorOverride;
+  });
+
+  function mockBaseImagePreflight(imageRef: string) {
+    const agentDefs = requireDist("../../agent/defs.js");
+    const agentOnboard = requireDist("../../agent/onboard.js");
+    vi.spyOn(agentDefs, "loadAgent").mockReturnValue({ name: "hermes" });
+    const ensureAgentBaseImage = vi
+      .spyOn(agentOnboard, "ensureAgentBaseImage")
+      .mockReturnValue({ imageTag: imageRef, built: true });
+    const pinAgentSandboxBaseImageRef = vi
+      .spyOn(agentOnboard, "pinAgentSandboxBaseImageRef")
+      .mockImplementation((_agentName, ref) => String(ref));
+    return { ensureAgentBaseImage, pinAgentSandboxBaseImageRef };
+  }
+
+  it("forces a repository-local build and returns its exact ref when no override exists", () => {
+    const imageRef = "nemoclaw-hermes-sandbox-base-local:12345678";
+    const { ensureAgentBaseImage } = mockBaseImagePreflight(imageRef);
+    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail());
+
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
+      forceBaseImageRebuild: true,
+    });
+    expect(result).toEqual({ ok: true, imageRef, overrideEnvVar });
+  });
+
+  it("resolves an explicit caller override instead of replacing it during preflight", () => {
+    process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:caller";
+    const mutableRef = "nemoclaw-hermes-sandbox-base-local:resolved";
+    const immutableRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
+    const { ensureAgentBaseImage, pinAgentSandboxBaseImageRef } =
+      mockBaseImagePreflight(mutableRef);
+    pinAgentSandboxBaseImageRef.mockReturnValue(immutableRef);
+    const { ensureRebuildAgentBaseImage } = loadRebuildFlowHelpers();
+
+    const result = ensureRebuildAgentBaseImage("hermes", makeBail());
+
+    expect(ensureAgentBaseImage).toHaveBeenCalledWith(expect.objectContaining({ name: "hermes" }), {
+      forceBaseImageRebuild: false,
+    });
+    expect(pinAgentSandboxBaseImageRef).toHaveBeenCalledWith("hermes", mutableRef);
+    expect(result).toEqual({ ok: true, imageRef: immutableRef, overrideEnvVar });
+  });
+
+  it("pins the preflighted ref only for recreation and restores caller state", () => {
+    const { pinRebuildAgentBaseImageForRecreate } = loadRebuildFlowHelpers();
+    const env: NodeJS.ProcessEnv = {
+      [overrideEnvVar]: "nemoclaw-hermes-sandbox-base-local:image-caller",
+    };
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: "nemoclaw-hermes-sandbox-base-local:image-resolved",
+        overrideEnvVar,
+      },
+      env,
+    );
+
+    expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-resolved");
+    restore();
+    expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
+    restore();
+    expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
+  });
+
+  it("removes a scoped recreation pin when the caller had no override", () => {
+    const { pinRebuildAgentBaseImageForRecreate } = loadRebuildFlowHelpers();
+    const env: NodeJS.ProcessEnv = {};
+    const restore = pinRebuildAgentBaseImageForRecreate(
+      {
+        ok: true,
+        imageRef: "nemoclaw-hermes-sandbox-base-local:12345678",
+        overrideEnvVar,
+      },
+      env,
+    );
+
+    expect(env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:12345678");
+    restore();
+    expect(Object.hasOwn(env, overrideEnvVar)).toBe(false);
+  });
+});
 
 describe("backupSandboxStateForRebuild — user-managed file warning", () => {
   let warnSpy: MockInstance;

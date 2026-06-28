@@ -41,6 +41,8 @@ export {
 export interface CustomPolicyEntry {
   name: string;
   content: string;
+  /** Desired content reserved before a crash-safe generated-policy transition. */
+  pendingContent?: string;
   sourcePath?: string;
   appliedAt?: string;
 }

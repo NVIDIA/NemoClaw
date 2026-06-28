@@ -5,7 +5,6 @@ import crypto from "node:crypto";
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import { stripAnsi } from "../../adapters/openshell/client";
-import { OPENSHELL_MCP_POLICY_CAPABILITY_MARKER } from "../../adapters/openshell/runtime-capabilities";
 import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -42,21 +41,6 @@ export type McpProviderAttachmentInspection = {
 };
 
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
-
-export function assertMcpTransportRuntimeCapability(sandboxName: string): void {
-  const result = executeSandboxExecCommand(
-    sandboxName,
-    [
-      "[ -r /proc/1/exe ] || exit 1",
-      `grep -aF -m 1 -- ${shellQuote(OPENSHELL_MCP_POLICY_CAPABILITY_MARKER)} /proc/1/exe >/dev/null 2>&1`,
-    ].join("\n"),
-  );
-  if (!result || result.status !== 0) {
-    throw new McpBridgeError(
-      `Sandbox '${sandboxName}' is missing OpenShell's native MCP/JSON-RPC policy runtime. Upgrade OpenShell and rebuild the sandbox before enabling authenticated MCP.`,
-    );
-  }
-}
 
 export function parseMcpProviderMetadata(output: string): Omit<McpProviderInspection, "exists"> {
   const clean = stripAnsi(output).replace(/\r/g, "");

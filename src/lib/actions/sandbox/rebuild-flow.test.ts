@@ -37,6 +37,11 @@ type RebuildFlowSession = Record<string, unknown> & {
 
 type RebuildFlowOverrides = {
   applyPreset?: (presetName: string) => boolean;
+  baseImagePreflight?: {
+    ok: boolean;
+    imageRef: string | null;
+    overrideEnvVar: string | null;
+  };
   executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
   onboard?: (session: RebuildFlowSession) => Promise<void> | void;
   repairMutableConfigPerms?: () =>
@@ -192,6 +197,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const sandboxVersion = requireDist("../../sandbox/version.js");
   const destroy = requireDist("./destroy.js");
   const gatewayState = requireDist("./gateway-state.js");
+  const rebuildFlowHelpers = requireDist("./rebuild-flow-helpers.js");
   const rebuildShields = requireDist("./rebuild-shields.js");
   const nim = requireDist("../../inference/nim.js");
   const policies = requireDist("../../policy/index.js");
@@ -217,6 +223,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     state: overrides.staleRecovery ? "missing" : "present",
     output: "",
   });
+  vi.spyOn(rebuildFlowHelpers, "ensureRebuildAgentBaseImage").mockReturnValue(
+    overrides.baseImagePreflight ?? { ok: true, imageRef: null, overrideEnvVar: null },
+  );
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
   vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
   vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
@@ -524,6 +533,9 @@ describe("rebuildSandbox flow", () => {
   });
 
   it("uses the no-exec MCP preparation path when recovering an absent sandbox", async () => {
+    const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
+    const restoreEnv = snapshotEnv([overrideEnvVar]);
+    process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:image-caller";
     const mcpEntry = {
       server: "github",
       agent: "openclaw",
@@ -534,25 +546,40 @@ describe("rebuildSandbox flow", () => {
       policyName: "mcp-bridge-github",
       addedAt: "2026-06-01T00:00:00.000Z",
     };
-    const harness = createRebuildFlowHarness({
-      staleRecovery: true,
-      sandboxEntry: { mcp: { bridges: { github: mcpEntry } } },
-      mcpPreparation: {
-        entries: [mcpEntry],
-        detachedProviderEntries: [],
-        scrubbedAdapterEntries: [],
-      },
-    });
+    try {
+      const harness = createRebuildFlowHarness({
+        staleRecovery: true,
+        sandboxEntry: { mcp: { bridges: { github: mcpEntry } } },
+        baseImagePreflight: {
+          ok: true,
+          imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          overrideEnvVar,
+        },
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [],
+          scrubbedAdapterEntries: [],
+        },
+        onboard: () => {
+          expect(process.env[overrideEnvVar]).toBe(
+            "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          );
+        },
+      });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).resolves.toBeUndefined();
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
 
-    expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
-    expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
-    expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).not.toHaveBeenCalled();
-    expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+      expect(process.env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.prepareMcpBridgesForAbsentSandboxRebuildSpy).toHaveBeenCalledWith("alpha");
+      expect(harness.prepareMcpBridgesForRebuildSpy).not.toHaveBeenCalled();
+      expect(harness.reattachMcpProvidersAfterRebuildAbortSpy).not.toHaveBeenCalled();
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    } finally {
+      restoreEnv();
+    }
   });
 
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
@@ -702,6 +729,36 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("uses the exact preflighted agent base image only for the recreate", async () => {
+    const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
+    const restoreEnv = snapshotEnv([overrideEnvVar]);
+    delete process.env[overrideEnvVar];
+    let refSeenInsideOnboard: string | undefined;
+
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: { agent: "hermes" },
+        baseImagePreflight: {
+          ok: true,
+          imageRef: "nemoclaw-hermes-sandbox-base-local:12345678",
+          overrideEnvVar,
+        },
+        onboard: () => {
+          refSeenInsideOnboard = process.env[overrideEnvVar];
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(refSeenInsideOnboard).toBe("nemoclaw-hermes-sandbox-base-local:12345678");
+      expect(process.env[overrideEnvVar]).toBeUndefined();
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint while ignoring hostile ambient values for PRA-4 (#5735)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
@@ -843,40 +900,61 @@ describe("rebuildSandbox flow", () => {
   });
 
   it("marks recreate onboarding failures as terminal and preserves retry cleanup", async () => {
-    const harness = createRebuildFlowHarness({
-      onboard: (session) => {
-        session.lastStepStarted = "sandbox";
-        throw new Error("inner recreate boom");
-      },
-    });
+    const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
+    const restoreEnv = snapshotEnv([overrideEnvVar]);
+    process.env[overrideEnvVar] = "nemoclaw-hermes-sandbox-base-local:image-caller";
+    try {
+      const harness = createRebuildFlowHarness({
+        baseImagePreflight: {
+          ok: true,
+          imageRef: "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          overrideEnvVar,
+        },
+        onboard: (session) => {
+          expect(process.env[overrideEnvVar]).toBe(
+            "nemoclaw-hermes-sandbox-base-local:image-preflighted",
+          );
+          session.lastStepStarted = "sandbox";
+          throw new Error("inner recreate boom");
+        },
+      });
 
-    await expect(
-      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
-    ).rejects.toThrow("Recreate failed");
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Recreate failed");
 
-    expect(harness.releaseOnboardLockSpy).toHaveBeenCalled();
-    expect(harness.markStepFailedSpy).toHaveBeenCalledWith(
-      "sandbox",
-      "Rebuild recreate failed",
-      expect.objectContaining({ updateMachine: true }),
-    );
-    expect(harness.session).toMatchObject({
-      status: "failed",
-      failure: { step: "sandbox", message: "Rebuild recreate failed" },
-      machine: { state: "failed" },
-      steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
-    });
-    expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
-    expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
+      expect(process.env[overrideEnvVar]).toBe("nemoclaw-hermes-sandbox-base-local:image-caller");
+      expect(harness.releaseOnboardLockSpy).toHaveBeenCalled();
+      expect(harness.markStepFailedSpy).toHaveBeenCalledWith(
+        "sandbox",
+        "Rebuild recreate failed",
+        expect.objectContaining({ updateMachine: true }),
+      );
+      expect(harness.session).toMatchObject({
+        status: "failed",
+        failure: { step: "sandbox", message: "Rebuild recreate failed" },
+        machine: { state: "failed" },
+        steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
+      });
+      expect(harness.relockSpy).toHaveBeenCalledWith(
+        "alpha",
+        expect.any(Object),
+        false,
+        "nemoclaw",
+      );
+      expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
 
-    // #5735 (PRA-T2): preconditions (credential/endpoint) passed, so the
-    // delete proceeded; when onboard() then fails for a residual runtime reason,
-    // the operator must get a clear fatal recovery path with the preserved
-    // backup — not a silent loss. Precondition-class failures are caught before
-    // delete by prepareRebuildResumeConfig (covered by the abort tests above).
-    const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
-    expect(errors).toContain("Recreate failed after sandbox was destroyed");
-    expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
-    expect(errors).toContain("onboard --resume");
+      // #5735 (PRA-T2): preconditions (credential/endpoint) passed, so the
+      // delete proceeded; when onboard() then fails for a residual runtime reason,
+      // the operator must get a clear fatal recovery path with the preserved
+      // backup — not a silent loss. Precondition-class failures are caught before
+      // delete by prepareRebuildResumeConfig (covered by the abort tests above).
+      const errors = harness.errorSpy.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(errors).toContain("Recreate failed after sandbox was destroyed");
+      expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
+      expect(errors).toContain("onboard --resume");
+    } finally {
+      restoreEnv();
+    }
   });
 });

@@ -283,7 +283,19 @@ process.exit(0);
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
-if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect") {
+  const formatIndex = a.indexOf("--format");
+  const format = formatIndex >= 0 ? a[formatIndex + 1] : "";
+  if (format === "{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
+  if (format === "{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
+if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
+if (a[0]==="run") {
+  if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  else process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 if (a[0]==="ps") { process.exit(0); }
 process.stderr.write("unexpected docker call: " + a.join(" ") + "\\n");

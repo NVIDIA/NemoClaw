@@ -11,6 +11,9 @@ import { describe, expect, it } from "vitest";
 type CrashBoundary =
   | "provider"
   | "policy"
+  | "policy-failure"
+  | "policy-drift"
+  | "credential-collision"
   | "adapter"
   | "adapter-mismatch"
   | "attach-race"
@@ -51,6 +54,9 @@ globalActions.runOpenshellProviderCommand = (args) => {
     return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
+    if (args[2] === "foreign-attached") {
+      return { status: 0, stdout: "Id: " + foreignProviderId + "\nType: generic\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" };
+    }
     observedProviderName = args[2];
     providerGetCount += 1;
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
@@ -60,6 +66,9 @@ globalActions.runOpenshellProviderCommand = (args) => {
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
+    if (!marked("policy")) {
+      return { status: 1, stdout: "", stderr: "provider mutation preceded policy attestation" };
+    }
     if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1];
     if (args[1] === "update") observedProviderName = args[2];
     mark("provider");
@@ -68,6 +77,16 @@ globalActions.runOpenshellProviderCommand = (args) => {
     return { status: 0, stdout: args[1] === "create" ? "Created provider" : "Updated provider", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    if (crashAfter === "credential-collision") {
+      return {
+        status: 0,
+        stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nforeign-attached generic 1 0\n",
+        stderr: "",
+      };
+    }
+    if (crashAfter === "attach-race" && marked("provider") && !marked("attached")) {
+      mark("foreign-provider");
+    }
     const attached = marked("attached");
     const providerName = observedProviderName ?? registry.getSandbox("crash-test")?.mcp?.bridges?.fake?.providerName;
     if (attached && !marked("provider")) {
@@ -97,10 +116,13 @@ globalActions.runOpenshellProviderCommand = (args) => {
   return { status: 0, stdout: "", stderr: "" };
 };
 
-policies.getPresetContentGatewayState = () => marked("policy") ? "match" : "absent";
+policies.getPresetContentGatewayState = () => {
+  if (!marked("policy")) return "absent";
+  return crashAfter === "policy-drift" ? "drift" : "match";
+};
 policies.applyPresetContent = () => {
+  if (crashAfter === "policy-failure") return false;
   mark("policy");
-  if (crashAfter === "attach-race") mark("foreign-provider");
   if (crashAfter === "policy") process.exit(86);
   return true;
 };
@@ -361,11 +383,13 @@ describe("MCP add crash consistency", () => {
       expect(crashed.status, `${crashed.stdout}\n${crashed.stderr}`).toBe(86);
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
       expect(readBridge(home)).not.toHaveProperty("providerId");
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
 
       const resumed = runAddProcess(home, "");
       expect(resumed.status, `${resumed.stdout}\n${resumed.stderr}`).toBe(2);
       expect(resumed.stderr).toContain("has no stable provider ID and cannot safely adopt it");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
       expect(readBridge(home)).not.toHaveProperty("providerId");
 
       // After the operator independently removes the unowned provider, the
@@ -382,6 +406,76 @@ describe("MCP add crash consistency", () => {
     }
   });
 
+  it("does not create a credential provider unless the generated policy is effective", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-policy-drift-"));
+    try {
+      const rejected = runAddProcess(home, "policy-drift");
+
+      expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
+      expect(rejected.stderr).toContain("Failed to activate generated MCP policy");
+      expect(rejected.stderr).toContain("effective state: drift");
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      expect(readBridge(home)).not.toHaveProperty("providerId");
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      ) as {
+        sandboxes: { "crash-test": { customPolicies?: Array<{ name: string }> } };
+      };
+      expect(registry.sandboxes["crash-test"].customPolicies).toEqual([
+        expect.objectContaining({
+          name: "mcp-bridge-fake",
+          content: expect.any(String),
+          sourcePath: "generated:nemoclaw-mcp-bridge",
+        }),
+      ]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("releases a generated-policy reservation when policy activation definitely fails", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-policy-failure-"));
+    try {
+      const rejected = runAddProcess(home, "policy-failure");
+
+      expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
+      expect(rejected.stderr).toContain("Failed to activate generated MCP policy");
+      expect(rejected.stderr).toContain("effective state: absent");
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
+      expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
+      const registry = JSON.parse(
+        fs.readFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), "utf8"),
+      ) as {
+        sandboxes: { "crash-test": { customPolicies?: Array<{ name: string }> } };
+      };
+      expect(registry.sandboxes["crash-test"].customPolicies).toBeUndefined();
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an attached credential-key collision before activating the MCP policy", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-add-key-collision-"));
+    try {
+      const rejected = runAddProcess(home, "credential-collision");
+
+      expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
+      expect(rejected.stderr).toContain(
+        "Credential key 'FAKE_MCP_SECRET' is already supplied by attached provider 'foreign-attached'",
+      );
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
+      expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   for (const boundary of ["policy", "adapter"] as const) {
     it(`resumes exact resources after process death at the ${boundary} boundary`, () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-mcp-add-${boundary}-`));
@@ -390,7 +484,14 @@ describe("MCP add crash consistency", () => {
         expect(crashed.status, `${crashed.stdout}\n${crashed.stderr}`).toBe(86);
         const pending = readBridge(home);
         expect(pending.addState).toBe("preflighted");
-        expect(pending.providerId).toBe("11111111-2222-4333-8444-555555555555");
+        if (boundary === "policy") {
+          expect(pending).not.toHaveProperty("providerId");
+          expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
+        } else {
+          expect(pending.providerId).toBe("11111111-2222-4333-8444-555555555555");
+          expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+        }
+        expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
         expect(JSON.stringify(pending)).not.toContain("host-only-secret");
 
         const resumed = runAddProcess(home, "");
@@ -421,6 +522,7 @@ describe("MCP add crash consistency", () => {
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
       expect(readBridge(home)).not.toHaveProperty("providerId");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -435,6 +537,7 @@ describe("MCP add crash consistency", () => {
       expect(readBridge(home)).toMatchObject({ addState: "preflighted" });
       expect(readBridge(home)).not.toHaveProperty("providerId");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
+      expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

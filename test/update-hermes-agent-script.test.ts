@@ -39,6 +39,16 @@ function writeInstalledHermesCopy(baseDockerfile: string, baseText = CURRENT_INS
 }
 
 describe("scripts/update-hermes-agent.sh", () => {
+  it("pins rebuild overrides to the accepted full image-ID local tag family", () => {
+    const source = fs.readFileSync(SCRIPT, "utf8");
+
+    expect(source).toContain(
+      'pin_tag="nemoclaw-hermes-sandbox-base-local:image-${base_image_id_hex}"',
+    );
+    expect(source).toContain('base_image_id_hex="${base_image_id#sha256:}"');
+    expect(source).not.toContain("base_image_id_short");
+  });
+
   it("keeps installed-copy scanning opt-in unless rebuild needs it", () => {
     const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-home-"));
     const installedDockerfile = path.join(

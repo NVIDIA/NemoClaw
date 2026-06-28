@@ -30,9 +30,8 @@ import {
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
-  assertNoAttachedProviderCredentialCollision,
   assertMcpProviderRecoverable,
-  assertMcpTransportRuntimeCapability,
+  assertNoAttachedProviderCredentialCollision,
   attachProvider,
   deleteProvider,
   detachMissingProviderReference,
@@ -291,7 +290,6 @@ async function addMcpBridgeUnlocked(
   const adapterEnvValues = resolveCredentialEnv(options.env);
   try {
     await ensureSandboxGatewaySelected(sandboxName);
-    assertMcpTransportRuntimeCapability(sandboxName);
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
 
     if (entry.addState === "prepared") {
@@ -316,6 +314,15 @@ async function addMcpBridgeUnlocked(
         `MCP server '${entry.server}' cannot be registered in the ${adapter} adapter: ${detail}.`,
       );
     }
+    // Credential keys are sandbox-global. Prove this key is not already
+    // supplied by a foreign attachment before opening its MCP route, then check
+    // again after provider creation to close the intervening race.
+    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    // Loading the real protocol:mcp policy with --wait is the authoritative
+    // running-supervisor capability check. Do it before any host credential is
+    // created or updated so unsupported runtimes fail without that side effect.
+    applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
+    policyApplied = true;
     credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
     const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
@@ -339,8 +346,6 @@ async function addMcpBridgeUnlocked(
       writeBridgeEntry(sandboxName, entry);
     }
     assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
-    policyApplied = true;
     providerAttachAttempted = true;
     attachProvider(sandboxName, entry);
     waitForAttachedMcpCredential(sandboxName, entry, {
@@ -455,7 +460,6 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   for (const entry of missingProviderEntries) {
     detachMissingProviderReference(sandboxName, entry);
   }
-  assertMcpTransportRuntimeCapability(sandboxName);
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
   for (const entry of missingProviderEntries) {
     waitForDetachedMcpCredential(sandboxName, entry);
@@ -469,6 +473,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const resolvedAddresses = resolvedByServer.get(entry.server);
     let credentialRevisionSnapshotPath: string | undefined;
     try {
+      assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+      // Revalidate the actual running supervisor before rotating or recreating
+      // a credential provider during restart.
+      applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
       if (providerInspectionByServer.get(entry.server)?.exists !== false) {
         credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
       }
@@ -491,7 +499,6 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
         entry = refreshedEntry;
       }
       assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-      applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
       attachProvider(sandboxName, entry);
       waitForAttachedMcpCredential(sandboxName, entry, {
         ...(providerResult.action === "updated"
@@ -713,7 +720,6 @@ export async function prepareMcpBridgesForDestroy(
   }
 
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpTransportRuntimeCapability(sandboxName);
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
@@ -988,7 +994,6 @@ export async function prepareMcpBridgesForRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpTransportRuntimeCapability(sandboxName);
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   const detached: McpBridgeEntry[] = [];
@@ -1076,7 +1081,6 @@ export async function reattachMcpProvidersAfterRebuildAbort(
 ): Promise<void> {
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpTransportRuntimeCapability(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, [
     ...entries,
@@ -1238,9 +1242,8 @@ async function removeMcpBridgeUnlocked(
   }
 
   // A dangling provider name can prevent fresh sandbox execs on OpenShell
-  // main, so clear that host-side spec reference before probing or mutating the
-  // in-sandbox adapter.
-  assertMcpTransportRuntimeCapability(sandboxName);
+  // main, so clear that host-side spec reference before mutating the in-sandbox
+  // adapter.
   assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
 
   const adapterEnvValues = resolveCredentialEnv(entry.env.map((envName) => ({ name: envName })));

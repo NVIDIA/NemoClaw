@@ -81,6 +81,7 @@ import {
   backupSandboxStateForRebuild,
   ensureRebuildAgentBaseImage,
   openRebuildShieldsWindowForState,
+  pinRebuildAgentBaseImageForRecreate,
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
 } from "./rebuild-flow-helpers";
@@ -780,7 +781,8 @@ async function rebuildSandboxUnlocked(
 
   // Build agent base layers before backup/delete so Dockerfile.base errors leave
   // the existing sandbox intact. This is what applies local Hermes version edits.
-  if (!ensureRebuildAgentBaseImage(rebuildAgent, bail)) return;
+  const rebuildBaseImagePreflight = ensureRebuildAgentBaseImage(rebuildAgent, bail);
+  if (!rebuildBaseImagePreflight.ok) return;
 
   // On stale-sandbox recovery the live sandbox is gone, so the normal
   // unlock→recreate→relock cycle cannot run. Track stale lock state and defer
@@ -1022,6 +1024,8 @@ async function rebuildSandboxUnlocked(
     // unrelated onboard's values. Restored in finally so a bulk rebuild loop
     // and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+    const restoreRebuildBaseImageOverride =
+      pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
     try {
       await onboard(recreateOpts);
       log("onboard() returned successfully");
@@ -1034,6 +1038,7 @@ async function rebuildSandboxUnlocked(
       }
     } finally {
       process.exit = _savedExit;
+      restoreRebuildBaseImageOverride();
       restoreAmbientRecreateEnv();
     }
 
