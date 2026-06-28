@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, expectTypeOf, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { HostCliClient, type CommandRunner } from "../fixtures/clients/index.ts";
+import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { OnboardingPhaseFixture, type OnboardingSecrets } from "../fixtures/phases/index.ts";
 import type { EnvironmentReady } from "../fixtures/phases/index.ts";
+import { OnboardingPhaseFixture, type OnboardingSecrets } from "../fixtures/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -296,7 +296,6 @@ describe("onboarding phase fixture", () => {
         timeoutMs: 900_000,
       },
     });
-    expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
     expect(runner.calls[0]?.options?.redactionValues).toEqual(["secret-token"]);
     expect(runner.calls[0]?.options?.env).toMatchObject({
       NEMOCLAW_AGENT: "openclaw",

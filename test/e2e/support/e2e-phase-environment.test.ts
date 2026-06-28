@@ -8,9 +8,9 @@ import path from "node:path";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
-import { HostCliClient, type CommandRunner } from "../fixtures/clients/index.ts";
+import { type CommandRunner, HostCliClient } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { EnvironmentPhaseFixture, type DockerRuntimeReady } from "../fixtures/phases/index.ts";
+import { type DockerRuntimeReady, EnvironmentPhaseFixture } from "../fixtures/phases/index.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
@@ -233,8 +233,6 @@ describe("environment phase fixture", () => {
       expect(dockerEnv?.PATH).toBe("/tmp/e2e-home/.local/bin:/usr/bin");
       expect(cliEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       expect(dockerEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
-      expect(runner.calls[0]?.options?.inheritEnv).toBeUndefined();
-      expect(runner.calls[1]?.options?.inheritEnv).toBeUndefined();
     } finally {
       if (previousSecret === undefined) {
         delete process.env.NVIDIA_INFERENCE_API_KEY;

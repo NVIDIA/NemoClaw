@@ -5,6 +5,7 @@ import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 
@@ -80,7 +81,7 @@ runDocsValidationTest(
     const build = await host.command("npm", ["run", "build:cli"], {
       artifactName: "docs-validation-build-cli",
       cwd: REPO_ROOT,
-      inheritEnv: true,
+      env: buildAvailabilityProbeEnv(),
       timeoutMs: BUILD_TIMEOUT_MS,
     });
     expect(build.exitCode, `CLI build failed\n${build.stdout}${build.stderr}`).toBe(0);
@@ -103,7 +104,6 @@ runDocsValidationTest(
       {
         artifactName: "docs-validation-prerequisite",
         cwd: REPO_ROOT,
-        inheritEnv: true,
         env,
         timeoutMs: DOCS_CHECK_TIMEOUT_MS,
       },
@@ -121,7 +121,6 @@ runDocsValidationTest(
     const cliParity = await host.command("bash", [CHECK_DOCS, "--only-cli"], {
       artifactName: "docs-validation-cli-parity",
       cwd: REPO_ROOT,
-      inheritEnv: true,
       env,
       timeoutMs: DOCS_CHECK_TIMEOUT_MS,
     });
@@ -135,7 +134,6 @@ runDocsValidationTest(
     const links = await host.command("bash", [CHECK_DOCS, "--only-links", "--local-only"], {
       artifactName: "docs-validation-local-links",
       cwd: REPO_ROOT,
-      inheritEnv: true,
       env,
       timeoutMs: DOCS_CHECK_TIMEOUT_MS,
     });

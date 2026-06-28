@@ -22,7 +22,6 @@ import type { TrustedShellCommand } from "./shell/trusted-command.ts";
 export interface ShellProbeRunOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
-  inheritEnv?: boolean;
   timeoutMs?: number;
   killGraceMs?: number;
   artifactName?: string;
@@ -123,9 +122,7 @@ export class ShellProbe {
     const child = spawn(command, args, {
       cwd: options.cwd,
       detached: true,
-      env: options.inheritEnv
-        ? { ...process.env, ...(options.env ?? {}) }
-        : { ...(options.env ?? {}) },
+      env: { ...(options.env ?? {}) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const supervised = await superviseChild(child, {

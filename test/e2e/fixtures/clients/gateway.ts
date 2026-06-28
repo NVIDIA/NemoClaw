@@ -11,8 +11,8 @@ import type { SandboxClient } from "./sandbox.ts";
 /**
  * Build the env passed to in-sandbox probes via `openshell sandbox exec`.
  *
- * The framework's ShellProbe defaults to `inheritEnv: false` and routes the
- * spawned-process env through `buildChildEnv`'s allowlist (HOME, PATH, …).
+ * The framework's ShellProbe accepts only an explicit spawned-process env,
+ * normally produced through `buildChildEnv`'s allowlist (HOME, PATH, …).
  * `OPENSHELL_GATEWAY` is not in that allowlist, so even when the workflow
  * sets it, raw `openshell sandbox exec` invocations fail with
  * "× No active gateway" because the openshell binary cannot resolve which

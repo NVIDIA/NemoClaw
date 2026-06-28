@@ -9,13 +9,13 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import { ArtifactSink } from "../fixtures/artifacts.ts";
 import {
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   SandboxClient,
-  type CommandRunner,
 } from "../fixtures/clients/index.ts";
 import type { E2ETargetFixtures } from "../fixtures/e2e-test.ts";
-import { StateValidationPhaseFixture, type NemoClawInstance } from "../fixtures/phases/index.ts";
+import { type NemoClawInstance, StateValidationPhaseFixture } from "../fixtures/phases/index.ts";
 import {
   latestRebuildBackupDir,
   listCredentialLeakPaths,
@@ -445,7 +445,6 @@ describe("state-validation phase fixture", () => {
       await fixture(runner).from("preflight-failure-no-sandbox", instance());
 
       for (const call of runner.calls.slice(1)) {
-        expect(call.options).not.toHaveProperty("inheritEnv");
         expect(call.options?.env).toEqual(expect.objectContaining({ PATH: expect.any(String) }));
         expect(call.options?.env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
       }

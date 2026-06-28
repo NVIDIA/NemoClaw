@@ -3,6 +3,8 @@
 
 import os from "node:os";
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { sandboxAccessEnv } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 
 // Branch validation provisions and onboards a real remote sandbox first; this
@@ -66,7 +68,7 @@ runDashboardRemoteBindTest(
       ["-lc", "command -v nemoclaw && command -v openshell"],
       {
         artifactName: "dashboard-remote-bind-cli-probe",
-        inheritEnv: true,
+        env: buildAvailabilityProbeEnv(),
         timeoutMs: 30_000,
       },
     );
@@ -76,14 +78,14 @@ runDashboardRemoteBindTest(
 
     await sandbox.openshell(["forward", "stop", dashboardPort], {
       artifactName: "dashboard-remote-bind-forward-stop",
-      inheritEnv: true,
+      env: sandboxAccessEnv(),
       timeoutMs: 30_000,
     });
 
     const connect = await host.nemoclaw([sandboxName, "connect"], {
       artifactName: "dashboard-remote-bind-connect",
-      inheritEnv: true,
       env: {
+        ...buildAvailabilityProbeEnv(),
         NEMOCLAW_DASHBOARD_BIND: "0.0.0.0",
       },
       timeoutMs: 120_000,
@@ -92,7 +94,7 @@ runDashboardRemoteBindTest(
 
     const forwardList = await sandbox.openshell(["forward", "list"], {
       artifactName: "dashboard-remote-bind-forward-list",
-      inheritEnv: true,
+      env: sandboxAccessEnv(),
       timeoutMs: 30_000,
     });
     expect(forwardList.exitCode, `openshell forward list failed\n${forwardList.stderr}`).toBe(0);

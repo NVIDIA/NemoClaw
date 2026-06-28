@@ -516,66 +516,78 @@ e2eTest(
   },
 );
 
-e2eTest("shell probe uses explicit env and escalates ignored timeouts", async ({ shellProbe }) => {
-  const parentSecretName = "NEMOCLAW_PARENT_SECRET_FOR_PROBE_TEST";
-  const parentSecret = "parent-secret-value";
-  const explicitSecret = "explicit-secret-value";
-  const oldParentSecret = process.env[parentSecretName];
-  process.env[parentSecretName] = parentSecret;
-  try {
-    const envResult = await shellProbe.run(
+e2eTest(
+  "shell probe excludes ambient workflow secrets and escalates ignored timeouts",
+  async ({ shellProbe }) => {
+    const parentSecrets = {
+      NVIDIA_INFERENCE_API_KEY: "parent-inference-secret-value",
+      DOCKERHUB_TOKEN: "parent-docker-secret-value",
+    };
+    const explicitSecret = "explicit-secret-value";
+    const previousSecrets = Object.fromEntries(
+      Object.keys(parentSecrets).map((name) => [name, process.env[name]]),
+    );
+    Object.assign(process.env, parentSecrets);
+    try {
+      const envResult = await shellProbe.run(
+        trustedShellCommand({
+          command: process.execPath,
+          args: [
+            "-e",
+            `console.log(process.env.NVIDIA_INFERENCE_API_KEY ?? "missing-inference"); console.log(process.env.DOCKERHUB_TOKEN ?? "missing-docker"); console.log(process.env.NEMOCLAW_TEST_TOKEN);`,
+          ],
+          reason: "exercise explicit shell probe environment",
+        }),
+        {
+          artifactName: "minimal-env",
+          env: { NEMOCLAW_TEST_TOKEN: explicitSecret },
+          redactionValues: [explicitSecret, ...Object.values(parentSecrets)],
+          timeoutMs: 5_000,
+        },
+      );
+
+      expect(envResult.exitCode).toBe(0);
+      expect(envResult.stdout).toContain("missing-inference");
+      expect(envResult.stdout).toContain("missing-docker");
+      expect(envResult.stdout).toContain("[REDACTED]");
+      for (const secret of Object.values(parentSecrets)) {
+        expect(envResult.stdout).not.toContain(secret);
+      }
+      expect(envResult.stdout).not.toContain(explicitSecret);
+      expect(fs.readFileSync(envResult.artifacts.result, "utf8")).not.toContain(explicitSecret);
+    } finally {
+      for (const [name, previousValue] of Object.entries(previousSecrets)) {
+        if (previousValue === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = previousValue;
+        }
+      }
+    }
+
+    const started = Date.now();
+    const timeoutResult = await shellProbe.run(
       trustedShellCommand({
         command: process.execPath,
-        args: [
-          "-e",
-          `console.log(process.env.${parentSecretName} ?? "missing"); console.log(process.env.NEMOCLAW_TEST_TOKEN);`,
-        ],
-        reason: "exercise explicit shell probe environment",
+        args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
+        reason: "exercise timeout escalation",
       }),
       {
-        artifactName: "minimal-env",
-        env: { NEMOCLAW_TEST_TOKEN: explicitSecret },
-        redactionValues: [explicitSecret, parentSecret],
-        timeoutMs: 5_000,
+        artifactName: "timeout-escalation",
+        timeoutMs: 50,
+        killGraceMs: 50,
       },
     );
 
-    expect(envResult.exitCode).toBe(0);
-    expect(envResult.stdout).toContain("missing");
-    expect(envResult.stdout).toContain("[REDACTED]");
-    expect(envResult.stdout).not.toContain(parentSecret);
-    expect(envResult.stdout).not.toContain(explicitSecret);
-    expect(fs.readFileSync(envResult.artifacts.result, "utf8")).not.toContain(explicitSecret);
-  } finally {
-    if (oldParentSecret === undefined) {
-      delete process.env[parentSecretName];
-    } else {
-      process.env[parentSecretName] = oldParentSecret;
-    }
-  }
-
-  const started = Date.now();
-  const timeoutResult = await shellProbe.run(
-    trustedShellCommand({
-      command: process.execPath,
-      args: ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000);"],
-      reason: "exercise timeout escalation",
-    }),
-    {
-      artifactName: "timeout-escalation",
-      timeoutMs: 50,
-      killGraceMs: 50,
-    },
-  );
-
-  expect(Date.now() - started).toBeLessThan(2_000);
-  expect(timeoutResult.timedOut).toBe(true);
-  // Darwin can report the earlier SIGTERM even when the supervisor's bounded
-  // escalation path resolves promptly. The contract here is timeout detection
-  // plus bounded cleanup; leaf supervisor tests own exact signal sequencing.
-  expect(
-    timeoutResult.signal === "SIGKILL" ||
-      timeoutResult.signal === "SIGTERM" ||
-      timeoutResult.exitCode !== 0,
-  ).toBe(true);
-});
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(timeoutResult.timedOut).toBe(true);
+    // Darwin can report the earlier SIGTERM even when the supervisor's bounded
+    // escalation path resolves promptly. The contract here is timeout detection
+    // plus bounded cleanup; leaf supervisor tests own exact signal sequencing.
+    expect(
+      timeoutResult.signal === "SIGKILL" ||
+        timeoutResult.signal === "SIGTERM" ||
+        timeoutResult.exitCode !== 0,
+    ).toBe(true);
+  },
+);

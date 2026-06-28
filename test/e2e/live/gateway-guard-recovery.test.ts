@@ -116,8 +116,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   // after a host reboot on DGX Spark.
   const recoveryResult = await host.nemoclaw([instance.sandboxName, "connect", "--probe-only"], {
     artifactName: "nemoclaw-connect-probe-only",
-    // ShellProbe defaults to inheritEnv: false; without an explicit env
-    // the spawned `nemoclaw` (= `node bin/nemoclaw.js`) cannot find node
+    // ShellProbe accepts only explicit env; without one the spawned
+    // `nemoclaw` (= `node bin/nemoclaw.js`) cannot find node
     // on PATH and exits 127. Pass the framework's allowlisted env so PATH,
     // HOME, and the OPENSHELL_GATEWAY override flow through.
     env: {

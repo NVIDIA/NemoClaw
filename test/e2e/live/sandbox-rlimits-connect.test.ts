@@ -120,7 +120,6 @@ runConnectRlimitTest(
       {
         artifactName: "phase-2-connect-rlimits",
         env: buildAvailabilityProbeEnv(),
-        inheritEnv: true,
         redactionValues,
         timeoutMs: 10 * 60_000,
       },

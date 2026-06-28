@@ -6,17 +6,18 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-
-import { assertExitZero, shellQuote, type CommandRunner } from "../fixtures/clients/index.ts";
 import {
+  assertExitZero,
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   ProviderClient,
   SandboxClient,
   StateClient,
-  trustedSandboxShellScript,
-  trustedProviderEndpoint,
+  shellQuote,
   type TrustedSandboxShellScript,
+  trustedProviderEndpoint,
+  trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -148,7 +149,6 @@ describe("E2E fixture clients", () => {
     await gateway.status({
       artifactName: "custom-gateway-status",
       env: { NEMOCLAW_TEST_VALUE: "1" },
-      inheritEnv: true,
       timeoutMs: 123,
     });
 
@@ -158,7 +158,6 @@ describe("E2E fixture clients", () => {
       options: {
         artifactName: "custom-gateway-status",
         env: { NEMOCLAW_TEST_VALUE: "1" },
-        inheritEnv: true,
         timeoutMs: 123,
       },
     });
@@ -234,7 +233,6 @@ describe("E2E fixture clients", () => {
     await sandbox.status("assistant", {
       artifactName: "custom-sandbox-status",
       env: { NEMOCLAW_TEST_VALUE: "1" },
-      inheritEnv: true,
       timeoutMs: 123,
     });
 
@@ -244,7 +242,6 @@ describe("E2E fixture clients", () => {
       options: {
         artifactName: "custom-sandbox-status",
         env: { NEMOCLAW_TEST_VALUE: "1" },
-        inheritEnv: true,
         timeoutMs: 123,
       },
     });
