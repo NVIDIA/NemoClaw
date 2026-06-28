@@ -51,12 +51,16 @@ describe("MCP adapters", () => {
   } {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-"));
     const configPath = path.join(tmp, ".deepagents", ".mcp.json");
-    if (initialConfig !== undefined) {
-      fs.mkdirSync(path.dirname(configPath), { recursive: true });
-      fs.writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`, {
-        mode: 0o600,
-      });
-    }
+    const initializeConfig =
+      initialConfig === undefined
+        ? () => undefined
+        : () => {
+            fs.mkdirSync(path.dirname(configPath), { recursive: true });
+            fs.writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`, {
+              mode: 0o600,
+            });
+          };
+    initializeConfig();
     try {
       const result = spawnSync(
         "bash",
