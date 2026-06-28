@@ -10,9 +10,9 @@ import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
-import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import { ensureAgentDashboardForward as ensureAgentDashboardForwardForAgent } from "./agent-dashboard-forward";
 import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
+import { fetchAgentWebAuthTokenFromSandbox as fetchAgentWebAuthToken } from "./agent-web-auth-token";
 import * as dashboardAccess from "./dashboard-access";
 import {
   createSandboxForwardStopper,
@@ -37,6 +37,7 @@ import {
   ensureMessagingHostForwardForSandbox,
   resolveMessagingHostForwardForSandbox,
 } from "./messaging-host-forward";
+import { buildSshForwardHintLines } from "./ssh-forward-hint";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -491,6 +492,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
       console.log("    Terminal:");
       console.log(`      ${deps.cliName()} ${sandboxName} connect`);
       console.log("      then run: openclaw tui");
+    }
+    const sshForwardHint = buildSshForwardHintLines({
+      port: chain.port,
+      accessUrl: chain.accessUrl,
+    });
+    if (sshForwardHint) {
+      console.log("");
+      for (const line of sshForwardHint) {
+        console.log(line);
+      }
     }
     console.log("");
     console.log("  Manage later");
