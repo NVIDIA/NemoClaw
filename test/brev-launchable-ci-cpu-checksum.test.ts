@@ -27,8 +27,8 @@ function linkSystemCommands(targetDir: string, commands: readonly string[]): voi
     const source = [`/usr/bin/${command}`, `/bin/${command}`].find((candidate) =>
       fs.existsSync(candidate),
     );
-    if (!source) throw new Error(`Required test command is unavailable: ${command}`);
-    fs.symlinkSync(source, path.join(targetDir, command));
+    expect(source, `Required test command is unavailable: ${command}`).toBeDefined();
+    fs.symlinkSync(source as string, path.join(targetDir, command));
   }
 }
 
@@ -50,20 +50,12 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
 
-  if (options.nodeSourceChecksumTool === false) {
-    linkSystemCommands(fakeBin, [
-      "bash",
-      "basename",
-      "cut",
-      "date",
-      "dirname",
-      "head",
-      "mkdir",
-      "mktemp",
-      "rm",
-      "tee",
-    ]);
-  }
+  linkSystemCommands(
+    fakeBin,
+    options.nodeSourceChecksumTool === false
+      ? ["bash", "basename", "cut", "date", "dirname", "head", "mkdir", "mktemp", "rm", "tee"]
+      : [],
+  );
 
   writeExecutable(
     path.join(fakeBin, "uname"),
@@ -192,10 +184,12 @@ esac
 exit 0
 `,
   );
-  if (options.nodeSourceChecksumTool !== false) {
-    writeExecutable(
-      path.join(fakeBin, "sha256sum"),
-      `#!/usr/bin/env bash
+  writeExecutable(
+    path.join(
+      fakeBin,
+      options.nodeSourceChecksumTool === false ? "sha256sum-unavailable" : "sha256sum",
+    ),
+    `#!/usr/bin/env bash
 if [ "\${1:-}" = "-c" ]; then
   cat >/dev/null
   if [ ${JSON.stringify(options.checksum)} = "mismatch" ]; then
@@ -207,8 +201,7 @@ if [ "\${1:-}" = "-c" ]; then
 fi
 exec /usr/bin/sha256sum "$@"
 `,
-    );
-  }
+  );
 
   return {
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
