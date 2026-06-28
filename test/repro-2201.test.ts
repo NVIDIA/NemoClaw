@@ -229,7 +229,20 @@ process.exit(0);
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
 if (a[0]==="build") { process.exit(0); }
+if (a[0]==="image" && a[1]==="inspect" && a[2]==="--format") {
+  if (a[3]==="{{.Id}}") process.stdout.write("sha256:${"a".repeat(64)}\\n");
+  if (a[3]==="{{json .RepoDigests}}") process.stdout.write("[]\\n");
+  process.exit(0);
+}
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
+if (a[0]==="run" && a.includes("/usr/bin/ldd")) {
+  process.stdout.write("ldd (GNU libc) 2.41\\n");
+  process.exit(0);
+}
+if (a[0]==="run" && a.includes("/opt/hermes/.venv/bin/python")) {
+  process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
+  process.exit(0);
+}
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
 process.exit(0);
 `,
