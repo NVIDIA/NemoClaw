@@ -570,6 +570,8 @@ hello
       curlStatus(sandbox, "https://pypi.org/simple/le/", "tc-net-02-pypi-post", "-X POST"),
     ).resolves.toBe("403");
 
+    // Use Slack's non-redirecting API probe on the preset's actual API host;
+    // the marketing root can leave the slack.com allowlist during redirects.
     const slackBefore = await fetchStatus(
       sandbox,
       "https://slack.com/api/api.test",

@@ -1,6 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Trust boundary: the Expect program receives only a numeric preset index
+// parsed from NemoClaw's own numbered menu plus the literal confirmation Y.
+// No dispatch input, secret, or other user-controlled text enters the script.
+// Exit codes: 2=preset timeout, 3=preset EOF, 4=confirmation timeout,
+// 5=confirmation EOF, and 6=post-confirmation timeout.
 export const POLICY_ADD_EXPECT_SCRIPT = String.raw`
 set timeout 60
 spawn env NEMOCLAW_NON_INTERACTIVE= node $env(NEMOCLAW_E2E_CLI) $env(NEMOCLAW_E2E_SANDBOX) policy-add

@@ -1872,9 +1872,10 @@ jobs:
         with:
           persist-credentials: false
 
-      # Keep this privileged setup inline in trusted workflow YAML. This job
-      # executes a selected target ref, so it must not load a repo-local action
-      # from that ref with sudo privileges.
+      # Expect is a reviewed host-tool consumer for the interactive policy-add
+      # test. Keep this privileged setup inline in trusted workflow YAML. This
+      # job executes a selected target ref, so it must not load a repo-local
+      # action from that ref with sudo privileges.
       - name: Install network-policy host dependencies
         shell: bash
         run: |

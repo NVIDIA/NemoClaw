@@ -1376,8 +1376,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
   }, 20_000);
 
   // #4780: Nemotron can generate invalid JS for OpenClaw's native
-  // `tool_search_code`. Disable it on affected managed-inference routes so
-  // these models use the structured tool-calling surface they handle correctly.
+  // `tool_search_code`. The Super and Ultra managed-inference manifests disable
+  // it so both models use the structured tool-calling surface they handle.
   it("disables native OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
     for (const model of ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nvidia/nemotron-3-ultra"]) {
       const config = runConfigScript({

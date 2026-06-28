@@ -347,6 +347,8 @@ export function expectedApiMode(): string | undefined {
   ]).get(SWITCH_API);
 }
 
+// This live lane runs on ubuntu-latest and intentionally uses GNU grep's
+// POSIX ERE character classes; support tests pin the accepted scalar shapes.
 export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
 
 export function apiKeyShapeCommand(): string[] {
