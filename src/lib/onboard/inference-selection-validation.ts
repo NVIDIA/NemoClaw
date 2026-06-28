@@ -185,10 +185,12 @@ export function createInferenceSelectionValidationHelpers(
     helpUrl: string | null = null,
   ): Promise<EndpointValidationResult> {
     const apiKey = resolveCredential(credentialEnv);
+    const reasoningEnabled = process.env.NEMOCLAW_REASONING === "true";
     const probe = runOpenAiLikeProbe(endpointUrl, model, apiKey, {
-      requireResponsesToolCalling: true,
-      skipResponsesProbe: shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
-      probeStreaming: true,
+      requireResponsesToolCalling: !reasoningEnabled,
+      skipResponsesProbe:
+        reasoningEnabled || shouldForceCompletionsApi(process.env.NEMOCLAW_PREFERRED_API),
+      probeStreaming: !reasoningEnabled,
     });
     if (probe.ok) {
       if (probe.note) {

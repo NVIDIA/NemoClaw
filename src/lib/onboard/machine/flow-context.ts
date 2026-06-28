@@ -21,6 +21,7 @@ export interface OnboardFlowContext<Agent = unknown, Gpu = unknown, SandboxGpuCo
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   webSearchSupported: boolean;
@@ -65,6 +66,7 @@ export interface ProviderModelSelectedContextUpdate {
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
 }

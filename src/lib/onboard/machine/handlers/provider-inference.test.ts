@@ -22,6 +22,7 @@ const baseSelection: ProviderSelectionResult = {
   hermesAuthMethod: null,
   hermesToolGateways: [],
   preferredInferenceApi: "openai-responses",
+  compatibleEndpointReasoning: null,
   nimContainer: null,
 };
 
@@ -76,6 +77,9 @@ function createDeps(
       recordStateSkipped: calls.recordSkip,
       recordRepairEvent: calls.repairEvent,
       hydrateCredentialEnv: calls.hydrate,
+      configureCompatibleEndpointReasoning: async (value?: string | null) =>
+        value === "true" ? "true" : "false",
+      clearCompatibleEndpointReasoning: () => null,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
       isNonInteractive: () => true,
       getOpenshellBinary: () => "/usr/bin/openshell",
@@ -123,6 +127,7 @@ function baseOptions(
       hermesAuthMethod: session?.hermesAuthMethod ?? null,
       hermesToolGateways: session?.hermesToolGateways ?? [],
       preferredInferenceApi: session?.preferredInferenceApi ?? null,
+      compatibleEndpointReasoning: session?.compatibleEndpointReasoning ?? null,
       nimContainer: session?.nimContainer ?? null,
       webSearchConfig: session?.webSearchConfig ?? null,
     },
@@ -147,7 +152,10 @@ describe("handleProviderInferenceState", () => {
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, null, null, true);
     expect(calls.complete).toHaveBeenCalledWith(
       "provider_selection",
-      expect.objectContaining({ provider: "nvidia-prod" }),
+      expect.objectContaining({
+        compatibleEndpointReasoning: null,
+        provider: "nvidia-prod",
+      }),
     );
     expect(calls.promptName).toHaveBeenCalledWith(null);
     expect(calls.log).toHaveBeenCalledWith("summary:nvidia-prod/nvidia/test/my-assistant");
@@ -190,6 +198,29 @@ describe("handleProviderInferenceState", () => {
       },
       result.stateResult,
     ]);
+  });
+
+  it("records compatible endpoint reasoning state during provider selection", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      compatibleEndpointReasoning: "true",
+      provider: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps),
+      env: { NEMOCLAW_REASONING: "true" },
+    });
+
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({
+        compatibleEndpointReasoning: "true",
+        provider: "compatible-endpoint",
+      }),
+    );
   });
 
   it("disables recorded provider recovery during fresh provider selection", async () => {

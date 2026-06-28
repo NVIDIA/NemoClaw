@@ -204,7 +204,7 @@ export function buildCompatibleEndpointSandboxSmokeScript(
 ): string {
   const configPath = options.configPath || "/sandbox/.openclaw/openclaw.json";
   const inferenceUrl = options.inferenceUrl || `${INFERENCE_ROUTE_URL}/chat/completions`;
-  const initialMaxTokens = positiveInt(options.initialMaxTokens, 256);
+  const initialMaxTokens = positiveInt(options.initialMaxTokens, 512);
   const attempts = positiveInt(options.attempts, COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS);
   const retryDelaySeconds = nonNegativeInt(
     options.retryDelaySeconds,
