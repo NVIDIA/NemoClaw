@@ -18,6 +18,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
@@ -100,6 +101,7 @@ async function onboardSandbox(
   cleanup: CleanupRegistry,
   sandboxName: string,
   artifactName: string,
+  providerEnv: NodeJS.ProcessEnv,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
   cleanup.add(`destroy sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
@@ -109,14 +111,16 @@ async function onboardSandbox(
       artifactName,
       env: {
         ...buildAvailabilityProbeEnv(),
+        ...providerEnv,
         ...extraEnv,
         NEMOCLAW_AGENT: "openclaw",
-        NEMOCLAW_PROVIDER: "cloud",
         NEMOCLAW_SANDBOX_NAME: sandboxName,
         NEMOCLAW_RECREATE_SANDBOX: "1",
-        NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY ?? "",
       },
-      redactionValues: [process.env.NVIDIA_INFERENCE_API_KEY ?? ""],
+      redactionValues: [
+        providerEnv.NVIDIA_INFERENCE_API_KEY ?? "",
+        providerEnv.COMPATIBLE_API_KEY ?? "",
+      ],
       timeoutMs: 20 * 60_000,
     },
   );
@@ -601,7 +605,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
 liveTest(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
-    secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-operations",
@@ -641,7 +645,7 @@ liveTest(
     await bestEffortCleanupSandbox(host, SANDBOX_B);
     await bestEffortCleanupSandbox(host, SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted.env);
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
@@ -652,7 +656,7 @@ liveTest(
     await assertRegistryRebuild(host, SANDBOX_A);
     await assertProcessRecovery(host, sandbox, SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", {
+    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", hosted.env, {
       CHAT_UI_URL: "http://127.0.0.1:18790",
     });
     await assertMetadataForBothSandboxes(host, SANDBOX_A, SANDBOX_B);
