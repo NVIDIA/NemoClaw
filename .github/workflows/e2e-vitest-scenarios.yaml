@@ -4154,8 +4154,9 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sandbox-operations-vitest,') || contains(format(',{0},', inputs.scenarios), ',sandbox-operations,') }}
     runs-on: ubuntu-latest
-    # The test onboards two sandboxes, exercises process and gateway recovery,
-    # and tears both down; its live-test budget is 45 minutes.
+    # The live test receives 45 minutes for two onboards plus process/gateway
+    # recovery. The remaining 15 minutes cover checkout, build, OpenShell setup,
+    # artifact upload, and unconditional credential/resource cleanup.
     timeout-minutes: 60
     env:
       FREE_STANDING_VITEST_JOB: "1"

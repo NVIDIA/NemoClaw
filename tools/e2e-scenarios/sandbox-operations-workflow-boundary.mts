@@ -6,10 +6,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+// Current-state security boundary for the default sandbox-operations job.
+// It pins the isolated Docker-auth pattern that free-standing live jobs should
+// reuse: trusted setup first, credentials only on the login step, target code
+// only after login, and unconditional artifact/auth cleanup.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-vitest-scenarios.yaml");
 const JOB_NAME = "sandbox-operations-vitest";
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+const GITHUB_ENV_REFERENCE = /\$\{?GITHUB_ENV\}?/u;
+const WORKSPACE_REFERENCE = /github\.workspace|GITHUB_WORKSPACE/u;
+const DOCKER_CREDENTIALS = ["DOCKERHUB_USERNAME", "DOCKERHUB_TOKEN"] as const;
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -69,6 +76,11 @@ export function validateSandboxOperationsWorkflow(workflow: {
   if (Object.hasOwn(jobEnv, "DOCKER_CONFIG")) {
     errors.push(`${JOB_NAME} must not configure Docker auth at job scope`);
   }
+  for (const variable of DOCKER_CREDENTIALS) {
+    if (Object.hasOwn(jobEnv, variable) || JSON.stringify(jobEnv).includes(`secrets.${variable}`)) {
+      errors.push(`${JOB_NAME} must not expose ${variable} at job scope`);
+    }
+  }
 
   const checkout = steps.find((step) => step.uses?.startsWith("actions/checkout@")) ?? {};
   if (!FULL_SHA_ACTION.test(checkout.uses ?? "")) {
@@ -103,6 +115,22 @@ export function validateSandboxOperationsWorkflow(workflow: {
     "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations",
   );
   requireRunContains(errors, configure, '>> "$GITHUB_ENV"');
+  if (WORKSPACE_REFERENCE.test(configure.run ?? "")) {
+    errors.push(`${JOB_NAME} Docker auth directory must not use the checkout workspace`);
+  }
+
+  for (const step of steps) {
+    if (step.env?.DOCKER_CONFIG !== undefined) {
+      errors.push(
+        `${JOB_NAME} must not expose DOCKER_CONFIG through step '${step.name ?? "<unnamed>"}'`,
+      );
+    }
+    if (step !== configure && GITHUB_ENV_REFERENCE.test(step.run ?? "")) {
+      errors.push(
+        `${JOB_NAME} step '${step.name ?? "<unnamed>"}' must not write persistent environment`,
+      );
+    }
+  }
 
   const authenticate = findStep(job, "Authenticate to Docker Hub");
   if (authenticate.env?.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
@@ -110,6 +138,16 @@ export function validateSandboxOperationsWorkflow(workflow: {
   }
   if (authenticate.env?.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
     errors.push(`${JOB_NAME} Docker token must be scoped to the auth step`);
+  }
+  for (const step of steps.filter((entry) => entry !== authenticate)) {
+    for (const variable of DOCKER_CREDENTIALS) {
+      if (
+        step.env?.[variable] !== undefined ||
+        JSON.stringify(step.env ?? {}).includes(`secrets.${variable}`)
+      ) {
+        errors.push(`${JOB_NAME} exposes ${variable} outside the Docker authentication step`);
+      }
+    }
   }
 
   requireStepOrder(errors, steps, "Install OpenShell CLI", configure.name ?? "");

@@ -18,7 +18,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  type HostedInferenceConfig,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
@@ -57,28 +60,21 @@ async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise
   expectExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
 }
 
-async function bestEffortCleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  try {
-    await cleanupSandbox(host, sandboxName);
-  } catch {
-    // Best-effort pre-cleanup mirrors the legacy script's stale sandbox removal.
-  }
-}
-
 async function destroyGateway(host: HostCliClient, artifactName = "cleanup-gateway-destroy") {
-  await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+  const result = await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
     artifactName,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 5 * 60_000,
   });
-}
-
-async function bestEffortDestroyGateway(host: HostCliClient): Promise<void> {
-  try {
-    await destroyGateway(host);
-  } catch {
-    // Mirrors legacy teardown: gateway cleanup must not mask the test failure.
+  if (result.exitCode === 0) return;
+  if (
+    /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i.test(
+      resultText(result),
+    )
+  ) {
+    return;
   }
+  expectExitZero(result, "cleanup destroy shared NemoClaw gateway");
 }
 
 async function onboardSandbox(
@@ -86,7 +82,7 @@ async function onboardSandbox(
   cleanup: CleanupRegistry,
   sandboxName: string,
   artifactName: string,
-  providerEnv: NodeJS.ProcessEnv,
+  hosted: HostedInferenceConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
   cleanup.add(`destroy sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
@@ -96,16 +92,15 @@ async function onboardSandbox(
       artifactName,
       env: {
         ...buildAvailabilityProbeEnv(),
-        ...providerEnv,
+        // The shared hosted configuration intentionally wins over availability
+        // defaults; extraEnv remains the per-sandbox override boundary.
+        ...hosted.env,
         ...extraEnv,
         NEMOCLAW_AGENT: "openclaw",
         NEMOCLAW_SANDBOX_NAME: sandboxName,
         NEMOCLAW_RECREATE_SANDBOX: "1",
       },
-      redactionValues: [
-        providerEnv.NVIDIA_INFERENCE_API_KEY ?? "",
-        providerEnv.COMPATIBLE_API_KEY ?? "",
-      ],
+      redactionValues: [hosted.apiKey],
       timeoutMs: 20 * 60_000,
     },
   );
@@ -281,8 +276,11 @@ async function assertAgentJsonNonzeroExit(host: HostCliClient, sandboxName: stri
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBeNull();
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBe(0);
 
-  // Failed-tool provenance is covered by deterministic source/package tests.
-  // A live prompt cannot require upstream OpenClaw to emit failed tool-result metadata.
+  // The v0.0.69 legacy job did not exercise piped stdin. That experimental
+  // migration-only assertion was retired instead of expanding the parity lane.
+  // Failed-tool provenance remains covered deterministically by
+  // test/openclaw-agent-json.test.ts; a live prompt cannot require upstream
+  // OpenClaw to emit failed tool-result metadata.
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -479,7 +477,16 @@ async function assertDestroyRemovesSandbox(
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
 }
 
-async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): Promise<void> {
+type GatewayRecoveryOutcome =
+  | "recovered"
+  | "skipped-gateway-absent"
+  | "skipped-docker-restarted-before-probe"
+  | "skipped-docker-did-not-restart";
+
+async function assertGatewayRecovery(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<GatewayRecoveryOutcome> {
   const running = await host.command(
     "docker",
     ["ps", "-q", "--filter", `name=${GATEWAY_CONTAINER}`],
@@ -490,9 +497,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     },
   );
   if (!running.stdout.trim()) {
-    // Preserve the legacy script's soft-skip when the shared gateway is already
-    // absent before the destructive recovery probe can exercise it.
-    return;
+    return "skipped-gateway-absent";
   }
 
   await host.command("docker", ["kill", GATEWAY_CONTAINER], {
@@ -512,9 +517,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     },
   );
   if (afterKill.stdout.trim() === "true") {
-    // Preserve the legacy script's soft-skip when Docker restarts the gateway
-    // before the recovery path can observe a stopped container.
-    return;
+    return "skipped-docker-restarted-before-probe";
   }
 
   const status = await host.nemoclaw([sandboxName, "status"], {
@@ -522,7 +525,7 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  if (status.exitCode === 0) return;
+  if (status.exitCode === 0) return "recovered";
 
   const afterStatus = await host.command(
     "docker",
@@ -534,11 +537,10 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     },
   );
   if (afterStatus.stdout.trim() !== "true") {
-    // Same legacy soft-skip: Docker did not restart the gateway container on
-    // this runner, so there is no recovery signal to assert.
-    return;
+    return "skipped-docker-did-not-restart";
   }
   expectExitZero(status, `nemoclaw ${sandboxName} status after gateway kill`);
+  return "recovered";
 }
 
 liveTest(
@@ -580,11 +582,11 @@ liveTest(
     }
 
     await environment.assertReady(ENVIRONMENT);
-    cleanup.add("destroy shared NemoClaw gateway", () => bestEffortDestroyGateway(host));
-    await bestEffortCleanupSandbox(host, SANDBOX_B);
-    await bestEffortCleanupSandbox(host, SANDBOX_A);
+    cleanup.add("destroy shared NemoClaw gateway", () => destroyGateway(host));
+    await cleanupSandbox(host, SANDBOX_B);
+    await cleanupSandbox(host, SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted.env);
+    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
@@ -595,7 +597,7 @@ liveTest(
     await assertRegistryRebuild(host, SANDBOX_A);
     await assertProcessRecovery(host, sandbox, SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", hosted.env, {
+    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", hosted, {
       CHAT_UI_URL: "http://127.0.0.1:18790",
     });
     await assertMetadataForBothSandboxes(host, SANDBOX_A, SANDBOX_B);
@@ -603,11 +605,12 @@ liveTest(
     await assertNetworkIsolation(sandbox, SANDBOX_B, SANDBOX_A, "tc-sbx-11-b-cannot-reach-a");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_B);
 
-    await assertGatewayRecovery(host, SANDBOX_A);
+    const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
 
     await artifacts.writeJson("scenario-result.json", {
       id: "sandbox-operations",
       status: "passed",
+      gatewayRecovery,
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });
   },
