@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveDiscordTemplateReference } from "../dist/lib/messaging/channels/discord/template-resolver.js";
+import { resolveDiscordTemplateReference } from "../src/lib/messaging/channels/discord/template-resolver.js";
 
 // OpenClaw's Discord plugin validates channels.discord.accounts.default.proxy
 // and rejects any non-loopback host (validateDiscordProxyUrl: "Proxy URL must

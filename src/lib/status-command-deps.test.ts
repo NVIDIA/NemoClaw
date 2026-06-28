@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { buildStatusCommandDeps } =
-  require("../../dist/lib/status-command-deps.js") as typeof import("../../dist/lib/status-command-deps");
+  require("./status-command-deps.js") as typeof import("./status-command-deps");
 
 function writeExecutable(target: string, body: string): void {
   fs.writeFileSync(target, body, { mode: 0o755 });

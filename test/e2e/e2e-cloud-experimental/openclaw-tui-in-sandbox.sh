@@ -7,8 +7,7 @@
 #
 # OpenClaw TUI flow in one command (local / interactive).
 #
-# Automated CI-style smoke (finite expect, no `interact`) runs as Phase 5e inside:
-#   test/e2e/test-e2e-cloud-experimental.sh
+# Local helper for manually launching the OpenClaw TUI inside an existing sandbox.
 #
 #   default: use `expect` to run `nemoclaw <sandbox> connect`, then send `openclaw tui`
 #   manual:  pass --manual to only run `nemoclaw <sandbox> connect`

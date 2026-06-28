@@ -3,15 +3,12 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type {
-  DockerGpuPatchFailureContext,
-  DockerGpuPatchResult,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
-import { buildSandboxGpuCreateArgs } from "../../../dist/lib/onboard/sandbox-gpu-create";
+import type { DockerGpuPatchFailureContext, DockerGpuPatchResult } from "./docker-gpu-patch";
 import {
   createDockerGpuSandboxCreatePatch,
   resolveDockerGpuSandboxCreatePlan,
-} from "../../../dist/lib/onboard/docker-gpu-sandbox-create";
+} from "./docker-gpu-sandbox-create";
+import { buildSandboxGpuCreateArgs } from "./sandbox-gpu-create";
 
 function deferredCreateResult(): DockerGpuPatchResult {
   return {

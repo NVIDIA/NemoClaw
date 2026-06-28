@@ -8,7 +8,6 @@ import {
   type OnboardFlags,
   onboardExamples,
   onboardUsage,
-  toLegacyOnboardArgs,
 } from "../lib/onboard/command-support";
 
 export default class OnboardCliCommand extends NemoClawCommand {
@@ -22,6 +21,6 @@ export default class OnboardCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(OnboardCliCommand);
-    await runOnboardAction(toLegacyOnboardArgs(flags as OnboardFlags));
+    await runOnboardAction(flags as OnboardFlags);
   }
 }

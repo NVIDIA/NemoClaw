@@ -8,9 +8,9 @@ import {
   assessAmbientRecreateEnv,
   isolateAmbientRecreateEnv,
   sanitizeEnvValueForDisplay,
-} from "../../../../dist/lib/actions/sandbox/rebuild-env-isolation.js";
+} from "./rebuild-env-isolation.js";
 
-describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
+describe("sanitizeEnvValueForDisplay PRA-7 (#5735)", () => {
   it("collapses a multi-line / ANSI value into a single safe line", () => {
     // Untrusted NEMOCLAW_AGENT with a newline + CR + ANSI escape that tries to
     // paint a fake "Installation complete" status line.
@@ -34,7 +34,7 @@ describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
   });
 });
 
-describe("AMBIENT_RECREATE_ENV_VARS contract (#5735 PRA-4)", () => {
+describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
   it("pins the exact onboard-selection env set the recreate must isolate", () => {
     // Mirrors the ambient selection env vars `onboard --resume` reads at its
     // source boundary. Adding a new onboard-selection env var must be a conscious

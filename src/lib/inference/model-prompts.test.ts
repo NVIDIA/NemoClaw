@@ -10,8 +10,8 @@ import {
   promptManualModelId,
   promptRemoteModel,
   promptVllmModel,
-} from "../../../dist/lib/inference/model-prompts";
-import { VLLM_MODELS, modelsForPlatform } from "../../../dist/lib/inference/vllm-models";
+} from "./model-prompts";
+import { modelsForPlatform, VLLM_MODELS } from "./vllm-models";
 
 function promptSequence(responses: string[]) {
   const queue = [...responses];
@@ -235,7 +235,7 @@ describe("promptVllmModel", () => {
   const sparkDefault = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-35b-a3b-nvfp4")!;
   const gatedModel = VLLM_MODELS.find((m) => m.envValue === "deepseek-r1-distill-70b")!;
   const stationModels = modelsForPlatform("station");
-  const stationDefault = VLLM_MODELS.find((m) => m.envValue === "qwen3.6-27b")!;
+  const stationDefault = VLLM_MODELS.find((m) => m.envValue === "deepseek-v4-flash")!;
 
   it("returns the profile default when the user presses Enter", async () => {
     const promptFn = promptSequence([""]);

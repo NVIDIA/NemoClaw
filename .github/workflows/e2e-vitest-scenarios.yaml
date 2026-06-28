@@ -228,6 +228,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -793,6 +794,8 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',gpu-e2e-vitest,') || contains(format(',{0},', inputs.scenarios), ',gpu-e2e,') }}
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
+    # The 55 minute install command includes a cold 40 minute model pull;
+    # 35 minutes remain for runner setup, assertions, artifacts, and cleanup.
     timeout-minutes: 90
     env:
       FREE_STANDING_VITEST_JOB: "1"
@@ -803,6 +806,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_PROVIDER: "ollama"
+      NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -1022,6 +1026,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/brave-search
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
@@ -1203,6 +1208,32 @@ jobs:
         with:
           persist-credentials: false
 
+      # This free-standing job checks out and executes the PR target ref. It
+      # intentionally avoids `uses: ./workflow-actions/.github/actions/install-apt-packages`
+      # because that would load a repo-local action from the target ref after
+      # checkout. Keep privileged host dependency setup inline in trusted
+      # workflow YAML instead; the reusable e2e-script workflow can use the
+      # composite action safely because it pins a separate helper checkout to
+      # github.sha. Contract tests compare this retry/install behavior with the
+      # shared install-apt-packages action so the inline copy cannot drift
+      # silently.
+      - name: "Install issue #4434 host dependencies"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect iptables
+
       - name: Authenticate to Docker Hub
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -1238,19 +1269,13 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Install issue #4434 host dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y expect iptables
-
       - name: Build CLI
         run: npm run build:cli
 
       - name: Install OpenShell CLI
         run: bash scripts/install-openshell.sh
 
-      - name: Run issue #4434 TUI unreachable inference live test
+      - name: "Run issue #4434 TUI unreachable inference live test"
         env:
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
@@ -1272,7 +1297,7 @@ jobs:
             test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload issue #4434 TUI unreachable inference artifacts
+      - name: "Upload issue #4434 TUI unreachable inference artifacts"
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -1293,6 +1318,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-sanitization
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-credential-sanitization"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -1377,6 +1403,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/credential-migration
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -1461,6 +1488,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sessions-agents-cli
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-sessions-agents-cli"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
@@ -1590,6 +1618,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-slack-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -1693,7 +1722,6 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-hermes
-      NEMOCLAW_MODEL: minimaxai/minimax-m2.7
       NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -1731,6 +1759,61 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hermes-dashboard-vitest:
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-dashboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-dashboard,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "hermes-dashboard"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-dashboard
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: hermes
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: e2e-hermes-dashboard
+      NEMOCLAW_E2E_HERMES_DASHBOARD: "1"
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run Hermes dashboard live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/hermes-e2e.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload Hermes dashboard live Vitest artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-hermes-dashboard
+          path: e2e-artifacts/vitest/hermes-dashboard/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   hermes-discord-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-discord-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-discord,') }}
@@ -1742,6 +1825,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-discord
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-hermes-discord
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_POLICY_TIER: open
@@ -1836,6 +1920,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/network-policy
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       # Raw OpenShell sandbox commands in the migrated live test must target
       # the gateway registered by NemoClaw onboarding even when OpenShell has
       # no active gateway selected on the runner.
@@ -1844,6 +1929,27 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      # Expect is a reviewed host-tool consumer for the interactive policy-add
+      # test. Keep this privileged setup inline in trusted workflow YAML. This
+      # job executes a selected target ref, so it must not load a repo-local
+      # action from that ref with sudo privileges.
+      - name: Install network-policy host dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if sudo apt-get update; then
+              break
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::apt-get update failed after 3 attempts." >&2
+              exit 1
+            fi
+            echo "::warning::apt-get update attempt ${attempt} failed; retrying." >&2
+            sleep $((attempt * 5))
+          done
+          sudo apt-get install -y --no-install-recommends expect
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -2056,6 +2162,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/rebuild-openclaw
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -2149,6 +2256,7 @@ jobs:
       FREE_STANDING_SCENARIO_ID: "rebuild-hermes"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_NON_INTERACTIVE: "1"
@@ -2231,6 +2339,7 @@ jobs:
       FREE_STANDING_SCENARIO_ID: "rebuild-hermes-stale-base"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/rebuild-hermes-stale-base
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: hermes
       NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E: "1"
@@ -2315,6 +2424,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rebuild
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: nemoclaw
@@ -2507,6 +2617,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/overlayfs-autofix
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-overlayfs
@@ -2594,6 +2705,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/state-backup-restore
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: e2e-state-backup
@@ -2690,6 +2802,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/upgrade-stale-sandbox
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
@@ -3143,6 +3256,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/full-e2e
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-full-vitest"
@@ -3207,6 +3321,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/cloud-onboard
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard-vitest"
@@ -3398,6 +3513,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/issue-4462-scope-upgrade-approval
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-issue-4462-vitest"
@@ -3694,6 +3810,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/messaging-providers
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       OPENSHELL_GATEWAY: "nemoclaw"
@@ -3920,7 +4037,7 @@ jobs:
         # sandbox inference.local completion boundaries without adding registry
         # or migration-ledger wiring.
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
         run: |
           set -euo pipefail
           npx vitest run --project e2e-scenarios-live \
@@ -3954,6 +4071,7 @@ jobs:
       FREE_STANDING_SCENARIO_ID: "snapshot-commands"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/snapshot-commands
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
@@ -4134,6 +4252,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/diagnostics
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-diag"
@@ -4212,7 +4331,9 @@ jobs:
         # Docker/OpenShell mutation.
         run: |
           set -euo pipefail
-          npx vitest run --project cli             test/gateway-drift-preflight.test.ts             --silent=false --reporter=default
+          npx vitest run --project integration \
+            test/gateway-drift-preflight.test.ts \
+            --silent=false --reporter=default
 
       - name: Upload gateway drift preflight artifacts
         if: always()
@@ -4326,6 +4447,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/gateway-guard-recovery
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       # nemoclaw onboard registers the gateway under the canonical name
@@ -4882,6 +5004,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/telegram-injection
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-telegram-injection"
@@ -4998,6 +5121,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/channels-stop-start/${{ matrix.agent }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
@@ -5100,6 +5224,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-slack-pairing
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
@@ -5303,6 +5428,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-discord-pairing
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
@@ -5413,6 +5539,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/tunnel-lifecycle
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-tunnel-lifecycle"
@@ -5528,6 +5655,7 @@ jobs:
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/spark-install
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_FRESH: "1"
@@ -5538,6 +5666,19 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"
+
+      - name: Authenticate to Docker Hub
+        if: github.ref == 'refs/heads/main'
+        # Authentication only accelerates pulls; anonymous pulls remain valid.
+        continue-on-error: true
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
@@ -5570,6 +5711,15 @@ jobs:
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Clean up Docker auth
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ -n "${DOCKER_CONFIG:-}" && "${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install" ]]; then
+            docker logout docker.io || true
+            rm -rf -- "${DOCKER_CONFIG}"
+          fi
 
   # ── PR result comment (mirrors nightly-e2e.yaml's report-to-pr) ───────────
   # Posts a results table on the open PR for the dispatching branch (or the
@@ -5604,6 +5754,7 @@ jobs:
         sessions-agents-cli-vitest,
         runtime-overrides-vitest,
         hermes-e2e-vitest,
+        hermes-dashboard-vitest,
         hermes-slack-vitest,
         hermes-discord-vitest,
         hermes-root-entrypoint-smoke-vitest,

@@ -61,8 +61,11 @@ The `/nemoclaw` slash command is available inside the OpenClaw chat interface fo
 |---|---|
 | `/nemoclaw` | Show slash-command help and host CLI pointers |
 | `/nemoclaw status` | Show sandbox and inference state |
+| `/nemoclaw shields [status]` | Explain that shields status is unavailable inside the sandbox and point to `$$nemoclaw <name> shields status` on the host |
 | `/nemoclaw onboard` | Show onboarding status and reconfiguration guidance |
 | `/nemoclaw eject` | Show rollback instructions for returning to the host installation |
+
+Use host-side `$$nemoclaw <sandbox> shields status|up|down` commands to inspect or change shields posture.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -143,6 +146,9 @@ nemoclaw onboard --agent hermes [options]
 ```
 
 </AgentOnly>
+
+`--agent` accepts the canonical manifest names from `$$nemoclaw agents list` plus common aliases.
+For example, `nemohermes` resolves to `hermes`, while `dcode`, `deepagents`, `deepagents-code`, and `langchain` resolve to `langchain-deepagents-code`.
 
 #### `--resume` and `--fresh`
 

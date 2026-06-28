@@ -383,6 +383,7 @@ liveTest(
         "post-add rebuild reuses the gateway-stored inference credential when NVIDIA_INFERENCE_API_KEY is absent",
         "post-add rebuild applies the Telegram policy preset and renders openclaw.json channel state",
         "channels remove telegram removes provider, policy, registry plan, and rendered channel state after rebuild",
+        "post-remove rebuild does not use stale Telegram host env inputs that would stage a fresh channel add",
       ],
     });
 
@@ -497,7 +498,7 @@ liveTest(
     expectHostTelegramPlan("removed", "after channels remove");
 
     const rebuildRemove = await host.nemoclaw([SANDBOX_NAME, "rebuild", "--yes"], {
-      artifactName: "phase-5-rebuild-after-remove",
+      artifactName: "phase-5-rebuild-after-remove-with-stale-telegram-env",
       env: channelEnv({ NVIDIA_INFERENCE_API_KEY: apiKey }),
       redactionValues: secretsToRedact,
       timeoutMs: REBUILD_TIMEOUT_MS,

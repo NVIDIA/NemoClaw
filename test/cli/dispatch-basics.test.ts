@@ -18,8 +18,8 @@ import {
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
-    const sandboxConfigModule = await import("../../dist/lib/sandbox/config.js");
-    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+    const sandboxConfigModule = await import("../../src/lib/sandbox/config.js");
+    const { parseConfigGetArgs } = sandboxConfigModule as {
       parseConfigGetArgs: (
         args: string[],
       ) =>
@@ -147,8 +147,11 @@ describe("CLI dispatch", () => {
     const r = run("onboard --help");
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code)",
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
     );
+    expect(r.out).toContain("aliases: nemohermes → hermes;");
+    expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
+    expect(r.out).toContain("langchain-deepagents-code)");
   });
 
   it("agents parent shows command help instead of sandbox lookup", () => {
@@ -166,7 +169,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("langchain-deepagents-code");
   });
 
-  it("--help exits 0", () => {
+  it("exits 0 for --help", () => {
     expect(run("--help").code).toBe(0);
   });
 
@@ -176,7 +179,7 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("-h exits 0", () => {
+  it("exits 0 for -h", () => {
     expect(run("-h").code).toBe(0);
   });
 
@@ -222,7 +225,9 @@ describe("CLI dispatch", () => {
     const policy = run("policy set");
     expect(policy.code).toBe(1);
     expect(policy.out).toContain("Unknown nemoclaw command: policy set");
-    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain(
+      "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+    );
     expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
     expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
 

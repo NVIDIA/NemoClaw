@@ -192,7 +192,16 @@ concurrency:
 # the workflow changes how individual jobs opt in to selective dispatch.
 jobs:
   cloud-e2e:
+    # The agent-mediated assertion is load-sensitive even when its direct and
+    # routed API probes are healthy. Run it after the peak hosted lifecycle
+    # lanes, while always() keeps selective cloud-e2e dispatches runnable when
+    # those unselected dependencies are skipped.
+    needs:
+      - token-rotation-e2e
+      - channels-stop-start-openclaw-e2e
+      - channels-stop-start-hermes-e2e
     if: >-
+      always() &&
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',cloud-e2e,'))
@@ -407,7 +416,16 @@ jobs:
       github_token: true
     secrets: *nightly-e2e-default-secrets
   openclaw-tui-chat-correlation-e2e:
+    # Keep this strict hosted-correlation probe out of the peak inference burst.
+    # Selective dispatches skip unselected dependencies, so always() preserves
+    # targeted execution while the full gate waits for the peak hosted jobs.
+    needs:
+      - token-rotation-e2e
+      - channels-stop-start-openclaw-e2e
+      - channels-stop-start-hermes-e2e
+      - cloud-e2e
     if: >-
+      always() &&
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
@@ -533,11 +551,9 @@ jobs:
           printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
 
       - name: "Install issue #4434 test dependencies"
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y expect iptables
+        uses: ./.github/actions/install-apt-packages
+        with:
+          packages: expect iptables
 
       - name: "Run issue #4434 TUI unreachable inference E2E test"
         env:
@@ -1533,6 +1549,7 @@ jobs:
       script: test/e2e/test-network-policy.sh
       artifact_name: "network-policy-test-log"
       artifact_path: "test-network-policy-*.log"
+      apt_packages: expect
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"restricted","NEMOCLAW_RECREATE_SANDBOX":"1"}'
       nvidia_api_key: true
     secrets: *nightly-e2e-default-secrets
@@ -2243,15 +2260,35 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',gpu-e2e,'))
     runs-on: linux-amd64-gpu-rtxpro6000-latest-1
-    timeout-minutes: 30
+    # A cold runner may spend up to 40 minutes pulling the 35B model;
+    # 15 minutes remain for install/assertions and 5 minutes for cleanup.
+    timeout-minutes: 60
     env:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_SANDBOX_NAME: "e2e-gpu-ollama"
       NEMOCLAW_RECREATE_SANDBOX: "1"
       NEMOCLAW_PROVIDER: "ollama"
+      NEMOCLAW_OLLAMA_PULL_TIMEOUT: "2400"
     steps:
       - *target-ref-checkout
+
+      - name: Checkout GPU E2E workflow actions
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          # The GPU script target remains checked out above. Privileged host
+          # dependency setup uses helper actions from the trusted workflow
+          # commit so target_ref cannot replace the local composite action.
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            .github/actions/install-apt-packages
+          path: workflow-actions
+          persist-credentials: false
+
+      - name: Install GPU E2E host dependencies
+        uses: ./workflow-actions/.github/actions/install-apt-packages
+        with:
+          packages: expect
 
       - *dockerhub-auth-step
 
@@ -2320,6 +2357,8 @@ jobs:
           echo "=== Docker ==="
           docker info --format '{{.ServerVersion}}'
 
+      # No expect install here: this double-onboard regression stays
+      # non-interactive and does not drive the OpenClaw TUI.
       - name: Run GPU double-onboard E2E test
         run: bash test/e2e/test-gpu-double-onboard.sh
 

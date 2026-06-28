@@ -610,21 +610,40 @@ section "Phase 5: Live inference"
 
 # ── Test 5a: Direct hosted inference endpoint ──
 info "[LIVE] Direct API test → ${HOSTED_INFERENCE_BASE_URL}..."
-api_response=$(curl -s --max-time 30 \
-  -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
-  -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":100}' "$HOSTED_INFERENCE_MODEL")" 2>/dev/null) || true
-
-if [ -n "$api_response" ]; then
-  api_content=$(echo "$api_response" | parse_chat_content 2>/dev/null) || true
-  if grep -qi "PONG" <<<"$api_content"; then
-    pass "[LIVE] Direct API: model responded with PONG"
-  else
-    fail "[LIVE] Direct API: expected PONG, got: ${api_content:0:200}"
+api_response=""
+api_content=""
+api_failure_summary=""
+for attempt in 1 2 3; do
+  max_tokens=1024
+  if [ "$attempt" -eq 1 ]; then
+    max_tokens=256
   fi
+  api_response_file="$(mktemp)"
+  api_http_status="$(curl -sS --max-time 90 \
+    -o "$api_response_file" \
+    -w "%{http_code}" \
+    -X POST "${HOSTED_INFERENCE_BASE_URL}/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $HOSTED_INFERENCE_KEY" \
+    -d "$(printf '{"model":"%s","messages":[{"role":"user","content":"Reply with exactly one word: PONG"}],"max_tokens":%s}' "$HOSTED_INFERENCE_MODEL" "$max_tokens")" 2>/dev/null || true)"
+  api_response="$(cat "$api_response_file" 2>/dev/null || true)"
+  rm -f "$api_response_file"
+  [ -n "$api_http_status" ] || api_http_status="000"
+  api_content="$(printf '%s' "$api_response" | parse_chat_content 2>/dev/null || true)"
+  api_failure_summary="response without PONG (HTTP ${api_http_status: -3}, chars=${#api_response})"
+  if grep -qi "PONG" <<<"$api_content"; then
+    break
+  fi
+  if [ "$attempt" -lt 3 ]; then
+    info "[LIVE] Direct API attempt ${attempt}/3 ${api_failure_summary}; retrying..."
+    sleep $((5 * attempt))
+  fi
+done
+
+if grep -qi "PONG" <<<"$api_content"; then
+  pass "[LIVE] Direct API: model responded with PONG"
 else
-  fail "[LIVE] Direct API: empty response from curl"
+  fail "[LIVE] Direct API: expected PONG after 3 attempts; ${api_failure_summary}"
 fi
 
 # ── Test 5b: Inference through the sandbox (THE definitive test) ──

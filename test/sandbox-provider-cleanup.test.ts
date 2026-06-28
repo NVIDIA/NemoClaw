@@ -11,7 +11,7 @@ import {
   recoverAttachedProvider,
   runSandboxProviderPreDeleteCleanup,
   SANDBOX_PROVIDER_SUFFIXES,
-} from "../dist/lib/onboard/sandbox-provider-cleanup.js";
+} from "../src/lib/onboard/sandbox-provider-cleanup.js";
 
 type Argv = string[];
 type RunResult = { status: number | null; stderr?: string; stdout?: string };

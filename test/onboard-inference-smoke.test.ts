@@ -26,10 +26,10 @@ describe("onboard inference smoke guard (#3253)", () => {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-inference-smoke-check.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+        path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });

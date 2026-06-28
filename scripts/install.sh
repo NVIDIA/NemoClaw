@@ -107,12 +107,32 @@ installer_version_for_display() {
 agent_display_name() {
   case "${1:-}" in
     hermes) printf "Hermes" ;;
+    langchain-deepagents-code) printf "LangChain Deep Agents Code" ;;
     openclaw | "") printf "OpenClaw" ;;
     *)
       local first rest
       first="$(printf "%.1s" "$1" | tr '[:lower:]' '[:upper:]')"
       rest="${1#?}"
       printf "%s%s" "$first" "$rest"
+      ;;
+  esac
+}
+
+canonical_agent_name() {
+  local raw="${1:-}" normalized
+  normalized="$(printf "%s" "$raw" | tr '[:upper:]_ ' '[:lower:]--' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  case "$normalized" in
+    nemoclaw | nemo-claw | openclaw)
+      printf "openclaw"
+      ;;
+    nemohermes | nemo-hermes | hermes)
+      printf "hermes"
+      ;;
+    nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code)
+      printf "langchain-deepagents-code"
+      ;;
+    *)
+      printf "%s" "$raw"
       ;;
   esac
 }
@@ -269,9 +289,14 @@ resolve_default_sandbox_name() {
   fi
 
   local fallback="my-assistant"
-  if [[ "${NEMOCLAW_AGENT:-}" == "hermes" ]]; then
-    fallback="hermes"
-  fi
+  case "${NEMOCLAW_AGENT:-}" in
+    hermes)
+      fallback="hermes"
+      ;;
+    langchain-deepagents-code)
+      fallback="deepagents-code"
+      ;;
+  esac
   printf "%s" "${sandbox_name:-$fallback}"
 }
 
@@ -846,11 +871,20 @@ MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 
 # ── Agent branding — adapt user-visible names to the active agent ──
+if [[ -n "${NEMOCLAW_AGENT:-}" ]]; then
+  NEMOCLAW_AGENT="$(canonical_agent_name "$NEMOCLAW_AGENT")"
+  export NEMOCLAW_AGENT
+fi
 case "${NEMOCLAW_AGENT:-openclaw}" in
   hermes)
     _CLI_DISPLAY="NemoHermes"
     _AGENT_PRODUCT="Hermes"
     _CLI_BIN="nemohermes"
+    ;;
+  langchain-deepagents-code)
+    _CLI_DISPLAY="NemoDeepAgents"
+    _AGENT_PRODUCT="LangChain Deep Agents Code"
+    _CLI_BIN="nemo-deepagents"
     ;;
   *)
     _CLI_DISPLAY="NemoClaw"
@@ -1536,8 +1570,8 @@ is_real_nemoclaw_cli() {
   local expected_name="${2:-$_CLI_BIN}"
   local version_output
   version_output="$("$bin_path" --version 2>/dev/null)" || return 1
-  # Real CLI outputs: "nemoclaw v0.1.0" or "nemohermes v0.1.0"
-  # (or any semver, with optional pre-release/build metadata).
+  # Real CLI outputs: "nemoclaw v0.1.0", "nemohermes v0.1.0", or
+  # "nemo-deepagents v0.1.0" (or any semver, with optional pre-release/build metadata).
   [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]]
 }
 

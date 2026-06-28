@@ -195,7 +195,7 @@ describe("runOclifCommandById", () => {
     expect(errorLine).not.toHaveBeenCalled();
   });
 
-  it("#2666: surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them", async () => {
+  it("surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them (#2666)", async () => {
     // Before #2666 this branch silently set exit 0 and produced no output.
     // The bug was an arbitrary error riding the same `oclif.exit === 0`
     // channel, e.g. propagated from inside a command's run(). Surface the
@@ -216,7 +216,7 @@ describe("runOclifCommandById", () => {
     );
   });
 
-  it("#2666: falls back to a generic line when the error message is empty", async () => {
+  it("falls back to a generic line when the error message is empty (#2666)", async () => {
     // Closes the residual silent path: if a non-ExitError(0) carries an
     // empty message (or one that trims to empty), still emit *something*
     // so the user is never left looking at exit 0 + blank stdout/stderr.

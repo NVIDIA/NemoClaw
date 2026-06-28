@@ -4,8 +4,8 @@
 #
 # Port 8080 conflict during nemoclaw onboard (VDR3 #5)
 #
-# OPTIONAL / standalone — not invoked by test-e2e-cloud-experimental.sh. Run manually or from
-# a separate CI job when you want to validate preflight port checks.
+# OPTIONAL / standalone — not invoked by test-cloud-onboard-e2e.sh. Run manually
+# or from a separate CI job when you want to validate preflight port checks.
 #
 # Expects a working NemoClaw/OpenShell install from a prior onboard (gateway may
 # hold 8080). Destroys the nemoclaw gateway, binds a dummy listener on 8080, runs
