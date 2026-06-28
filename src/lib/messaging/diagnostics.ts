@@ -137,12 +137,6 @@ export function resolveVisibleConfigDisplay(
   }
   if (input.defaultValue !== undefined) {
     const mapped = input.valueDisplay?.[input.defaultValue];
-    if (mapped && input.envKey) {
-      return {
-        detail: `${mapped} (${input.envKey}=${input.defaultValue}) (default)`,
-        source: "default",
-      };
-    }
     if (mapped) {
       return { detail: `${mapped} (default)`, source: "default" };
     }

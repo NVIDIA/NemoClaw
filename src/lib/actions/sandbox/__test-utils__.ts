@@ -3,8 +3,16 @@
 
 import { vi } from "vitest";
 
+import {
+  type CompileTelegramPlanOptions,
+  compileTelegramPlanForTests,
+} from "../../messaging/__test-utils__/telegram-plan";
 import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  getMessagingPlanFromEntry,
+  serializeSandboxMessagingStateForDisk,
+} from "../../state/registry-messaging";
 
 export type ChannelInputOverride = {
   inputId: string;
@@ -133,4 +141,39 @@ export function tamperCompactRegistryTelegramInputs(
     return isTelegram ? { ...channel, inputs: tamperedInputs } : channel;
   });
   return { ...state, plan: { ...state.plan, channels: tamperedChannels } };
+}
+
+export interface CompactTelegramEntryOptions extends CompileTelegramPlanOptions {
+  readonly sandboxName?: string;
+  readonly agentName?: "openclaw" | "hermes";
+  readonly tamperedInputs?: Readonly<Record<string, unknown>>;
+}
+
+export interface CompactTelegramEntryBundle {
+  readonly entry: SandboxEntry;
+  readonly messagingOnDisk: unknown;
+}
+
+export async function compactTelegramEntryFromEnv(
+  options: CompactTelegramEntryOptions,
+): Promise<CompactTelegramEntryBundle> {
+  const { tamperedInputs, sandboxName = "alpha", agentName = "openclaw", ...compileOptions } = options;
+  const compiled = await compileTelegramPlanForTests(compileOptions);
+  const baseOnDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
+  const messagingOnDisk = tamperedInputs
+    ? tamperCompactRegistryTelegramInputs(baseOnDisk, tamperedInputs)
+    : baseOnDisk;
+  const entry = {
+    name: sandboxName,
+    agent: agentName,
+    messaging: messagingOnDisk,
+  } as unknown as SandboxEntry;
+  return { entry, messagingOnDisk };
+}
+
+export function useRealMessagingPlanReader<
+  T extends { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null },
+>(deps: T): T {
+  deps.getMessagingPlan = (entry) => getMessagingPlanFromEntry(entry);
+  return deps;
 }

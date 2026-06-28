@@ -43,8 +43,9 @@ import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../mes
 import type { SandboxEntry } from "../../state/registry";
 import {
   type ChannelInputOverridesByChannel,
+  compactTelegramEntryFromEnv,
   fakePlanFromInputs,
-  tamperCompactRegistryTelegramInputs,
+  useRealMessagingPlanReader,
 } from "./__test-utils__";
 import { showSandboxChannelStatus } from "./channel-status";
 
@@ -552,9 +553,7 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(
-      /Telegram group policy:\s+open groups \(TELEGRAM_GROUP_POLICY=open\) \(default\)/,
-    );
+    expect(dump).toMatch(/Telegram group policy:\s+open groups \(default\)/);
   });
 
   it("surfaces the resolved Telegram mention mode alongside the group policy", async () => {
@@ -603,9 +602,7 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(
-      /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\) \(default\)/,
-    );
+    expect(dump).toMatch(/Telegram group mention mode:\s+mention-only \(default\)/);
   });
 
   it("omits visible config defaults when the telegram channel is not registered", async () => {
@@ -653,9 +650,7 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).not.toMatch(/Telegram group policy/);
-    expect(dump).toMatch(
-      /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\) \(default\)/,
-    );
+    expect(dump).toMatch(/Telegram group mention mode:\s+mention-only \(default\)/);
   });
 
   it("redacts an invalid persisted value rather than echoing it", async () => {
@@ -732,31 +727,16 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
   });
 
   it("reads Telegram visible config from a non-interactive compact registry entry through the real plan reader", async () => {
-    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
-      "../../state/registry-messaging"
-    );
-    const compiled = await compileTelegramPlanForTests({
-      envOverrides: {
-        TELEGRAM_GROUP_POLICY: "disabled",
-        TELEGRAM_REQUIRE_MENTION: "0",
-      },
+    const { entry: compactEntry } = await compactTelegramEntryFromEnv({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "disabled", TELEGRAM_REQUIRE_MENTION: "0" },
       isInteractive: false,
     });
-    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
-    expect(onDisk).toBeDefined();
-    const compactEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      messaging: onDisk,
-    } as unknown as SandboxEntry;
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: compactEntry,
       appliedPresets: ["telegram"],
     });
-    (
-      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
-    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -769,31 +749,16 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
   });
 
   it("renders mention-only when a non-interactive compact registry entry omits TELEGRAM_REQUIRE_MENTION", async () => {
-    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
-      "../../state/registry-messaging"
-    );
-    const compiled = await compileTelegramPlanForTests({
-      envOverrides: {
-        TELEGRAM_GROUP_POLICY: undefined,
-        TELEGRAM_REQUIRE_MENTION: undefined,
-      },
+    const { entry: compactEntry } = await compactTelegramEntryFromEnv({
+      envOverrides: { TELEGRAM_GROUP_POLICY: undefined, TELEGRAM_REQUIRE_MENTION: undefined },
       isInteractive: false,
     });
-    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
-    expect(onDisk).toBeDefined();
-    const compactEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      messaging: onDisk,
-    } as unknown as SandboxEntry;
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: compactEntry,
       appliedPresets: ["telegram"],
     });
-    (
-      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
-    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -803,32 +768,17 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
   });
 
   it("bounds tampered out-of-allowlist Telegram visible config from a compact registry entry through the real plan reader", async () => {
-    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
-      "../../state/registry-messaging"
-    );
-    const compiled = await compileTelegramPlanForTests({
+    const { entry: tamperedEntry } = await compactTelegramEntryFromEnv({
       envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
       isInteractive: false,
+      tamperedInputs: { groupPolicy: "definitely-not-a-policy", requireMention: "" },
     });
-    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
-    expect(onDisk).toBeDefined();
-    const tamperedOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
-      groupPolicy: "definitely-not-a-policy",
-      requireMention: "",
-    });
-    const tamperedEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      messaging: tamperedOnDisk,
-    } as unknown as SandboxEntry;
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: tamperedEntry,
       appliedPresets: ["telegram"],
     });
-    (
-      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
-    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
@@ -841,32 +791,20 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
   });
 
   it("redacts non-scalar Telegram visible config from a compact registry entry through the real plan reader", async () => {
-    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
-      "../../state/registry-messaging"
-    );
-    const compiled = await compileTelegramPlanForTests({
+    const { entry: tamperedEntry } = await compactTelegramEntryFromEnv({
       envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
       isInteractive: false,
+      tamperedInputs: {
+        groupPolicy: { smuggled: "secret-id" } as unknown,
+        requireMention: ["1", "0"] as unknown,
+      },
     });
-    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
-    expect(onDisk).toBeDefined();
-    const nonScalarOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
-      groupPolicy: { smuggled: "secret-id" } as unknown as MessagingSerializableValue,
-      requireMention: ["1", "0"] as unknown as MessagingSerializableValue,
-    });
-    const tamperedEntry = {
-      name: "alpha",
-      agent: "openclaw",
-      messaging: nonScalarOnDisk,
-    } as unknown as SandboxEntry;
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
       sandbox: tamperedEntry,
       appliedPresets: ["telegram"],
     });
-    (
-      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
-    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    useRealMessagingPlanReader(deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram group policy:\s+invalid persisted value \(unsupported type\)/);
