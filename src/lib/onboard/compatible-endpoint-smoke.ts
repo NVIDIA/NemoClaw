@@ -35,14 +35,10 @@ type CompatibleEndpointSmokeRun = (
 const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
-// Three attempts sleep after attempts one and two: 5s, then 10s.
-const COMPATIBLE_ENDPOINT_SMOKE_RETRY_BACKOFF_SECONDS =
-  COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS * COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS;
-// Reserve time for sandbox exec startup plus config, payload, and response parsing.
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    COMPATIBLE_ENDPOINT_SMOKE_RETRY_BACKOFF_SECONDS +
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS * COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
 
@@ -281,8 +277,7 @@ PYPAYLOAD
 
 run_smoke_request() {
   curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
-    -o "$response_file" \
-    -w '%{http_code}' \
+    -o "$response_file" -w '%{http_code}' \
     "$INFERENCE_URL" \
     -H "Content-Type: application/json" \
     -d "@$payload_file" >"$status_file" 2>/dev/null || {
@@ -306,12 +301,9 @@ status_path = sys.argv[2]
 attempt = sys.argv[3]
 max_tokens = sys.argv[4]
 can_retry = sys.argv[5] == "1"
-try:
-    with open(status_path, "r", encoding="utf-8") as f:
-        http_status = f.read().strip()[-3:] or "000"
-except Exception:
-    http_status = "000"
-response_bytes = os.path.getsize(path) if os.path.exists(path) else 0
+with open(status_path, "r", encoding="utf-8") as f:
+    http_status = f.read().strip()[-3:] or "000"
+response_bytes = os.path.getsize(path)
 try:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
@@ -367,13 +359,11 @@ print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 PYRESP
 }
 
-# Source boundary: OpenShell provider refresh currently has no route-ready
-# acknowledgement for an already-running sandbox. This authenticated request is
-# the first end-to-end readiness check after reuse, so retry only explicit
-# transport and HTTP 5xx signals while keeping config/content failures strict.
+# OpenShell provider refresh has no route-ready acknowledgement for a reused
+# sandbox, so this first authenticated request retries only explicit transport
+# and HTTP 5xx signals while keeping config/content failures strict.
 # Remove this retry when provider refresh exposes a route-ready acknowledgement.
-# Keep the same request timeout on retries: escalation extends onboarding but
-# does not improve propagation readiness after a curl exit 28.
+# Timeout escalation extends onboarding but not propagation readiness after exit 28.
 attempt=1
 while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   max_tokens="$RETRY_MAX_TOKENS"
