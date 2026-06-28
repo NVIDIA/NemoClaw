@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   runSmokeScript,
   writeFakeCurl,
+  writeFakeSleep,
   writeSmokeConfig,
 } from "./__test-helpers__/compatible-endpoint-smoke-helpers";
 
@@ -86,6 +87,25 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain("SMOKE_REQUEST_TIMEOUT_SECONDS=60");
     expect(script).toContain("SMOKE_RETRY_DELAY_SECONDS=5");
     expect(script).toContain("MODEL='provider/model'\\'''");
+  });
+
+  it("shell-quotes hostile model text through the generated smoke script", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-quoting-"));
+    const sentinel = path.join(tmpDir, "model-command-ran");
+    const model = "foo'bar`baz$(touch " + sentinel + ")";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, requestFile } = writeFakeCurl(
+      tmpDir,
+      `printf '%s\\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      configPath,
+      retryDelaySeconds: 0,
+    });
+    const result = runSmokeScript(script, tmpDir, binDir);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(requestFile, "utf-8")).model).toBe(model);
+    expect(fs.existsSync(sentinel)).toBe(false);
   });
 
   it("retries a reasoning-only length response before failing the sandbox smoke", () => {
@@ -180,6 +200,34 @@ fi
     expect(result.stderr).toContain("transient HTTP 500");
     expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("backs off for 5s then 10s between three attempts", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-backoff-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -lt 3 ]; then
+  printf '%s\n' '__HTTP_STATUS__=500'
+  printf '%s\n' '{"error":{"message":"temporary gateway failure"}}'
+else
+  printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+fi
+`,
+    );
+    const sleepFile = writeFakeSleep(tmpDir, binDir);
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 5,
+    });
+    const result = runSmokeScript(script, tmpDir, binDir);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("retrying in 5s");
+    expect(result.stderr).toContain("retrying in 10s");
+    expect(fs.readFileSync(sleepFile, "utf-8")).toBe("5\n10\n");
   });
 
   it("does not retry a parseable JSON HTTP 429 response", () => {

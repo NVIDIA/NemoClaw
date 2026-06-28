@@ -29,10 +29,15 @@ export function writeSmokeConfig(tmpDir: string, model: string): string {
 export function writeFakeCurl(
   tmpDir: string,
   bodyForCall: string,
-): { binDir: string; callFile: string } {
+): { binDir: string; callFile: string; requestFile: string } {
   const binDir = path.join(tmpDir, "bin");
   const callFile = path.join(tmpDir, "curl-calls");
+  const requestFile = path.join(tmpDir, "curl-request.json");
+  const responseScript = path.join(tmpDir, "fake-curl-response.sh");
   fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(responseScript, `#!/usr/bin/env bash\nset -eu\n${bodyForCall}\n`, {
+    mode: 0o755,
+  });
   fs.writeFileSync(
     path.join(binDir, "curl"),
     `#!/usr/bin/env bash
@@ -46,6 +51,7 @@ count=$((count + 1))
 printf '%s' "$count" >"$call_file"
 output_file=""
 write_out=""
+data_file=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o)
@@ -56,12 +62,18 @@ while [ "$#" -gt 0 ]; do
       write_out="$2"
       shift 2
       ;;
+    -d)
+      data_file="\${2#@}"
+      shift 2
+      ;;
     *) shift ;;
   esac
 done
+if [ -n "$data_file" ]; then
+  cp "$data_file" "${requestFile}"
+fi
 set +e
-body="$(${bodyForCall}
-)"
+body="$(count="$count" "${responseScript}")"
 rc=$?
 set -e
 if [ "$rc" -ne 0 ]; then
@@ -87,7 +99,20 @@ fi
 `,
     { mode: 0o755 },
   );
-  return { binDir, callFile };
+  return { binDir, callFile, requestFile };
+}
+
+export function writeFakeSleep(tmpDir: string, binDir: string): string {
+  const sleepFile = path.join(tmpDir, "sleep-calls");
+  fs.writeFileSync(
+    path.join(binDir, "sleep"),
+    `#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$1" >>"${sleepFile}"
+`,
+    { mode: 0o755 },
+  );
+  return sleepFile;
 }
 
 export function runSmokeScript(script: string, tmpDir: string, binDir: string) {

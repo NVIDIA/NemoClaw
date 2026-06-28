@@ -5,6 +5,11 @@ import type { StdioOptions } from "node:child_process";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
+import {
+  buildCompatibleEndpointSmokeRequestScript,
+  RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
+  totalRetryBackoffSeconds,
+} from "./smoke-retry-classifier";
 
 type CompatibleEndpointSmokeAgent =
   | {
@@ -38,7 +43,10 @@ const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS * COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS +
+    totalRetryBackoffSeconds(
+      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+    ) +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
 
@@ -202,6 +210,7 @@ export function buildCompatibleEndpointSandboxSmokeScript(
     COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
   );
   const retryMaxTokens = positiveInt(options.retryMaxTokens, 1024);
+  const smokeRequestScript = buildCompatibleEndpointSmokeRequestScript();
 
   return `
 set -eu
@@ -275,20 +284,7 @@ print(json.dumps({
 PYPAYLOAD
 }
 
-run_smoke_request() {
-  curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
-    -o "$response_file" -w '%{http_code}' \
-    "$INFERENCE_URL" \
-    -H "Content-Type: application/json" \
-    -d "@$payload_file" >"$status_file" 2>/dev/null || {
-    rc=$?
-    printf 'curl exit %s\n' "$rc" >&2
-    case "$rc" in
-      6 | 7 | 28 | 52 | 55 | 56) return 4 ;;
-      *) return 1 ;;
-    esac
-  }
-}
+${smokeRequestScript}
 
 check_response() {
   python3 - "$response_file" "$status_file" "$1" "$2" "$3" <<'PYRESP'
@@ -302,7 +298,10 @@ attempt = sys.argv[3]
 max_tokens = sys.argv[4]
 can_retry = sys.argv[5] == "1"
 with open(status_path, "r", encoding="utf-8") as f:
-    http_status = f.read().strip()[-3:] or "000"
+    http_status = f.read().strip()
+if len(http_status) != 3 or not http_status.isdigit():
+    print("inference.local returned invalid curl HTTP status metadata", file=sys.stderr)
+    sys.exit(1)
 response_bytes = os.path.getsize(path)
 try:
     with open(path, "r", encoding="utf-8") as f:
@@ -313,10 +312,10 @@ except Exception as exc:
         % (exc, response_bytes, http_status),
         file=sys.stderr,
     )
-    retryable_gateway_error = http_status.isdigit() and 500 <= int(http_status) <= 599
+    retryable_gateway_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
     sys.exit(3 if can_retry and retryable_gateway_error else 1)
 
-retryable_http_error = http_status.isdigit() and 500 <= int(http_status) <= 599
+retryable_http_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
 if retryable_http_error:
     print(
         "inference.local returned transient HTTP %s; response_bytes=%s"
@@ -325,6 +324,7 @@ if retryable_http_error:
     )
     sys.exit(3 if can_retry else 1)
 
+# HTTP 429 stays terminal because this probe does not retain Retry-After metadata.
 choices = data.get("choices")
 choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
 message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
@@ -364,6 +364,7 @@ PYRESP
 # and HTTP 5xx signals while keeping config/content failures strict.
 # Remove this retry when provider refresh exposes a route-ready acknowledgement.
 # Timeout escalation extends onboarding but not propagation readiness after exit 28.
+# Three attempts sleep twice: 5s after attempt 1, then 10s after attempt 2.
 attempt=1
 while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   max_tokens="$RETRY_MAX_TOKENS"

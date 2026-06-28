@@ -1,0 +1,46 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+const TRANSIENT_CURL_EXIT_CODES = [6, 7, 28, 52, 55, 56] as const;
+const RETRYABLE_HTTP_STATUS_MIN = 500;
+const RETRYABLE_HTTP_STATUS_MAX = 599;
+
+export function classifyCurlExit(code: number): "transient" | "permanent" {
+  return TRANSIENT_CURL_EXIT_CODES.some((candidate) => candidate === code)
+    ? "transient"
+    : "permanent";
+}
+
+export function isRetryableHttpStatus(status: number): boolean {
+  return status >= RETRYABLE_HTTP_STATUS_MIN && status <= RETRYABLE_HTTP_STATUS_MAX;
+}
+
+export function totalRetryBackoffSeconds(attempts: number, delaySeconds: number): number {
+  return (delaySeconds * attempts * (attempts - 1)) / 2;
+}
+
+export const RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION = `http_status.isdigit() and ${RETRYABLE_HTTP_STATUS_MIN} <= int(http_status) <= ${RETRYABLE_HTTP_STATUS_MAX}`;
+
+export function buildCompatibleEndpointSmokeRequestScript(): string {
+  const transientExitPattern = TRANSIENT_CURL_EXIT_CODES.join(" | ");
+  return String.raw`
+run_smoke_request() {
+  curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
+    -o "$response_file" -w '%{http_code}' \
+    "$INFERENCE_URL" \
+    -H "Content-Type: application/json" \
+    -d "@$payload_file" >"$status_file" 2>/dev/null || {
+    rc=$?
+    printf 'curl exit %s\n' "$rc" >&2
+    case "$rc" in
+      ${transientExitPattern})
+        if [ "$rc" -eq 28 ]; then
+          printf 'curl timeout (exit 28); retrying with the same bounded request timeout\n' >&2
+        fi
+        return 4
+        ;;
+      *) return 1 ;;
+    esac
+  }
+}`.trim();
+}
