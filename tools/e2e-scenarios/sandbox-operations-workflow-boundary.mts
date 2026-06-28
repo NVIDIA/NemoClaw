@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { validateE2eVitestScenariosWorkflowBoundary } from "./workflow-boundary.mts";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-vitest-scenarios.yaml");
 const JOB_NAME = "sandbox-operations-vitest";
@@ -146,5 +148,8 @@ export function validateSandboxOperationsWorkflow(workflow: SandboxOperationsWor
 export function validateSandboxOperationsWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): string[] {
-  return validateSandboxOperationsWorkflow(readSandboxOperationsWorkflow(workflowPath));
+  return [
+    ...validateE2eVitestScenariosWorkflowBoundary(workflowPath),
+    ...validateSandboxOperationsWorkflow(readSandboxOperationsWorkflow(workflowPath)),
+  ];
 }

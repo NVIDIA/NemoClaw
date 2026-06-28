@@ -10,13 +10,11 @@ import {
 import {
   evaluateE2eVitestWorkflowDispatchSelectors,
   readFreeStandingJobsInventory,
-  validateE2eVitestScenariosWorkflowBoundary,
 } from "../../../tools/e2e-scenarios/workflow-boundary.mts";
 
 describe("sandbox operations workflow boundary", () => {
   it("runs by default and through either selective dispatch input", () => {
     const inventory = readFreeStandingJobsInventory();
-    expect(validateE2eVitestScenariosWorkflowBoundary()).toEqual([]);
     expect(validateSandboxOperationsWorkflowBoundary()).toEqual([]);
     expect(inventory.scenarioToJob.get("sandbox-operations")).toBe("sandbox-operations-vitest");
 
