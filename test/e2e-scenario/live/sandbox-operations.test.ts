@@ -66,15 +66,14 @@ async function destroyGateway(host: HostCliClient, artifactName = "cleanup-gatew
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 5 * 60_000,
   });
-  if (result.exitCode === 0) return;
-  if (
+  const gatewayAlreadyAbsent =
     /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i.test(
       resultText(result),
-    )
-  ) {
-    return;
-  }
-  expectExitZero(result, "cleanup destroy shared NemoClaw gateway");
+    );
+  expect(
+    result.exitCode === 0 || gatewayAlreadyAbsent,
+    `cleanup destroy shared NemoClaw gateway\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  ).toBe(true);
 }
 
 async function onboardSandbox(
