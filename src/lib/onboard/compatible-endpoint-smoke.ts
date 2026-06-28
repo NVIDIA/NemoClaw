@@ -323,14 +323,10 @@ except Exception as exc:
         % (exc, response_bytes, http_status),
         file=sys.stderr,
     )
-    retryable_gateway_error = http_status.isdigit() and (
-        int(http_status) == 429 or 500 <= int(http_status) <= 599
-    )
+    retryable_gateway_error = http_status.isdigit() and 500 <= int(http_status) <= 599
     sys.exit(3 if can_retry and retryable_gateway_error else 1)
 
-retryable_http_error = http_status.isdigit() and (
-    int(http_status) == 429 or 500 <= int(http_status) <= 599
-)
+retryable_http_error = http_status.isdigit() and 500 <= int(http_status) <= 599
 if retryable_http_error:
     print(
         "inference.local returned transient HTTP %s; response_bytes=%s"
@@ -373,9 +369,13 @@ print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 PYRESP
 }
 
-# A refreshed gateway provider can briefly precede route readiness in a reused
-# sandbox. Keep config validation strict and retry only explicit transient
-# transport, rate-limit, and gateway signals at this external boundary.
+# Source boundary: OpenShell provider refresh currently has no route-ready
+# acknowledgement for an already-running sandbox. This authenticated request is
+# the first end-to-end readiness check after reuse, so retry only explicit
+# transport and HTTP 5xx signals while keeping config/content failures strict.
+# Remove this retry when provider refresh exposes a route-ready acknowledgement.
+# Keep the same request timeout on retries: escalation extends onboarding but
+# does not improve propagation readiness after a curl exit 28.
 attempt=1
 while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   max_tokens="$RETRY_MAX_TOKENS"

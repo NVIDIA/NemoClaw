@@ -83,13 +83,19 @@ set -e
 if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
+http_status=200
+case "$body" in
+  __HTTP_STATUS__=*)
+    status_line="\${body%%$'\n'*}"
+    http_status="\${status_line#__HTTP_STATUS__=}"
+    body="\${body#*$'\n'}"
+    ;;
+  *"504 Gateway Time-out"*) http_status=504 ;;
+esac
 if [ -n "$output_file" ]; then
   printf '%s' "$body" >"$output_file"
   if [ "$write_out" = '%{http_code}' ]; then
-    case "$body" in
-      *"504 Gateway Time-out"*) printf '504' ;;
-      *) printf '200' ;;
-    esac
+    printf '%s' "$http_status"
   fi
 else
   printf '%s\n' "$body"
@@ -234,6 +240,36 @@ fi
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
     expect(result.stderr).toContain("inference.local returned non-JSON response");
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("retries a parseable JSON HTTP 500 response", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-500-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '__HTTP_STATUS__=500'
+  printf '%s\n' '{"error":{"message":"temporary gateway failure"}}'
+else
+  printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+fi
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stderr).toContain("transient HTTP 500");
     expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
