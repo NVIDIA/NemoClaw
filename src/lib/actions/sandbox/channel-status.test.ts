@@ -770,8 +770,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       sandbox: compactEntry,
       appliedPresets: ["telegram"],
     });
-    (deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }).getMessagingPlan =
-      (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    (
+      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
+    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Telegram group policy:\s+disabled\b/);

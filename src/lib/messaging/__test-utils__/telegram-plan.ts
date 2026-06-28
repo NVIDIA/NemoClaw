@@ -21,12 +21,7 @@ export interface CompileTelegramPlanOptions {
 export async function compileTelegramPlanForTests(
   options: CompileTelegramPlanOptions,
 ): Promise<SandboxMessagingPlan> {
-  const {
-    envOverrides,
-    sandboxName = "alpha",
-    agent = "openclaw",
-    isInteractive = true,
-  } = options;
+  const { envOverrides, sandboxName = "alpha", agent = "openclaw", isInteractive = true } = options;
   const planner = new MessagingWorkflowPlanner(
     createBuiltInChannelManifestRegistry(),
     createBuiltInMessagingHookRegistry({
