@@ -89,8 +89,12 @@ describe("rebuild agent base image preflight", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    if (priorOverride === undefined) delete process.env[overrideEnvVar];
-    else process.env[overrideEnvVar] = priorOverride;
+    const original = priorOverride;
+    const restoreOverride =
+      original === undefined
+        ? () => Reflect.deleteProperty(process.env, overrideEnvVar)
+        : () => Reflect.set(process.env, overrideEnvVar, original);
+    restoreOverride();
   });
 
   function mockBaseImagePreflight(imageRef: string) {

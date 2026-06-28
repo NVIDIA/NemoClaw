@@ -476,7 +476,10 @@ describe("MCP add crash consistency", () => {
     }
   });
 
-  for (const boundary of ["policy", "adapter"] as const) {
+  for (const [boundary, expectedProviderId, expectedProviderMarker] of [
+    ["policy", undefined, false],
+    ["adapter", "11111111-2222-4333-8444-555555555555", true],
+  ] as const) {
     it(`resumes exact resources after process death at the ${boundary} boundary`, () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-mcp-add-${boundary}-`));
       try {
@@ -484,13 +487,8 @@ describe("MCP add crash consistency", () => {
         expect(crashed.status, `${crashed.stdout}\n${crashed.stderr}`).toBe(86);
         const pending = readBridge(home);
         expect(pending.addState).toBe("preflighted");
-        if (boundary === "policy") {
-          expect(pending).not.toHaveProperty("providerId");
-          expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
-        } else {
-          expect(pending.providerId).toBe("11111111-2222-4333-8444-555555555555");
-          expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
-        }
+        expect(pending.providerId).toBe(expectedProviderId);
+        expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(expectedProviderMarker);
         expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
         expect(JSON.stringify(pending)).not.toContain("host-only-secret");
 

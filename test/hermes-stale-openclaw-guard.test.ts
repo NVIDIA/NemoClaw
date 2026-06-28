@@ -81,6 +81,10 @@ describe("Hermes stale OpenClaw guardrails", () => {
     for (const ref of allowedRefs) {
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-local-base-"));
       const sandboxRoot = path.join(tmp, "sandbox");
+      const safeCleanupCommand = cleanupCommand.replaceAll(
+        "/root/.cache/pip",
+        path.join(tmp, "root-cache", "pip"),
+      );
       const hermesDir = path.join(sandboxRoot, ".hermes");
       fs.mkdirSync(hermesDir, { recursive: true });
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n", {
@@ -92,7 +96,7 @@ describe("Hermes stale OpenClaw guardrails", () => {
 
       try {
         const { result } = runDockerShell(
-          `BASE_IMAGE=${JSON.stringify(ref)}; ${cleanupCommand}`,
+          `BASE_IMAGE=${JSON.stringify(ref)}; ${safeCleanupCommand}`,
           sandboxRoot,
         );
         expect(result.status, `${ref}\n${result.stdout}\n${result.stderr}`).toBe(0);

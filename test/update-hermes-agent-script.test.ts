@@ -8,6 +8,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "update-hermes-agent.sh");
+const HERMES_BASE_DOCKERFILE = path.join(
+  import.meta.dirname,
+  "..",
+  "agents",
+  "hermes",
+  "Dockerfile.base",
+);
+const HERMES_MANIFEST = path.join(import.meta.dirname, "..", "agents", "hermes", "manifest.yaml");
 const TARGET_TAG = "v2026.6.19";
 
 const CURRENT_INSTALLED_BASE = [
@@ -38,15 +46,91 @@ function writeInstalledHermesCopy(baseDockerfile: string, baseText = CURRENT_INS
   );
 }
 
+function writeExecutable(file: string, body: string) {
+  fs.writeFileSync(file, body, { mode: 0o755 });
+}
+
 describe("scripts/update-hermes-agent.sh", () => {
   it("pins rebuild overrides to the accepted full image-ID local tag family", () => {
-    const source = fs.readFileSync(SCRIPT, "utf8");
-
-    expect(source).toContain(
-      'pin_tag="nemoclaw-hermes-sandbox-base-local:image-${base_image_id_hex}"',
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-update-rebuild-"));
+    const repo = path.join(tmp, "repo");
+    const script = path.join(repo, "scripts", "update-hermes-agent.sh");
+    const fakeBin = path.join(tmp, "bin");
+    const dockerLog = path.join(tmp, "docker.log");
+    const nemohermesLog = path.join(tmp, "nemohermes.log");
+    const imageId = `sha256:${"a".repeat(64)}`;
+    const pinnedRef = `nemoclaw-hermes-sandbox-base-local:image-${"a".repeat(64)}`;
+    const baseRef = "nemoclaw-hermes-base-local:test";
+    fs.mkdirSync(path.dirname(script), { recursive: true });
+    fs.mkdirSync(path.join(repo, "agents", "hermes"), { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.copyFileSync(SCRIPT, script);
+    fs.chmodSync(script, 0o755);
+    fs.copyFileSync(HERMES_BASE_DOCKERFILE, path.join(repo, "agents", "hermes", "Dockerfile.base"));
+    fs.copyFileSync(HERMES_MANIFEST, path.join(repo, "agents", "hermes", "manifest.yaml"));
+    writeExecutable(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+output=""
+previous=""
+for arg in "$@"; do
+  case "$previous" in
+    -o) output="$arg" ;;
+  esac
+  previous="$arg"
+done
+printf 'fake archive' > "$output"
+`,
     );
-    expect(source).toContain('base_image_id_hex="${base_image_id#sha256:}"');
-    expect(source).not.toContain("base_image_id_short");
+    writeExecutable(
+      path.join(fakeBin, "tar"),
+      "#!/usr/bin/env bash\nprintf 'version = \"0.17.0\"\\n'\n",
+    );
+    writeExecutable(path.join(fakeBin, "npm"), "#!/usr/bin/env bash\nprintf 'sha512-test\\n'\n");
+    writeExecutable(
+      path.join(fakeBin, "docker"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$FAKE_DOCKER_LOG"
+case "\${1:-}" in
+  image) printf '%s\\n' ${JSON.stringify(imageId)} ;;
+esac
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "nemohermes"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s|%s\\n' "\${NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF:-}" "$*" >> "$FAKE_NEMOHERMES_LOG"
+if [[ "$*" == "hermes exec -- hermes --version" ]]; then
+  printf '0.17.0\\n'
+fi
+`,
+    );
+
+    try {
+      const run = spawnSync("bash", [script, "--tag", TARGET_TAG, "--rebuild"], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${fakeBin}:${process.env.PATH}`,
+          HOME: path.join(tmp, "home"),
+          HERMES_BASE_REF: baseRef,
+          FAKE_DOCKER_LOG: dockerLog,
+          FAKE_NEMOHERMES_LOG: nemohermesLog,
+          NEMOCLAW_SOURCE_ROOT: undefined,
+        },
+        timeout: 10_000,
+      });
+
+      expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+      expect(fs.readFileSync(dockerLog, "utf8")).toContain(`tag ${baseRef} ${pinnedRef}`);
+      expect(fs.readFileSync(nemohermesLog, "utf8")).toContain(`${pinnedRef}|hermes rebuild`);
+      expect(run.stdout).toContain("OK: sandbox reports Hermes Agent v0.17.0");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("keeps installed-copy scanning opt-in unless rebuild needs it", () => {
