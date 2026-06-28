@@ -14,7 +14,6 @@ const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 // repository build output. The self-audit below prevents this list growing or
 // retaining an exemption after the fixture no longer needs one.
 const FIXTURE_EXCLUSIONS = new Set([
-  "src/lib/onboard/inference-selection-validation.test.ts",
   "test/dist-sourcemaps.test.ts",
   "test/install-preflight.test.ts",
   "test/stale-dist-check.test.ts",
@@ -25,6 +24,9 @@ const EXCLUDED_PREFIXES = [
   "test/e2e-scenario/live/",
   // This is the sole non-live lane allowed to import compiled package artifacts.
   "test/package-contract/",
+  // Spawn-only fixture: constructs dist/ string paths to inject into a child
+  // node process via require.cache, never imports them in this test process.
+  "src/lib/onboard/inference-selection-validation.test.ts",
 ];
 
 function repoPath(absolutePath: string): string {
