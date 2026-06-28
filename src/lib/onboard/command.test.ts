@@ -156,6 +156,12 @@ describe("onboard command options", () => {
   it("sets the Ollama autostart override before onboarding", async () => {
     const previous = process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
     delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
+    const restoreEnvironment =
+      previous === undefined
+        ? () => delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART
+        : () => {
+            process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = previous;
+          };
     let observed: string | undefined;
     try {
       await runOnboardCommand({
@@ -167,8 +173,7 @@ describe("onboard command options", () => {
       });
       expect(observed).toBe("1");
     } finally {
-      if (previous === undefined) delete process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART;
-      else process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = previous;
+      restoreEnvironment();
     }
   });
 });
