@@ -476,11 +476,7 @@ async function assertDestroyRemovesSandbox(
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
 }
 
-type GatewayRecoveryOutcome =
-  | "recovered"
-  | "skipped-gateway-absent"
-  | "skipped-docker-restarted-before-probe"
-  | "skipped-docker-did-not-restart";
+type GatewayRecoveryOutcome = "recovered" | "skipped-gateway-absent";
 
 async function assertGatewayRecovery(
   host: HostCliClient,
@@ -499,11 +495,12 @@ async function assertGatewayRecovery(
     return "skipped-gateway-absent";
   }
 
-  await host.command("docker", ["kill", GATEWAY_CONTAINER], {
+  const kill = await host.command("docker", ["kill", GATEWAY_CONTAINER], {
     artifactName: "tc-sbx-06-docker-kill-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
+  expectExitZero(kill, "kill shared NemoClaw gateway container");
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 
   const afterKill = await host.command(
@@ -515,17 +512,13 @@ async function assertGatewayRecovery(
       timeoutMs: 15_000,
     },
   );
-  if (afterKill.stdout.trim() === "true") {
-    return "skipped-docker-restarted-before-probe";
-  }
+  expect(afterKill.stdout.trim(), resultText(afterKill)).not.toBe("true");
 
   const status = await host.nemoclaw([sandboxName, "status"], {
     artifactName: "tc-sbx-06-status-recovers-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  if (status.exitCode === 0) return "recovered";
-
   const afterStatus = await host.command(
     "docker",
     ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
@@ -535,10 +528,8 @@ async function assertGatewayRecovery(
       timeoutMs: 15_000,
     },
   );
-  if (afterStatus.stdout.trim() !== "true") {
-    return "skipped-docker-did-not-restart";
-  }
   expectExitZero(status, `nemoclaw ${sandboxName} status after gateway kill`);
+  expect(afterStatus.stdout.trim(), resultText(afterStatus)).toBe("true");
   return "recovered";
 }
 

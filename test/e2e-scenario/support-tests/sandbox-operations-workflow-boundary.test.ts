@@ -31,11 +31,12 @@ function validateCentralWorkflowMutation(mutate: (source: string) => string): st
 
 function mutateSandboxOperationsJob(source: string, mutate: (jobSource: string) => string): string {
   const startMarker = "  sandbox-operations-vitest:\n";
-  const endMarker = "  sandbox-survival-vitest:\n";
   const start = source.indexOf(startMarker);
-  const end = source.indexOf(endMarker, start + startMarker.length);
   expect(start).toBeGreaterThanOrEqual(0);
-  expect(end).toBeGreaterThan(start);
+  const rest = source.slice(start + startMarker.length);
+  const nextJob = /^  [A-Za-z0-9_-]+:\n/m.exec(rest);
+  const end = nextJob ? start + startMarker.length + nextJob.index : source.length;
+  expect(end).toBeGreaterThan(start + startMarker.length);
   const jobSource = source.slice(start, end);
   const mutated = mutate(jobSource);
   expect(mutated).not.toBe(jobSource);
