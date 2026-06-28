@@ -8,8 +8,8 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { createOpenshellCliHelpers } from "../../../dist/lib/onboard/openshell-cli";
-import { prepareSandboxCreateLaunch } from "../../../dist/lib/onboard/sandbox-create-launch";
+import { createOpenshellCliHelpers } from "./openshell-cli";
+import { prepareSandboxCreateLaunch } from "./sandbox-create-launch";
 
 const disabledHermesDashboardState = { config: null, enabled: false };
 

@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
-
-import { spawnSync } from "node:child_process";
-import childProcess from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import { redact, runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../src/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
+const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
 
 type SpawnCallOptions = {
   stdio?: StdioOptions;
@@ -231,7 +229,7 @@ describe("runner env merging", () => {
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
-  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
     // Regression for the macOS Privoxy scenario: validateOllamaModel calls
     // runCaptureEx with a curl probe against http://localhost:11434. Before
     // the fix, runCaptureEx merged raw process.env (including the user's
@@ -926,6 +924,8 @@ describe("regression guards", () => {
       path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
       path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox-permissive.yaml"),
       path.join("agents", "openclaw", "policy-permissive.yaml"),
+      path.join("agents", "hermes", "policy-additions.yaml"),
+      path.join("agents", "hermes", "policy-permissive.yaml"),
     ]) {
       it(`${policyFile} grants /dev/pts so PTY allocation (tmux) works`, () => {
         const doc = YAML.parse(fs.readFileSync(path.join(repoRoot, policyFile), "utf-8"));

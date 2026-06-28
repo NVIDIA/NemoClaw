@@ -33,14 +33,11 @@ runs:
       shell: bash
       run: npm run validate:configs
 
+    # TypeScript checks and version sync run in the build-typecheck job.
     - name: Run static hook checks
       shell: bash
       run: |
-        npx prek run --all-files --stage pre-push \
-          --skip tsc-plugin \
-          --skip tsc-js \
-          --skip tsc-cli \
-          --skip version-tag-sync \
+        npx prek run --all-files --stage pre-commit \
           --skip test-cli \
           --skip test-plugin \
           --skip source-shape-test-budget \

@@ -10,7 +10,7 @@ import {
   probeOllamaRuntimeModelStatus,
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow,
-} from "../../../dist/lib/inference/ollama-runtime-context";
+} from "./ollama-runtime-context";
 
 const getOllamaHost = () => "127.0.0.1";
 

@@ -10,6 +10,7 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { resultText } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import {
   shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
@@ -47,7 +48,6 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_FRESH: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    NEMOCLAW_PROVIDER: "cloud",
     OPENSHELL_GATEWAY: "nemoclaw",
     ...extra,
   };
@@ -112,8 +112,8 @@ liveTest(
 
     assertRequiredInstallerEnv(process.env);
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    const redactionValues = [apiKey];
+    const hosted = requireHostedInferenceConfig(secrets);
+    const redactionValues = [hosted.apiKey];
     cleanup.add(`remove ${SANDBOX_NAME} after Spark install smoke`, () => bestEffortCleanup(host));
     await bestEffortCleanup(host);
 
@@ -140,9 +140,7 @@ liveTest(
     const install = await host.command("bash", ["-lc", installer.script], {
       artifactName: `phase-1-${installer.mode}-install`,
       cwd: REPO_ROOT,
-      env: env({
-        NVIDIA_API_KEY: apiKey,
-      }),
+      env: env(hosted.env),
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,
     });

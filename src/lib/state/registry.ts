@@ -4,6 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type { InferenceSelection } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
 
@@ -61,12 +63,9 @@ export interface SandboxGpuProofResult {
   at: string;
 }
 
-export interface SandboxEntry {
+export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   createdAt?: string;
-  model?: string | null;
-  nimContainer?: string | null;
-  provider?: string | null;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -376,13 +375,30 @@ function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
   return { ...entry, messaging };
 }
 
+/**
+ * Prepare a sandbox entry for persistence: normalize messaging state and drop
+ * transient #5714 display-only markers (`recoveredFromGateway`, `livePhase`)
+ * that must never reach sandboxes.json.
+ */
 function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
-  const messaging = serializeSandboxMessagingStateForDisk(entry.messaging);
+  // #5714: defensively drop transient, display-only recovery markers so they
+  // can never reach sandboxes.json even if a caller force-passed one through
+  // updateSandbox(). These are not part of the durable SandboxEntry type; they
+  // live only on the ephemeral list-recovery rows.
+  const {
+    recoveredFromGateway: _recovered,
+    livePhase: _phase,
+    ...durable
+  } = entry as SandboxEntry & {
+    recoveredFromGateway?: boolean;
+    livePhase?: string | null;
+  };
+  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
   if (!messaging) {
-    const { messaging: _messaging, ...rest } = entry;
+    const { messaging: _messaging, ...rest } = durable;
     return rest;
   }
-  return { ...entry, messaging };
+  return { ...durable, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
@@ -405,9 +421,7 @@ export function registerSandbox(entry: SandboxEntry): void {
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
-      model: entry.model || null,
-      nimContainer: entry.nimContainer || null,
-      provider: entry.provider || null,
+      ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,

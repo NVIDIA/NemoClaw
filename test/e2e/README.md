@@ -3,6 +3,32 @@
 
 # NemoClaw E2E CI
 
+## Interactive Host Tool Prerequisites
+
+Interactive E2E coverage that drives terminal prompts requires `expect`.
+GitHub Actions installs it before the affected tests begin through the shared `install-apt-packages` action.
+Local developer images and runners must install `expect` before starting `test/e2e/test-network-policy.sh` or `test/e2e/test-gpu-e2e.sh`; missing `expect` is a test failure so interactive coverage cannot silently skip.
+The fail-closed guards in `test-network-policy.sh` and `test-gpu-e2e.sh` name their source boundaries and regression tests:
+
+- `test-network-policy.sh`: trusted CI workflow setup installs `expect` before the script; local developer base images must provide it themselves. Remove the guard only when interactive policy-add no longer depends on `expect`, or when a repo-owned local development image is added with CI coverage that runs `command -v expect` against that image.
+- `test-gpu-e2e.sh`: trusted CI workflow setup installs `expect` before the script; the GPU runner image and local GPU images must provide it themselves. Remove the guard only when the OpenClaw TUI harness no longer depends on `expect`, or when the `linux-amd64-gpu-rtxpro6000-latest-1` runner image has CI coverage that runs `command -v expect` on that image.
+
+## Hermetic Compatible Inference for Direct Bash Jobs
+
+Direct bash E2E jobs that need onboarding inference, but do not need the live NVIDIA hosted service, should use `test/e2e/lib/hermetic-compatible-inference.sh` instead of `test/e2e/lib/ci-compatible-inference.sh` or workflow-injected hosted inference secrets.
+
+This pattern supports issue #5747 conversions:
+
+1. Source `lib/hermetic-compatible-inference.sh` from the test script.
+2. Call `nemoclaw_e2e_start_hermetic_compatible_inference` during prerequisites.
+3. Run the onboarding behavior under test normally; the helper exports a fake `custom` OpenAI-compatible endpoint and fake `COMPATIBLE_API_KEY`.
+4. Assert the endpoint was actually used with `nemoclaw_e2e_assert_hermetic_compatible_inference_used`.
+5. Stop it from the test cleanup trap with `nemoclaw_e2e_stop_hermetic_compatible_inference`.
+6. In `.github/workflows/nightly-e2e.yaml`, install/build only the CLI and OpenShell needed by the script; do not inject `NVIDIA_INFERENCE_API_KEY`, `COMPATIBLE_API_KEY`, `NEMOCLAW_E2E_USE_HOSTED_INFERENCE`, or hosted model/env knobs into the converted job.
+7. Add/update workflow contract coverage in `test/e2e-script-workflow.test.ts` so the job cannot regress back to hosted inference secrets.
+
+Use the lower-level `openai-compatible-api-proof.sh` directly only when a test needs raw fake-server lifecycle control without NemoClaw onboarding environment exports.
+
 ## Nightly Onboard Trace Timing
 
 The GitHub Actions workflow `.github/workflows/nightly-e2e.yaml` enables NemoClaw tracing for the `cloud-onboard-e2e` lane.

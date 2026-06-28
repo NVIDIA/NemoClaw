@@ -19,6 +19,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   buildPreContractExternalProviderSkipEvidence,
@@ -50,7 +51,10 @@ const SANDBOX_SKILL_VALIDATOR = path.join(
 );
 const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-cloud-inference";
 const CLOUD_MODEL =
-  process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+  process.env.NEMOCLAW_MODEL ??
+  process.env.NEMOCLAW_COMPAT_MODEL ??
+  process.env.NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL ??
+  "nvidia/nemotron-3-super-120b-a12b";
 const INSTALL_TIMEOUT_MS = 25 * 60_000;
 const CHAT_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 40 * 60_000;
@@ -227,8 +231,8 @@ async function expectLiveChatPong(
 test.skipIf(!shouldRunLiveE2EScenarios())(
   "cloud inference: inference.local chat and OpenClaw skill filesystem validate",
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     expect(fs.existsSync(CLI_ENTRYPOINT), `missing CLI entrypoint: ${CLI_ENTRYPOINT}`).toBe(true);
     expect(
@@ -247,7 +251,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       legacySource: "test/e2e/test-cloud-inference-e2e.sh",
       contracts: [
         "Docker is running before install/onboard",
-        "NVIDIA_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "install.sh --non-interactive creates or recreates the named OpenClaw sandbox",
         "nemoclaw and openshell are available on PATH after install",
         "curl inside the sandbox reaches https://inference.local/v1/chat/completions and returns PONG",
@@ -289,9 +293,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         artifactName: "phase-1-install-and-onboard-cloud-inference",
         cwd: REPO_ROOT,
         env: testEnv(home, {
-          NVIDIA_API_KEY: apiKey,
+          ...hosted.env,
           NEMOCLAW_AGENT: "openclaw",
-          NEMOCLAW_PROVIDER: "cloud",
           NEMOCLAW_RECREATE_SANDBOX: "1",
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
         }),

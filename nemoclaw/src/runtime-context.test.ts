@@ -33,12 +33,6 @@ function blankState(patch: Partial<NemoClawState> = {}): NemoClawState {
     updatedAt: "2026-03-01T00:00:00.000Z",
     lastRebuildAt: null,
     lastRebuildBackupPath: null,
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    shieldsPolicySnapshotPath: null,
     ...patch,
   };
 }

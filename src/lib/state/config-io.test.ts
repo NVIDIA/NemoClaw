@@ -11,7 +11,7 @@ import {
   ensureConfigDir,
   readConfigFile,
   writeConfigFile,
-} from "../../../dist/lib/state/config-io";
+} from "./config-io";
 
 const tmpDirs: string[] = [];
 

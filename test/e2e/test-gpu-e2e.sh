@@ -660,13 +660,23 @@ else
 fi
 
 # 5.5b: Drive the real OpenClaw TUI first turn and assert preemptive
-# auto-compaction does not block the reply. Requires `expect`; skip cleanly if
-# it is unavailable so the rest of the GPU lane still runs. The harness waits
-# for the gateway to connect before sending (so a slow host cannot drop the
-# keystroke), treats a healthy reply ("streaming") as success, and fails — not
-# passes — on a dropped turn, an early EOF/crash, or an inconclusive timeout, so
-# a turn that never ran can never be scored as a pass.
-if command -v expect >/dev/null 2>&1; then
+# auto-compaction does not block the reply. Source boundary: CI installs expect
+# through trusted workflow setup before this script starts; the GPU runner image
+# and any local GPU developer image must provide it up front too. Missing
+# `expect` is intentionally fail-closed so this interactive guard cannot become
+# a silent skip. Regression coverage lives in test/e2e-script-workflow.test.ts
+# (gpu-e2e installs expect before this script) and
+# test/e2e-expect-fail-closed.test.ts (missing expect records a failure). TODO:
+# remove this guard only after this TUI harness no longer depends on expect, or
+# after the linux-amd64-gpu-rtxpro6000-latest-1 runner image has CI coverage
+# that runs `command -v expect` on that image. The harness waits for the gateway
+# to connect before sending (so a slow host cannot drop the keystroke), treats a
+# healthy reply ("streaming") as success, and fails on a dropped turn, an early
+# EOF/crash, or an inconclusive timeout, so a turn that never ran can never be
+# scored as a pass.
+if ! command -v expect >/dev/null 2>&1; then
+  fail "[#5468] expect is required for the OpenClaw TUI first-turn compaction guard"
+else
   TUI_CAPTURE="/tmp/nemoclaw-5468-tui-capture.log"
   : >"$TUI_CAPTURE"
   TUI_TIMEOUT_SEC="${NEMOCLAW_5468_TUI_TIMEOUT_SEC:-240}"
@@ -701,8 +711,6 @@ EXPECT
     fail "[#5468] OpenClaw TUI first turn did not complete (rc=$tui_rc) — see capture"
     info "TUI capture (first 800 chars): $(tr -d '\000' <"$TUI_CAPTURE" | head -c 800)"
   fi
-else
-  skip "[#5468] expect not installed — TUI first-turn compaction guard not exercised"
 fi
 
 # ══════════════════════════════════════════════════════════════════

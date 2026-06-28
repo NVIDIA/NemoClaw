@@ -120,6 +120,7 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_raw_secret_keys = set()
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_remote_toolsets = {
     "web",
@@ -160,6 +161,8 @@ def env_violations(path: Path) -> list[str]:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
         if key in allowed_nonsecret_keys:
+            continue
+        if key in allowed_raw_secret_keys:
             continue
         if not secret_key_re.search(key):
             continue
@@ -213,6 +216,9 @@ if not env_path.is_file():
 if not config_path.is_file():
     print(f"{config_path} missing", file=sys.stderr)
     sys.exit(1)
+if "API_SERVER_KEY=" in env_path.read_text(encoding="utf-8"):
+    print("API_SERVER_KEY must be minted at sandbox startup, not baked into the image", file=sys.stderr)
+    sys.exit(1)
 
 violations = env_violations(env_path)
 if violations:
@@ -246,6 +252,7 @@ from pathlib import Path
 secret_key_re = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 slack_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
 allowed_nonsecret_keys = {"API_SERVER_HOST", "API_SERVER_PORT"}
+allowed_raw_secret_keys = {"API_SERVER_KEY"}
 allowed_literals = {"", "[STRIPPED_BY_MIGRATION]"}
 required_env_lines = {
     "NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
@@ -284,6 +291,8 @@ def env_violations(path: Path) -> list[str]:
         key, value = stripped.split("=", 1)
         key = key.strip()
         if key in allowed_nonsecret_keys:
+            continue
+        if key in allowed_raw_secret_keys:
             continue
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
             continue
@@ -383,6 +392,84 @@ assert_startup_rejects_runtime_env_entry() {
   pass "Hermes startup rejects runtime env ${key} without echoing its value"
 }
 
+probe_runtime_api_server_key() {
+  docker run --rm --entrypoint /bin/bash "$IMAGE" -lc '
+set -euo pipefail
+if ! /usr/local/bin/nemoclaw-start true >/tmp/nemoclaw-start-api-key-probe.log 2>&1; then
+  cat /tmp/nemoclaw-start-api-key-probe.log >&2
+  exit 1
+fi
+python3 - <<'"'"'PY'"'"'
+import hashlib
+import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+env_path = Path("/sandbox/.hermes/.env")
+values = []
+for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+    line = raw_line.strip()
+    if line.startswith("export "):
+        line = line[len("export ") :].lstrip()
+    if line.startswith("API_SERVER_KEY="):
+        value = line.split("=", 1)[1].strip().strip("\"'"'"'")
+        values.append(value)
+
+if len(values) != 1:
+    print(f"expected exactly one API_SERVER_KEY, found {len(values)}", file=sys.stderr)
+    sys.exit(1)
+
+token = values[0]
+strict_hash_ok = subprocess.call(
+    ["sha256sum", "-c", "/etc/nemoclaw/hermes.config-hash", "--status"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+) == 0
+compat_hash_ok = subprocess.call(
+    ["sha256sum", "-c", "/sandbox/.hermes/.config-hash", "--status"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+) == 0
+
+print(json.dumps({
+    "key_hash": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+    "key_hex": bool(re.fullmatch(r"[0-9a-f]{64}", token)),
+    "key_len": len(token),
+    "strict_hash_ok": strict_hash_ok,
+    "compat_hash_ok": compat_hash_ok,
+}, sort_keys=True))
+PY
+'
+}
+
+assert_runtime_api_server_key_per_sandbox() {
+  local first second
+
+  info "Verifying Hermes startup mints unique API_SERVER_KEY values per sandbox"
+  first="$(probe_runtime_api_server_key)" || fail "first Hermes runtime API key probe failed"
+  second="$(probe_runtime_api_server_key)" || fail "second Hermes runtime API key probe failed"
+
+  python3 - "$first" "$second" <<'PY' || fail "Hermes runtime API key uniqueness/hash validation failed"
+import json
+import sys
+
+first = json.loads(sys.argv[1])
+second = json.loads(sys.argv[2])
+for label, payload in (("first", first), ("second", second)):
+    if not payload.get("key_hex") or payload.get("key_len") != 64:
+        raise SystemExit(f"{label} API_SERVER_KEY is not a 32-byte hex token")
+    if not payload.get("strict_hash_ok"):
+        raise SystemExit(f"{label} strict Hermes config hash did not validate")
+    if not payload.get("compat_hash_ok"):
+        raise SystemExit(f"{label} compatibility Hermes config hash did not validate")
+if first.get("key_hash") == second.get("key_hash"):
+    raise SystemExit("two sandboxes from the same Hermes image shared API_SERVER_KEY")
+PY
+  pass "Hermes startup mints distinct API_SERVER_KEY values and valid hashes per sandbox"
+}
+
 require_docker
 build_image_if_needed
 docker image inspect "$IMAGE" >/dev/null 2>&1 || fail "image not found: ${IMAGE}"
@@ -391,6 +478,7 @@ docker image inspect "$MANAGED_IMAGE" >/dev/null 2>&1 || fail "image not found: 
 
 inspect_image_boundary "$IMAGE"
 inspect_managed_tool_boundary "$MANAGED_IMAGE"
+assert_runtime_api_server_key_per_sandbox
 RAW_SECRET_SENTINEL="SENTINEL_RAW_SECRET_VALUE"
 assert_startup_rejects_env_entry \
   "DEVTEST_API_TOKEN=${RAW_SECRET_SENTINEL}" \

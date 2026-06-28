@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
+import { listChannels } from "../sandbox/channels";
 import {
   prepareSandboxMessagingPreflight,
   type SandboxMessagingPreflightDeps,
-} from "../../../dist/lib/onboard/sandbox-messaging-preflight";
-import { listChannels } from "../../../dist/lib/sandbox/channels";
+} from "./sandbox-messaging-preflight";
 
 class ExitError extends Error {
   constructor(readonly code: number) {

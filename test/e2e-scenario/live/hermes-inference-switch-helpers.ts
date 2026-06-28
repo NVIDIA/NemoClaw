@@ -22,8 +22,14 @@ export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
-export const SWITCH_PROVIDER = process.env.NEMOCLAW_SWITCH_PROVIDER ?? "nvidia-prod";
-export const SWITCH_MODEL = process.env.NEMOCLAW_SWITCH_MODEL ?? "z-ai/glm-5.1";
+const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
+const DEFAULT_COMPAT_MODEL = "nvidia/nvidia/nemotron-3-super-v3";
+export const SWITCH_PROVIDER =
+  process.env.NEMOCLAW_SWITCH_PROVIDER ??
+  (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
+export const SWITCH_MODEL =
+  process.env.NEMOCLAW_SWITCH_MODEL ??
+  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "z-ai/glm-5.1");
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);
@@ -44,7 +50,17 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey, NVIDIA_API_KEY: apiKey });
+  apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  USE_COMPATIBLE_HOSTED &&
+    apiKey &&
+    Object.assign(out, {
+      COMPATIBLE_API_KEY: apiKey,
+      NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+      NEMOCLAW_ENDPOINT_URL:
+        process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
+      NEMOCLAW_PROVIDER: "custom",
+    });
   return { ...out, ...extra };
 }
 
@@ -219,9 +235,9 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
 export async function ensureCompatibleAnthropicSwitchProvider(
   host: HostCliClient,
   cleanup: { add(name: string, run: () => Promise<void> | void): void },
-): Promise<void> {
+): Promise<string | null> {
   if (SWITCH_PROVIDER !== "compatible-anthropic-endpoint" || SWITCH_API !== "anthropic-messages")
-    return;
+    return null;
   const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
@@ -252,6 +268,7 @@ export async function ensureCompatibleAnthropicSwitchProvider(
     timeoutMs: 120_000,
   });
   expect(result.exitCode).toBe(0);
+  return endpointUrl;
 }
 
 export async function installHermes(
@@ -330,14 +347,20 @@ export function expectedApiMode(): string | undefined {
   ]).get(SWITCH_API);
 }
 
+// This live lane runs on ubuntu-latest and intentionally uses GNU grep's
+// POSIX ERE character classes; support tests pin the accepted scalar shapes.
+export const API_KEY_SHAPE_PATTERN = `^[[:space:]]*api_key:[[:space:]]*("sk-[^"[:space:]]+"|'sk-[^'[:space:]]+'|sk-[^"'[:space:]]+)[[:space:]]*$`;
+
+export function apiKeyShapeCommand(): string[] {
+  return ["grep", "-Eq", API_KEY_SHAPE_PATTERN, "/sandbox/.hermes/config.yaml"];
+}
+
 export async function apiKeyShape(sandbox: SandboxClient): Promise<ShellProbeResult> {
-  return await sandbox.execShell(
-    SANDBOX_NAME,
-    trustedSandboxShellScript(
-      "python3 - <<'PY'\nimport re\ntext=open('/sandbox/.hermes/config.yaml', encoding='utf-8').read()\nmatch=re.search(r'^\\s+api_key:\\s*[\\\"\\']?(sk-[^\\\"\\'\\s]+)', text, re.M)\nraise SystemExit(0 if match else 1)\nPY",
-    ),
-    { artifactName: "hermes-config-api-key-shape", env: env(), timeoutMs: 30_000 },
-  );
+  return await sandbox.exec(SANDBOX_NAME, apiKeyShapeCommand(), {
+    artifactName: "hermes-config-api-key-shape",
+    env: env(),
+    timeoutMs: 30_000,
+  });
 }
 
 export async function hashCheck(

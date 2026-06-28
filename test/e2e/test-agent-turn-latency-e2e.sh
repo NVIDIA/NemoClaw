@@ -412,7 +412,7 @@ run_openclaw_turn() {
     return
   fi
 
-  if grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
+  if e2e_text_contains_integer_42 "$reply"; then
     pass "OpenClaw: real agent turn returned 42 in $(duration_s "$OPENCLAW_TURN_MS")"
     assert_latency_under_cap "OpenClaw" "$OPENCLAW_TURN_MS"
   else
@@ -463,7 +463,7 @@ print(json.dumps({
     return
   fi
 
-  if grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$content"; then
+  if e2e_text_contains_integer_42 "$content"; then
     pass "Hermes: real daemon turn returned 42 in $(duration_s "$HERMES_TURN_MS")"
     assert_latency_under_cap "Hermes" "$HERMES_TURN_MS"
   else

@@ -1,7 +1,7 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles"
+title: "NemoClaw Security Controls, Risks, and Posture Profiles"
 sidebar-title: "Security Best Practices"
 description: "A risk framework for every configurable security control in NemoClaw: defaults, what you can change, and what happens if you do."
 description-agent: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs."
@@ -20,7 +20,7 @@ For background on how the layers fit together, refer to [How It Works](../about/
 {/* TODO: uncomment after the OpenShell docs are published
 <Note>
 OpenShell enforces the platform-level mechanisms that NemoClaw configures, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication.
-For the full platform-level controls reference, see [OpenShell Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html).
+For the full platform-level controls reference, refer to [OpenShell Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html).
 </Note>
 */}
 
@@ -92,11 +92,11 @@ flowchart TB
 
 ## Network Controls
 
-NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets operators approve or deny requests in real time.
-Network policy allowlists do not disable OpenShell's SSRF guard; see [Customize the Network Policy](/network-policy/customize-network-policy) for the interaction between egress rules and internal-address blocking.
+NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets you approve or deny requests in real time.
+Network policy allowlists do not disable OpenShell's SSRF guard; refer to [Customize the Network Policy](/network-policy/customize-network-policy) for the interaction between egress rules and internal-address blocking.
 
 {/* OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
-See the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices. */}
+Refer to the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices. */}
 
 ### Deny-by-Default Egress
 
@@ -111,7 +111,7 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 
 ### Binary-Scoped Endpoint Rules
 
-Each network policy entry restricts which executables can reach the endpoint using the `binaries` field.
+Each network policy entry uses the `binaries` field to restrict which executables can reach the endpoint.
 
 OpenShell identifies the calling binary by reading `/proc/<pid>/exe` (the kernel-trusted executable path, not `argv[0]`), walking the process tree for ancestor binaries, and computing a SHA256 hash of each binary on first use.
 If someone replaces a binary while the sandbox runs, the hash mismatch immediately denies the request.
@@ -120,7 +120,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch immediate
 |---|---|
 | Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
-| Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
+| Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent can use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
 
 ### Path-Scoped HTTP Rules
@@ -153,7 +153,7 @@ When the agent reaches an unlisted endpoint, OpenShell blocks the request and pr
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The gateway blocks all unlisted endpoints and requires approval. |
-| What you can change | The system merges approved endpoints into the sandbox's policy as a new durable revision. They persist across sandbox restarts within the same sandbox instance. However, when you destroy and recreate the sandbox through onboarding, the policy resets to the baseline defined in the blueprint. |
+| What you can change | OpenShell merges approved endpoints into the sandbox's policy as a new durable revision. They persist across sandbox restarts within the same sandbox instance. When you destroy and recreate the sandbox through onboarding, the policy resets to the baseline defined in the blueprint. |
 | Risk if relaxed | Approving an endpoint permanently widens the running sandbox's policy. If you approve a broad domain (such as a CDN that hosts arbitrary content), the agent can fetch anything from that domain until you destroy and recreate the sandbox. |
 | Recommendation | Review each blocked request before approving. If you find yourself approving the same endpoint repeatedly, add it to the baseline policy with appropriate binary and path restrictions. To reset approved endpoints, destroy and recreate the sandbox. |
 
@@ -177,14 +177,15 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
 | `telegram` | Telegram Bot API. | Agent can send messages to any chat the bot token has access to. |
 
-**Recommendation:** Apply presets only when the agent's task requires the integration. Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
+Apply presets only when the agent's task requires the integration.
+Review the preset's YAML file before applying to understand the endpoints, methods, and binary restrictions it adds.
 
 ## Filesystem Controls
 
 NemoClaw restricts which paths the agent can read and write, protecting system binaries, configuration files, and gateway credentials.
 
 {/* OpenShell covers additional filesystem enforcement details, including `hard_requirement` compatibility mode for Landlock and policy path validation rules.
-See the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices. */}
+Refer to the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices. */}
 
 ### Read-Only System Paths
 
@@ -208,27 +209,36 @@ In root mode, the gateway process still runs as the separate `gateway` user, but
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
-For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config and high-risk state entry points.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so the sandbox user cannot change config or high-risk state entry points.
 The immutability workflow locks high-risk state directories (`skills`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `devices`, `canvas`, `telegram`, `wechat`, `whatsapp`, `platforms`, `weixin`, `profiles`, `skins`) to `root:sandbox` with `chmod -R go-w`.
 The OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code; the sandbox user can no longer write them.
 The same workflow also locks the secret-bearing directories (`credentials`, `identity`, `pairing`) to `root:root 700` with `chmod -R go-rwX`.
 Neither the sandbox user nor the gateway can read those secrets while the lock is active.
-Restoring the mutable-default posture returns both groups to `sandbox:sandbox 2770`.
-The list is the union of state directories declared by every shipped agent manifest; the lock helper silently skips dirs that aren't present in a given agent's config tree.
+Restoring the mutable-default posture returns those directories to `sandbox:sandbox 2770`.
+The list is the union of state directories declared by every shipped agent manifest.
+The lock helper silently skips dirs that are not present in a given agent's config tree.
 Two exemption kinds keep runtime data writable.
-The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`; the lock helper never touches those paths.
+The lock inventory omits top-level Hermes runtime dirs (`sessions/`, `memories/`, `logs/`, `cache/`, `plans/`) and the image-build-regenerated `openclaw-weixin/`.
+The lock helper never touches those paths.
 Inside a locked tree, the helper restores `agents/<agent-id>/sessions/` to `sandbox:sandbox 2770` after the surrounding `agents/` lock so the OpenClaw TUI can create and write session metadata under an otherwise root-owned parent.
 If any high-risk state-dir root is a symlink when the lock runs, the lock helper refuses to proceed and reports "Config not locked: state dir root is a symlink" instead of following the link with privileged `chown -R` / `chmod -R`.
 
-- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
-- **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
+- **DAC permissions (default).**
+  The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly.
+  A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
+- **Config integrity hash.**
+  The image includes a SHA256 hash of `openclaw.json`.
+  In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash.
+  When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
 - **Content integrity seal.**
   A clean immutable config lock can capture a SHA-256 seal of `openclaw.json` and other locked files into host-side state.
   Verification recomputes hashes inside the sandbox and surfaces drift on mismatch, so a host-root tamper that flips permissions back to `444 root:root` after rewriting the file is still flagged.
   Sandboxes locked before the seal landed have no recorded hash; permission-only verification cannot prove their bytes match the image original, so the seal is **not** a retroactive proof of integrity for legacy state.
   The same limitation applies when the locked file set grew after the existing seal was captured.
   Rebuild the sandbox for a known-good baseline before trusting a new seal.
-- **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
+- **Gateway token environment.**
+  The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions.
+  Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
 | Aspect | Detail |
 |---|---|
@@ -283,7 +293,7 @@ Landlock is a Linux Security Module that enforces filesystem access rules at the
 NemoClaw limits the capabilities, user privileges, and resource quotas available to processes inside the sandbox.
 
 {/* OpenShell enforces additional process-level controls not covered here, including seccomp BPF socket domain filters and a specific enforcement application order (namespace entry, privilege drop, Landlock, seccomp).
-See the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices. */}
+Refer to the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices. */}
 
 ### Capability Drops
 
@@ -294,16 +304,21 @@ When the entrypoint switches from root to the `sandbox` and `gateway` users, it 
 The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
 During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
-This behavior is best effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
+This behavior is best effort.
+If `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
 If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
 
 To make the drop fail-closed instead of best-effort, set `NEMOCLAW_REQUIRE_CAP_DROP=1` in the entrypoint environment.
-The agent then refuses to start unless the agent process tree's bounding set is verified free of the dangerous capabilities, so it will not boot on a host whose bounding set still holds them — typically one that cannot perform the drop (no `CAP_SETPCAP`, or `capsh` missing) and was not given a clean bounding set by the container runtime.
-This is opt-in because such hosts are common (many cloud VMs, Docker Desktop, WSL); leaving it unset preserves the best-effort default.
-The check covers the agent process tree only — a `$$nemoclaw connect` shell is spawned by the container runtime outside that tree and is not affected (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
+The agent then refuses to start unless it verifies that the agent process tree's bounding set is free of dangerous capabilities.
+It does not boot on a host whose bounding set still holds them, typically one that cannot perform the drop because `CAP_SETPCAP` or `capsh` is missing and the container runtime did not provide a clean bounding set.
+This is opt-in because such hosts are common, including many cloud VMs, Docker Desktop, and WSL.
+Leaving it unset preserves the best-effort default.
+The check covers the agent process tree only.
+The container runtime spawns a `$$nemoclaw connect` shell outside that tree, so the check does not affect it (tracked in [NVIDIA/OpenShell#1452](https://github.com/NVIDIA/OpenShell/issues/1452)).
 
 <AgentOnly variant="openclaw">
-For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose. Refer to [Sandbox Hardening](../deployment/sandbox-hardening).
+For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose.
+Refer to [Sandbox Hardening](../deployment/sandbox-hardening).
 </AgentOnly>
 
 | Aspect | Detail |
@@ -339,7 +354,8 @@ The `no-new-privileges` flag prevents processes from gaining additional privileg
 
 A process limit caps the number of processes the sandbox user can spawn.
 The entrypoint sets both soft and hard limits using `ulimit -u 512`.
-This behavior is best effort: if the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
+This behavior is best effort.
+If the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
 
 | Aspect | Detail |
 |---|---|
@@ -350,17 +366,16 @@ This behavior is best effort: if the container runtime restricts `ulimit` modifi
 
 ### Open File Descriptor Limit
 
-An open file descriptor limit caps the number of files, sockets, and pipes the
-sandbox user can hold open at once. The entrypoint sets both soft and hard
-limits using `ulimit -n 65536`. This is best-effort: if the container runtime
-restricts `ulimit` modification, the entrypoint logs a security warning and
-continues without the limit.
+An open file descriptor limit caps the number of files, sockets, and pipes the sandbox user can hold open at once.
+The entrypoint sets both soft and hard limits using `ulimit -n 65536`.
+This behavior is best effort.
+If the container runtime restricts `ulimit` modification, the entrypoint logs a security warning and continues without the limit.
 
 | Aspect | Detail |
 |---|---|
 | Default | 65536 open files, soft and hard (`ulimit -n 65536`), best-effort. |
 | What you can change | Increase or decrease the limit with `--ulimit nofile=N:N` in `docker run` or the `ulimits` section in Compose. The runtime-level ulimit takes precedence over the entrypoint's setting. |
-| Risk if relaxed | Without this cap the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them — a denial-of-service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
+| Risk if relaxed | Without this cap, the sandbox inherits the Docker daemon default (`nofile` ~1048576). A runaway or hostile process can then open file descriptors until it exhausts them, causing a denial of service that can starve the gateway, the agent, or the host of file handles. If the entrypoint cannot set the limit (logs `[SECURITY] Could not set soft/hard nofile limit`), the container runs without a file-descriptor cap. Ref [#4527](https://github.com/NVIDIA/NemoClaw/issues/4527). |
 | Recommendation | Keep the default at 65536. If the agent legitimately keeps many connections or files open, raise it deliberately and monitor host file-descriptor usage. If the entrypoint logs a warning about ulimit restrictions, set the limit through the container runtime instead. |
 
 ### Non-Root User
@@ -381,7 +396,7 @@ The entrypoint locks the `PATH` environment variable to system directories, prev
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint sets `PATH` to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` at startup. |
+| Default | The default sandbox entrypoint sets `PATH` to `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` at startup. Agent-specific images may add locked read-only runtime directories, such as `/opt/venv/bin` for LangChain Deep Agents Code. |
 | What you can change | This is not a user-facing knob. The entrypoint enforces it. |
 | Risk if relaxed | Without PATH hardening, the agent could create an executable named `curl` or `git` in a writable directory earlier in the PATH, intercepting commands run by the entrypoint or other processes. |
 | Recommendation | No action needed. The entrypoint handles this automatically. |
@@ -499,7 +514,7 @@ The CLI automatically redacts secret patterns (API keys, bearer tokens, provider
 <AgentOnly variant="openclaw">
 
 The NemoClaw plugin blocks the agent from writing likely secrets (API keys, tokens, private keys) into persistent memory files.
-The scanner intercepts Write, Edit, and similar tool calls targeting memory and workspace paths before they reach disk.
+The scanner intercepts `Write`, `Edit`, and similar tool calls targeting memory and workspace paths before they reach disk.
 
 | Aspect | Detail |
 |---|---|
@@ -546,7 +561,9 @@ Different inference providers have different trust and cost profiles.
 | Local Ollama | Self-hosted. No data leaves the machine. | No per-token cost. GPU/CPU resource cost. | Data stays local. |
 | Custom compatible endpoint | Varies. Depends on the proxy or gateway. | Varies. | Depends on the endpoint operator. |
 
-**Recommendation:** For sensitive workloads, use local Ollama to keep data on-premise. For general use, NVIDIA Endpoints provide a good balance of capability and trust. Review the data policies of any cloud provider you use.
+For sensitive workloads, use local Ollama to keep data on-premise.
+For general use, NVIDIA Endpoints provide a balance of capability and trust.
+Review the data policies of any cloud provider you use.
 
 ### Experimental Providers
 
@@ -571,7 +588,7 @@ They provide guidance on which controls to keep tight or relax.
 
 Use for always-on assistants with minimal external access.
 
-- Keep all defaults. Do not add presets.
+- Keep all defaults and do not add presets.
 - Use operator approval for any endpoint the agent requests.
 - Use NVIDIA Endpoints or local Ollama for inference.
 - Monitor the TUI for unexpected network requests.
@@ -592,7 +609,7 @@ Use when the agent talks to internal APIs or third-party services during testing
 - Add custom endpoint entries with tight path and method restrictions.
 - Use `protocol: rest` for all HTTP APIs to maintain inspection.
 - Use operator approval for unknown endpoints during test runs.
-- Review and clean up the baseline policy after testing. Remove endpoints that are no longer needed.
+- Review and clean up the baseline policy after testing by removing endpoints that are no longer needed.
 
 ## Common Mistakes
 

@@ -15,6 +15,41 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.68
+
+NemoClaw v0.0.68 improves onboarding recovery, messaging setup, agent-specific CLI behavior, local inference defaults, and release validation:
+
+- Installer and onboarding paths now stop on real setup failures and recover more cleanly after interrupted runs.
+  Scripted installs propagate onboarding exit codes, interrupted installer runs start fresh when no sandbox exists to resume, and resume behavior stays tied to onboarding sessions with a real sandbox.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart) and [Troubleshooting](../reference/troubleshooting).
+- Messaging setup adds experimental Microsoft Teams channel onboarding for OpenClaw and Hermes, including Bot Framework credentials, webhook forwarding, the `teams` network policy preset, and local webhook port conflict checks.
+  NemoClaw also derives channel availability from each channel manifest's `supportedAgents` declaration and rejects `channels add` before policy, provider, registry, credential, or rebuild mutations when no channel manifest supports the selected agent.
+  LangChain Deep Agents Code therefore fails closed for messaging until a real channel bridge and matching manifest support land.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels) and [Platform Support and Launch Claims](../reference/platform-support).
+- Agent-specific CLI commands now route more accurately and fail earlier with clearer local guidance.
+  `sessions export` routes by sandbox agent kind, Hermes `gateway-token` points users to `dashboard-url`, bare OpenClaw `agent` invocations print wrapper help locally, and omitted extra-agent `workspace` and `agentDir` fields use canonical OpenClaw paths.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- LangChain Deep Agents Code sandboxes now stay alive with a stable entrypoint, use their own product branding, reject unsupported messaging mutations, and preserve the hosted-compatible default model ID without doubling the provider namespace.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](../get-started/quickstart-langchain-deepagents-code), [NemoClaw Inference Options](../inference/inference-options), and [Platform Support and Launch Claims](../reference/platform-support).
+- DGX Spark express install now selects managed local vLLM by default, while hosted NVIDIA inference setup preserves the provider, namespace, and model ID shape used by the compatible endpoint path.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [NemoClaw Inference Options](../inference/inference-options), and [Platform Support and Launch Claims](../reference/platform-support).
+- Platform-support docs now rely on the canonical support matrix, so users and agents see one source of truth for supported platforms, inference providers, agents, messaging integrations, deployment paths, capabilities, and out-of-scope items.
+  For more information, refer to [Platform Support and Launch Claims](../reference/platform-support).
+
+## v0.0.67
+
+NemoClaw v0.0.67 improves onboarding recovery, messaging reliability, OpenClaw agent workflows, and AI-agent documentation routing:
+
+- Onboarding and OpenClaw agent operations recover more reliably after interrupted or scripted runs.
+  NemoClaw keeps repair backstops active when `onboard --resume` continues from later nonterminal onboarding phases, and `agents apply` removes orphan OpenClaw agents without forwarding a delete flag that the OpenClaw CLI rejects.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Discord messaging now uses the managed proxy path that OpenClaw accepts.
+  NemoClaw no longer writes a non-loopback per-account Discord proxy, while Telegram keeps its per-account proxy behavior, and WhatsApp policy E2E checks avoid brittle shell-pipeline failures on large policy output.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
+- AI-agent documentation now uses one compact routing skill instead of generated page-copy skills.
+  The `nemoclaw-user-guide` skill points agents to the docs MCP server, `llms.txt`, and canonical Markdown routes so the docs site remains the source of truth.
+  For more information, refer to [Use NemoClaw Agent Prompts, Docs MCP Server, and Skills with Your AI Coding Agent](../resources/agent-skills).
+
 ## v0.0.66
 
 NemoClaw v0.0.66 improves gateway serving, OpenClaw agent workflows, messaging defaults, local inference setup, and release validation:
@@ -297,7 +332,7 @@ NemoClaw v0.0.44 improves onboarding reliability, GPU sandbox networking, local 
 - `$$nemoclaw onboard` handles DGX Spark and Jetson hosts more conservatively. Unified-memory GPU detection works for Spark, Jetson defaults to CPU-only sandbox passthrough unless you opt in, and local Ollama validation tolerates slow unified-memory model loads that still fit host memory.
 - Linux Docker-driver GPU sandboxes preserve `host.openshell.internal` during recreation and inject a reachable DNS resolver when the host uses a systemd-resolved loopback nameserver, which keeps local inference and external DNS working after GPU patching.
 - Onboarding and sandbox builds fail less often on first run. Preflight can guide missing NVIDIA Container Toolkit setup, Docker builds force BuildKit for Dockerfile bind mounts, npm installs retry transient registry resets, and compatible-endpoint onboarding runs a final inference smoke check before reporting success.
-- `$$nemoclaw <name> connect` repairs stale `inference.local` routes before opening the shell, reports local Ollama backend and auth-proxy diagnostics when repair fails, and `--probe-only` keeps dashboard and process recovery from failing just because inference repair needs follow-up.
+- `$$nemoclaw <name> connect` repairs stale `inference.local` routes before opening the shell, reports local Ollama backend and auth-proxy diagnostics when repair fails, and `--probe-only` keeps dashboard and process recovery from failing because inference repair needs follow-up.
 - `$$nemoclaw <name> channels add <channel>` applies the matching built-in network policy preset before rebuild, and rebuilds preserve paused channel state so stopped messaging channels stay disabled after destroy and recreate.
 - Remote hosts can opt into dashboard forwarding on all interfaces with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, and gateway drift checks now stop backup, status, rebuild, recover, and upgrade flows before they trust stale OpenShell state.
 - Workspace restore uploads backed-up directories file by file, dashboard forwards retry while stopped ports are still releasing, and the in-sandbox OpenClaw gateway respawns after unexpected exits.
@@ -406,4 +441,4 @@ NemoClaw pins the OpenClaw version inside the sandbox at build time via `OPENCLA
 The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` is the compatibility floor for direct blueprint consumers and may be lower than the NemoClaw runtime target.
 Existing sandboxes do not auto-upgrade.
 Run `nemoclaw <name> status` to see the OpenClaw version currently running in a sandbox, and `nemoclaw <name> rebuild` to pick up a newer pin from a NemoClaw upgrade.
-See [Checking the OpenClaw version](../reference/commands#checking-the-openclaw-version) for the full policy.
+Refer to [Checking the OpenClaw version](../reference/commands#checking-the-openclaw-version) for the full policy.

@@ -39,6 +39,13 @@ describe("probesForState maps typed expected-state into probe ids", () => {
     ]);
   });
 
+  it("Deep Agents Code ready state omits host dashboard health for terminal-agent parity", () => {
+    expect(probesForState(requireExpectedState("cloud-deepagents-code-ready"))).toEqual([
+      "cli-installed",
+      "sandbox-running",
+    ]);
+  });
+
   it("preflight-failure state emits cli-installed, gateway-absent, sandbox-absent", () => {
     expect(probesForState(requireExpectedState("preflight-failure-no-sandbox"))).toEqual([
       "cli-installed",

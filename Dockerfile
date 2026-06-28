@@ -529,6 +529,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 
 # Copy startup script and shared sandbox initialisation library
 COPY scripts/lib/sandbox-init.sh /usr/local/lib/nemoclaw/sandbox-init.sh
+COPY scripts/lib/sandbox-rlimits.sh /usr/local/lib/nemoclaw/sandbox-rlimits.sh
 COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
@@ -548,6 +549,7 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /scripts/generate-openclaw-config.mts \
         /src/lib/messaging/applier/build/messaging-build-applier.mts \
     && chmod -R a+rX /src/lib/messaging \
+    && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \
         /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads-compiled-channels ]; then \
@@ -935,33 +937,44 @@ RUN set -eu; \
         chmod 660 /sandbox/.openclaw/openclaw.json; \
     fi
 
-# System-wide proxy hooks for shells where ~/.bashrc / ~/.profile aren't
+# System-wide shell hooks for shells where ~/.bashrc / ~/.profile aren't
 # sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
-# without HOME=/sandbox). Defined in Dockerfile.base; replayed here so the
-# fix applies before the GHCR base image catches up. Idempotent — `mv` of
-# a freshly-rebuilt /etc/bash.bashrc is harmless once the base layer
-# already includes the prepended hook (the cat | mv block just rewrites
-# with the same first line).
+# without HOME=/sandbox). Dockerfile.base is the source of truth. This final
+# image replay only repairs stale published bases that predate the v0.0.69
+# base layer and therefore lack /etc/profile.d/nemoclaw-rlimits.sh, the
+# /etc/bash.bashrc hook, or the root-owned helper mode. Remove this block after
+# the minimum supported OpenClaw sandbox base tag is v0.0.69 or newer and those
+# three artifacts are guaranteed by the base image and covered by
+# test/sandbox-provisioning.test.ts.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2704
 # hadolint ignore=SC2028,DL4006
-RUN if ! grep -q "/tmp/nemoclaw-proxy-env.sh" /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null; then \
+RUN chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
+    && if ! grep -q "sandbox-rlimits.sh" /etc/profile.d/nemoclaw-rlimits.sh 2>/dev/null; then \
+        printf '%s\n' \
+            '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+            '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
+            > /etc/profile.d/nemoclaw-rlimits.sh \
+        && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh; \
+    fi \
+    && if ! grep -q "/tmp/nemoclaw-proxy-env.sh" /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null; then \
         printf '%s\n' \
             '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
             '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
             > /etc/profile.d/nemoclaw-proxy.sh \
         && chmod 444 /etc/profile.d/nemoclaw-proxy.sh; \
     fi \
-    && if ! head -2 /etc/bash.bashrc | grep -q "/tmp/nemoclaw-proxy-env.sh"; then \
-        chmod 644 /etc/bash.bashrc 2>/dev/null || true; \
-        { printf '%s\n' \
-              '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
-              '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
-              ''; \
-          cat /etc/bash.bashrc; \
-        } > /etc/bash.bashrc.new \
-        && mv /etc/bash.bashrc.new /etc/bash.bashrc \
-        && chmod 444 /etc/bash.bashrc; \
-    fi
+    && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
+    && { printf '%s\n' \
+          '# NemoClaw runtime proxy config — see /tmp/nemoclaw-proxy-env.sh (#2704)' \
+          '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+          '' \
+          '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
+          ''; \
+        grep -Ev 'NemoClaw runtime proxy config|nemoclaw-proxy-env[.]sh|NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc || true; \
+      } > /etc/bash.bashrc.new \
+    && mv /etc/bash.bashrc.new /etc/bash.bashrc \
+    && chmod 444 /etc/bash.bashrc
 
 # Pin config hash at build time so the entrypoint can verify integrity.
 RUN sha256sum /sandbox/.openclaw/openclaw.json > /sandbox/.openclaw/.config-hash \

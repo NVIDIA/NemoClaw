@@ -1,10 +1,11 @@
+// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("node:fs") as typeof import("node:fs");
-const os = require("node:os") as typeof import("node:os");
-const path = require("node:path") as typeof import("node:path");
-const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const WORKFLOW_FILE = "nightly-e2e.yaml";
 const TRACE_ARTIFACT_NAME = "cloud-onboard-traces";
@@ -18,51 +19,10 @@ const ONBOARD_PHASE_ORDER = [
   "nemoclaw.onboard.phase.provider_selection",
   "nemoclaw.onboard.phase.inference",
   "nemoclaw.onboard.phase.sandbox",
-] as const;
-const ONBOARD_PHASE_NAMES = new Set<string>(ONBOARD_PHASE_ORDER);
+];
+const ONBOARD_PHASE_NAMES = new Set(ONBOARD_PHASE_ORDER);
 
-type SemverTag = {
-  name: string;
-  major: number;
-  minor: number;
-  patch: number;
-  sha?: string;
-};
-
-type TraceSpanLike = {
-  name?: unknown;
-  duration_ms?: unknown;
-};
-
-type TimingSummaryArtifact = {
-  schema_version?: unknown;
-  trace_id?: unknown;
-  total_duration_ms?: unknown;
-  phases?: unknown;
-  slowest_spans?: unknown;
-};
-
-type OnboardTraceSummary = {
-  artifact: unknown;
-  totalMs: number;
-  phases: Record<string, number>;
-};
-
-type PhaseRow = {
-  name?: string;
-  label: string;
-  currentMs: number;
-  priorMs: number;
-  deltaMs?: number;
-  deltaAbsMs: number;
-};
-
-type GitHubDeps = {
-  github: any;
-  context: any;
-};
-
-function parseSemverTag(name: string): SemverTag | null {
+function parseSemverTag(name) {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(name);
   if (!match) return null;
   return {
@@ -73,11 +33,11 @@ function parseSemverTag(name: string): SemverTag | null {
   };
 }
 
-function compareSemverDesc(a: SemverTag, b: SemverTag): number {
+function compareSemverDesc(a, b) {
   return b.major - a.major || b.minor - a.minor || b.patch - a.patch;
 }
 
-function formatDuration(ms: number): string {
+function formatDuration(ms) {
   if (!Number.isFinite(ms)) return "unknown";
   if (ms < 1000) return `${ms.toFixed(0)}ms`;
   const seconds = ms / 1000;
@@ -87,7 +47,7 @@ function formatDuration(ms: number): string {
   return `${minutes}m ${remaining.toFixed(1)}s`;
 }
 
-function formatTraceDelta(currentMs: number, priorMs: number): string {
+function formatTraceDelta(currentMs, priorMs) {
   const deltaMs = currentMs - priorMs;
   const pct = priorMs > 0 ? (deltaMs / priorMs) * 100 : 0;
   if (Math.abs(deltaMs) < 1) return "unchanged";
@@ -96,19 +56,19 @@ function formatTraceDelta(currentMs: number, priorMs: number): string {
   return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (${sign}${Math.abs(pct).toFixed(1)}%)`;
 }
 
-function phaseLabel(name: string): string {
+function phaseLabel(name) {
   return name.replace(ONBOARD_PHASE_PREFIX, "").replace(/_/g, " ");
 }
 
-function formatPhaseDelta(currentMs: number, priorMs: number): string {
+function formatPhaseDelta(currentMs, priorMs) {
   const deltaMs = currentMs - priorMs;
   if (Math.abs(deltaMs) < 1) return "±0ms";
   const sign = deltaMs > 0 ? "+" : "-";
   return `${sign}${formatDuration(Math.abs(deltaMs))}`;
 }
 
-function extractPhaseDurations(spans: TraceSpanLike[]): Record<string, number> {
-  const phases: Record<string, number> = {};
+function extractPhaseDurations(spans) {
+  const phases = {};
   for (const span of spans) {
     const name = span?.name;
     const durationMs = Number(span?.duration_ms);
@@ -124,16 +84,13 @@ function extractPhaseDurations(spans: TraceSpanLike[]): Record<string, number> {
   return phases;
 }
 
-function traceTimingResult(
-  traceTimingLine: string,
-  traceSummaryLines: string[] = [],
-): { traceTimingLine: string; traceSummaryLines: string[] } {
+function traceTimingResult(traceTimingLine, traceSummaryLines = []) {
   return { traceTimingLine, traceSummaryLines };
 }
 
-function normalizePhaseDurations(value: unknown): Record<string, number> | null {
+function normalizePhaseDurations(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const phases: Record<string, number> = {};
+  const phases = {};
   for (const [name, entry] of Object.entries(value)) {
     if (!ONBOARD_PHASE_NAMES.has(name)) continue;
     const durationMs = Number(entry);
@@ -143,11 +100,11 @@ function normalizePhaseDurations(value: unknown): Record<string, number> | null 
   return phases;
 }
 
-function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
-  const candidates: OnboardTraceSummary[] = [];
+function selectOnboardTrace(jsonTexts) {
+  const candidates = [];
   for (const text of jsonTexts) {
     try {
-      const artifact = JSON.parse(text) as TimingSummaryArtifact;
+      const artifact = JSON.parse(text);
       const totalMs = Number(artifact?.total_duration_ms);
       const phases = normalizePhaseDurations(artifact.phases);
       if (
@@ -168,10 +125,7 @@ function selectOnboardTrace(jsonTexts: string[]): OnboardTraceSummary | null {
   return candidates[0] ?? null;
 }
 
-function buildPhaseRows(
-  currentPhases: Record<string, number>,
-  priorPhases: Record<string, number>,
-): PhaseRow[] {
+function buildPhaseRows(currentPhases, priorPhases) {
   return ONBOARD_PHASE_ORDER.filter(
     (name) => currentPhases[name] !== undefined && priorPhases[name] !== undefined,
   ).map((name) => {
@@ -189,7 +143,7 @@ function buildPhaseRows(
   });
 }
 
-function formatTopPhaseChanges(phaseRows: PhaseRow[]): string {
+function formatTopPhaseChanges(phaseRows) {
   return phaseRows
     .slice()
     .sort((a, b) => b.deltaAbsMs - a.deltaAbsMs || a.label.localeCompare(b.label))
@@ -198,12 +152,7 @@ function formatTopPhaseChanges(phaseRows: PhaseRow[]): string {
     .join("; ");
 }
 
-function buildTraceSummaryLines(
-  currentTrace: { totalMs: number },
-  priorTrace: { totalMs: number },
-  priorTag: { name: string },
-  phaseRows: PhaseRow[],
-): string[] {
+function buildTraceSummaryLines(currentTrace, priorTrace, priorTag, phaseRows) {
   if (phaseRows.length === 0) return [];
 
   const lines = [
@@ -230,14 +179,14 @@ function buildTraceSummaryLines(
   return lines;
 }
 
-async function resolvePriorReleaseTag({ github, context }: GitHubDeps): Promise<SemverTag | null> {
+async function resolvePriorReleaseTag({ github, context }) {
   const tags = await github.paginate(github.rest.repos.listTags, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     per_page: 100,
   });
   const semverTags = tags
-    .map((tag: any) => {
+    .map((tag) => {
       const semverTag = parseSemverTag(tag.name);
       return semverTag && tag.commit?.sha ? { ...semverTag, sha: tag.commit.sha } : null;
     })
@@ -250,14 +199,11 @@ async function resolvePriorReleaseTag({ github, context }: GitHubDeps): Promise<
     : null;
   if (!currentTag) return semverTags[0];
 
-  const index = semverTags.findIndex((tag: SemverTag) => tag.name === currentTag.name);
+  const index = semverTags.findIndex((tag) => tag.name === currentTag.name);
   return index >= 0 ? (semverTags[index + 1] ?? null) : semverTags[0];
 }
 
-async function findLatestCompletedNightlyRunForReleaseTag(
-  { github, context }: GitHubDeps,
-  tag: SemverTag,
-): Promise<any | null> {
+async function findLatestCompletedNightlyRunForReleaseTag({ github, context }, tag) {
   for (let page = 1; page <= 10; page++) {
     const { data } = await github.rest.actions.listWorkflowRuns({
       owner: context.repo.owner,
@@ -269,7 +215,7 @@ async function findLatestCompletedNightlyRunForReleaseTag(
       page,
     });
     const run = data.workflow_runs.find(
-      (candidate: any) => candidate.id !== context.runId && candidate.status === "completed",
+      (candidate) => candidate.id !== context.runId && candidate.status === "completed",
     );
     if (run) return run;
     if (data.workflow_runs.length < 100) break;
@@ -277,17 +223,14 @@ async function findLatestCompletedNightlyRunForReleaseTag(
   return null;
 }
 
-async function readTraceSummaryFromRun(
-  { github, context }: GitHubDeps,
-  runId: number,
-): Promise<OnboardTraceSummary | null> {
+async function readTraceSummaryFromRun({ github, context }, runId) {
   const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     run_id: runId,
     per_page: 100,
   });
-  const artifact = artifacts.find((item: any) => item.name === TRACE_ARTIFACT_NAME);
+  const artifact = artifacts.find((item) => item.name === TRACE_ARTIFACT_NAME);
   if (!artifact) return null;
 
   const download = await github.rest.actions.downloadArtifact({
@@ -311,9 +254,7 @@ async function readTraceSummaryFromRun(
   }
 }
 
-async function buildTraceTimingResult(
-  deps: GitHubDeps,
-): Promise<{ traceTimingLine: string; traceSummaryLines: string[] }> {
+async function buildTraceTimingResult(deps) {
   const { context } = deps;
   try {
     const currentTrace = await readTraceSummaryFromRun(deps, context.runId);

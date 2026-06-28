@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import path from "node:path";
 
-// Import from compiled dist/ for correct coverage attribution.
-async function loadVerifier(): Promise<typeof import("../../../dist/lib/shields/verify-lock")> {
-  const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "verify-lock.js");
-  return import(distModulePath);
+async function loadVerifier(): Promise<typeof import("./verify-lock")> {
+  return import("./verify-lock");
 }
 
 const target = {

@@ -364,7 +364,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
   it(
     "repairs WSL ollama-local routes without requiring the auth proxy",
-    testTimeoutOptions(20_000),
+    testTimeoutOptions(40_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {

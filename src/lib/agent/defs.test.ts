@@ -11,7 +11,8 @@ import {
   getAgentChoices,
   loadAgent,
   resolveAgentName,
-} from "../../../dist/lib/agent/defs";
+  resolveAgentNameAlias,
+} from "./defs";
 
 const tempAgentDirs: string[] = [];
 
@@ -48,17 +49,13 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-    ]);
     expect(openclaw.inferenceProviderOptions).toEqual([]);
+    // OpenClaw uses device_pairing web auth — no fetchable bearer token.
+    expect(openclaw.webAuth).toEqual({ method: "none", env: null });
     // #5027: openclaw.json must be declared as a durable state file so
     // backup-all/rebuild preserve core settings (model/provider, MCP, agents).
     expect(openclaw.stateFiles).toEqual([{ path: "openclaw.json", strategy: "copy" }]);
+    expect(openclaw.userManagedFiles).toEqual([".env", ".mcp.json"]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -87,13 +84,9 @@ describe("agent definitions", () => {
       auth: "session",
     });
     expect(hermes.dashboardUi).toBeNull();
-    expect(hermes.messagingPlatforms).toEqual([
-      "telegram",
-      "discord",
-      "slack",
-      "wechat",
-      "whatsapp",
-    ]);
+    // Hermes' OpenAI-compatible API uses a bearer token read from API_SERVER_KEY.
+    expect(hermes.webAuth).toEqual({ method: "bearer_token", env: "API_SERVER_KEY" });
+    expect(hermes.userManagedFiles).toEqual([".hermes/.env"]);
   });
 
   it("loads the LangChain Deep Agents Code terminal acceptance contract", () => {
@@ -122,12 +115,13 @@ describe("agent definitions", () => {
       format: "toml",
     });
     expect(deepAgentsCode.inference?.provider_type).toBe("openai_compatible");
-    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills"]);
+    expect(deepAgentsCode.stateDirs).toEqual([".state", "skills", "agent/skills"]);
     expect(deepAgentsCode.stateFiles).toEqual([
       { path: "config.toml", strategy: "copy" },
       { path: "hooks.json", strategy: "copy" },
     ]);
     expect(deepAgentsCode.stateFiles.map((entry) => entry.path)).not.toContain(".env");
+    expect(deepAgentsCode.userManagedFiles).toEqual([".env", ".mcp.json"]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -149,6 +143,27 @@ describe("agent definitions", () => {
     process.env.NEMOCLAW_AGENT = "hermes";
 
     expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
+  });
+
+  it("resolves common user-facing agent aliases to canonical manifest names", () => {
+    const available = ["openclaw", "hermes", "langchain-deepagents-code"];
+
+    expect(resolveAgentNameAlias("nemohermes", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("NEMO_HERMES", available)).toBe("hermes");
+    expect(resolveAgentNameAlias("dcode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagent", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagents", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deep agents code", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("deepagentscode", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("langchain", available)).toBe("langchain-deepagents-code");
+    expect(resolveAgentNameAlias("nemoclaw", available)).toBe("openclaw");
+  });
+
+  it("resolves --agent and NEMOCLAW_AGENT aliases through resolveAgentName", () => {
+    expect(resolveAgentName({ agentFlag: "dcode" })).toBe("langchain-deepagents-code");
+
+    vi.stubEnv("NEMOCLAW_AGENT", "nemohermes");
+    expect(resolveAgentName()).toBe("hermes");
   });
 
   it("rejects non-object manifest payloads", () => {
@@ -340,5 +355,90 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/runtime\.smoke_commands/);
+  });
+
+  it("rejects non-string user_managed_files entries", () => {
+    const agentName = `invalid-umf-nonstring-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken UMF",
+        "user_managed_files:",
+        "  - .env",
+        "  - 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[1\].*string/);
+  });
+
+  it("rejects non-array user_managed_files values", () => {
+    const agentName = `invalid-umf-nonarray-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken UMF", "user_managed_files: not-an-array"].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files.*must be an array/);
+  });
+
+  it("rejects empty-string user_managed_files entries", () => {
+    const agentName = `invalid-umf-empty-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [`name: ${agentName}`, "display_name: Broken UMF", "user_managed_files:", '  - ""'].join(
+        "\n",
+      ),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*empty/);
+  });
+
+  it("rejects absolute paths in user_managed_files entries", () => {
+    const agentName = `invalid-umf-absolute-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken UMF",
+        "user_managed_files:",
+        "  - /sandbox/.env",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*absolute/);
+  });
+
+  it("rejects '..' traversal in user_managed_files entries", () => {
+    const agentName = `invalid-umf-traversal-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken UMF",
+        "user_managed_files:",
+        '  - "../secret"',
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*'\.\.'/);
+  });
+
+  it("rejects control characters in user_managed_files entries", () => {
+    const agentName = `invalid-umf-control-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken UMF",
+        "user_managed_files:",
+        '  - ".env\\n.malicious"',
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/user_managed_files\[0\].*control characters/);
   });
 });

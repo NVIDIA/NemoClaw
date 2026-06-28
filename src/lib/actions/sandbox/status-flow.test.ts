@@ -5,13 +5,18 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type ShowSandboxStatus =
-  typeof import("../../../../dist/lib/actions/sandbox/status")["showSandboxStatus"];
+type ShowSandboxStatus = typeof import("./status")["showSandboxStatus"];
 
 const requireDist = createRequire(import.meta.url);
-const statusModulePath = "../../../../dist/lib/actions/sandbox/status.js";
+const statusModulePath = "./status.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(statusModulePath);
+delete require.cache[requireDist.resolve(statusModulePath)];
 
 type StatusFlowHarness = {
+  checkAgentVersionSpy: MockInstance;
   getActiveSandboxSessionsSpy: MockInstance;
   getSandboxDockerRuntimeSpy: MockInstance;
   logSpy: MockInstance;
@@ -39,23 +44,31 @@ const baseSandboxEntry = {
   agentVersion: "0.1.0",
 };
 
-function createStatusFlowHarness(options: { lookupState?: "present" | "missing" } = {}) {
+function createStatusFlowHarness(
+  options: {
+    lookupState?: "present" | "missing";
+    sandboxEntry?: Partial<Omit<typeof baseSandboxEntry, "agentVersion">> & {
+      agent?: string | null;
+      agentVersion?: string | null;
+    };
+  } = {},
+) {
   delete require.cache[requireDist.resolve(statusModulePath)];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-  const statusPreflight = requireDist("../../../../dist/lib/actions/sandbox/status-preflight.js");
-  const statusSnapshot = requireDist("../../../../dist/lib/actions/sandbox/status-snapshot.js");
-  const dockerHealth = requireDist("../../../../dist/lib/actions/sandbox/docker-health.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const nim = requireDist("../../../../dist/lib/inference/nim.js");
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const shields = requireDist("../../../../dist/lib/shields/index.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
+  const statusPreflight = requireDist("./status-preflight.js");
+  const statusSnapshot = requireDist("./status-snapshot.js");
+  const dockerHealth = requireDist("./docker-health.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const nim = requireDist("../../inference/nim.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const shields = requireDist("../../shields/index.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
 
   const lookup =
     options.lookupState === "missing"
@@ -74,7 +87,9 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
           recoverySandboxVia: "docker unpause",
         };
 
-  vi.spyOn(registry, "getSandbox").mockReturnValue(baseSandboxEntry);
+  const sandboxEntry = { ...baseSandboxEntry, ...options.sandboxEntry };
+
+  vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
   vi.spyOn(statusPreflight, "getSandboxStatusPreflight").mockResolvedValue({
     failure: null,
     failureLayer: null,
@@ -82,7 +97,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
     exitCode: 0,
   });
   vi.spyOn(statusSnapshot, "collectSandboxStatusSnapshot").mockResolvedValue({
-    sb: baseSandboxEntry,
+    sb: sandboxEntry,
     lookup,
     rpcIssue: null,
     currentModel: "nvidia/nemotron-live",
@@ -129,7 +144,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
     container: null,
   });
   vi.spyOn(nim, "shouldShowNimLine").mockReturnValue(true);
-  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+  const checkAgentVersionSpy = vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
     sandboxVersion: "0.1.0",
     expectedVersion: "0.2.0",
     isStale: true,
@@ -149,6 +164,7 @@ function createStatusFlowHarness(options: { lookupState?: "present" | "missing" 
   logSpy.mockClear();
 
   return {
+    checkAgentVersionSpy,
     getActiveSandboxSessionsSpy,
     getSandboxDockerRuntimeSpy,
     logSpy,
@@ -199,6 +215,27 @@ describe("showSandboxStatus flow", () => {
     expect(harness.getActiveSandboxSessionsSpy).toHaveBeenCalledWith("alpha", expect.any(Object));
     expect(harness.getSandboxDockerRuntimeSpy).toHaveBeenCalledWith("alpha");
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("probes terminal runtime agent version when cached metadata is missing", async () => {
+    const harness = createStatusFlowHarness({
+      sandboxEntry: {
+        agent: "langchain-deepagents-code",
+        agentVersion: null,
+      },
+    });
+
+    await expect(harness.showSandboxStatus("alpha")).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(output).toContain("Agent:    LangChain Deep Agents Code v0.1.0");
+    expect(output).toContain("Update:");
+    expect(output).toContain("Run `nemoclaw alpha rebuild` to upgrade");
+    expect(harness.checkAgentVersionSpy).toHaveBeenCalledWith("alpha", {
+      forceProbe: true,
+      skipProbe: false,
+    });
   });
 
   it("preserves the registry entry and exits when the live gateway is missing the sandbox", async () => {

@@ -6,10 +6,10 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OnboardDashboardDeps, OnboardDashboardHelpers } from "../src/lib/onboard/dashboard";
 
-const { getPortConflictServiceHints } = require("../dist/lib/onboard") as {
+const { getPortConflictServiceHints } = require("../src/lib/onboard") as {
   getPortConflictServiceHints: (platform?: string) => string[];
 };
-const { createOnboardDashboardHelpers } = require("../dist/lib/onboard/dashboard") as {
+const { createOnboardDashboardHelpers } = require("../src/lib/onboard/dashboard") as {
   createOnboardDashboardHelpers: (deps: OnboardDashboardDeps) => OnboardDashboardHelpers;
 };
 

@@ -101,6 +101,7 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   reportProviderSelectionFailure,
 }: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
@@ -125,6 +126,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -340,6 +342,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const {
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -1053,14 +1058,11 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
   buildContext;
 // classifySandboxCreateFailure — see validation import above
 
-// ---------------------------------------------------------------------------
-// Ollama model prompt/pull/prepare functions — from inference/ollama/proxy.ts
-// (proxy lifecycle functions already imported at the top of this file)
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
   prepareOllamaModel,
-} = require("./inference/ollama/proxy");
+}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -1577,23 +1579,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
-// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
-function assertCdiNvidiaGpuSpecPresent(
-  host: ReturnType<typeof assessHost>,
-  optedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-): void {
-  if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough)
-    return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-  );
-  printRemediationActions(planHostRemediation(host));
-  process.exit(1);
-}
-
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
@@ -1640,11 +1625,13 @@ async function preflight(
     device: preflightOpts.sandboxGpuDevice ?? null,
   });
   exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
-  const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true ||
-    preflightOpts.noGpu === true ||
-    !sandboxGpuConfig.sandboxGpuEnabled;
-  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
+  const explicitlyOptedOutGpuPassthrough =
+    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+  preflightUtils.assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+  );
 
   assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
@@ -3059,10 +3046,10 @@ async function createSandbox(
       dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
+    readyCheckOutputPatterns: agentDefs.isTerminalAgent(agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: onboardTracing.addTraceEvent,
   });
-
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -3202,10 +3189,10 @@ async function createSandbox(
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const inferenceSelection = sandboxRegistration.selection;
   sandboxRegistration.registerCreatedSandbox({
     sandboxName,
-    model,
-    provider,
+    inferenceSelection: inferenceSelection(sandboxName, provider, model, preferredInferenceApi),
     runtimeFields: sandboxRuntimeFields,
     agent,
     agentVersionKnown: !fromDockerfile,
@@ -3291,6 +3278,9 @@ async function selectAndValidateOllamaModel(
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
+  const confirm = (question: string, defaultIsYes: boolean) =>
+    promptYesNoOrDefault(question, null, defaultIsYes);
+  const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
@@ -3333,7 +3323,7 @@ async function selectAndValidateOllamaModel(
         }
       }
     }
-    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
@@ -3477,11 +3467,7 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-
-  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
-    saveCredential(routerCredentialEnv, _providerKeyHint);
-  }
+  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
   if (isNonInteractive()) {
     if (!resolveProviderCredential(routerCredentialEnv)) {
       console.error(
@@ -3774,17 +3760,9 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-
   hydrateCredentialEnv(state.credentialEnv);
-
   if (selected.key === "build") {
-    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-      .find(Boolean);
-    if (_nvProviderKey && !existingNvidiaKey) {
-      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-    }
+    providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -3809,15 +3787,7 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
-    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (_providerKeyHint && state.credentialEnv) {
-      const existingCredentialKey = normalizeCredentialValue(
-        process.env[state.credentialEnv] ?? "",
-      );
-      if (!existingCredentialKey) {
-        process.env[state.credentialEnv] = _providerKeyHint;
-      }
-    }
+    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -3955,6 +3925,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
+  recoverProvider = true,
 ): Promise<{
   model: string | null;
   provider: string;
@@ -4008,7 +3979,6 @@ async function setupNim(
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
-  // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
   const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4063,9 +4033,9 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider,
-          readRecordedNimContainer,
-          readRecordedModel,
+          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
+          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -4647,7 +4617,6 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
-  stepMutationOptions: { updateMachine: false },
 });
 
 const sandboxCancelRollback = installSandboxCancelRollback({
@@ -4664,6 +4633,8 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
+const recordCompatibleStateResult =
+  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
@@ -4829,13 +4800,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
-    // Backstop for the resume path: a session may exist (so the early guard
-    // skipped because resume === true) but never have recorded a sandboxName
-    // — sandbox creation could have failed before that step ran. Without a
-    // --name or env-var seed, the downstream prompt path would fall back to
-    // 'my-assistant' under no TTY, exactly the silent-default the early
-    // guard is meant to prevent.
+    await (resume ? recordCompatibleStateResult : recordStateResult)(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    // Resume backstop: a session may exist without a sandboxName if sandbox
+    // creation failed before that step. Non-interactive --from cannot infer a
+    // safe name in that state.
     if (
       resume &&
       cannotPrompt &&
@@ -4853,15 +4823,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        const current = onboardSession.loadSession();
-        const failedStep = current?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
-        }
-      }
-    });
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -4956,7 +4918,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent,
+        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
@@ -5007,7 +4969,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -5129,6 +5091,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>
@@ -5148,15 +5111,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;
@@ -5308,7 +5269,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },
@@ -5316,6 +5277,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
@@ -5449,6 +5411,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

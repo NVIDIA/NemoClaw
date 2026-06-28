@@ -147,6 +147,87 @@ describe("parseSandboxMessagingPlan", () => {
     });
   });
 
+  it("keeps compact persisted plans free of derived workflow sections", () => {
+    const source = makePlan({
+      networkPolicy: {
+        presets: ["telegram"],
+        entries: [
+          {
+            channelId: "telegram",
+            presetName: "telegram",
+            policyKeys: ["telegram"],
+            source: "manifest",
+          },
+        ],
+      },
+      agentRender: [
+        {
+          channelId: "telegram",
+          agent: "openclaw",
+          target: "openclaw.json",
+          kind: "json-fragment",
+          path: "channels.telegram",
+          value: { enabled: true },
+          templateRefs: [],
+        },
+      ],
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "package-install",
+          outputId: "telegram-openclaw-plugin",
+          required: true,
+          value: "npm:@openclaw/telegram",
+        },
+      ],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [],
+        secretScans: [
+          {
+            channelId: "telegram",
+            path: "/sandbox/.openclaw/openclaw.json",
+            pattern: "TELEGRAM_BOT_TOKEN",
+          },
+        ],
+      },
+      stateUpdates: [
+        {
+          channelId: "telegram",
+          kind: "persist-inputs",
+          stateKey: "allowedIds.telegram",
+          inputIds: ["allowedIds"],
+        },
+      ],
+      healthChecks: [
+        {
+          channelId: "telegram",
+          phase: "health-check",
+          requiredBefore: "lifecycle-success",
+          hookIds: ["telegram-openclaw-bridge-health"],
+        },
+      ],
+    });
+
+    const compact = compactSandboxMessagingPlanForPersistence(source);
+
+    expect(compact.networkPolicy).toEqual(source.networkPolicy);
+    expect(compact).not.toHaveProperty("agentRender");
+    expect(compact).not.toHaveProperty("buildSteps");
+    expect(compact).not.toHaveProperty("runtimeSetup");
+    expect(compact).not.toHaveProperty("stateUpdates");
+    expect(compact).not.toHaveProperty("healthChecks");
+    expect(compact.channels).toEqual([
+      {
+        channelId: "telegram",
+        active: true,
+        configured: true,
+        disabled: false,
+        inputs: [{ inputId: "allowedIds", value: "123" }],
+      },
+    ]);
+  });
+
   it("rejects mismatched selectors, duplicate channels, and unsupported channels", () => {
     expect(parseSandboxMessagingPlan(makePlan(), { sandboxName: "other" })).toBeNull();
     expect(parseSandboxMessagingPlan(makePlan(), { agent: "hermes" })).toBeNull();
@@ -158,11 +239,65 @@ describe("parseSandboxMessagingPlan", () => {
     ).toBeNull();
   });
 
+  it("rejects any persisted channel when supportedChannelIds: [] is passed (deny-all)", () => {
+    expect(parseSandboxMessagingPlan(makePlan(), { supportedChannelIds: [] })).toBeNull();
+  });
+
   it("rejects malformed channel arrays without throwing", () => {
     const plan = makePlan() as unknown as { channels: unknown[] };
     plan.channels = [null];
 
     expect(parseSandboxMessagingPlan(plan)).toBeNull();
+  });
+
+  it("accepts and rejects channel host forward plans", () => {
+    const source = makePlan({
+      channels: [
+        {
+          ...makePlan().channels[0],
+          channelId: "teams",
+          displayName: "Microsoft Teams",
+          inputs: [
+            {
+              channelId: "teams",
+              inputId: "webhookPort",
+              kind: "config",
+              required: false,
+              sourceEnv: "MSTEAMS_PORT",
+              statePath: "teamsConfig.webhookPort",
+              value: "3978",
+            },
+          ],
+          hostForward: {
+            channelId: "teams",
+            port: 3978,
+            label: "Microsoft Teams webhook",
+          },
+        },
+      ],
+    });
+
+    expect(parseSandboxMessagingPlan(source)?.channels[0]?.hostForward).toEqual({
+      channelId: "teams",
+      port: 3978,
+      label: "Microsoft Teams webhook",
+    });
+
+    for (const hostForward of [
+      { channelId: "telegram", port: 0, label: "Telegram webhook" },
+      { channelId: "telegram", port: 70000, label: "Telegram webhook" },
+      { channelId: "telegram", port: 3978.5, label: "Telegram webhook" },
+      { channelId: "telegram", port: "3978", label: "Telegram webhook" },
+      { channelId: "telegram", port: 3978 },
+    ]) {
+      const plan = makePlan() as unknown as { channels: Array<Record<string, unknown>> };
+      plan.channels[0] = {
+        ...plan.channels[0],
+        hostForward,
+      };
+
+      expect(parseSandboxMessagingPlan(plan), JSON.stringify(hostForward)).toBeNull();
+    }
   });
 
   it("rejects malformed object arrays without throwing", () => {

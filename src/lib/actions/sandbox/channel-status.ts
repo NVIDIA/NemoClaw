@@ -19,6 +19,10 @@ import {
   collectVisibleConfigRecords,
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
+import {
+  createBuiltInChannelManifestRegistry,
+  getMessagingManifestAvailabilityContext,
+} from "../../messaging";
 import type { MessagingAgentId, SandboxMessagingPlan } from "../../messaging/manifest";
 import * as policies from "../../policy";
 import {
@@ -98,6 +102,7 @@ export type ChannelStatusReport =
 // channels status from inheriting that hang.
 const WHATSAPP_PROBE_TIMEOUT_MS = 8_000;
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
+const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
 const SHELL_OK = "NEMOCLAW_WA_DIAG_OK";
 const HEARTBEAT_BEGIN = "NEMOCLAW_WA_HEARTBEAT_BEGIN";
@@ -520,11 +525,11 @@ function buildBasicChannelReport(
     severity: "info",
     detail: `not implemented for ${channelName}; see \`${CLI_NAME} ${sandboxName} doctor\` and \`${CLI_NAME} ${sandboxName} logs --follow\``,
   });
-  if (!agent.messagingPlatforms.includes(channelName)) {
+  if (!channelSupportedByAgent(channelName, agent)) {
     signals.unshift({
       label: "Agent support",
       severity: "warn",
-      detail: `agent '${agent.name}' does not declare support for ${channelName}`,
+      detail: `channel '${channelName}' does not support agent '${agent.name}'`,
     });
   }
   return {
@@ -571,6 +576,12 @@ function severityForDisplay(source: "persisted" | "default" | "invalid") {
 
 function asMessagingAgent(name: string): MessagingAgentId | null {
   return name === "openclaw" || name === "hermes" ? name : null;
+}
+
+function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
+  return channelManifestRegistry
+    .listAvailable(getMessagingManifestAvailabilityContext(agent, channelManifestRegistry.list()))
+    .some((manifest) => manifest.id === channelName);
 }
 
 /**

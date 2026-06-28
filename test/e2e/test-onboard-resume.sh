@@ -15,10 +15,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_INFERENCE_API_KEY set before starting the test
+#   - local fake OpenAI-compatible endpoint reachable from host and sandbox
 #
 # Usage:
-#   NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-onboard-resume.sh
+#   bash test/e2e/test-onboard-resume.sh
 
 set -uo pipefail
 
@@ -77,13 +77,19 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
+# shellcheck source=test/e2e/lib/hermetic-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hermetic-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+
+cleanup_on_exit() {
+  nemoclaw_e2e_stop_hermetic_compatible_inference
+  _nemoclaw_sandbox_teardown
+}
+trap cleanup_on_exit EXIT
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
-RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
+EXPECTED_PROVIDER="compatible-endpoint"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -123,25 +129,20 @@ else
   exit 1
 fi
 
-if [[ -z "$RESTORE_API_KEY" ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
-  exit 1
-fi
-pass "NVIDIA_INFERENCE_API_KEY is set"
-
-export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
-nemoclaw_e2e_configure_compatible_inference || exit 1
-HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
-EXPECTED_PROVIDER="$(nemoclaw_e2e_expected_route_provider)"
-
-if nemoclaw_e2e_probe_hosted_inference; then
-  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
+if nemoclaw_e2e_start_hermetic_compatible_inference; then
+  pass "Configured onboard resume test for hermetic compatible-endpoint inference at ${FAKE_OPENAI_BASE_URL}"
 else
-  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
+  fail "Fake OpenAI-compatible endpoint failed to start"
+  sed 's/^/    /' "${FAKE_OPENAI_LOG:-/dev/null}" 2>/dev/null || true
   exit 1
 fi
 
-pass "Exported NVIDIA_INFERENCE_API_KEY for the resume run (host writes nothing to disk; OpenShell gateway is the system of record)"
+if curl -sf "${FAKE_OPENAI_BASE_URL}/models" >/dev/null 2>&1; then
+  pass "Network access to fake OpenAI-compatible endpoint"
+else
+  fail "Cannot reach fake OpenAI-compatible endpoint at ${FAKE_OPENAI_BASE_URL}"
+  exit 1
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (forced failure after sandbox creation)
@@ -209,6 +210,13 @@ case $? in
   0) pass "Session file recorded openclaw completion and policy failure" ;;
   *) fail "Session file did not record the expected interrupted state" ;;
 esac
+
+if nemoclaw_e2e_assert_hermetic_compatible_inference_used; then
+  pass "Fake OpenAI-compatible endpoint handled authenticated inference"
+else
+  fail "Fake OpenAI-compatible endpoint did not record authenticated inference"
+  sed 's/^/    /' "$FAKE_OPENAI_REQUESTS_FILE" 2>/dev/null || true
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Resume and complete

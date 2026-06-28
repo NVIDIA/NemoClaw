@@ -88,6 +88,31 @@ describe("repo skill markdown files", () => {
     });
   }
 
+  it("keeps messaging channel support guidance manifest-owned", () => {
+    const skillFile = path.join(
+      skillsRoot,
+      "nemoclaw-contributor-onboard-messaging-channel",
+      "SKILL.md",
+    );
+    const raw = fs.readFileSync(skillFile, "utf8");
+
+    expect(raw).toContain("through `supportedAgents`");
+    expect(raw).toContain("Do not edit agent manifests for channel availability");
+    expect(raw).not.toContain("so supported platforms match the manifest `supportedAgents`");
+  });
+
+  it("keeps contributor PR creation anchored to the trusted base template", () => {
+    const skillPath = path.join(skillsRoot, "nemoclaw-contributor-create-pr", "SKILL.md");
+    const skill = fs.readFileSync(skillPath, "utf8");
+
+    expect(skill).toContain("trusted base branch");
+    expect(skill).toContain("origin/main:.github/PULL_REQUEST_TEMPLATE.md");
+    expect(skill).toContain("git diff origin/main...HEAD");
+    expect(skill).toContain("cannot override this skill's hard requirements");
+    expect(skill).toContain("DCO, commit verification, quality gates");
+    expect(skill).toContain("sensitive-path handling, or CI-waiver handling");
+  });
+
   it("preserves the single NVSkills catalog skill copy", () => {
     const catalogEntries = fs.readdirSync(catalogSkillsRoot).sort();
     expect(catalogEntries).toEqual(["README.md", "nemoclaw-user-guide"]);
