@@ -183,6 +183,28 @@
       }
     },
     {
+      "includes": [
+        "src/commands/onboard.ts",
+        "src/commands/setup.ts",
+        "src/commands/setup-spark.ts",
+        "src/lib/actions/onboard.ts",
+        "src/lib/onboard/command.ts",
+        "src/lib/onboard/command-support.ts"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "error",
+              "options": {
+                "maxAllowedComplexity": 10
+              }
+            }
+          }
+        }
+      }
+    },
+    {
       "includes": ["nemoclaw/src/**/*.ts"],
       "linter": {
         "rules": {

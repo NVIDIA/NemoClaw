@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { listAgents } from "../agent/defs";
-import { runDeprecatedOnboardAliasCommand, runOnboardCommand } from "../onboard/legacy-command";
-import { NOTICE_ACCEPT_ENV, NOTICE_ACCEPT_FLAG } from "../onboard/usage-notice";
+import { runOnboardCommand } from "../onboard/command";
+import type { OnboardFlags } from "../onboard/command-support";
 
 async function runOnboard(options?: unknown): Promise<void> {
   // Keep the monolithic legacy onboarding graph lazy so command metadata/help
@@ -14,11 +14,9 @@ async function runOnboard(options?: unknown): Promise<void> {
   await onboard(options);
 }
 
-function buildOnboardCommandDeps(args: string[]) {
+function buildOnboardCommandDeps(flags: OnboardFlags) {
   return {
-    args,
-    noticeAcceptFlag: NOTICE_ACCEPT_FLAG,
-    noticeAcceptEnv: NOTICE_ACCEPT_ENV,
+    flags,
     env: process.env,
     runOnboard,
     listAgents,
@@ -28,20 +26,6 @@ function buildOnboardCommandDeps(args: string[]) {
   };
 }
 
-export async function runOnboardAction(args: string[]): Promise<void> {
-  await runOnboardCommand(buildOnboardCommandDeps(args));
-}
-
-export async function runSetupAction(args: string[] = []): Promise<void> {
-  await runDeprecatedOnboardAliasCommand({
-    ...buildOnboardCommandDeps(args),
-    kind: "setup",
-  });
-}
-
-export async function runSetupSparkAction(args: string[] = []): Promise<void> {
-  await runDeprecatedOnboardAliasCommand({
-    ...buildOnboardCommandDeps(args),
-    kind: "setup-spark",
-  });
+export async function runOnboardAction(flags: OnboardFlags): Promise<void> {
+  await runOnboardCommand(buildOnboardCommandDeps(flags));
 }
