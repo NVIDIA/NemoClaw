@@ -185,12 +185,12 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("runs provider selection and carries inference output into the flow context", async () => {
-    const [providerPhase] = createPhases();
+  it("carries provider selection output into sandbox setup", async () => {
+    const [providerPhase, sandboxPhase] = createPhases();
 
-    const result = await providerPhase.run(context());
+    const providerResult = await providerPhase.run(context());
 
-    expect(result.context).toMatchObject({
+    expect(providerResult.context).toMatchObject({
       sandboxName: "my-sandbox",
       model: "nvidia/test",
       provider: "nim",
@@ -200,7 +200,20 @@ describe("core onboard flow phases", () => {
       preferredInferenceApi: "chat",
       nimContainer: "nim-test",
     });
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(Array.isArray(providerResult.result)).toBe(true);
+
+    const sandboxResult = await sandboxPhase.run(providerResult.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "nim",
+      hermesToolGateways: ["local"],
+      preferredInferenceApi: "chat",
+      nimContainer: "nim-test",
+      selectedMessagingChannels: ["slack", "discord"],
+      webSearchSupported: true,
+    });
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {
@@ -272,26 +285,6 @@ describe("core onboard flow phases", () => {
       { allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
-  });
-
-  it("passes selected provider state into sandbox setup", async () => {
-    const [, sandboxPhase] = createPhases();
-
-    const result = await sandboxPhase.run(
-      context({
-        model: "nvidia/test",
-        provider: "nim",
-        hermesToolGateways: ["local"],
-        preferredInferenceApi: "chat",
-        nimContainer: "nim-test",
-      }),
-    );
-
-    expect(result.context).toMatchObject({
-      sandboxName: "created-sandbox",
-      selectedMessagingChannels: ["slack", "discord"],
-      webSearchSupported: true,
-    });
   });
 
   it("uses the strict runner for fresh provider selection sessions", async () => {
