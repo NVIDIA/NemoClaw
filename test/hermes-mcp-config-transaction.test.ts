@@ -160,6 +160,104 @@ else:
     expect(result.stdout).toContain("does not identify the trusted launcher");
   });
 
+  it("allows an authenticated same-UID lifecycle entrypoint to reload the trusted gateway", () => {
+    const result = runPython(`
+import importlib.util, json, signal, sys, types
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+sandbox_uid = 1000
+gateway_pid = 4242
+gateway_state = {"start_time": 99}
+observed = {
+    "closed_fds": [],
+    "trusted_pids": [],
+}
+module.os.geteuid = lambda: sandbox_uid
+observed["entrypoint_uid"] = module.os.geteuid()
+module.pwd.getpwnam = lambda name: (_ for _ in ()).throw(
+    AssertionError("same-UID reload must not resolve a separate gateway identity")
+)
+
+module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "9"
+def read_lifecycle_authority(fd):
+    observed["lifecycle_uid"] = module.os.geteuid()
+    return (321, 0, 0, module.LIFECYCLE_AUTH_HANDSHAKE)
+module._read_lifecycle_authority = read_lifecycle_authority
+module.os.close = lambda fd: observed["closed_fds"].append(fd)
+
+snapshot = types.SimpleNamespace(mode=0o600, uid=sandbox_uid, gid=sandbox_uid)
+guard = types.SimpleNamespace(
+    _read_text=lambda path: ("model: test\\n", snapshot),
+)
+module._load_guard = lambda: guard
+def apply_transaction(action, payload):
+    observed["helper_uid"] = module.os.geteuid()
+    observed["action"] = action
+    return True
+module.apply_transaction = apply_transaction
+
+gateway = types.ModuleType("gateway")
+status = types.ModuleType("gateway.status")
+status.get_running_pid = lambda cleanup_stale=False: gateway_pid
+status.get_process_start_time = lambda pid: gateway_state["start_time"]
+sys.modules["gateway"] = gateway
+sys.modules["gateway.status"] = status
+
+def stat_gateway(path):
+    observed["gateway_owner_uid"] = sandbox_uid
+    observed["gateway_check_uid"] = module.os.geteuid()
+    return types.SimpleNamespace(st_uid=sandbox_uid)
+module.os.stat = stat_gateway
+def trusted_gateway(pid):
+    observed["trusted_pids"].append(pid)
+    return True
+module._is_trusted_gateway_process = trusted_gateway
+def signal_gateway(pid, sent_signal):
+    observed["signal_uid"] = module.os.geteuid()
+    observed["signal_pid"] = pid
+    observed["signal_name"] = signal.Signals(sent_signal).name
+    gateway_state["start_time"] = 100
+module.os.kill = signal_gateway
+def gateway_healthy():
+    observed["health_uid"] = module.os.geteuid()
+    return True
+module._gateway_healthy = gateway_healthy
+
+payload = {
+    "server": "fake",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
+    "replace_existing": False,
+}
+sys.argv = [sys.argv[1], "add", "--payload", json.dumps(payload)]
+exit_code = module.main()
+observed["exit_code"] = exit_code
+print(json.dumps(observed, sort_keys=True))
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const lines = result.stdout.trim().split("\n");
+    expect(JSON.parse(lines[0] ?? "{}")).toEqual({ changed: true, ok: true, reloaded: true });
+    expect(JSON.parse(lines[1] ?? "{}")).toEqual({
+      action: "add",
+      closed_fds: [9],
+      entrypoint_uid: 1000,
+      exit_code: 0,
+      gateway_check_uid: 1000,
+      gateway_owner_uid: 1000,
+      health_uid: 1000,
+      helper_uid: 1000,
+      lifecycle_uid: 1000,
+      signal_name: "SIGUSR1",
+      signal_pid: 4242,
+      signal_uid: 1000,
+      trusted_pids: [4242, 4242],
+    });
+  });
+
   it("repairs and verifies strict and compatibility hashes on an unchanged retry", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-tx-"));
     const hermesDir = path.join(temp, ".hermes");

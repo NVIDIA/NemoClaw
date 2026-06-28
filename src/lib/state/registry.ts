@@ -462,7 +462,6 @@ function normalizeSandboxMcpState(value: unknown): SandboxMcpState | undefined {
     const entry = normalizeMcpBridgeEntry(name, rawEntry);
     if (entry) bridges[entry.server] = entry;
   }
-  if (Object.keys(bridges).length === 0) return undefined;
   const destroyPendingAt =
     typeof value.destroyPendingAt === "string" && value.destroyPendingAt
       ? value.destroyPendingAt
@@ -471,6 +470,9 @@ function normalizeSandboxMcpState(value: unknown): SandboxMcpState | undefined {
     typeof value.destroyPreparedAt === "string" && value.destroyPreparedAt
       ? value.destroyPreparedAt
       : undefined;
+  if (Object.keys(bridges).length === 0 && !destroyPreparedAt && !destroyPendingAt) {
+    return undefined;
+  }
   return {
     bridges,
     ...(destroyPreparedAt ? { destroyPreparedAt } : {}),

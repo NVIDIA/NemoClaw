@@ -215,6 +215,7 @@ export function buildDeepAgentsMcpRegisterCommand(
     `    print(f"MCP server '{payload['server']}' already exists in ${DEEPAGENTS_MCP_CONFIG_PATH} and is not managed by NemoClaw.", file=sys.stderr)`,
     "    raise SystemExit(2)",
     "servers[payload['server']] = payload['expected']",
+    "config_path.parent.mkdir(parents=True, exist_ok=True)",
     "tmp = config_path.with_name(config_path.name + '.nemoclaw-mcp.tmp')",
     "tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + '\\n', encoding='utf-8')",
     "os.chmod(tmp, 0o600)",

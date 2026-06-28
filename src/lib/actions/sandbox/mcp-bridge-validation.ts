@@ -269,19 +269,19 @@ export function parseMcpAddArgs(argv: string[]): ParsedMcpAddArgs {
       continue;
     }
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <http-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
       2,
     );
   }
 
   if (!server) {
     throw new McpBridgeError(
-      "Usage: nemoclaw <sandbox> mcp add <server> --url <http-mcp-url> --env KEY",
+      "Usage: nemoclaw <sandbox> mcp add <server> --url <https-mcp-url> --env KEY",
       2,
     );
   }
   if (!url) {
-    throw new McpBridgeError("MCP server URL is required. Pass --url <http-mcp-url>.", 2);
+    throw new McpBridgeError("MCP server URL is required. Pass --url <https-mcp-url>.", 2);
   }
   if (env.length !== 1) {
     throw new McpBridgeError(

@@ -119,7 +119,7 @@ There is no host listener, shell, persistent control socket, or service for this
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
 LangChain Deep Agents Code writes an HTTP entry under its user-level discovery path, `/sandbox/.deepagents/.mcp.json`.
-Deep Agents Code 0.1.12 treats the sandbox-root `.mcp.json` as project configuration and gates it on project trust, so NemoClaw does not use that path for managed MCP definitions:
+Deep Agents Code `0.1.12` treats the sandbox-root `.mcp.json` as project configuration and gates it on project trust, so NemoClaw does not use that path for managed MCP definitions.
 
 ```json
 {

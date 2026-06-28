@@ -41,7 +41,7 @@ describe("MCP adapters", () => {
 
   function runDeepAgentsConfigCommand(
     command: string,
-    initialConfig: Record<string, unknown>,
+    initialConfig?: Record<string, unknown>,
   ): {
     status: number | null;
     stdout: string;
@@ -51,10 +51,12 @@ describe("MCP adapters", () => {
   } {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepagents-mcp-"));
     const configPath = path.join(tmp, ".deepagents", ".mcp.json");
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`, {
-      mode: 0o600,
-    });
+    if (initialConfig !== undefined) {
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(configPath, `${JSON.stringify(initialConfig, null, 2)}\n`, {
+        mode: 0o600,
+      });
+    }
     try {
       const result = spawnSync(
         "bash",
@@ -149,60 +151,64 @@ describe("MCP adapters", () => {
 
   it("uses the normalized-header ownership rule in mcporter inspect and remove commands", () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcporter-owner-"));
-    const fakeMcporter = path.join(temp, "mcporter");
-    const removeMarker = path.join(temp, "removed");
-    fs.writeFileSync(
-      fakeMcporter,
-      [
-        "#!/usr/bin/env node",
-        'const fs = require("node:fs");',
-        'const headers = JSON.parse(process.env.FAKE_MCPORTER_HEADERS || "{}");',
-        'if (process.argv[3] === "get") {',
-        "  process.stdout.write(JSON.stringify({",
-        '    name: "github", transport: "http",',
-        '    baseUrl: "https://api.githubcopilot.com/mcp/", headers,',
-        "  }));",
-        "  process.exit(0);",
-        "}",
-        'if (process.argv[3] === "remove") {',
-        '  fs.writeFileSync(process.env.FAKE_MCPORTER_REMOVE_MARKER, "removed");',
-        "  process.exit(0);",
-        "}",
-        "process.exit(3);",
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const run = (command: string, headers: Record<string, string>) =>
-      spawnSync("/bin/sh", ["-c", command], {
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${temp}:${process.env.PATH ?? ""}`,
-          FAKE_MCPORTER_HEADERS: JSON.stringify(headers),
-          FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
-        },
+    try {
+      const fakeMcporter = path.join(temp, "mcporter");
+      const removeMarker = path.join(temp, "removed");
+      fs.writeFileSync(
+        fakeMcporter,
+        [
+          "#!/usr/bin/env node",
+          'const fs = require("node:fs");',
+          'const headers = JSON.parse(process.env.FAKE_MCPORTER_HEADERS || "{}");',
+          'if (process.argv[3] === "get") {',
+          "  process.stdout.write(JSON.stringify({",
+          '    name: "github", transport: "http",',
+          '    baseUrl: "https://api.githubcopilot.com/mcp/", headers,',
+          "  }));",
+          "  process.exit(0);",
+          "}",
+          'if (process.argv[3] === "remove") {',
+          '  fs.writeFileSync(process.env.FAKE_MCPORTER_REMOVE_MARKER, "removed");',
+          "  process.exit(0);",
+          "}",
+          "process.exit(3);",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const run = (command: string, headers: Record<string, string>) =>
+        spawnSync("/bin/sh", ["-c", command], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${temp}:${process.env.PATH ?? ""}`,
+            FAKE_MCPORTER_HEADERS: JSON.stringify(headers),
+            FAKE_MCPORTER_REMOVE_MARKER: removeMarker,
+          },
+        });
+      const normalizedHeaders = {
+        Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+        accept: "application/json, text/event-stream",
+      };
+
+      const inspect = run(buildOpenClawMcporterInspectCommand(baseEntry, true), normalizedHeaders);
+      expect(inspect.status).toBe(0);
+      expect(inspect.stdout.trim()).toBe("registered");
+
+      const remove = run(buildOpenClawMcporterRemoveCommand(baseEntry), normalizedHeaders);
+      expect(remove.status).toBe(0);
+      expect(fs.readFileSync(removeMarker, "utf8")).toBe("removed");
+
+      fs.rmSync(removeMarker, { force: true });
+      const drifted = run(buildOpenClawMcporterRemoveCommand(baseEntry), {
+        ...normalizedHeaders,
+        "x-unowned": "drift",
       });
-    const normalizedHeaders = {
-      Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
-      accept: "application/json, text/event-stream",
-    };
-
-    const inspect = run(buildOpenClawMcporterInspectCommand(baseEntry, true), normalizedHeaders);
-    expect(inspect.status).toBe(0);
-    expect(inspect.stdout.trim()).toBe("registered");
-
-    const remove = run(buildOpenClawMcporterRemoveCommand(baseEntry), normalizedHeaders);
-    expect(remove.status).toBe(0);
-    expect(fs.readFileSync(removeMarker, "utf8")).toBe("removed");
-
-    fs.rmSync(removeMarker, { force: true });
-    const drifted = run(buildOpenClawMcporterRemoveCommand(baseEntry), {
-      ...normalizedHeaders,
-      "x-unowned": "drift",
-    });
-    expect(drifted.status).toBe(2);
-    expect(drifted.stderr).toContain("Refusing to remove modified mcporter MCP server");
-    expect(fs.existsSync(removeMarker)).toBe(false);
+      expect(drifted.status).toBe(2);
+      expect(drifted.stderr).toContain("Refusing to remove modified mcporter MCP server");
+      expect(fs.existsSync(removeMarker)).toBe(false);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
   });
 
   it("constructs a Hermes config registration with placeholders", () => {
@@ -271,6 +277,30 @@ describe("MCP adapters", () => {
     expect(command).toContain("Invalid /sandbox/.deepagents/.mcp.json");
     expect(command).toContain("mcpServers must be an object");
     expect(command).toContain("already exists in /sandbox/.deepagents/.mcp.json");
+  });
+
+  it("creates the Deep Agents config parent on first registration", () => {
+    const registration = runDeepAgentsConfigCommand(
+      buildDeepAgentsMcpRegisterCommand({
+        ...baseEntry,
+        agent: "langchain-deepagents-code",
+        adapter: "deepagents-config",
+      }),
+    );
+
+    expect(registration.status, registration.stderr).toBe(0);
+    expect(registration.configExists).toBe(true);
+    expect(registration.config).toEqual({
+      mcpServers: {
+        github: {
+          type: "http",
+          url: "https://api.githubcopilot.com/mcp/",
+          headers: {
+            Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN",
+          },
+        },
+      },
+    });
   });
 
   it("fails Deep Agents removal on corrupt config unless forced", () => {

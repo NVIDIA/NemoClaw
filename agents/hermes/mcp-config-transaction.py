@@ -16,6 +16,7 @@ no persistent control listener is exposed to sandbox processes.
 from __future__ import annotations
 
 import argparse
+import errno
 import http.client
 import importlib.util
 import ipaddress
@@ -524,8 +525,11 @@ def _require_lifecycle_identity() -> None:
         os.environ.pop(LIFECYCLE_AUTH_FD_ENV, None)
         try:
             os.close(fd)
-        except OSError:
-            pass
+        except OSError as close_error:
+            # Preserve the authentication failure when an injected or stale FD
+            # was already invalid; every other close failure remains actionable.
+            if close_error.errno != errno.EBADF:
+                raise
     if peer_pid <= 0 or peer_uid != 0 or handshake != LIFECYCLE_AUTH_HANDSHAKE:
         raise PermissionError(
             "Hermes MCP mutation requires OpenShell policy-authorized lifecycle execution"

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AgentDefinition } from "../../agent/defs";
+import { type AgentDefinition, type AgentMcpAdapter, loadAgent } from "../../agent/defs";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
 } from "./mcp-bridge-adapters";
-import type { McpBridgeStatus } from "./mcp-bridge-contracts";
+import { isAgentMcpAdapter, type McpBridgeStatus } from "./mcp-bridge-contracts";
 import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import { getPolicyPresence, getRegisteredGeneratedPolicy } from "./mcp-bridge-policy";
 import {
@@ -20,11 +20,14 @@ import {
 import {
   bridgeState,
   ensureSandboxGatewaySelected,
-  getEntryAdapter,
   getSandboxAgent,
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
-import { resolveCredentialEnv, validateSandboxName } from "./mcp-bridge-validation";
+import {
+  resolveCredentialEnv,
+  validateMcpServerName,
+  validateSandboxName,
+} from "./mcp-bridge-validation";
 import { executeSandboxCommand } from "./process-recovery";
 
 export interface McpBridgeJsonSummary {
@@ -36,11 +39,10 @@ export interface McpBridgeJsonSummary {
 
 function getAdapterRegistration(
   sandboxName: string,
-  agent: AgentDefinition,
+  adapter: AgentMcpAdapter | undefined,
   entry: McpBridgeEntry | undefined,
 ): McpBridgeStatus["adapter"] {
   if (!entry) return { registered: null };
-  const adapter = getEntryAdapter(entry, agent);
   if (!adapter) return { registered: null, detail: "MCP adapter is not declared" };
   const command =
     adapter === "mcporter"
@@ -71,16 +73,18 @@ export async function statusMcpBridge(
   server?: string,
 ): Promise<McpBridgeStatus[]> {
   validateSandboxName(sandboxName);
+  if (server !== undefined) validateMcpServerName(server);
   const sandbox = getSandboxOrThrow(sandboxName);
   const agent = getSandboxAgent(sandbox);
   const bridges = bridgeState(sandbox);
   if (Object.keys(bridges).length > 0) {
     await ensureSandboxGatewaySelected(sandboxName);
   }
-  const entries: Array<[string, McpBridgeEntry | undefined]> = server
-    ? [[server, bridges[server]]]
-    : Object.entries(bridges);
-  if (server && !bridges[server]) {
+  const selectedEntry =
+    server !== undefined && Object.hasOwn(bridges, server) ? bridges[server] : undefined;
+  const entries: Array<[string, McpBridgeEntry | undefined]> =
+    server !== undefined ? [[server, selectedEntry]] : Object.entries(bridges);
+  if (server !== undefined && !selectedEntry) {
     return [
       {
         server,
@@ -105,6 +109,7 @@ export async function statusMcpBridge(
   }
 
   return entries.map(([name, entry]) => {
+    const support = entry ? getPersistedBridgeSupport(entry) : getSupportSummary(agent);
     const registeredPolicy = getRegisteredGeneratedPolicy(sandboxName, entry);
     const hasCredentialBinding =
       !!entry &&
@@ -132,14 +137,7 @@ export async function statusMcpBridge(
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
-      support: {
-        supported: agent.mcpCapability.support === "bridge",
-        mode: agent.mcpCapability.support,
-        ...(getEntryAdapter(entry, agent)
-          ? { adapter: getEntryAdapter(entry, agent) ?? undefined }
-          : {}),
-        ...(agent.mcpCapability.reason ? { reason: agent.mcpCapability.reason } : {}),
-      },
+      support,
       ...(entry ? { url: entry.url } : {}),
       ...(entry?.addState ? { addState: entry.addState } : {}),
       env: {
@@ -163,11 +161,30 @@ export async function statusMcpBridge(
         registryPresent: !!registeredPolicy,
         gatewayPresent: getPolicyPresence(sandboxName, entry),
       },
-      adapter: getAdapterRegistration(sandboxName, agent, entry),
+      adapter: getAdapterRegistration(sandboxName, support.adapter, entry),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),
     };
   });
+}
+
+function getPersistedBridgeSupport(entry: McpBridgeEntry): McpBridgeStatus["support"] {
+  if (isAgentMcpAdapter(entry.adapter)) {
+    return {
+      supported: true,
+      mode: "bridge",
+      adapter: entry.adapter,
+    };
+  }
+  try {
+    return getSupportSummary(loadAgent(entry.agent));
+  } catch {
+    return {
+      supported: false,
+      mode: "disabled",
+      reason: `Persisted agent '${entry.agent}' is unavailable.`,
+    };
+  }
 }
 
 function getSupportSummary(agent: AgentDefinition): McpBridgeStatus["support"] {
