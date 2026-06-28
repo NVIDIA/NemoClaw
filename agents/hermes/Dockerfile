@@ -280,12 +280,13 @@ RUN set -eu; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_link="$(find "$data_dir" -type l -print -quit)"; \
+        if [ -n "$legacy_link" ]; then \
+            echo "ERROR: refusing legacy layout cleanup because $legacy_link is a symlink" >&2; \
+            exit 1; \
+        fi; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
-            if [ -L "$entry" ]; then \
-                echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
-                exit 1; \
-            fi; \
             name="$(basename "$entry")"; \
             target="$config_dir/$name"; \
             if [ -L "$target" ]; then \

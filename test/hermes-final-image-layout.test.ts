@@ -10,7 +10,12 @@ import { dockerRunCommandBetween, runDockerShell } from "./helpers/hermes-docker
 const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
-type LegacyDataFixture = "none" | "content" | "directory-symlink" | "entry-symlink";
+type LegacyDataFixture =
+  | "none"
+  | "content"
+  | "directory-symlink"
+  | "entry-symlink"
+  | "nested-symlink";
 type OpenClawFixture = "none" | "directory" | "symlink";
 
 interface FixturePaths {
@@ -44,6 +49,11 @@ const legacyDataSetups = {
     fs.mkdirSync(legacyDataDir, { recursive: true });
     fs.writeFileSync(legacyTarget, "keep\n");
     fs.symlinkSync(legacyTarget, path.join(legacyDataDir, "linked-entry"));
+  },
+  "nested-symlink": ({ legacyDataDir, legacyTarget }: FixturePaths) => {
+    fs.mkdirSync(path.join(legacyDataDir, "sessions"), { recursive: true });
+    fs.writeFileSync(legacyTarget, "keep\n");
+    fs.symlinkSync(legacyTarget, path.join(legacyDataDir, "sessions", "linked-entry"));
   },
 } satisfies Record<LegacyDataFixture, (paths: FixturePaths) => void>;
 
@@ -140,7 +150,9 @@ describe("Hermes final image layout", () => {
     const run = runFinalLayout({ legacyData: "content" });
     try {
       expect(run.result.status).toBe(0);
-      expect(fs.existsSync(path.join(run.sandboxRoot, ".hermes-data"))).toBe(false);
+      expect(
+        fs.lstatSync(path.join(run.sandboxRoot, ".hermes-data"), { throwIfNoEntry: false }),
+      ).toBeUndefined();
       expect(fs.lstatSync(path.join(run.hermesDir, "sessions")).isDirectory()).toBe(true);
       expect(readText(path.join(run.hermesDir, "sessions", "legacy.json"))).toBe("{}\n");
       expect(fs.lstatSync(path.join(run.hermesDir, "legacy.txt")).isSymbolicLink()).toBe(false);
@@ -156,6 +168,7 @@ describe("Hermes final image layout", () => {
   it.each([
     "directory-symlink",
     "entry-symlink",
+    "nested-symlink",
   ] as const)("refuses a legacy data %s before migration", (legacyData) => {
     const run = runFinalLayout({ legacyData });
     try {
