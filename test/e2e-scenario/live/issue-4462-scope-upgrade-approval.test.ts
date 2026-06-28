@@ -910,12 +910,18 @@ liveTest(
       scopeUpgradeScript().replaceAll("\\${", "${"),
       "utf8",
     ).toString("base64");
+    const scopeUpgradeScriptChunks = encodedScopeUpgradeScript.match(/.{1,24000}/g);
+    if (!scopeUpgradeScriptChunks?.length) {
+      throw new Error("scope-upgrade probe script encoded to an empty payload");
+    }
     const probe = await sandbox.exec(
       SANDBOX_NAME,
       [
         "sh",
         "-lc",
-        `tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf '%s' '${encodedScopeUpgradeScript}' | base64 -d > "$tmp"; bash "$tmp"`,
+        `set -e; umask 077; tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; printf '%s' "$@" | base64 -d > "$tmp"; bash "$tmp"`,
+        "issue-4462-scope-upgrade-probe",
+        ...scopeUpgradeScriptChunks,
       ],
       {
         artifactName: "phase-2-scope-upgrade-approval",
