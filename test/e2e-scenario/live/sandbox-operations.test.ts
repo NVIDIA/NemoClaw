@@ -45,17 +45,6 @@ function expectExitZero(result: ProcessResult, label: string): void {
   expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
 }
 
-function expectJsonStdout(result: ProcessResult, label: string): void {
-  expect(
-    result.stdout.trim(),
-    `${label} produced empty stdout\nstderr:\n${result.stderr}`,
-  ).not.toBe("");
-  expect(
-    () => JSON.parse(result.stdout),
-    `${label} stdout is not JSON:\n${result.stdout}`,
-  ).not.toThrow();
-}
-
 async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
   const result = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
     artifactName: `cleanup-destroy-${sandboxName}`,
@@ -279,10 +268,7 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
   expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
 }
 
-async function assertAgentJsonTransportBoundaries(
-  host: HostCliClient,
-  sandboxName: string,
-): Promise<void> {
+async function assertAgentJsonNonzeroExit(host: HostCliClient, sandboxName: string): Promise<void> {
   const invalidFlag = await host.nemoclaw(
     [sandboxName, "agent", "--json", "--nemoclaw-e2e-invalid-openclaw-agent-flag"],
     {
@@ -295,32 +281,8 @@ async function assertAgentJsonTransportBoundaries(
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBeNull();
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBe(0);
 
-  const provenanceMarker = `NEMOCLAW_PROVENANCE_E2E_${Date.now()}_${process.pid}`;
-  const failureSessionId = `e2e-sbx-02b-failure-${Date.now()}-${process.pid}`;
-  const failure = await host.nemoclaw(
-    [
-      sandboxName,
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--thinking",
-      "off",
-      "--session-id",
-      failureSessionId,
-      "-m",
-      `Use the exec tool to run exactly: /bin/sh -lc 'echo ${provenanceMarker}; exit 7'. Do not retry the command. Then reply with exactly: observed expected failure.`,
-    ],
-    {
-      artifactName: "tc-sbx-02b-agent-json-failed-tool-provenance",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 180_000,
-    },
-  );
-  expectExitZero(failure, `nemoclaw ${sandboxName} agent --json failed-tool provenance`);
-  expectJsonStdout(failure, "failed-tool agent --json");
-  expect(failure.stderr, resultText(failure)).toContain("[openclaw provenance] failed tool result");
-  expect(failure.stderr, resultText(failure)).toContain(provenanceMarker);
+  // Failed-tool provenance is covered by deterministic source/package tests.
+  // A live prompt cannot require upstream OpenClaw to emit failed tool-result metadata.
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -592,7 +554,7 @@ liveTest(
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
         "TC-SBX-02 nemoclaw <sandbox> agent --json answers through sandbox inference.local",
-        "TC-SBX-02b agent --json preserves nonzero status and failed-tool provenance boundaries",
+        "TC-SBX-02b agent --json preserves nonzero transport status",
         "TC-SBX-03 status renders Sandbox/Model/Provider/GPU fields",
         "TC-SBX-04 logs and logs --follow behave as streaming commands",
         "TC-SBX-05 destroy removes NemoClaw and OpenShell entries",
@@ -626,7 +588,7 @@ liveTest(
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
-    await assertAgentJsonTransportBoundaries(host, SANDBOX_A);
+    await assertAgentJsonNonzeroExit(host, SANDBOX_A);
     await assertStatusFields(host, SANDBOX_A);
     await assertLogsStream(host, SANDBOX_A);
     await assertTmuxPtyFlow(sandbox, SANDBOX_A);
