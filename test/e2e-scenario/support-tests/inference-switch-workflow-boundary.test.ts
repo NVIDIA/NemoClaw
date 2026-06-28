@@ -45,11 +45,23 @@ describe("inference switch workflow boundary", () => {
       "hermes-inference-switch-vitest must run the exact hosted and Anthropic-compatible modes",
     );
 
+    const failFast = readInferenceSwitchWorkflow();
+    failFast.jobs["hermes-inference-switch-vitest"].strategy!["fail-fast"] = true;
+    expect(validateInferenceSwitchWorkflow(failFast)).toContain(
+      "hermes-inference-switch-vitest mode matrix must not fail fast",
+    );
+
     const hardcodedMode = readInferenceSwitchWorkflow();
     hardcodedMode.jobs["openclaw-inference-switch-vitest"].env!.NEMOCLAW_SWITCH_PROVIDER =
       "compatible-endpoint";
     expect(validateInferenceSwitchWorkflow(hardcodedMode)).toContain(
       "openclaw-inference-switch-vitest must map NEMOCLAW_SWITCH_PROVIDER from its mode matrix",
+    );
+
+    const broadPermissions = readInferenceSwitchWorkflow();
+    broadPermissions.jobs["openclaw-inference-switch-vitest"].permissions!.contents = "write";
+    expect(validateInferenceSwitchWorkflow(broadPermissions)).toContain(
+      "openclaw-inference-switch-vitest must pin contents permission to read",
     );
 
     const lingeringCredentials = readInferenceSwitchWorkflow();

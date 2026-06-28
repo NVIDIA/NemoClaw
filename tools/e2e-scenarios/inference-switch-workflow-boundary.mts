@@ -19,6 +19,7 @@ type WorkflowStep = {
 
 type WorkflowJob = {
   env?: Record<string, unknown>;
+  permissions?: { contents?: string };
   steps?: WorkflowStep[];
   strategy?: {
     "fail-fast"?: boolean;
@@ -74,6 +75,9 @@ function expectedModes(agent: JobSpec["agent"]): Array<Record<string, unknown>> 
 }
 
 function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
+  if (job.permissions?.contents !== "read") {
+    errors.push(`${spec.job} must pin contents permission to read`);
+  }
   if (job.strategy?.["fail-fast"] !== false) {
     errors.push(`${spec.job} mode matrix must not fail fast`);
   }

@@ -969,6 +969,8 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-inference-switch-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-inference-switch,') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -4660,6 +4662,8 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-inference-switch,') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 90
     strategy:
       fail-fast: false
