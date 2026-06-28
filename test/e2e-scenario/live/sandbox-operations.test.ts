@@ -60,19 +60,28 @@ async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise
   expectExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
 }
 
-async function destroyGateway(host: HostCliClient, artifactName = "cleanup-gateway-destroy") {
-  const result = await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-    artifactName,
+async function cleanupGateway(host: HostCliClient, artifactName = "cleanup-gateway") {
+  const remove = await host.command("openshell", ["gateway", "remove", "nemoclaw"], {
+    artifactName: `${artifactName}-remove`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 5 * 60_000,
+  });
+  if (remove.exitCode === 0) return;
+
+  // OpenShell builds before the registration-only gateway API exposed the
+  // equivalent cleanup operation as `gateway destroy`.
+  const destroy = await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
+    artifactName: `${artifactName}-legacy-destroy`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 5 * 60_000,
   });
   const gatewayAlreadyAbsent =
     /gateway[^\n]*(?:does not exist|not found)|No (?:active )?gateway|No gateway metadata found/i.test(
-      resultText(result),
+      `${resultText(remove)}\n${resultText(destroy)}`,
     );
   expect(
-    result.exitCode === 0 || gatewayAlreadyAbsent,
-    `cleanup destroy shared NemoClaw gateway\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    destroy.exitCode === 0 || gatewayAlreadyAbsent,
+    `cleanup shared NemoClaw gateway registration\nremove:\n${resultText(remove)}\nlegacy destroy:\n${resultText(destroy)}`,
   ).toBe(true);
 }
 
@@ -572,7 +581,7 @@ liveTest(
     }
 
     await environment.assertReady(ENVIRONMENT);
-    cleanup.add("destroy shared NemoClaw gateway", () => destroyGateway(host));
+    cleanup.add("remove shared NemoClaw gateway registration", () => cleanupGateway(host));
     await cleanupSandbox(host, SANDBOX_B);
     await cleanupSandbox(host, SANDBOX_A);
 
