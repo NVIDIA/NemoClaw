@@ -11,7 +11,7 @@ function rulesFor(source: string): string[] {
   );
 }
 
-describe("test title style scanner", () => {
+describe("enforces behavior-oriented Vitest titles", () => {
   it("detects issue-first, metadata-first, placeholder-only, and arrow-label titles", () => {
     const rules = rulesFor(`
       import { describe, it } from "vitest";
