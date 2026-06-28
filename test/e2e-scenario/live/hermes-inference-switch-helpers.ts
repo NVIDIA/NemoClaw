@@ -15,6 +15,7 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -40,6 +41,12 @@ interface MockAnthropicProvider {
   close(): Promise<void>;
 }
 
+export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
+  return (
+    runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
+  );
+}
+
 export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
@@ -55,7 +62,8 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     apiKey &&
     Object.assign(out, {
       COMPATIBLE_API_KEY: apiKey,
-      NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+      NEMOCLAW_MODEL: hostedInstallModel(),
+      NEMOCLAW_COMPAT_MODEL: hostedInstallModel(),
       NEMOCLAW_ENDPOINT_URL:
         process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
       NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
@@ -279,7 +287,7 @@ export async function installHermes(
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
     install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,

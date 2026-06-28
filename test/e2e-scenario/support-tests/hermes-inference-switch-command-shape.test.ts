@@ -3,11 +3,15 @@
 
 import { spawnSync } from "node:child_process";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
+  hostedInstallModel,
+  installHermes,
 } from "../live/hermes-inference-switch-helpers.ts";
 
 describe("Hermes inference switch command shape", () => {
@@ -41,5 +45,29 @@ describe("Hermes inference switch command shape", () => {
         '  api_key: sk-value"',
       ].some(matchesApiKeyShape),
     ).toBe(false);
+  });
+
+  it("keeps initial hosted onboarding independent from the switch target", () => {
+    expect(hostedInstallModel({ NEMOCLAW_SWITCH_MODEL: "mock-anthropic-model" })).toBe(
+      DEFAULT_HOSTED_INFERENCE_MODEL,
+    );
+    expect(
+      hostedInstallModel({
+        NEMOCLAW_MODEL: "initial-hosted-model",
+        NEMOCLAW_SWITCH_MODEL: "target-switch-model",
+      }),
+    ).toBe("initial-hosted-model");
+  });
+
+  it("discards failed onboarding state before an install attempt", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    await installHermes({ command } as unknown as HostCliClient, "hosted-key");
+
+    expect(command.mock.calls[0]?.[1]).toEqual([
+      "install.sh",
+      "--non-interactive",
+      "--fresh",
+      "--yes-i-accept-third-party-software",
+    ]);
   });
 });
