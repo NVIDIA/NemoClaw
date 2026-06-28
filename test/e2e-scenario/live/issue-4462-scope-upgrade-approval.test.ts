@@ -910,10 +910,8 @@ liveTest(
       scopeUpgradeScript().replaceAll("\\${", "${"),
       "utf8",
     ).toString("base64");
-    const scopeUpgradeScriptChunks = encodedScopeUpgradeScript.match(/.{1,24000}/g);
-    if (!scopeUpgradeScriptChunks?.length) {
-      throw new Error("scope-upgrade probe script encoded to an empty payload");
-    }
+    const scopeUpgradeScriptChunks = encodedScopeUpgradeScript.match(/.{1,24000}/g) ?? [];
+    expect(scopeUpgradeScriptChunks).not.toHaveLength(0);
     const probe = await sandbox.exec(
       SANDBOX_NAME,
       [
