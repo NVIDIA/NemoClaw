@@ -23,7 +23,8 @@ import {
   createBuiltInChannelManifestRegistry,
   getMessagingManifestAvailabilityContext,
 } from "../../messaging";
-import type { MessagingAgentId, SandboxMessagingPlan } from "../../messaging/manifest";
+import { asMessagingAgent } from "../../messaging/manifest";
+import type { SandboxMessagingPlan } from "../../messaging/manifest";
 import * as policies from "../../policy";
 import {
   type DiagnosticSeverity,
@@ -572,10 +573,6 @@ function severityForDisplay(source: "persisted" | "default" | "invalid") {
     case "invalid":
       return "warn" as const;
   }
-}
-
-function asMessagingAgent(name: string): MessagingAgentId | null {
-  return name === "openclaw" || name === "hermes" ? name : null;
 }
 
 function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {

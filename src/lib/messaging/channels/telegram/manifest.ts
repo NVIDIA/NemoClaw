@@ -66,6 +66,11 @@ export const telegramManifest = {
       validValues: ["open", "allowlist", "disabled"],
       defaultValue: "open",
       safeToPrintInDiagnostics: true,
+      valueDisplay: {
+        open: "open groups",
+        allowlist: "allowlisted groups only",
+        disabled: "groups disabled",
+      },
       agentApplicability: ["openclaw"],
       prompt: {
         label: "Telegram group policy",

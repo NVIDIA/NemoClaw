@@ -69,7 +69,7 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
     expect(labels).toContain("Telegram group mention mode");
     expect(byLabel("Telegram group policy")?.display).toMatchObject({
       source: "persisted",
-      detail: "allowlist",
+      detail: "allowlisted groups only (TELEGRAM_GROUP_POLICY=allowlist)",
     });
     expect(byLabel("Telegram group mention mode")?.display).toMatchObject({
       source: "persisted",
@@ -192,7 +192,7 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
     const byLabel = (label: string) => records.find((record) => record.input.label === label);
     expect(byLabel("Telegram group policy")?.display).toMatchObject({
       source: "persisted",
-      detail: "allowlist",
+      detail: "allowlisted groups only (TELEGRAM_GROUP_POLICY=allowlist)",
     });
     expect(byLabel("Telegram group mention mode")?.display).toMatchObject({
       source: "persisted",

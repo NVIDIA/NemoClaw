@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { vi } from "vitest";
+
 import {
   createBuiltInChannelManifestRegistry,
   createBuiltInRenderTemplateResolver,
@@ -72,8 +74,13 @@ export async function withTelegramEnvOverrides<T>(
   }
 }
 
+// Per-key set/restore via `vi.stubEnv` keeps the helper's environment edits
+// scoped to the tests that call it. `vi.unstubAllEnvs()` (the canonical
+// counterpart) would clear stubs registered by concurrent unrelated tests in
+// the same worker, so the explicit per-key restore in `withTelegramEnvOverrides`
+// guards isolation rather than a coarser revert.
 export function applyEnvForTests(values: Readonly<Record<string, string | undefined>>): void {
   for (const [key, value] of Object.entries(values)) {
-    value === undefined ? Reflect.deleteProperty(process.env, key) : (process.env[key] = value);
+    vi.stubEnv(key, value as string);
   }
 }

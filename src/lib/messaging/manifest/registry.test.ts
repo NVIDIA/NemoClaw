@@ -84,4 +84,64 @@ describe("ChannelManifestRegistry", () => {
       registry.listAvailable({ supportedChannelIds: undefined }).map((manifest) => manifest.id),
     ).toEqual(["telegram", "wechat"]);
   });
+
+  it("rejects registration when a config input declares valueDisplay keys outside validValues", () => {
+    const malformed: ChannelManifest = {
+      ...TELEGRAM_MANIFEST,
+      id: "malformed-display",
+      inputs: [
+        {
+          id: "bogus",
+          kind: "config",
+          required: false,
+          validValues: ["0", "1"],
+          valueDisplay: { "2": "two" },
+        },
+      ],
+    };
+
+    expect(() => createChannelManifestRegistry([malformed])).toThrow(
+      "valueDisplay key '2' is not in validValues",
+    );
+  });
+
+  it("rejects registration when a config input declares an agentApplicability not in supportedAgents", () => {
+    const malformed: ChannelManifest = {
+      ...TELEGRAM_MANIFEST,
+      id: "malformed-agent",
+      supportedAgents: ["openclaw"],
+      inputs: [
+        {
+          id: "bogus",
+          kind: "config",
+          required: false,
+          validValues: ["0", "1"],
+          agentApplicability: ["hermes"],
+        },
+      ],
+    };
+
+    expect(() => createChannelManifestRegistry([malformed])).toThrow(
+      "agentApplicability 'hermes' is not in supportedAgents",
+    );
+  });
+
+  it("rejects registration when a secret input declares safeToPrintInDiagnostics", () => {
+    const malformed = {
+      ...TELEGRAM_MANIFEST,
+      id: "malformed-secret",
+      inputs: [
+        {
+          id: "leakySecret",
+          kind: "secret",
+          required: false,
+          safeToPrintInDiagnostics: true,
+        },
+      ],
+    } as unknown as ChannelManifest;
+
+    expect(() => createChannelManifestRegistry([malformed])).toThrow(
+      "is not kind 'config' yet declares safeToPrintInDiagnostics=true",
+    );
+  });
 });

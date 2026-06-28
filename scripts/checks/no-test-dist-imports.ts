@@ -149,14 +149,27 @@ function findViolations(absolutePath: string): Violation[] {
   return findCompiledInternalViolations(repoPath(absolutePath), readFileSync(absolutePath, "utf8"));
 }
 
+export function isPathConstructionViolation(violation: Violation): boolean {
+  return (
+    violation.detail.startsWith("constructs a path") ||
+    violation.detail.includes("require in generated test code")
+  );
+}
+
+function findPathConstructionViolations(absolutePath: string): Violation[] {
+  return findViolations(absolutePath).filter(isPathConstructionViolation);
+}
+
 function main(): void {
   const staleFixtureExclusions = [...FIXTURE_EXCLUSIONS].filter((relativePath) => {
     const absolutePath = path.join(REPO_ROOT, relativePath);
-    return !existsSync(absolutePath) || findViolations(absolutePath).length === 0;
+    return !existsSync(absolutePath) || findPathConstructionViolations(absolutePath).length === 0;
   });
 
   if (staleFixtureExclusions.length > 0) {
-    console.error("Fixture exclusions must exist and still construct a compiled-internal path:");
+    console.error(
+      "Fixture exclusions must exist and still construct a compiled-internal path through path.join/require/template, not via a bare import specifier:",
+    );
     for (const relativePath of staleFixtureExclusions) console.error(`  ${relativePath}`);
     process.exit(1);
   }

@@ -9,7 +9,7 @@ import {
   collectVisibleConfigRecords,
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
-import type { MessagingAgentId } from "../../messaging/manifest";
+import { asMessagingAgent } from "../../messaging/manifest";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import type { SandboxEntry } from "../../state/registry";
@@ -302,6 +302,12 @@ function messagingChannelConfigDoctorChecks(sandboxName: string, sb: SandboxEntr
   const activeChannels = activeChannelsFromEntry(sb);
   if (activeChannels.length === 0) return [];
   const plan = registry.getMessagingPlanFromEntry(sb);
+  // Legacy sandbox entries from before the agent field was mandatory may
+  // still hydrate with `sb.agent === undefined`; default to "openclaw" so
+  // agent-applicability filtering matches the historical behaviour. Existing
+  // regression: doctor-flow.test.ts asserts the OpenClaw visible-config path
+  // when a legacy entry omits the field. Remove the fallback once every
+  // managed sandbox has been migrated by an explicit registry upgrade.
   const agent = asMessagingAgent(sb.agent ?? "openclaw");
   const checks: DoctorCheck[] = [];
   for (const channelName of activeChannels) {
@@ -324,10 +330,6 @@ function doctorStatusForDisplay(source: "persisted" | "default" | "invalid"): Do
     case "invalid":
       return "warn";
   }
-}
-
-function asMessagingAgent(name: string | null): MessagingAgentId | null {
-  return name === "openclaw" || name === "hermes" ? name : null;
 }
 
 export function collectMessagingDoctorChecks(

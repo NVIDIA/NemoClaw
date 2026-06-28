@@ -41,6 +41,11 @@ import type { AgentDefinition } from "../../agent/defs";
 import { compileTelegramPlanForTests } from "../../messaging/__test-utils__/telegram-plan";
 import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
+import {
+  type ChannelInputOverridesByChannel,
+  fakePlanFromInputs,
+  tamperCompactRegistryTelegramInputs,
+} from "./__test-utils__";
 import { showSandboxChannelStatus } from "./channel-status";
 
 type ExecResult = { status: number; stdout: string; stderr: string };
@@ -158,10 +163,7 @@ function makeDeps(opts: {
   gatewayPresets?: string[] | null;
   agentName?: "openclaw" | "hermes";
   sandbox?: SandboxEntry | undefined;
-  channelInputs?: Record<
-    string,
-    ReadonlyArray<{ inputId: string; value?: MessagingSerializableValue }>
-  >;
+  channelInputs?: ChannelInputOverridesByChannel;
   messagingPlan?: SandboxMessagingPlan | null;
   out?: (line: string) => void;
 }) {
@@ -185,43 +187,6 @@ function makeDeps(opts: {
       out,
     },
     out_lines: calls,
-  };
-}
-
-function fakePlanFromInputs(
-  sandbox: SandboxEntry | undefined,
-  channelInputs:
-    | Record<string, ReadonlyArray<{ inputId: string; value?: MessagingSerializableValue }>>
-    | undefined,
-): SandboxMessagingPlan | null {
-  const base = sandbox?.messaging?.plan ?? null;
-  return base && channelInputs ? mergePlanInputs(base, channelInputs) : base;
-}
-
-function mergePlanInputs(
-  base: SandboxMessagingPlan,
-  channelInputs: Record<
-    string,
-    ReadonlyArray<{ inputId: string; value?: MessagingSerializableValue }>
-  >,
-): SandboxMessagingPlan {
-  return {
-    ...base,
-    channels: base.channels.map((channel) => {
-      const overrides = channelInputs[channel.channelId];
-      return overrides
-        ? {
-            ...channel,
-            inputs: overrides.map((entry) => ({
-              channelId: channel.channelId,
-              inputId: entry.inputId,
-              kind: "config" as const,
-              required: false,
-              ...(entry.value !== undefined ? { value: entry.value } : {}),
-            })),
-          }
-        : channel;
-    }),
   };
 }
 
@@ -552,6 +517,12 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 });
 
+const TELEGRAM_GROUP_POLICY_LABEL: Readonly<Record<"open" | "allowlist" | "disabled", string>> = {
+  open: "open groups",
+  allowlist: "allowlisted groups only",
+  disabled: "groups disabled",
+};
+
 describe("showSandboxChannelStatus (telegram config visibility)", () => {
   for (const policy of ["open", "allowlist", "disabled"] as const) {
     it(`surfaces the resolved Telegram group policy: ${policy}`, async () => {
@@ -565,8 +536,11 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
       });
       await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
       const dump = out_lines.join("\n");
-      expect(dump).toMatch(new RegExp(`Telegram group policy:\\s+${policy}\\b`));
-      expect(dump).not.toMatch(new RegExp(`Telegram group policy:\\s+${policy}\\s+\\(default\\)`));
+      const label = TELEGRAM_GROUP_POLICY_LABEL[policy];
+      expect(dump).toMatch(
+        new RegExp(`Telegram group policy:\\s+${label} \\(TELEGRAM_GROUP_POLICY=${policy}\\)`),
+      );
+      expect(dump).not.toMatch(/Telegram group policy:.*\(default\)/);
     });
   }
 
@@ -578,7 +552,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/Telegram group policy:\s+open\s+\(default\)/);
+    expect(dump).toMatch(
+      /Telegram group policy:\s+open groups \(TELEGRAM_GROUP_POLICY=open\) \(default\)/,
+    );
   });
 
   it("surfaces the resolved Telegram mention mode alongside the group policy", async () => {
@@ -598,7 +574,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     expect(dump).toMatch(
       /Telegram group mention mode:\s+all group messages \(TELEGRAM_REQUIRE_MENTION=0\)/,
     );
-    expect(dump).toMatch(/Telegram group policy:\s+allowlist\b/);
+    expect(dump).toMatch(
+      /Telegram group policy:\s+allowlisted groups only \(TELEGRAM_GROUP_POLICY=allowlist\)/,
+    );
   });
 
   it("translates Telegram requireMention=1 to the mention-only behavior label", async () => {
@@ -625,7 +603,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/Telegram group mention mode:\s+mention-only \(default\)/);
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\) \(default\)/,
+    );
   });
 
   it("omits visible config defaults when the telegram channel is not registered", async () => {
@@ -673,7 +653,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
     expect(dump).not.toMatch(/Telegram group policy/);
-    expect(dump).toMatch(/Telegram group mention mode:\s+mention-only \(default\)/);
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\) \(default\)/,
+    );
   });
 
   it("redacts an invalid persisted value rather than echoing it", async () => {
@@ -740,7 +722,9 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     });
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/Telegram group policy:\s+allowlist\b/);
+    expect(dump).toMatch(
+      /Telegram group policy:\s+allowlisted groups only \(TELEGRAM_GROUP_POLICY=allowlist\)/,
+    );
     expect(dump).not.toMatch(/Telegram group policy:.*\(default\)/);
     expect(dump).toMatch(
       /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\)/,
@@ -775,10 +759,121 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
     ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
     await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
     const dump = out_lines.join("\n");
-    expect(dump).toMatch(/Telegram group policy:\s+disabled\b/);
+    expect(dump).toMatch(
+      /Telegram group policy:\s+groups disabled \(TELEGRAM_GROUP_POLICY=disabled\)/,
+    );
     expect(dump).toMatch(
       /Telegram group mention mode:\s+all group messages \(TELEGRAM_REQUIRE_MENTION=0\)/,
     );
     expect(dump).not.toMatch(/Telegram group policy:.*\(default\)/);
+  });
+
+  it("renders mention-only when a non-interactive compact registry entry omits TELEGRAM_REQUIRE_MENTION", async () => {
+    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
+      "../../state/registry-messaging"
+    );
+    const compiled = await compileTelegramPlanForTests({
+      envOverrides: {
+        TELEGRAM_GROUP_POLICY: undefined,
+        TELEGRAM_REQUIRE_MENTION: undefined,
+      },
+      isInteractive: false,
+    });
+    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
+    expect(onDisk).toBeDefined();
+    const compactEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      messaging: onDisk,
+    } as unknown as SandboxEntry;
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      sandbox: compactEntry,
+      appliedPresets: ["telegram"],
+    });
+    (
+      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
+    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    const dump = out_lines.join("\n");
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+mention-only \(TELEGRAM_REQUIRE_MENTION=1\)/,
+    );
+    expect(dump).not.toMatch(/Telegram group mention mode:.*all group messages/);
+  });
+
+  it("bounds tampered out-of-allowlist Telegram visible config from a compact registry entry through the real plan reader", async () => {
+    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
+      "../../state/registry-messaging"
+    );
+    const compiled = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
+      isInteractive: false,
+    });
+    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
+    expect(onDisk).toBeDefined();
+    const tamperedOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
+      groupPolicy: "definitely-not-a-policy",
+      requireMention: "",
+    });
+    const tamperedEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      messaging: tamperedOnDisk,
+    } as unknown as SandboxEntry;
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      sandbox: tamperedEntry,
+      appliedPresets: ["telegram"],
+    });
+    (
+      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
+    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    const dump = out_lines.join("\n");
+    expect(dump).toMatch(
+      /Telegram group policy:\s+invalid persisted value \(expected: open \| allowlist \| disabled\)/,
+    );
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+invalid persisted value \(expected: 0 \| 1\)/,
+    );
+    expect(dump).not.toMatch(/definitely-not-a-policy/);
+  });
+
+  it("redacts non-scalar Telegram visible config from a compact registry entry through the real plan reader", async () => {
+    const { getMessagingPlanFromEntry, serializeSandboxMessagingStateForDisk } = await import(
+      "../../state/registry-messaging"
+    );
+    const compiled = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
+      isInteractive: false,
+    });
+    const onDisk = serializeSandboxMessagingStateForDisk({ schemaVersion: 1, plan: compiled });
+    expect(onDisk).toBeDefined();
+    const nonScalarOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
+      groupPolicy: { smuggled: "secret-id" } as unknown as MessagingSerializableValue,
+      requireMention: ["1", "0"] as unknown as MessagingSerializableValue,
+    });
+    const tamperedEntry = {
+      name: "alpha",
+      agent: "openclaw",
+      messaging: nonScalarOnDisk,
+    } as unknown as SandboxEntry;
+    const { deps, out_lines } = makeDeps({
+      exec: () => ({ status: 0, stdout: "", stderr: "" }),
+      sandbox: tamperedEntry,
+      appliedPresets: ["telegram"],
+    });
+    (
+      deps as { getMessagingPlan: (entry: SandboxEntry | undefined) => SandboxMessagingPlan | null }
+    ).getMessagingPlan = (sandboxEntry) => getMessagingPlanFromEntry(sandboxEntry);
+    await showSandboxChannelStatus("alpha", { deps, channel: "telegram" });
+    const dump = out_lines.join("\n");
+    expect(dump).toMatch(/Telegram group policy:\s+invalid persisted value \(unsupported type\)/);
+    expect(dump).toMatch(
+      /Telegram group mention mode:\s+invalid persisted value \(unsupported type\)/,
+    );
+    expect(dump).not.toMatch(/secret-id/);
+    expect(dump).not.toMatch(/smuggled/);
   });
 });

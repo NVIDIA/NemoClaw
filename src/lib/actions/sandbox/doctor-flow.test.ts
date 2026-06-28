@@ -6,6 +6,11 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 import { compileTelegramPlanForTests } from "../../messaging/__test-utils__/telegram-plan";
+import {
+  type ChannelInputOverride,
+  mockTelegramDoctorRegistry as applyTelegramDoctorRegistryMocks,
+  tamperCompactRegistryTelegramInputs,
+} from "./__test-utils__";
 
 type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 
@@ -200,57 +205,12 @@ function createDoctorHarness(): {
   };
 }
 
-type TelegramInputOverride = {
-  inputId: string;
-  value?: unknown;
-};
-
-function telegramDoctorPlan(options: {
-  agent: "openclaw" | "hermes";
-  inputs?: ReadonlyArray<TelegramInputOverride>;
-}) {
-  return {
-    schemaVersion: 1 as const,
-    sandboxName: "alpha",
-    agent: options.agent,
-    workflow: "onboard" as const,
-    channels: [
-      {
-        channelId: "telegram",
-        displayName: "telegram",
-        authMode: "token-paste" as const,
-        active: true,
-        selected: true,
-        configured: true,
-        disabled: false,
-        inputs: (options.inputs ?? []).map((override) => ({
-          channelId: "telegram",
-          inputId: override.inputId,
-          kind: "config" as const,
-          required: false,
-          ...(override.value === undefined ? {} : { value: override.value }),
-        })),
-        hooks: [],
-      },
-    ],
-    disabledChannels: [],
-    credentialBindings: [],
-    networkPolicy: { presets: [], entries: [] },
-    agentRender: [],
-    buildSteps: [],
-    stateUpdates: [],
-    healthChecks: [],
-  };
-}
-
 function mockTelegramDoctorRegistry(options: {
   agent: "openclaw" | "hermes";
-  inputs?: ReadonlyArray<TelegramInputOverride>;
+  inputs?: ReadonlyArray<ChannelInputOverride>;
 }): void {
   const registry = requireDist("../../state/registry.js");
-  vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
-  vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
-  vi.spyOn(registry, "getMessagingPlanFromEntry").mockReturnValue(telegramDoctorPlan(options));
+  applyTelegramDoctorRegistryMocks(registry, options);
 }
 
 describe("runSandboxDoctor flow", () => {
@@ -326,7 +286,7 @@ describe("runSandboxDoctor flow", () => {
           group: "Messaging",
           label: "Telegram group policy",
           status: "info",
-          detail: "open (default)",
+          detail: "open groups (TELEGRAM_GROUP_POLICY=open) (default)",
         }),
       ]),
     );
@@ -360,7 +320,10 @@ describe("runSandboxDoctor flow", () => {
     expect(messagingChecks.some((check) => check.label === "Telegram group policy")).toBe(false);
     expect(
       messagingChecks.find((check) => check.label === "Telegram group mention mode"),
-    ).toMatchObject({ status: "info", detail: "mention-only (default)" });
+    ).toMatchObject({
+      status: "info",
+      detail: "mention-only (TELEGRAM_REQUIRE_MENTION=1) (default)",
+    });
   });
 
   it("falls back to OpenClaw visible config when a legacy SandboxEntry omits the agent field", async () => {
@@ -381,11 +344,14 @@ describe("runSandboxDoctor flow", () => {
 
     expect(messagingChecks.find((check) => check.label === "Telegram group policy")).toMatchObject({
       status: "info",
-      detail: "open (default)",
+      detail: "open groups (TELEGRAM_GROUP_POLICY=open) (default)",
     });
     expect(
       messagingChecks.find((check) => check.label === "Telegram group mention mode"),
-    ).toMatchObject({ status: "info", detail: "mention-only (default)" });
+    ).toMatchObject({
+      status: "info",
+      detail: "mention-only (TELEGRAM_REQUIRE_MENTION=1) (default)",
+    });
   });
 
   it("flags an invalid persisted Telegram group policy without echoing the raw value", async () => {
@@ -441,7 +407,7 @@ describe("runSandboxDoctor flow", () => {
 
     expect(messagingChecks.find((check) => check.label === "Telegram group policy")).toMatchObject({
       status: "ok",
-      detail: "allowlist",
+      detail: "allowlisted groups only (TELEGRAM_GROUP_POLICY=allowlist)",
     });
     expect(
       messagingChecks.find((check) => check.label === "Telegram group mention mode"),
@@ -486,7 +452,7 @@ describe("runSandboxDoctor flow", () => {
 
     expect(messagingChecks.find((check) => check.label === "Telegram group policy")).toMatchObject({
       status: "ok",
-      detail: "allowlist",
+      detail: "allowlisted groups only (TELEGRAM_GROUP_POLICY=allowlist)",
     });
     expect(
       messagingChecks.find((check) => check.label === "Telegram group mention mode"),
@@ -494,6 +460,142 @@ describe("runSandboxDoctor flow", () => {
       status: "ok",
       detail: "all group messages (TELEGRAM_REQUIRE_MENTION=0)",
     });
+  });
+
+  it("renders mention-only when a non-interactive compact registry entry omits TELEGRAM_REQUIRE_MENTION", async () => {
+    const harness = createDoctorHarness();
+    const registryMessaging = requireDist("../../state/registry-messaging.js");
+    const realGetMessagingPlanFromEntry = registryMessaging.getMessagingPlanFromEntry;
+    const compiledPlan = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: undefined, TELEGRAM_REQUIRE_MENTION: undefined },
+      isInteractive: false,
+    });
+    const onDisk = registryMessaging.serializeSandboxMessagingStateForDisk({
+      schemaVersion: 1,
+      plan: compiledPlan,
+    });
+    expect(onDisk).toBeDefined();
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+      messaging: onDisk,
+    });
+    const registry = requireDist("../../state/registry.js");
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(registry, "getMessagingPlanFromEntry").mockImplementation((entry) =>
+      realGetMessagingPlanFromEntry(entry),
+    );
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const messagingChecks = (report?.checks ?? []).filter((check) => check.group === "Messaging");
+
+    expect(
+      messagingChecks.find((check) => check.label === "Telegram group mention mode"),
+    ).toMatchObject({
+      status: "ok",
+      detail: "mention-only (TELEGRAM_REQUIRE_MENTION=1)",
+    });
+  });
+
+  it("bounds tampered out-of-allowlist Telegram visible config from a compact registry entry through the real plan reader", async () => {
+    const harness = createDoctorHarness();
+    const registryMessaging = requireDist("../../state/registry-messaging.js");
+    const realGetMessagingPlanFromEntry = registryMessaging.getMessagingPlanFromEntry;
+    const compiledPlan = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
+      isInteractive: false,
+    });
+    const onDisk = registryMessaging.serializeSandboxMessagingStateForDisk({
+      schemaVersion: 1,
+      plan: compiledPlan,
+    });
+    expect(onDisk).toBeDefined();
+    const tamperedOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
+      groupPolicy: "definitely-not-a-policy",
+      requireMention: "",
+    });
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+      messaging: tamperedOnDisk,
+    });
+    const registry = requireDist("../../state/registry.js");
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(registry, "getMessagingPlanFromEntry").mockImplementation((entry) =>
+      realGetMessagingPlanFromEntry(entry),
+    );
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const messagingChecks = (report?.checks ?? []).filter((check) => check.group === "Messaging");
+
+    const policy = messagingChecks.find((check) => check.label === "Telegram group policy");
+    expect(policy?.status).toBe("warn");
+    expect(policy?.detail).toMatch(
+      /invalid persisted value \(expected: open \| allowlist \| disabled\)/,
+    );
+    expect(policy?.detail).not.toContain("definitely-not-a-policy");
+
+    const mention = messagingChecks.find((check) => check.label === "Telegram group mention mode");
+    expect(mention?.status).toBe("warn");
+    expect(mention?.detail).toMatch(/invalid persisted value/);
+  });
+
+  it("redacts non-scalar Telegram visible config from a compact registry entry through the real plan reader", async () => {
+    const harness = createDoctorHarness();
+    const registryMessaging = requireDist("../../state/registry-messaging.js");
+    const realGetMessagingPlanFromEntry = registryMessaging.getMessagingPlanFromEntry;
+    const compiledPlan = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist", TELEGRAM_REQUIRE_MENTION: "0" },
+      isInteractive: false,
+    });
+    const onDisk = registryMessaging.serializeSandboxMessagingStateForDisk({
+      schemaVersion: 1,
+      plan: compiledPlan,
+    });
+    expect(onDisk).toBeDefined();
+    const tamperedOnDisk = tamperCompactRegistryTelegramInputs(onDisk, {
+      groupPolicy: { smuggled: "secret-id" } as unknown,
+      requireMention: ["1", "0"] as unknown,
+    });
+    harness.getSandboxSpy.mockReturnValue({
+      name: "alpha",
+      agent: "openclaw",
+      model: "registry-model",
+      provider: "ollama-local",
+      openshellDriver: "docker",
+      gatewayName: "nemoclaw-19080",
+      gatewayPort: 19080,
+      messaging: tamperedOnDisk,
+    });
+    const registry = requireDist("../../state/registry.js");
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);
+    vi.spyOn(registry, "getMessagingPlanFromEntry").mockImplementation((entry) =>
+      realGetMessagingPlanFromEntry(entry),
+    );
+
+    const report = await harness.runSandboxDoctor("alpha", ["--json"], { quietJson: true });
+    const messagingChecks = (report?.checks ?? []).filter((check) => check.group === "Messaging");
+
+    const policy = messagingChecks.find((check) => check.label === "Telegram group policy");
+    expect(policy?.detail).toMatch(/invalid persisted value \(unsupported type\)/);
+    expect(policy?.detail).not.toContain("secret-id");
+    expect(policy?.detail).not.toContain("smuggled");
+
+    const mention = messagingChecks.find((check) => check.label === "Telegram group mention mode");
+    expect(mention?.detail).toMatch(/invalid persisted value \(unsupported type\)/);
   });
 
   it("rejects mutating --fix when JSON output was requested", async () => {

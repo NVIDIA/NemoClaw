@@ -127,10 +127,22 @@ export function resolveVisibleConfigDisplay(
     return { detail: valueText, source: "persisted" };
   }
   if (planInputPresent) {
+    // A plan input that resolves to an empty string lands here as invalid
+    // rather than falling back to the manifest default. The planner already
+    // normalises an empty env var to `undefined` at the source boundary
+    // (see workflow-planner.ts), so observing an empty persisted value at
+    // this point can only come from a tampered or corrupted plan, and the
+    // diagnostic must surface that explicitly rather than masking it.
     return invalidPersistedDisplay(input, `expected: ${input.validValues.join(" | ")}`);
   }
   if (input.defaultValue !== undefined) {
     const mapped = input.valueDisplay?.[input.defaultValue];
+    if (mapped && input.envKey) {
+      return {
+        detail: `${mapped} (${input.envKey}=${input.defaultValue}) (default)`,
+        source: "default",
+      };
+    }
     if (mapped) {
       return { detail: `${mapped} (default)`, source: "default" };
     }
