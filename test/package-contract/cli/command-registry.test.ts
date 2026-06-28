@@ -285,6 +285,17 @@ describe("command-registry", () => {
         }
       }
     });
+
+    it("exposes the default-sandbox command in root help", () => {
+      expect(canonicalUsageList()).toContain("nemoclaw use <name>");
+      expect(commandsByGroup().get("Sandbox Management")).toContainEqual(
+        expect.objectContaining({
+          commandId: "use",
+          flags: "[--json]",
+          usage: "nemoclaw use <name>",
+        }),
+      );
+    });
   });
 
   describe("GROUP_ORDER", () => {
