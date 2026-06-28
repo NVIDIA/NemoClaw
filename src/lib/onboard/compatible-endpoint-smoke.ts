@@ -35,10 +35,16 @@ type CompatibleEndpointSmokeRun = (
 const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
 const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
 const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
+const COMPATIBLE_ENDPOINT_SMOKE_RETRY_BACKOFF_SECONDS =
+  ((COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS - 1) *
+    COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS *
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS) /
+  2;
+// Reserve time for sandbox exec startup plus config, payload, and response parsing.
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS - 1) * COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS +
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_BACKOFF_SECONDS +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
 
@@ -255,8 +261,8 @@ PYCFG
 
 payload_file="$(mktemp)"
 response_file="$(mktemp)"
-error_file="$(mktemp)"
-trap 'rm -f "$payload_file" "$response_file" "$error_file"' EXIT
+status_file="$(mktemp)"
+trap 'rm -f "$payload_file" "$response_file" "$status_file"' EXIT
 
 write_payload() {
   python3 - "$MODEL" "$1" >"$payload_file" <<'PYPAYLOAD'
@@ -277,47 +283,61 @@ PYPAYLOAD
 
 run_smoke_request() {
   curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
+    -o "$response_file" \
+    -w '%{http_code}' \
     "$INFERENCE_URL" \
     -H "Content-Type: application/json" \
-    -d "@$payload_file" >"$response_file" 2>"$error_file" || {
+    -d "@$payload_file" >"$status_file" 2>/dev/null || {
     rc=$?
-    printf 'curl exit %s: ' "$rc" >&2
-    cat "$error_file" >&2
-    return "$rc"
+    printf 'curl exit %s\n' "$rc" >&2
+    case "$rc" in
+      6 | 7 | 28 | 52 | 55 | 56) return 4 ;;
+      *) return 1 ;;
+    esac
   }
 }
 
 check_response() {
-  python3 - "$response_file" "$1" "$2" "$3" <<'PYRESP'
+  python3 - "$response_file" "$status_file" "$1" "$2" "$3" <<'PYRESP'
 import json
-import re
+import os
 import sys
 
 path = sys.argv[1]
-attempt = sys.argv[2]
-max_tokens = sys.argv[3]
-can_retry = sys.argv[4] == "1"
+status_path = sys.argv[2]
+attempt = sys.argv[3]
+max_tokens = sys.argv[4]
+can_retry = sys.argv[5] == "1"
+try:
+    with open(status_path, "r", encoding="utf-8") as f:
+        http_status = f.read().strip()[-3:] or "000"
+except Exception:
+    http_status = "000"
+response_bytes = os.path.getsize(path) if os.path.exists(path) else 0
 try:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 except Exception as exc:
-    body = ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            body = f.read(1000)
-    except Exception:
-        pass
-    status_match = re.search(r"<(?:title|h1)>\\s*([1-5][0-9][0-9])\\b", body, re.IGNORECASE)
-    status_detail = "; http_status=%s" % status_match.group(1) if status_match else ""
     print(
-        "inference.local returned non-JSON response: %s; response_bytes=%s%s"
-        % (exc, len(body.encode("utf-8", errors="replace")), status_detail),
+        "inference.local returned non-JSON response: %s; response_bytes=%s; http_status=%s"
+        % (exc, response_bytes, http_status),
         file=sys.stderr,
     )
-    retryable_gateway_error = bool(
-        status_match and 500 <= int(status_match.group(1)) <= 599
+    retryable_gateway_error = http_status.isdigit() and (
+        int(http_status) == 429 or 500 <= int(http_status) <= 599
     )
     sys.exit(3 if can_retry and retryable_gateway_error else 1)
+
+retryable_http_error = http_status.isdigit() and (
+    int(http_status) == 429 or 500 <= int(http_status) <= 599
+)
+if retryable_http_error:
+    print(
+        "inference.local returned transient HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
+    sys.exit(3 if can_retry else 1)
 
 choices = data.get("choices")
 choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
@@ -353,6 +373,9 @@ print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 PYRESP
 }
 
+# A refreshed gateway provider can briefly precede route readiness in a reused
+# sandbox. Keep config validation strict and retry only explicit transient
+# transport, rate-limit, and gateway signals at this external boundary.
 attempt=1
 while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   max_tokens="$RETRY_MAX_TOKENS"
@@ -364,11 +387,7 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
 
   write_payload "$max_tokens"
   status=0
-  request_failed=0
-  run_smoke_request || {
-    status=$?
-    request_failed=1
-  }
+  run_smoke_request || status=$?
   if [ "$status" -eq 0 ]; then
     can_retry=0
     if [ "$attempt" -lt "$SMOKE_ATTEMPTS" ]; then
@@ -379,17 +398,18 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   if [ "$status" -eq 0 ]; then
     exit 0
   fi
-  if [ "$request_failed" -eq 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then
+  if [ "$status" -ne 2 ] && [ "$status" -ne 3 ] && [ "$status" -ne 4 ]; then
     exit "$status"
   fi
   if [ "$attempt" -ge "$SMOKE_ATTEMPTS" ]; then
     exit "$status"
   fi
+  retry_delay=$((SMOKE_RETRY_DELAY_SECONDS * attempt))
   if [ "$status" -ne 2 ]; then
     printf 'inference.local smoke attempt %s/%s failed; retrying in %ss\n' \
-      "$attempt" "$SMOKE_ATTEMPTS" "$SMOKE_RETRY_DELAY_SECONDS" >&2
+      "$attempt" "$SMOKE_ATTEMPTS" "$retry_delay" >&2
   fi
-  sleep "$SMOKE_RETRY_DELAY_SECONDS"
+  sleep "$retry_delay"
   attempt=$((attempt + 1))
 done
   `.trim();

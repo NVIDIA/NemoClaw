@@ -60,7 +60,33 @@ if [ -f "$call_file" ]; then
 fi
 count=$((count + 1))
 printf '%s' "$count" >"$call_file"
-${bodyForCall}
+output_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o)
+      output_file="$2"
+      shift 2
+      ;;
+    *) shift ;;
+  esac
+done
+set +e
+body="$(${bodyForCall}
+)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  exit "$rc"
+fi
+if [ -n "$output_file" ]; then
+  printf '%s' "$body" >"$output_file"
+  case "$body" in
+    *"504 Gateway Time-out"*) printf '504' ;;
+    *) printf '200' ;;
+  esac
+else
+  printf '%s\n' "$body"
+fi
 `,
       { mode: 0o755 },
     );
@@ -122,7 +148,7 @@ ${bodyForCall}
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       expect.any(Array),
-      expect.objectContaining({ timeout: 220_000 }),
+      expect.objectContaining({ timeout: 225_000 }),
     );
   });
 
@@ -203,6 +229,53 @@ fi
     expect(result.stderr).toContain("inference.local returned non-JSON response");
     expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it.each([6, 7, 28])("retries transient curl exit %i before succeeding", (exitCode) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -eq 1 ]; then
+  exit ${exitCode}
+fi
+printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stderr).toContain(`curl exit ${exitCode}`);
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("does not retry a permanent curl exit", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-terminal-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(tmpDir, "exit 2");
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("curl exit 2");
+    expect(result.stderr).not.toContain("retrying in");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
   it("does not retry a permanent JSON response validation failure", () => {
