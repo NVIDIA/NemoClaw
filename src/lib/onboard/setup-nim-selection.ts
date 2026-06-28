@@ -153,7 +153,7 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         `Missing model for ${remoteConfig.label}`,
       );
       if (selected.key === "custom") {
-        // Reasoning mode applies only to the OpenAI-compatible response shape.
+        // Reasoning mode is OpenAI-compatible only; Anthropic/native providers use other formats.
         const reasoning = await deps.configureCompatibleEndpointReasoning?.();
         if (reasoning) {
           state.compatibleEndpointReasoning = reasoning;

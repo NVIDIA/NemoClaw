@@ -197,6 +197,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
  * Builds the shell script that runs inside the sandbox to confirm OpenClaw is
  * routed through NemoClaw's managed inference provider and can receive assistant
  * content from the compatible endpoint.
+ * A 512-token reasoning budget retries at 1024 until providers offer non-reasoning output.
  */
 export function buildCompatibleEndpointSandboxSmokeScript(
   model: string,
