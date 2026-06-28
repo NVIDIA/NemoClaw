@@ -32,6 +32,16 @@ type CompatibleEndpointSmokeRun = (
   },
 ) => { status: number | null; stdout?: unknown; stderr?: unknown };
 
+const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
+const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
+const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
+const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
+const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
+  (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
+    (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS - 1) * COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS +
+    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+  1000;
+
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
  * the generated sandbox smoke script.
@@ -154,7 +164,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 90_000,
+      timeout: COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
     },
   );
   const smokeOutput = [
@@ -186,8 +196,11 @@ export function buildCompatibleEndpointSandboxSmokeScript(
   const configPath = options.configPath || "/sandbox/.openclaw/openclaw.json";
   const inferenceUrl = options.inferenceUrl || `${INFERENCE_ROUTE_URL}/chat/completions`;
   const initialMaxTokens = positiveInt(options.initialMaxTokens, 256);
-  const attempts = positiveInt(options.attempts, 3);
-  const retryDelaySeconds = nonNegativeInt(options.retryDelaySeconds, 5);
+  const attempts = positiveInt(options.attempts, COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS);
+  const retryDelaySeconds = nonNegativeInt(
+    options.retryDelaySeconds,
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+  );
   const retryMaxTokens = positiveInt(options.retryMaxTokens, 1024);
 
   return `
@@ -198,6 +211,7 @@ INFERENCE_URL=${shellQuote(inferenceUrl)}
 INITIAL_MAX_TOKENS=${initialMaxTokens}
 RETRY_MAX_TOKENS=${retryMaxTokens}
 SMOKE_ATTEMPTS=${attempts}
+SMOKE_REQUEST_TIMEOUT_SECONDS=${COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS}
 SMOKE_RETRY_DELAY_SECONDS=${retryDelaySeconds}
 
 python3 - "$CONFIG" "$MODEL" <<'PYCFG'
@@ -262,7 +276,7 @@ PYPAYLOAD
 }
 
 run_smoke_request() {
-  curl -sS --connect-timeout 10 --max-time 60 \
+  curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
     "$INFERENCE_URL" \
     -H "Content-Type: application/json" \
     -d "@$payload_file" >"$response_file" 2>"$error_file" || {
@@ -276,6 +290,7 @@ run_smoke_request() {
 check_response() {
   python3 - "$response_file" "$1" "$2" "$3" <<'PYRESP'
 import json
+import re
 import sys
 
 path = sys.argv[1]
@@ -292,7 +307,13 @@ except Exception as exc:
             body = f.read(1000)
     except Exception:
         pass
-    print("inference.local returned non-JSON response: %s; body=%s" % (exc, body), file=sys.stderr)
+    status_match = re.search(r"<(?:title|h1)>\\s*([1-5][0-9][0-9])\\b", body, re.IGNORECASE)
+    status_detail = "; http_status=%s" % status_match.group(1) if status_match else ""
+    print(
+        "inference.local returned non-JSON response: %s; response_bytes=%s%s"
+        % (exc, len(body.encode("utf-8", errors="replace")), status_detail),
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 choices = data.get("choices")
