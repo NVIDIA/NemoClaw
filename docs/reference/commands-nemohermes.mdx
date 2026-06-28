@@ -624,6 +624,8 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 Run a focused health check for one sandbox and the host services it depends on.
 The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, provider reachability, messaging channel conflicts, Ollama reachability, and the cloudflared tunnel state.
 
+For channels with manifest-declared visible config inputs (e.g. Telegram group mention mode and OpenClaw-only group policy), the Messaging section also surfaces one check per opted-in input so operators can confirm the active policy without inspecting logs. Secrets and inputs that do not opt in via `safeToPrintInDiagnostics` remain excluded, agent-scoped inputs are hidden when the sandbox runs a different agent, and persisted values are validated against the manifest allowlist before display.
+
 Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.
 Use `--json` for machine-readable output.
@@ -982,6 +984,8 @@ nemohermes my-assistant channels start telegram
 ### `nemohermes <name> channels status`
 
 Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+
+For channels with manifest-declared visible config inputs (e.g. Telegram group mention mode and OpenClaw-only group policy), the status report also surfaces one signal per opted-in input. Secrets and other inputs without the `safeToPrintInDiagnostics` opt-in remain excluded; agent-scoped inputs are hidden when the sandbox runs a different agent (e.g. Telegram group policy is hidden on Hermes). Persisted values are validated against the manifest allowlist before display; an out-of-allowlist, present-but-empty, or non-scalar persisted value renders as `invalid persisted value (...)` rather than echoing the raw plan value.
 
 ```bash
 nemohermes my-assistant channels status --channel whatsapp
