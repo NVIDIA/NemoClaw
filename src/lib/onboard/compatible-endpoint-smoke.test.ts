@@ -61,10 +61,15 @@ fi
 count=$((count + 1))
 printf '%s' "$count" >"$call_file"
 output_file=""
+write_out=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o)
       output_file="$2"
+      shift 2
+      ;;
+    -w)
+      write_out="$2"
       shift 2
       ;;
     *) shift ;;
@@ -80,10 +85,12 @@ if [ "$rc" -ne 0 ]; then
 fi
 if [ -n "$output_file" ]; then
   printf '%s' "$body" >"$output_file"
-  case "$body" in
-    *"504 Gateway Time-out"*) printf '504' ;;
-    *) printf '200' ;;
-  esac
+  if [ "$write_out" = '%{http_code}' ]; then
+    case "$body" in
+      *"504 Gateway Time-out"*) printf '504' ;;
+      *) printf '200' ;;
+    esac
+  fi
 else
   printf '%s\n' "$body"
 fi
@@ -231,7 +238,9 @@ fi
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
   });
 
-  it.each([6, 7, 28])("retries transient curl exit %i before succeeding", (exitCode) => {
+  it.each([
+    6, 7, 28, 52, 55, 56,
+  ])("retries transient curl exit %i before succeeding", (exitCode) => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
     const model = "nvidia/nemotron-3-ultra";
     const configPath = writeSmokeConfig(tmpDir, model);
