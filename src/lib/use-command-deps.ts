@@ -45,7 +45,12 @@ export function runUseCommand(sandboxName: string, deps: UseCommandDeps): UseCom
   }
   const updated = deps.setDefault(sandboxName);
   if (!updated) {
-    return { outcome: "not-found", sandboxName, knownSandboxes: known };
+    const refreshed = deps.listSandboxes();
+    return {
+      outcome: "not-found",
+      sandboxName,
+      knownSandboxes: refreshed.sandboxes.map((sb) => sb.name),
+    };
   }
   return { outcome: "set", sandboxName, previousDefault: current.defaultSandbox };
 }

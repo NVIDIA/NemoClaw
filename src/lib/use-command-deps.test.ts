@@ -87,4 +87,26 @@ describe("runUseCommand", () => {
     });
     expect(deps.setDefault).toHaveBeenCalledWith("beta");
   });
+
+  it("refreshes the known sandbox list after a failed setDefault so the diagnostic excludes the concurrently removed sandbox", () => {
+    const listSandboxes = vi
+      .fn()
+      .mockReturnValueOnce({
+        sandboxes: [{ name: "alpha" }, { name: "beta" }],
+        defaultSandbox: "alpha",
+      })
+      .mockReturnValueOnce({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" });
+    const setDefault = vi.fn(() => false);
+    const deps: UseCommandDeps = { listSandboxes, setDefault };
+
+    const result = runUseCommand("beta", deps);
+
+    expect(result).toEqual({
+      outcome: "not-found",
+      sandboxName: "beta",
+      knownSandboxes: ["alpha"],
+    });
+    expect(listSandboxes).toHaveBeenCalledTimes(2);
+    expect(setDefault).toHaveBeenCalledWith("beta");
+  });
 });
