@@ -192,7 +192,16 @@ concurrency:
 # the workflow changes how individual jobs opt in to selective dispatch.
 jobs:
   cloud-e2e:
+    # The agent-mediated assertion is load-sensitive even when its direct and
+    # routed API probes are healthy. Run it after the peak hosted lifecycle
+    # lanes, while always() keeps selective cloud-e2e dispatches runnable when
+    # those unselected dependencies are skipped.
+    needs:
+      - token-rotation-e2e
+      - channels-stop-start-openclaw-e2e
+      - channels-stop-start-hermes-e2e
     if: >-
+      always() &&
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',cloud-e2e,'))
@@ -414,6 +423,7 @@ jobs:
       - token-rotation-e2e
       - channels-stop-start-openclaw-e2e
       - channels-stop-start-hermes-e2e
+      - cloud-e2e
     if: >-
       always() &&
       github.repository == 'NVIDIA/NemoClaw' &&
