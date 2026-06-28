@@ -43,11 +43,8 @@ describe("inline E2E host dependency boundary", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-apt-allowlist-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow();
-    const install = workflow.jobs[jobName]?.steps.find((step) => step.name === stepName);
-    if (typeof install?.run !== "string") {
-      throw new Error(`${jobName} is missing workflow step '${stepName}'`);
-    }
-    install.run = install.run.replace(/(sudo apt-get install[^\n]+)/u, "$1 curl");
+    const install = workflow.jobs[jobName]?.steps.find((step) => step.name === stepName)!;
+    install.run = (install.run ?? "").replace(/(sudo apt-get install[^\n]+)/u, "$1 curl");
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
 
     try {
