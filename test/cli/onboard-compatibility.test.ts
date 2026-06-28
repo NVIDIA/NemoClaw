@@ -118,6 +118,12 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).toContain("--sandbox-gpu");
   });
 
+  it("lets oclif reject privileged control UI ports", () => {
+    const r = run("onboard --control-ui-port 80");
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Expected an integer greater than or equal to 1024 but received: 80");
+  });
+
   it("setup --help exits 0 and shows native deprecated-alias usage", () => {
     const r = run("setup --help");
     expect(r.code).toBe(0);

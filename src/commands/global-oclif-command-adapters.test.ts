@@ -209,17 +209,14 @@ describe("global oclif command adapters", () => {
 
   it("maps onboard-family flags directly into the shared typed action", async () => {
     await OnboardCliCommand.run(["--name", "alpha", "--resume"], rootDir);
-    await SetupCliCommand.run(["--fresh"], rootDir);
+    await SetupCliCommand.run(["--name", "alpha", "--resume"], rootDir);
     await SetupSparkCliCommand.run(["--control-ui-port", "18080"], rootDir);
 
     expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({ name: "alpha", resume: true }),
     );
-    expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({ fresh: true }),
-    );
+    expect(mocks.runOnboardAction.mock.calls[1]).toEqual(mocks.runOnboardAction.mock.calls[0]);
     expect(mocks.runOnboardAction).toHaveBeenNthCalledWith(
       3,
       expect.objectContaining({ "control-ui-port": 18080 }),

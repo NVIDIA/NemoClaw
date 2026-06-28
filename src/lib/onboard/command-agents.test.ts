@@ -38,24 +38,29 @@ describe("onboard --agents", () => {
     expect(errors.join("\n")).toContain("--agents path not found");
   });
 
-  it("rejects manifests for non-OpenClaw runtimes", () => {
+  it("rejects manifests for non-OpenClaw runtimes before mutating the environment", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-agents-hermes-"));
     const manifestPath = path.join(tmpDir, "agents.yaml");
     fs.writeFileSync(manifestPath, "agents: []\n");
     const errors: string[] = [];
+    vi.stubEnv("NEMOCLAW_EXTRA_AGENTS_JSON", "unchanged");
 
-    expect(() =>
-      resolveOnboardOptions(
-        { agent: "hermes", agents: manifestPath },
-        {
+    try {
+      await expect(
+        runOnboardCommand({
+          flags: { agent: "hermes", agents: manifestPath },
           env: {},
           listAgents: () => ["openclaw", "hermes"],
           error: (message = "") => errors.push(message),
           exit: exitWithCode,
-        },
-      ),
-    ).toThrow("exit:1");
-    expect(errors.join("\n")).toContain("--agents is OpenClaw-specific");
+          runOnboard: vi.fn(),
+        }),
+      ).rejects.toThrow("exit:1");
+      expect(errors.join("\n")).toContain("--agents is OpenClaw-specific");
+      expect(process.env.NEMOCLAW_EXTRA_AGENTS_JSON).toBe("unchanged");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("applies the manifest environment before invoking onboard", async () => {
