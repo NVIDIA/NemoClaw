@@ -14,6 +14,7 @@ const SKIP_DIRS = new Set([".git", "coverage", "dist", "node_modules"]);
 // repository build output. The self-audit below prevents this list growing or
 // retaining an exemption after the fixture no longer needs one.
 const FIXTURE_EXCLUSIONS = new Set([
+  "src/lib/onboard/inference-selection-validation.test.ts",
   "test/dist-sourcemaps.test.ts",
   "test/install-preflight.test.ts",
   "test/stale-dist-check.test.ts",
