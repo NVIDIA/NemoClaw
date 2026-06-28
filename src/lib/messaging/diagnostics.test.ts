@@ -116,6 +116,106 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
       detail: "mention-only (TELEGRAM_REQUIRE_MENTION=1)",
     });
   });
+
+  it("redacts non-scalar persisted Telegram visible config values without echoing raw JSON", async () => {
+    const planner = new MessagingWorkflowPlanner(
+      createBuiltInChannelManifestRegistry(),
+      createBuiltInMessagingHookRegistry({
+        common: {
+          env: {
+            TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
+          },
+          getCredential: (key) =>
+            key === "TELEGRAM_BOT_TOKEN" ? "123456:test-telegram-token" : null,
+          saveCredential: () => {},
+          prompt: async () => "unused",
+          log: () => {},
+        },
+        telegram: {
+          fetch: async () => ({
+            ok: true,
+            status: 200,
+            async json() {
+              return { ok: true };
+            },
+            async text() {
+              return "";
+            },
+          }),
+        },
+      }),
+      createBuiltInRenderTemplateResolver(),
+    );
+
+    const basePlan = await withEnvOverrides(
+      {
+        TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
+        TELEGRAM_GROUP_POLICY: undefined,
+        TELEGRAM_REQUIRE_MENTION: undefined,
+      },
+      () =>
+        planner.buildPlan({
+          sandboxName: "alpha",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: true,
+          configuredChannels: ["telegram"],
+        }),
+    );
+
+    const tamperedPlan = {
+      ...basePlan,
+      channels: basePlan.channels.map((channel) => {
+        if (channel.channelId !== "telegram") return channel;
+        return {
+          ...channel,
+          inputs: [
+            ...channel.inputs.filter(
+              (input) => input.inputId !== "groupPolicy" && input.inputId !== "requireMention",
+            ),
+            {
+              channelId: "telegram",
+              inputId: "groupPolicy",
+              kind: "config" as const,
+              required: false,
+              value: { tampered: ["allowlist", "open"] } as unknown as string,
+            },
+            {
+              channelId: "telegram",
+              inputId: "requireMention",
+              kind: "config" as const,
+              required: false,
+              value: ["1", "0"] as unknown as string,
+            },
+          ],
+        };
+      }),
+    };
+
+    const diagnostic = collectBuiltInMessagingChannelDiagnostics().find(
+      (spec) => spec.channelId === "telegram",
+    );
+    expect(diagnostic).toBeDefined();
+
+    const records = collectVisibleConfigRecords(diagnostic!, tamperedPlan, "telegram", "openclaw");
+    const byLabel = (label: string) => records.find((record) => record.input.label === label);
+
+    const policy = byLabel("Telegram group policy");
+    expect(policy?.display).toMatchObject({
+      source: "invalid",
+      detail: "invalid persisted value (unsupported type)",
+    });
+    expect(policy?.display.detail).not.toMatch(/tampered/);
+    expect(policy?.display.detail).not.toMatch(/allowlist/);
+
+    const mention = byLabel("Telegram group mention mode");
+    expect(mention?.display).toMatchObject({
+      source: "invalid",
+      detail: "invalid persisted value (unsupported type)",
+    });
+    expect(mention?.display.detail).not.toMatch(/\[/);
+    expect(mention?.display.detail).not.toMatch(/"/);
+  });
 });
 
 async function withEnvOverrides<T>(

@@ -66,6 +66,7 @@ function collectVisibleConfigInputs(
   return inputs.flatMap((input) => {
     if (input.kind !== "config") return [];
     if (input.safeToPrintInDiagnostics !== true) return [];
+    if (!input.validValues || input.validValues.length === 0) return [];
     const label = input.prompt?.label;
     if (!label) return [];
     return [
