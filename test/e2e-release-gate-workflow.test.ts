@@ -17,18 +17,23 @@ const vitestWorkflow = readYaml<{ jobs: Record<string, WorkflowJob> }>(
 );
 
 describe("release gate workflow resource contracts", () => {
-  it("runs the strict hosted TUI correlation probe after peak hosted lifecycle jobs", () => {
-    const job = nightlyWorkflow.jobs["openclaw-tui-chat-correlation-e2e"];
-    const dependencies = [
+  it("serializes hosted agent proofs after peak hosted lifecycle jobs", () => {
+    const cloudJob = nightlyWorkflow.jobs["cloud-e2e"];
+    const tuiJob = nightlyWorkflow.jobs["openclaw-tui-chat-correlation-e2e"];
+    const peakDependencies = [
       "token-rotation-e2e",
       "channels-stop-start-openclaw-e2e",
       "channels-stop-start-hermes-e2e",
     ];
 
-    expect(job.needs).toEqual(dependencies);
-    for (const dependency of dependencies) expect(nightlyWorkflow.jobs).toHaveProperty(dependency);
-    expect(job.if).toContain("always()");
-    expect(job.if).toContain(",openclaw-tui-chat-correlation-e2e,");
+    expect(cloudJob.needs).toEqual(peakDependencies);
+    expect(cloudJob.if).toContain("always()");
+    expect(cloudJob.if).toContain(",cloud-e2e,");
+    expect(tuiJob.needs).toEqual([...peakDependencies, "cloud-e2e"]);
+    expect(tuiJob.if).toContain("always()");
+    expect(tuiJob.if).toContain(",openclaw-tui-chat-correlation-e2e,");
+    for (const dependency of [...peakDependencies, "cloud-e2e"])
+      expect(nightlyWorkflow.jobs).toHaveProperty(dependency);
   });
 
   it("budgets cold Ollama pulls in both retained and Vitest GPU lanes", () => {
