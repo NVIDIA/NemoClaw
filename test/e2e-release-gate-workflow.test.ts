@@ -26,13 +26,16 @@ describe("release gate workflow resource contracts", () => {
       "channels-stop-start-hermes-e2e",
     ];
 
-    expect(cloudJob.needs).toEqual(peakDependencies);
+    expect(cloudJob.needs).toEqual(expect.arrayContaining(peakDependencies));
+    expect(cloudJob.needs).toHaveLength(peakDependencies.length);
     expect(cloudJob.if).toContain("always()");
     expect(cloudJob.if).toContain(",cloud-e2e,");
-    expect(tuiJob.needs).toEqual([...peakDependencies, "cloud-e2e"]);
+    const tuiDependencies = [...peakDependencies, "cloud-e2e"];
+    expect(tuiJob.needs).toEqual(expect.arrayContaining(tuiDependencies));
+    expect(tuiJob.needs).toHaveLength(tuiDependencies.length);
     expect(tuiJob.if).toContain("always()");
     expect(tuiJob.if).toContain(",openclaw-tui-chat-correlation-e2e,");
-    for (const dependency of [...peakDependencies, "cloud-e2e"])
+    for (const dependency of tuiDependencies)
       expect(nightlyWorkflow.jobs).toHaveProperty(dependency);
   });
 
