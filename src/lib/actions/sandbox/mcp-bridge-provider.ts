@@ -338,6 +338,7 @@ export function upsertMcpProvider(
   options: {
     allowExisting: boolean;
     expectedProviderId?: string;
+    prepareMutation?: (action: "create" | "update") => void;
   },
 ): {
   action: "created" | "updated" | "reused" | "none";
@@ -389,6 +390,10 @@ export function upsertMcpProvider(
     );
   }
   const action = inspection.exists ? "update" : "create";
+  // Let callers establish policy and revision proofs only after the actual
+  // mutation kind is known. The immediate reinspection below closes races
+  // that occur while those fail-closed prerequisites are being prepared.
+  options.prepareMutation?.(action);
   // Close as much of the inspect-to-mutate window as OpenShell current main's
   // name-based provider CLI permits. Re-read immutable identity immediately
   // before and after every mutation; main does not expose provider CAS flags.
@@ -524,7 +529,17 @@ function executeMcpCredentialProofCommand(
   sandboxName: string,
   command: string,
 ): ReturnType<typeof executeSandboxExecCommand> {
-  return executeSandboxExecCommand(sandboxName, command, undefined, {
+  // OpenShell current main rejects CR/LF in each sandbox-exec argv element.
+  // Transport the proof as base64 so the `sh -c` argument remains one line;
+  // the decoded script still runs only inside the sandbox and contains no raw
+  // credential value.
+  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
+  const transportCommand = [
+    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+    `decoded="$(printf '%s' '${encodedCommand}' | base64 -d)" || exit 1`,
+    `printf '%s' "$decoded" | sh`,
+  ].join("; ");
+  return executeSandboxExecCommand(sandboxName, transportCommand, undefined, {
     allowLocalDockerFallback: false,
   });
 }

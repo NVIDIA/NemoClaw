@@ -337,7 +337,7 @@ describe("executeSandboxExecCommand", () => {
   it("does not let Docker fallback satisfy a strict provider credential proof", () => {
     const childProcess = requireSource("node:child_process");
     const dockerExec = requireSource("../src/lib/adapters/docker/exec.js");
-    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+    const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 1,
       stdout: "OpenShell transport failed before the child marker\n",
       stderr: "gateway unavailable\n",
@@ -356,6 +356,10 @@ describe("executeSandboxExecCommand", () => {
 
     expect(result).toBeNull();
     expect(dockerSpawnSync).not.toHaveBeenCalled();
+    const args = spawn.mock.calls[0]?.[1] as string[];
+    const shellPayload = args.at(-1) ?? "";
+    expect(shellPayload).not.toMatch(/[\r\n]/);
+    expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
   });
 });
 

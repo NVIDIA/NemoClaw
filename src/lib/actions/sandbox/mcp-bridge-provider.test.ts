@@ -13,8 +13,17 @@ import {
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge";
-import { snapshotMcpCredentialRevision, waitForDetachedMcpCredential } from "./mcp-bridge-provider";
+import {
+  snapshotMcpCredentialRevision,
+  waitForAttachedMcpCredential,
+  waitForDetachedMcpCredential,
+} from "./mcp-bridge-provider";
 import * as processRecovery from "./process-recovery";
+
+function decodeMcpProofTransport(command: string): string {
+  const match = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/);
+  return match?.[1] ? Buffer.from(match[1], "base64").toString("utf8") : "";
+}
 
 describe("OpenShell MCP provider state", () => {
   afterEach(() => {
@@ -198,9 +207,40 @@ alpha-mcp-slack   generic  1                 0
         addedAt: "2026-06-01T00:00:00.000Z",
       }),
     ).toThrow(/Could not capture the current OpenShell credential revision/);
-    expect(exec).toHaveBeenCalledWith("alpha", expect.stringContaining("GITHUB_TOKEN"), undefined, {
+    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
+    expect(proofCommand).not.toMatch(/[\r\n]/);
+    expect(proofCommand).toContain("base64 -d");
+    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN");
+    expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
       allowLocalDockerFallback: false,
     });
+    const decodeFailure = spawnSync("/bin/sh", ["-c", proofCommand.replace("base64 -d", "false")]);
+    expect(decodeFailure.status).not.toBe(0);
+  });
+
+  it("uses a newline-free OpenShell transport for attachment readiness", () => {
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue({
+      status: 0,
+      stdout: "",
+      stderr: "",
+    });
+
+    waitForAttachedMcpCredential("alpha", {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github-0123456789abcdef",
+      providerId: "11111111-2222-4333-8444-555555555555",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    });
+
+    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
+    expect(proofCommand).not.toMatch(/[\r\n]/);
+    expect(decodeMcpProofTransport(proofCommand)).toContain("valid_placeholder");
+    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN");
   });
 
   it("fails detach verification when the strict OpenShell exec is unavailable", () => {
@@ -222,12 +262,12 @@ alpha-mcp-slack   generic  1                 0
       }),
     ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
 
-    expect(exec).toHaveBeenCalledWith(
-      "alpha",
-      expect.stringContaining("GITHUB_TOKEN+x"),
-      undefined,
-      { allowLocalDockerFallback: false },
-    );
+    const proofCommand = exec.mock.calls[0]?.[1] ?? "";
+    expect(proofCommand).not.toMatch(/[\r\n]/);
+    expect(decodeMcpProofTransport(proofCommand)).toContain("GITHUB_TOKEN+x");
+    expect(exec).toHaveBeenCalledWith("alpha", proofCommand, undefined, {
+      allowLocalDockerFallback: false,
+    });
   });
 
   it("requires a changed credential revision after provider updates", () => {

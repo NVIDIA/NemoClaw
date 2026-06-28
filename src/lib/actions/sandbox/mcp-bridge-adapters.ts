@@ -3,6 +3,7 @@
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import type { AgentMcpAdapter } from "../../agent/defs";
+import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -127,6 +128,8 @@ function buildHermesMcpRemoveCommand(entry: McpBridgeEntry, force = false): stri
 
 const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
+const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
+const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
 
 export function buildHermesMcpExecArgs(
   sandboxName: string,
@@ -521,31 +524,43 @@ export function assertAgentMcpMutationRuntimeCapability(
   adapter: AgentMcpAdapter,
 ): void {
   if (adapter !== "hermes-config") return;
-  let result: ReturnType<typeof runOpenshellProviderCommand>;
-  try {
-    result = runOpenshellProviderCommand(
-      buildHermesMcpExecArgs(
-        sandboxName,
-        buildHermesMcpProbeCommand(),
-        HERMES_MCP_PROBE_TIMEOUT_SECONDS,
-      ),
-      {
-        ignoreError: true,
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 45_000,
-      },
-    );
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+  let lastDetail = "";
+  const ready = waitUntil(
+    () => {
+      let result: ReturnType<typeof runOpenshellProviderCommand>;
+      try {
+        result = runOpenshellProviderCommand(
+          buildHermesMcpExecArgs(
+            sandboxName,
+            buildHermesMcpProbeCommand(),
+            HERMES_MCP_PROBE_TIMEOUT_SECONDS,
+          ),
+          {
+            ignoreError: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            timeout: 45_000,
+          },
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new McpBridgeError(
+          `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+        );
+      }
+      const response = parseLastJsonObject(result.stdout || "");
+      if (result.status === 0 && !result.error && response?.ok === true) return true;
+      lastDetail = commandOutput(result).trim();
+      if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
+      throw new McpBridgeError(
+        `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
+      );
+    },
+    HERMES_MCP_STARTUP_TIMEOUT_SECONDS,
+    1_000,
+  );
+  if (!ready) {
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
-    );
-  }
-  const response = parseLastJsonObject(result.stdout || "");
-  if (result.status !== 0 || result.error || response?.ok !== true) {
-    const detail = commandOutput(result).trim();
-    throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after waiting for startup. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
     );
   }
 }

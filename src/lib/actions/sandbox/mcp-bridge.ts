@@ -252,6 +252,13 @@ async function addMcpBridgeUnlocked(
           crypto.randomBytes(8).toString("hex"),
         ))
       : undefined;
+  const adapterEnvValues = resolveCredentialEnv(options.env);
+  if (!existingEntry && !Object.hasOwn(adapterEnvValues, envNames[0])) {
+    throw new McpBridgeError(
+      `Host environment variable '${envNames[0]}' is required to create MCP provider '${providerName}'.`,
+      1,
+    );
+  }
   const policyName = buildMcpBridgePolicyName(options.server);
   assertNoDerivedResourceCollision(sandbox, options.server, providerName, policyName);
   const requestedEntry: McpBridgeEntry = {
@@ -277,6 +284,12 @@ async function addMcpBridgeUnlocked(
     ? { ...existingEntry, env: [...existingEntry.env] }
     : requestedEntry;
   const resumingPreflightedAdd = existingEntry?.addState === "preflighted";
+  if (existingEntry?.addState === "prepared" && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
+    throw new McpBridgeError(
+      `Host environment variable '${entry.env[0]}' is required to create MCP provider '${entry.providerName}'.`,
+      1,
+    );
+  }
   // This is the durable ownership manifest for every resource created below.
   // It intentionally precedes gateway selection and all OpenShell mutations,
   // so process death can never leave an unowned provider/policy/adapter entry.
@@ -287,9 +300,36 @@ async function addMcpBridgeUnlocked(
   let policyApplied = false;
   let adapterMutationAttempted = false;
   let credentialRevisionSnapshotPath: string | undefined;
-  const adapterEnvValues = resolveCredentialEnv(options.env);
   try {
     await ensureSandboxGatewaySelected(sandboxName);
+    if (resumingPreflightedAdd) {
+      const providerInspection = inspectMcpProvider(entry.providerName);
+      if (providerInspection.exists === null) {
+        throw new McpBridgeError(
+          providerInspection.error ??
+            `Could not inspect OpenShell provider '${entry.providerName}' before resuming MCP add.`,
+        );
+      }
+      if (providerInspection.exists === false) {
+        // A provider can disappear while its sandbox-spec attachment remains.
+        // Remove that dangling name before any fresh exec or adapter probe, then
+        // prove the old credential placeholder is absent before recreate/reuse.
+        detachMissingProviderReference(sandboxName, entry);
+        waitForDetachedMcpCredential(sandboxName, entry);
+      }
+      if (!Object.hasOwn(adapterEnvValues, entry.env[0])) {
+        try {
+          // A retry may reuse an exact provider without re-exporting its secret,
+          // but recreating a missing provider cannot. Check before agent and
+          // adapter exec so deterministic recovery failure cannot preserve an
+          // exact owned policy or be masked by a blocked sandbox spec.
+          assertMcpProviderRecoverable(entry);
+        } catch (error) {
+          removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+          throw error;
+        }
+      }
+    }
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
 
     if (entry.addState === "prepared") {
@@ -300,7 +340,6 @@ async function addMcpBridgeUnlocked(
       // may therefore reuse only missing or exact resources, never drift.
       writeBridgeEntry(sandboxName, entry);
     }
-
     const adapterInspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
     if (
       adapterInspection.state !== "absent" &&
@@ -323,13 +362,20 @@ async function addMcpBridgeUnlocked(
     // created or updated so unsupported runtimes fail without that side effect.
     applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
     policyApplied = true;
-    credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
     const providerResult = upsertMcpProvider(providerName ?? "", options.env, {
       // A first mutation must still observe the absence proven above. Only a
       // retry of the durable preflighted transaction may encounter an exact
       // provider whose immutable ID was already persisted by this add.
       allowExisting: resumingPreflightedAdd,
       expectedProviderId: entry.providerId,
+      prepareMutation: (action) => {
+        // A fresh create has no prior revision to compare. Capture an opaque
+        // placeholder only for an actual update, after the running supervisor
+        // has accepted the authenticated MCP policy.
+        if (action === "update") {
+          credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
+        }
+      },
     });
     providerCreated = providerResult.action === "created";
     const providerId = providerResult.inspection.id;
@@ -474,15 +520,17 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     let credentialRevisionSnapshotPath: string | undefined;
     try {
       assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-      // Revalidate the actual running supervisor before rotating or recreating
-      // a credential provider during restart.
+      // Revalidate the actual running supervisor before rotating, recreating,
+      // attaching, or re-registering an authenticated provider.
       applyGeneratedPolicy(sandboxName, entry, resolvedAddresses);
-      if (providerInspectionByServer.get(entry.server)?.exists !== false) {
-        credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
-      }
       const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
         allowExisting: true,
         expectedProviderId: entry.providerId,
+        prepareMutation: (action) => {
+          if (action === "update") {
+            credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
+          }
+        },
       });
       const providerId = providerResult.inspection.id;
       if (!providerId) {

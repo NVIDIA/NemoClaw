@@ -128,17 +128,21 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
     stderr: "",
   };
 };
-processRecovery.executeSandboxExecCommand = (_sandbox, command) => ({
-  status:
-    command.includes("allow_all_known_mcp_methods") ||
-    command.includes('[ -z "\${') ||
-    command.includes("openshell:resolve:env:GITHUB_TOKEN") ||
-    command.includes("openshell:resolve:env:SLACK_TOKEN")
+processRecovery.executeSandboxExecCommand = (_sandbox, command) => {
+  const encoded = command.match(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/)?.[1] || "";
+  const proof = encoded ? Buffer.from(encoded, "base64").toString("utf8") : command;
+  return {
+    status:
+    proof.includes("allow_all_known_mcp_methods") ||
+    proof.includes('[ -z "\${') ||
+    proof.includes("openshell:resolve:env:GITHUB_TOKEN") ||
+    proof.includes("openshell:resolve:env:SLACK_TOKEN")
       ? 0
       : 1,
-  stdout: "",
-  stderr: "",
-});
+    stdout: "",
+    stderr: "",
+  };
+};
 
 const bridgeEntry = (server, credential) => ({
   server,

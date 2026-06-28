@@ -79,9 +79,13 @@ async function hostAddressForSandbox(host: HostCliClient): Promise<string> {
   return probe.stdout.trim().split(/\s+/)[0] || "127.0.0.1";
 }
 
-async function bestEffortRemoveBridge(host: HostCliClient, sandboxName: string): Promise<void> {
-  await host.nemoclaw([sandboxName, "mcp", "remove", SERVER_NAME, "--force"], {
-    artifactName: "cleanup-mcp-remove",
+async function bestEffortRemoveBridge(
+  host: HostCliClient,
+  sandboxName: string,
+  server = SERVER_NAME,
+): Promise<void> {
+  await host.nemoclaw([sandboxName, "mcp", "remove", server, "--force"], {
+    artifactName: `cleanup-mcp-remove-${server}`,
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 60_000,
   });
@@ -103,7 +107,7 @@ async function onboardAgent(
   cleanup.add(`destroy MCP bridge ${options.agent} sandbox`, () =>
     cleanupSandbox(host, options.sandboxName),
   );
-  await host.bestEffortCleanupSandbox(options.sandboxName, {
+  await host.cleanupSandbox(options.sandboxName, {
     artifactName: "precleanup-destroy-sandbox",
     timeoutMs: 15 * 60_000,
   });
@@ -554,6 +558,9 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
   });
   await installMcpTestCaInSandbox(host, sandbox, OPENCLAW_SANDBOX_NAME, "openclaw");
   cleanup.add("remove MCP bridge", () => bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME));
+  cleanup.add("remove unexpected missing-secret MCP state", () =>
+    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret"),
+  );
 
   await expectMcpCliFailure(
     host,
