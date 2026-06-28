@@ -25,12 +25,13 @@ function workflowFiles(): string[] {
 }
 
 describe("retired shell E2E entrypoints", () => {
-  it("keeps top-level shell E2E entrypoints out of test/e2e", () => {
-    const topLevelScripts = fs
-      .readdirSync(E2E_SUITE_DIR)
-      .filter((name) => /^test-.*\.sh$/u.test(name));
+  it("keeps shell E2E entrypoints out of test/e2e recursively", () => {
+    const shellEntrypoints = fs
+      .readdirSync(E2E_SUITE_DIR, { recursive: true })
+      .filter((entry): entry is string => typeof entry === "string")
+      .filter((entry) => /^test-.*\.sh$/u.test(path.basename(entry)));
 
-    expect(topLevelScripts).toEqual([]);
+    expect(shellEntrypoints).toEqual([]);
   });
 
   it("keeps workflows from referencing retired shell lanes", () => {
