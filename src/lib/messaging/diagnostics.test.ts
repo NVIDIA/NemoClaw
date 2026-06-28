@@ -3,16 +3,11 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-} from "./channels";
+import { compileTelegramPlanForTests } from "./__test-utils__/telegram-plan";
 import {
   collectBuiltInMessagingChannelDiagnostics,
   collectVisibleConfigRecords,
 } from "./diagnostics";
-import { MessagingWorkflowPlanner } from "./compiler/workflow-planner";
-import { createBuiltInMessagingHookRegistry } from "./hooks";
 
 describe("messaging channel diagnostics", () => {
   it("derives common channel diagnostic metadata directly from manifests", () => {
@@ -50,51 +45,12 @@ describe("messaging channel diagnostics", () => {
 
 describe("collectVisibleConfigRecords (compiled plan integration)", () => {
   it("renders Telegram visible config from a plan compiled out of process env, not from injected plan inputs", async () => {
-    const planner = new MessagingWorkflowPlanner(
-      createBuiltInChannelManifestRegistry(),
-      createBuiltInMessagingHookRegistry({
-        common: {
-          env: {
-            TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
-            TELEGRAM_GROUP_POLICY: "allowlist",
-          },
-          getCredential: (key) =>
-            key === "TELEGRAM_BOT_TOKEN" ? "123456:test-telegram-token" : null,
-          saveCredential: () => {},
-          prompt: async () => "unused",
-          log: () => {},
-        },
-        telegram: {
-          fetch: async () => ({
-            ok: true,
-            status: 200,
-            async json() {
-              return { ok: true };
-            },
-            async text() {
-              return "";
-            },
-          }),
-        },
-      }),
-      createBuiltInRenderTemplateResolver(),
-    );
-
-    const plan = await withEnvOverrides(
-      {
-        TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
+    const plan = await compileTelegramPlanForTests({
+      envOverrides: {
         TELEGRAM_GROUP_POLICY: "allowlist",
         TELEGRAM_REQUIRE_MENTION: undefined,
       },
-      () =>
-        planner.buildPlan({
-          sandboxName: "alpha",
-          agent: "openclaw",
-          workflow: "onboard",
-          isInteractive: true,
-          configuredChannels: ["telegram"],
-        }),
-    );
+    });
 
     const diagnostic = collectBuiltInMessagingChannelDiagnostics().find(
       (spec) => spec.channelId === "telegram",
@@ -118,50 +74,12 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
   });
 
   it("redacts non-scalar persisted Telegram visible config values without echoing raw JSON", async () => {
-    const planner = new MessagingWorkflowPlanner(
-      createBuiltInChannelManifestRegistry(),
-      createBuiltInMessagingHookRegistry({
-        common: {
-          env: {
-            TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
-          },
-          getCredential: (key) =>
-            key === "TELEGRAM_BOT_TOKEN" ? "123456:test-telegram-token" : null,
-          saveCredential: () => {},
-          prompt: async () => "unused",
-          log: () => {},
-        },
-        telegram: {
-          fetch: async () => ({
-            ok: true,
-            status: 200,
-            async json() {
-              return { ok: true };
-            },
-            async text() {
-              return "";
-            },
-          }),
-        },
-      }),
-      createBuiltInRenderTemplateResolver(),
-    );
-
-    const basePlan = await withEnvOverrides(
-      {
-        TELEGRAM_BOT_TOKEN: "123456:test-telegram-token",
+    const basePlan = await compileTelegramPlanForTests({
+      envOverrides: {
         TELEGRAM_GROUP_POLICY: undefined,
         TELEGRAM_REQUIRE_MENTION: undefined,
       },
-      () =>
-        planner.buildPlan({
-          sandboxName: "alpha",
-          agent: "openclaw",
-          workflow: "onboard",
-          isInteractive: true,
-          configuredChannels: ["telegram"],
-        }),
-    );
+    });
 
     const tamperedPlan = {
       ...basePlan,
@@ -217,23 +135,35 @@ describe("collectVisibleConfigRecords (compiled plan integration)", () => {
     expect(mention?.display.detail).not.toMatch(/\[/);
     expect(mention?.display.detail).not.toMatch(/"/);
   });
+
+  it("never persists out-of-allowlist Telegram env values to the plan at the planner source boundary", async () => {
+    const plan = await compileTelegramPlanForTests({
+      envOverrides: {
+        TELEGRAM_GROUP_POLICY: "definitely-not-a-policy",
+        TELEGRAM_REQUIRE_MENTION: "definitely-not-a-mode",
+      },
+    });
+    const telegramChannel = plan.channels.find((channel) => channel.channelId === "telegram");
+    expect(telegramChannel).toBeDefined();
+    const policyInput = telegramChannel?.inputs.find((input) => input.inputId === "groupPolicy");
+    const mentionInput = telegramChannel?.inputs.find(
+      (input) => input.inputId === "requireMention",
+    );
+    expect(policyInput?.value).not.toBe("definitely-not-a-policy");
+    expect(mentionInput?.value).not.toBe("definitely-not-a-mode");
+    const policyAllowed = ["open", "allowlist", "disabled", undefined] as const;
+    const mentionAllowed = ["0", "1", undefined] as const;
+    expect(policyAllowed).toContain(policyInput?.value as (typeof policyAllowed)[number]);
+    expect(mentionAllowed).toContain(mentionInput?.value as (typeof mentionAllowed)[number]);
+
+    const diagnostic = collectBuiltInMessagingChannelDiagnostics().find(
+      (spec) => spec.channelId === "telegram",
+    );
+    const records = collectVisibleConfigRecords(diagnostic!, plan, "telegram", "openclaw");
+    const byLabel = (label: string) => records.find((record) => record.input.label === label);
+    expect(byLabel("Telegram group policy")?.display.detail).not.toMatch(/definitely-not-a-policy/);
+    expect(byLabel("Telegram group mention mode")?.display.detail).not.toMatch(
+      /definitely-not-a-mode/,
+    );
+  });
 });
-
-async function withEnvOverrides<T>(
-  values: Readonly<Record<string, string | undefined>>,
-  run: () => Promise<T>,
-): Promise<T> {
-  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
-  applyEnvOverrides(values);
-  try {
-    return await run();
-  } finally {
-    applyEnvOverrides(previous);
-  }
-}
-
-function applyEnvOverrides(values: Readonly<Record<string, string | undefined>>): void {
-  for (const [key, value] of Object.entries(values)) {
-    value === undefined ? Reflect.deleteProperty(process.env, key) : (process.env[key] = value);
-  }
-}

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
+import { compileTelegramPlanForTests } from "../../messaging/__test-utils__/telegram-plan";
 
 type RunSandboxDoctor = typeof import("./doctor")["runSandboxDoctor"];
 
@@ -427,62 +428,9 @@ describe("runSandboxDoctor flow", () => {
 
   it("surfaces Telegram visible config from a plan compiled out of process env through doctor", async () => {
     const harness = createDoctorHarness();
-    const channelsModule = requireDist("../../../../dist/lib/messaging/channels/index.js");
-    const hooksModule = requireDist("../../../../dist/lib/messaging/hooks/index.js");
-    const plannerModule = requireDist(
-      "../../../../dist/lib/messaging/compiler/workflow-planner.js",
-    );
-    const TELEGRAM_TOKEN = "123456:test-telegram-token";
-    const planner = new plannerModule.MessagingWorkflowPlanner(
-      channelsModule.createBuiltInChannelManifestRegistry(),
-      hooksModule.createBuiltInMessagingHookRegistry({
-        common: {
-          env: {
-            TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
-            TELEGRAM_GROUP_POLICY: "allowlist",
-          },
-          getCredential: (key: string) => (key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null),
-          saveCredential: () => {},
-          prompt: async () => "unused",
-          log: () => {},
-        },
-        telegram: {
-          fetch: async () => ({
-            ok: true,
-            status: 200,
-            async json() {
-              return { ok: true };
-            },
-            async text() {
-              return "";
-            },
-          }),
-        },
-      }),
-      channelsModule.createBuiltInRenderTemplateResolver(),
-    );
-    const envOverrides = {
-      TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
-      TELEGRAM_GROUP_POLICY: "allowlist",
-    };
-    const previous = Object.fromEntries(
-      Object.keys(envOverrides).map((key) => [key, process.env[key]]),
-    );
-    Object.assign(process.env, envOverrides);
-    let compiledPlan;
-    try {
-      compiledPlan = await planner.buildPlan({
-        sandboxName: "alpha",
-        agent: "openclaw",
-        workflow: "onboard",
-        isInteractive: true,
-        configuredChannels: ["telegram"],
-      });
-    } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        value === undefined ? Reflect.deleteProperty(process.env, key) : (process.env[key] = value);
-      }
-    }
+    const compiledPlan = await compileTelegramPlanForTests({
+      envOverrides: { TELEGRAM_GROUP_POLICY: "allowlist" },
+    });
     const registry = requireDist("../../state/registry.js");
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledMessagingChannelsFromEntry").mockReturnValue([]);

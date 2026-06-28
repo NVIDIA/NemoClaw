@@ -38,12 +38,7 @@ vi.mock("./process-recovery", () => ({
 }));
 
 import type { AgentDefinition } from "../../agent/defs";
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-} from "../../messaging/channels";
-import { MessagingWorkflowPlanner } from "../../messaging/compiler/workflow-planner";
-import { createBuiltInMessagingHookRegistry } from "../../messaging/hooks";
+import { compileTelegramPlanForTests } from "../../messaging/__test-utils__/telegram-plan";
 import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../messaging/manifest";
 import type { SandboxEntry } from "../../state/registry";
 import { showSandboxChannelStatus } from "./channel-status";
@@ -230,57 +225,6 @@ function mergePlanInputs(
   };
 }
 
-async function compileTelegramPlanForTests(
-  envOverrides: Readonly<Record<string, string | undefined>>,
-): Promise<SandboxMessagingPlan> {
-  const TELEGRAM_TOKEN = "123456:test-telegram-token";
-  const planner = new MessagingWorkflowPlanner(
-    createBuiltInChannelManifestRegistry(),
-    createBuiltInMessagingHookRegistry({
-      common: {
-        env: { TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN, ...envOverrides },
-        getCredential: (key) => (key === "TELEGRAM_BOT_TOKEN" ? TELEGRAM_TOKEN : null),
-        saveCredential: () => {},
-        prompt: async () => "unused",
-        log: () => {},
-      },
-      telegram: {
-        fetch: async () => ({
-          ok: true,
-          status: 200,
-          async json() {
-            return { ok: true };
-          },
-          async text() {
-            return "";
-          },
-        }),
-      },
-    }),
-    createBuiltInRenderTemplateResolver(),
-  );
-  const previous = Object.fromEntries(
-    Object.keys(envOverrides).map((key) => [key, process.env[key]]),
-  );
-  applyEnvForTests({ TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN, ...envOverrides });
-  try {
-    return await planner.buildPlan({
-      sandboxName: "alpha",
-      agent: "openclaw",
-      workflow: "onboard",
-      isInteractive: true,
-      configuredChannels: ["telegram"],
-    });
-  } finally {
-    applyEnvForTests({ TELEGRAM_BOT_TOKEN: undefined, ...previous });
-  }
-}
-
-function applyEnvForTests(values: Readonly<Record<string, string | undefined>>): void {
-  for (const [key, value] of Object.entries(values)) {
-    value === undefined ? Reflect.deleteProperty(process.env, key) : (process.env[key] = value);
-  }
-}
 
 describe("showSandboxChannelStatus (whatsapp)", () => {
   it("returns idle verdict and exit code 1 when paired but no inbound observed", async () => {
@@ -784,8 +728,10 @@ describe("showSandboxChannelStatus (telegram config visibility)", () => {
 
   it("renders Telegram inputs from a plan compiled out of process env through the command path", async () => {
     const plan = await compileTelegramPlanForTests({
-      TELEGRAM_GROUP_POLICY: "allowlist",
-      TELEGRAM_REQUIRE_MENTION: undefined,
+      envOverrides: {
+        TELEGRAM_GROUP_POLICY: "allowlist",
+        TELEGRAM_REQUIRE_MENTION: undefined,
+      },
     });
     const { deps, out_lines } = makeDeps({
       exec: () => ({ status: 0, stdout: "", stderr: "" }),
