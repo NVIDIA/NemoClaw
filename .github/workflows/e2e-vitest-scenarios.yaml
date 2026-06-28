@@ -4151,11 +4151,12 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',sandbox-operations-vitest,') || contains(format(',{0},', inputs.scenarios), ',sandbox-operations,') }}
     runs-on: ubuntu-latest
+    # The test onboards two sandboxes, exercises process and gateway recovery,
+    # and tears both down; its live-test budget is 45 minutes.
     timeout-minutes: 60
     env:
       FREE_STANDING_VITEST_JOB: "1"
       FREE_STANDING_SCENARIO_ID: "sandbox-operations"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-sandbox-operations
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/sandbox-operations
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
@@ -4168,6 +4169,31 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: |
+          env -u DOCKER_CONFIG \
+            -u DOCKERHUB_USERNAME \
+            -u DOCKERHUB_TOKEN \
+            -u NVIDIA_API_KEY \
+            -u NVIDIA_INFERENCE_API_KEY \
+            -u GITHUB_TOKEN \
+            bash scripts/install-openshell.sh
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:
@@ -4196,21 +4222,6 @@ jobs:
           if [[ "$login_succeeded" -ne 1 ]]; then
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
-
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
-
-      - name: Install OpenShell CLI
-        run: bash scripts/install-openshell.sh
 
       - name: Run sandbox operations live test
         env:
