@@ -394,10 +394,9 @@ rotate_cli_to_pairing_scope() {
   rotate_rc=$?
   set -e
   (
-    local rotate_log
     umask 077
     rotate_log="$(mktemp /tmp/issue4462-rotate.XXXXXX)"
-    trap 'rm -f "$rotate_log"' EXIT
+    trap 'rm -f -- "\${rotate_log:-}"' EXIT
     printf '%s\n' "$rotate_output" >"$rotate_log"
     python3 - "$device_id" "$rotate_log" "$require_seed_replacement" "$rotate_rc" <<'PY'
 import base64, hashlib, json, os, re, sys
@@ -416,7 +415,7 @@ for idx,ch in enumerate(raw):
         doc,_=dec.raw_decode(raw[idx:])
     except Exception:
         continue
-    if doc.get('deviceId') == want and isinstance(doc.get('token'), str):
+    if isinstance(doc, dict) and doc.get('deviceId') == want:
         result=doc
         break
 if result is None:
@@ -463,12 +462,17 @@ def write_json(path, value, mode):
         os.fchmod(handle.fileno(), mode)
     os.replace(tmp, path)
 
-rotated_token=norm(result.get('token'))
 result_scopes=scopes(result.get('scopes') or [])
-if not rotated_token or rotated_token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN')):
-    raise SystemExit('device token rotation returned an unsafe token')
-if result_scopes != {'operator.pairing'}:
-    raise SystemExit(f'unexpected rotated scopes: {sorted(result_scopes)}')
+reported_token=norm(result.get('token'))
+rotated_at=result.get('rotatedAtMs')
+if rotate_rc != 0:
+    raise SystemExit(f'device token rotation returned JSON but exited {rotate_rc}')
+if (
+    norm(result.get('role')) != 'operator'
+    or result_scopes != {'operator.pairing'}
+    or not isinstance(rotated_at, int) or isinstance(rotated_at, bool) or rotated_at <= 0
+):
+    raise SystemExit('unexpected public device-rotation result')
 
 root=Path(os.environ.get('OPENCLAW_STATE_DIR') or '/sandbox/.openclaw')
 identity_path=root / 'identity' / 'device.json'
@@ -500,12 +504,17 @@ if (
     raise SystemExit('rotated device metadata or approved baseline changed unexpectedly')
 tokens=paired_device.get('tokens') if isinstance(paired_device.get('tokens'), dict) else {}
 operator=tokens.get('operator') if isinstance(tokens.get('operator'), dict) else {}
+rotated_token=norm(operator.get('token'))
 if (
-    set(tokens) != {'operator'} or norm(operator.get('token')) != rotated_token
+    set(tokens) != {'operator'} or not rotated_token
+    or rotated_token == norm(os.environ.get('OPENCLAW_GATEWAY_TOKEN'))
     or norm(operator.get('role')) != 'operator'
     or scopes(operator.get('scopes') or []) != {'operator.pairing'}
+    or operator.get('rotatedAtMs') != rotated_at
 ):
-    raise SystemExit('authoritative paired token does not match the rotation result')
+    raise SystemExit('authoritative paired token is unsafe after rotation')
+if reported_token and reported_token != rotated_token:
+    raise SystemExit('reported token does not match authoritative paired state')
 
 seed_token_path=Path('/tmp/issue4462-seed-token.sha256')
 auth_before=load(auth_path)
@@ -539,7 +548,7 @@ auth={
         'token': rotated_token,
         'role': 'operator',
         'scopes': ['operator.pairing'],
-        'updatedAtMs': result.get('rotatedAtMs') or operator.get('rotatedAtMs') or operator.get('createdAtMs'),
+        'updatedAtMs': rotated_at,
     }},
 }
 write_json(auth_path, auth, 0o600)
