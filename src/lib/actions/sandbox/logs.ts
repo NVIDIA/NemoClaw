@@ -4,13 +4,13 @@
 import { spawn } from "node:child_process";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import * as agentRuntime from "../../agent/runtime";
+import { spawnExitCode } from "../../core/process-exit";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
   buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
   buildSandboxOpenclawGatewayLogsArgs,
   describeLogProbeResult,
-  exitCodeFromSignal,
   getLogsProbeTimeoutMs,
   type LogProbeResult,
   mergeTailLogLines,
@@ -35,15 +35,6 @@ export type SandboxLogsRuntimeDeps = {
   spawn?: SpawnFn;
   writeStdout?: (chunk: string) => void;
 };
-
-function exitWithSpawnResult(result: LogProbeResult, deps: SandboxLogsRuntimeDeps) {
-  const exit = deps.exit ?? process.exit;
-  if (result.status !== null) {
-    exit(result.status);
-  }
-
-  exit(exitCodeFromSignal(result.signal ?? null));
-}
 
 function runOpenclawGatewayLogs(
   sandboxName: string,
@@ -169,7 +160,7 @@ function streamSandboxFollowLogs(
     source.child.on("exit", (code: number | null, signal: NodeJS.Signals | null) => {
       markSourceDone(
         source,
-        code ?? exitCodeFromSignal(signal),
+        spawnExitCode({ status: code, signal }),
         signal ? `signal ${signal}` : null,
       );
     });
@@ -271,5 +262,5 @@ export function showSandboxLogsWithDeps(
       `  Command failed (exit ${openshellResult.status}): openshell ${openshellArgs.join(" ")}`,
     );
   }
-  exitWithSpawnResult(openshellResult, deps);
+  (deps.exit ?? process.exit)(spawnExitCode(openshellResult));
 }

@@ -170,9 +170,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--no-disable-hybrid-kv-cache-manager");
     expect(cmd).toContain("--disable-uvicorn-access-log");
     expect(cmd).toContain("--max-cudagraph-capture-size 128");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
-    );
+    expect(cmd).toContain(`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`);
     expect(cmd).toContain("--max-model-len 1048576");
     expect(cmd).toContain("--max-num-batched-tokens 8192");
     expect(cmd).toContain("--max-num-seqs 16");
