@@ -108,7 +108,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.realInvoked).toBe(false);
   });
 
-  it("cannot be bypassed by shadowing python3 on PATH (#4981 review)", () => {
+  it("cannot be bypassed by shadowing python3 on PATH after review (#4981)", () => {
     // PATH is part of the untrusted env; a planted python3 that exits 0 must not
     // let the gateway start with a raw secret. The wrapper uses a trusted
     // absolute interpreter, so the guard still refuses.

@@ -120,7 +120,12 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
-| `npm test` | Run root-level tests (`test/*.test.js`) |
+| `npm test` | Build package artifacts and run every non-live Vitest project |
+| `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
+| `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
+| `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
+| `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
+| `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
 | `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
@@ -128,13 +133,25 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
+### Test Titles as Behavioral Documentation
+
+Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
+titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
+issue references in a final suffix such as `(#1234)`. Prefer
+`it("reticulates splines correctly (#1234)")` over
+`it("#1234 fixes spline reticulation")`.
+
+Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
+`npm run test:titles:check` to enforce the objective title-shape conventions without attempting to
+lint subjective English grammar.
+
 ### Git hooks (prek)
 
 All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-binary pre-commit hook runner installed as a devDependency (`@j178/prek`). The `npm install` step runs `prek install` automatically via the `prepare` script, which wires up the following hooks from [`.pre-commit-config.yaml`](.pre-commit-config.yaml):
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, docs-to-skills dry-run validation, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, skill frontmatter validation, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
@@ -192,7 +209,7 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-During release prep, run that skill first, make any doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
 
 To build and preview docs locally:
 
@@ -206,9 +223,9 @@ Use these npm scripts when validating docs for a PR.
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
-### Doc-to-Skills Pipeline
+### Markdown Docs for AI Agents
 
-For user-skill definitions, docs-to-skills validation, release-prep regeneration, and script flags, see [Doc-to-Skills Pipeline](docs/CONTRIBUTING.md#doc-to-skills-pipeline).
+For Markdown docs routing, user-skill guidance, and release-prep documentation workflow, see [Markdown Docs for AI Agents](docs/CONTRIBUTING.md#markdown-docs-for-ai-agents).
 
 ## Pull Requests
 

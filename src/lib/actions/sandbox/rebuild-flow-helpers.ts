@@ -16,6 +16,7 @@ import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as shields from "../../shields";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
+import * as userManagedFilesProbe from "../../state/user-managed-files-probe";
 import { loadAgent } from "../../agent/defs";
 import { CLI_NAME } from "../../cli/branding";
 import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
@@ -220,5 +221,33 @@ export function backupSandboxStateForRebuild(
     );
   }
   console.log(`    Backup: ${backupManifest.backupPath}`);
+  warnUnpreservedUserManagedFiles(sandboxName, log);
   return backupManifest;
+}
+
+function warnUnpreservedUserManagedFiles(sandboxName: string, log: (msg: string) => void): void {
+  let probe: userManagedFilesProbe.UserManagedFilesProbe;
+  try {
+    probe = userManagedFilesProbe.probeUserManagedFiles(sandboxName);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(`User-managed file probe errored: ${message}`);
+    console.warn(
+      `  ${YW}⚠${R} Could not check declared user-managed files before rebuild (probe failed).`,
+    );
+    console.warn(
+      "    Re-add any user-managed files you keep in the sandbox after rebuild, or manage them from the host.",
+    );
+    return;
+  }
+  if (probe.existing.length === 0) {
+    if (probe.declared.length > 0) {
+      log(`User-managed files declared but none present in sandbox: [${probe.declared.join(",")}]`);
+    }
+    return;
+  }
+  console.warn(
+    `  ${YW}⚠${R} User-managed files in sandbox not preserved by rebuild: ${probe.existing.join(", ")}`,
+  );
+  console.warn("    Re-add them after rebuild, or manage them from the host.");
 }

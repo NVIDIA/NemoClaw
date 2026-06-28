@@ -6,14 +6,9 @@
 // assert only on the mocked module boundaries — never on the private helper
 // names — so they survive a refactor of the internal conflict-check plumbing.
 //
-// Why dist + vi.spyOn (the rebuild-shields-finally.test.ts pattern): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`
-// (../../onboard, ../../onboard/providers, ./rebuild, ../../runner, ...). In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`, and those modules do extensionless sibling requires the TS
-// transform cannot resolve. So we require the COMPILED module + its real
-// compiled dependency modules from dist/ (one shared require cache) and
-// `vi.spyOn` the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 //
 // isNonInteractive is destructured at module load (`const { isNonInteractive }
 // = require("../../onboard")`), so it cannot be spied after load; it reads
@@ -25,12 +20,12 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 type SandboxEntry = import("../../state/registry").SandboxEntry;
 
-// Real compiled dependency modules (shared require cache with the SUT).
+// Real source dependency modules (shared require cache with the SUT).
 const store = D("credentials/store.js");
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");
@@ -38,14 +33,19 @@ const runtime = D("adapters/openshell/runtime.js");
 const gatewayRuntime = D("gateway-runtime-action.js");
 const defs = D("agent/defs.js");
 const rebuild = D("actions/sandbox/rebuild.js");
+const messagingHostForwardLifecycle = D("actions/sandbox/messaging-host-forward-lifecycle.js");
 const processRecovery = D("actions/sandbox/process-recovery.js");
 const onboardSession = D("state/onboard-session.js");
 const policy = D("policy/index.js");
 const { hashCredential } = D("security/credential-hash.js") as {
   hashCredential: (v: string) => string | null;
 };
-const { addSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
+const { addSandboxChannel, startSandboxChannel } = D("actions/sandbox/policy-channel.js") as {
   addSandboxChannel: (
+    name: string,
+    options?: { channel?: string; dryRun?: boolean; force?: boolean },
+  ) => Promise<void>;
+  startSandboxChannel: (
     name: string,
     options?: { channel?: string; dryRun?: boolean; force?: boolean },
   ) => Promise<void>;
@@ -108,6 +108,131 @@ function makeEmptyEntry(name: string): SandboxEntry {
   return { name } as SandboxEntry;
 }
 
+function makeTeamsEntry(
+  name: string,
+  { disabled = false, port = "3978" }: { disabled?: boolean; port?: string } = {},
+): SandboxEntry {
+  const active = !disabled;
+  return {
+    name,
+    agent: "openclaw",
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: name,
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: [
+          {
+            channelId: "teams",
+            displayName: "Microsoft Teams",
+            authMode: "token-paste",
+            active,
+            selected: true,
+            configured: true,
+            disabled,
+            inputs: [
+              {
+                channelId: "teams",
+                inputId: "appId",
+                kind: "config",
+                required: true,
+                sourceEnv: "MSTEAMS_APP_ID",
+                statePath: "teamsConfig.appId",
+                value: "teams-app-id",
+              },
+              {
+                channelId: "teams",
+                inputId: "clientSecret",
+                kind: "secret",
+                required: true,
+                sourceEnv: "MSTEAMS_APP_PASSWORD",
+                credentialAvailable: true,
+              },
+              {
+                channelId: "teams",
+                inputId: "tenantId",
+                kind: "config",
+                required: true,
+                sourceEnv: "MSTEAMS_TENANT_ID",
+                statePath: "teamsConfig.tenantId",
+                value: "teams-tenant-id",
+              },
+              {
+                channelId: "teams",
+                inputId: "allowedUsers",
+                kind: "config",
+                required: false,
+                sourceEnv: "TEAMS_ALLOWED_USERS",
+                statePath: "allowedIds.teams",
+                value: "",
+              },
+              {
+                channelId: "teams",
+                inputId: "webhookPort",
+                kind: "config",
+                required: false,
+                sourceEnv: "MSTEAMS_PORT",
+                statePath: "teamsConfig.webhookPort",
+                value: port,
+              },
+              {
+                channelId: "teams",
+                inputId: "requireMention",
+                kind: "config",
+                required: false,
+                sourceEnv: "TEAMS_REQUIRE_MENTION",
+                statePath: "teamsConfig.requireMention",
+                value: "1",
+              },
+            ],
+            ...(active
+              ? {
+                  hostForward: {
+                    channelId: "teams",
+                    port: Number(port),
+                    label: "Microsoft Teams webhook",
+                  },
+                }
+              : {}),
+            hooks: [],
+          },
+        ],
+        disabledChannels: disabled ? ["teams"] : [],
+        credentialBindings: [
+          {
+            channelId: "teams",
+            credentialId: "teamsClientSecret",
+            sourceInput: "clientSecret",
+            providerName: `${name}-teams-bridge`,
+            providerEnvKey: "MSTEAMS_APP_PASSWORD",
+            placeholder: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+            credentialAvailable: true,
+          },
+        ],
+        networkPolicy: {
+          presets: active ? ["teams"] : [],
+          entries: active
+            ? [
+                {
+                  channelId: "teams",
+                  presetName: "teams",
+                  policyKeys: ["teams"],
+                  source: "manifest",
+                },
+              ]
+            : [],
+        },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
+  } as unknown as SandboxEntry;
+}
+
 let spies: MockInstance[];
 let logSpy: MockInstance;
 let errSpy: MockInstance;
@@ -119,7 +244,10 @@ let upsertMock: MockInstance;
 let runOpenshellMock: MockInstance;
 let applyPresetMock: MockInstance;
 let getSandboxMock: MockInstance;
+let getDisabledChannelsMock: MockInstance;
 let listSandboxesMock: MockInstance;
+let rebuildSandboxMock: MockInstance;
+let ensureMessagingHostForwardAfterRebuildMock: MockInstance;
 
 function arrangeRegistry(opts: { current: SandboxEntry; others?: SandboxEntry[] }): void {
   const all = [opts.current, ...(opts.others ?? [])];
@@ -161,6 +289,12 @@ beforeEach(() => {
   delete process.env.WECHAT_ACCOUNT_ID;
   delete process.env.WECHAT_BASE_URL;
   delete process.env.WECHAT_USER_ID;
+  delete process.env.MSTEAMS_APP_ID;
+  delete process.env.MSTEAMS_APP_PASSWORD;
+  delete process.env.MSTEAMS_TENANT_ID;
+  delete process.env.MSTEAMS_PORT;
+  delete process.env.TEAMS_ALLOWED_USERS;
+  delete process.env.TEAMS_REQUIRE_MENTION;
 
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -170,6 +304,7 @@ beforeEach(() => {
 
   // Registry seam.
   getSandboxMock = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
+  getDisabledChannelsMock = vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
   listSandboxesMock = vi
     .spyOn(registry, "listSandboxes")
     .mockReturnValue({ sandboxes: [], defaultSandbox: null });
@@ -190,10 +325,9 @@ beforeEach(() => {
   promptMock = vi.spyOn(store, "prompt").mockResolvedValue("");
   vi.spyOn(store, "saveCredential").mockImplementation(() => undefined);
 
-  // Agent gate: support every channel.
+  // Agent gate: OpenClaw support is derived from channel manifests.
   vi.spyOn(defs, "loadAgent").mockReturnValue({
     name: "openclaw",
-    messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp"],
   });
 
   // Policy seam. addSandboxChannel gates on loadPreset()/parsePresetPolicyKeys()
@@ -208,7 +342,10 @@ beforeEach(() => {
   vi.spyOn(policy, "getAppliedPresets").mockReturnValue([]);
 
   // Downstream rebuild is not under test.
-  vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  rebuildSandboxMock = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
+  ensureMessagingHostForwardAfterRebuildMock = vi
+    .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
+    .mockReturnValue(true);
 
   // After a successful interactive add, channel health-check hooks can probe
   // the sandbox via executeSandboxExecCommand, which calls getOpenshellBinary()
@@ -244,6 +381,12 @@ afterEach(() => {
   delete process.env.WECHAT_ACCOUNT_ID;
   delete process.env.WECHAT_BASE_URL;
   delete process.env.WECHAT_USER_ID;
+  delete process.env.MSTEAMS_APP_ID;
+  delete process.env.MSTEAMS_APP_PASSWORD;
+  delete process.env.MSTEAMS_TENANT_ID;
+  delete process.env.MSTEAMS_PORT;
+  delete process.env.TEAMS_ALLOWED_USERS;
+  delete process.env.TEAMS_REQUIRE_MENTION;
 });
 
 describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
@@ -337,7 +480,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 4
-  it("--force bypasses the conflict even in non-interactive mode", async () => {
+  it("bypasses the conflict with --force even in non-interactive mode", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -423,7 +566,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
   });
 
   // Scenario 7
-  it("--dry-run never runs the conflict check or touches credentials", async () => {
+  it("avoids the conflict check and credentials with --dry-run", async () => {
     arrangeRegistry({
       current: makeEmptyEntry("alpha"),
       others: [
@@ -563,7 +706,7 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(upsertMock).not.toHaveBeenCalled();
   });
 
-  it("--force proceeds when the conflict check throws", async () => {
+  it("proceeds with --force when the conflict check throws", async () => {
     arrangeRegistry({ current: makeEmptyEntry("alpha"), others: [] });
     getCredentialMock.mockReturnValue(TELEGRAM_TOKEN);
     listSandboxesMock.mockImplementation(() => {
@@ -876,6 +1019,65 @@ describe("addSandboxChannel cross-sandbox conflict check (#4305)", () => {
     expect(text).toContain("'slack' bridge logged credential/startup warnings");
     expect(text).toContain("invalid_auth");
     expect(exitMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Teams host-forward lifecycle (PRA-2)", () => {
+  function setTeamsEnv(port = "3978"): void {
+    process.env.MSTEAMS_APP_ID = "teams-app-id";
+    process.env.MSTEAMS_APP_PASSWORD = "teams-client-secret";
+    process.env.MSTEAMS_TENANT_ID = "teams-tenant-id";
+    process.env.MSTEAMS_PORT = port;
+    process.env.TEAMS_REQUIRE_MENTION = "1";
+  }
+
+  function teamsForwardFromFirstEnsureCall(): unknown {
+    const plan = ensureMessagingHostForwardAfterRebuildMock.mock.calls[0]?.[1] as
+      | { channels?: Array<{ channelId?: string; hostForward?: unknown }> }
+      | undefined;
+    return plan?.channels?.find((channel) => channel.channelId === "teams")?.hostForward;
+  }
+
+  it("channels add teams starts the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
+    setTeamsEnv();
+    arrangeRegistry({ current: makeEmptyEntry("alpha") });
+
+    await addSandboxChannel("alpha", { channel: "teams" });
+
+    expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+    );
+    expect(ensureMessagingHostForwardAfterRebuildMock.mock.invocationCallOrder[0]).toBeGreaterThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
+    expect(teamsForwardFromFirstEnsureCall()).toEqual({
+      channelId: "teams",
+      port: 3978,
+      label: "Microsoft Teams webhook",
+    });
+  });
+
+  it("channels start teams re-establishes the MSTEAMS_PORT host forward after rebuild-now completes", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true, port: "3978" }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+
+    await startSandboxChannel("alpha", { channel: "teams" });
+
+    expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
+      "alpha",
+      expect.any(Object),
+    );
+    expect(ensureMessagingHostForwardAfterRebuildMock.mock.invocationCallOrder[0]).toBeGreaterThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
+    expect(teamsForwardFromFirstEnsureCall()).toEqual({
+      channelId: "teams",
+      port: 3978,
+      label: "Microsoft Teams webhook",
+    });
   });
 });
 

@@ -16,7 +16,7 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const {
-  createSelectOnboardAgent,
+  createOnboardAgentSelector,
 }: typeof import("./onboard/agent-selection") = require("./onboard/agent-selection");
 const {
   createInferenceSelectionValidationHelpers,
@@ -85,6 +85,7 @@ const {
   agentSupportsWebSearch,
 }: typeof import("./onboard/web-search-support") = require("./onboard/web-search-support");
 const onboardDashboard: typeof import("./onboard/dashboard") = require("./onboard/dashboard");
+const dashboardRuntime: typeof import("./onboard/dashboard-runtime") = require("./onboard/dashboard-runtime");
 const {
   buildGatewayBootstrapSecretsScript,
   createGatewayBootstrapRepairHelpers,
@@ -100,6 +101,7 @@ const {
 const {
   resolveRequestedProviderSelection,
 }: typeof import("./onboard/provider-selection") = require("./onboard/provider-selection");
+const providerKeyBridge: typeof import("./onboard/provider-key-bridge") = require("./onboard/provider-key-bridge");
 const {
   reportProviderSelectionFailure,
 }: typeof import("./onboard/provider-selection-failure") = require("./onboard/provider-selection-failure");
@@ -124,6 +126,7 @@ const {
   setupMessagingChannels: setupMessagingChannelsImpl,
   readMessagingPlanFromEnv,
   writePlanToEnv,
+  clearPlanEnv,
   getRegistrySandboxMessagingPlan,
   MessagingHostStateApplier,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
@@ -339,6 +342,9 @@ const { resolveSandboxImageTagFromCreateOutput } =
   require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
+const {
+  registerIncompleteOnboardExitHandlerForSession,
+}: typeof import("./onboard/onboard-exit-handler") = require("./onboard/onboard-exit-handler");
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
@@ -762,12 +768,7 @@ const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
 
 const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
-const selectOnboardAgent = createSelectOnboardAgent({
-  resolveAgent: agentOnboard.resolveAgent,
-  loadAgent: agentDefs.loadAgent,
-  isNonInteractive,
-  note,
-});
+const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
 const { getTransportRecoveryMessage } = validationRecovery;
 
@@ -1057,14 +1058,11 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
   buildContext;
 // classifySandboxCreateFailure — see validation import above
 
-// ---------------------------------------------------------------------------
-// Ollama model prompt/pull/prepare functions — from inference/ollama/proxy.ts
-// (proxy lifecycle functions already imported at the top of this file)
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
   prepareOllamaModel,
-} = require("./inference/ollama/proxy");
+}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -1581,23 +1579,6 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
-// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
-function assertCdiNvidiaGpuSpecPresent(
-  host: ReturnType<typeof assessHost>,
-  optedOutGpuPassthrough: boolean,
-  hostGpuPlatform: string | null | undefined = null,
-): void {
-  if (hostGpuPlatform === "jetson" || preflightUtils.isWslDockerDesktopRuntime(host)) return;
-  if (!(host.cdiNvidiaGpuSpecNeedsRepair || host.cdiNvidiaGpuSpecMissing) || optedOutGpuPassthrough)
-    return;
-  console.error(
-    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
-  );
-  printRemediationActions(planHostRemediation(host));
-  process.exit(1);
-}
-
 type PreflightOptions = Pick<
   OnboardOptions,
   "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
@@ -1644,11 +1625,13 @@ async function preflight(
     device: preflightOpts.sandboxGpuDevice ?? null,
   });
   exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
-  const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true ||
-    preflightOpts.noGpu === true ||
-    !sandboxGpuConfig.sandboxGpuEnabled;
-  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
+  const explicitlyOptedOutGpuPassthrough =
+    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+  preflightUtils.assertCdiNvidiaGpuSpecPresent(
+    host,
+    explicitlyOptedOutGpuPassthrough,
+    sandboxGpuConfig.hostGpuPlatform,
+  );
 
   assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive());
 
@@ -2580,17 +2563,21 @@ async function createSandbox(
   enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
-
-  let { effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
-    sandboxName,
-    controlUiPort,
-    chatUiUrlEnv: process.env.CHAT_UI_URL,
-    persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
-    agentForwardPort: agent?.forwardPort,
-    defaultPort: DASHBOARD_PORT,
-    forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
-    warn: (message) => console.warn(message),
-  });
+  const manageDashboard = dashboardRuntime.shouldManageDashboardForAgent(agent);
+  let effectivePort = 0,
+    chatUiUrl = "";
+  if (manageDashboard) {
+    ({ effectivePort, chatUiUrl } = resolveCreateSandboxDashboardPort({
+      sandboxName,
+      controlUiPort,
+      chatUiUrlEnv: process.env.CHAT_UI_URL,
+      persistedPort: registry.getSandbox(sandboxName)?.dashboardPort ?? null,
+      agentForwardPort: dashboardRuntime.getAgentPrimaryForwardPort(agent, DASHBOARD_PORT),
+      defaultPort: DASHBOARD_PORT,
+      forwardListOutput: runCaptureOpenshell(["forward", "list"], { ignoreError: true }),
+      warn: (message) => console.warn(message),
+    }));
+  }
   const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
     agentName: agent?.name,
     env: process.env,
@@ -2795,6 +2782,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2837,6 +2825,7 @@ async function createSandbox(
               sandboxGpuConfig: effectiveSandboxGpuConfig,
               gatewayName: GATEWAY_NAME,
               gatewayPort: GATEWAY_PORT,
+              manageDashboard,
               ensureDashboardForward,
               hermesDashboardForwarding,
               updateReusedSandboxMetadata,
@@ -2991,6 +2980,7 @@ async function createSandbox(
     getMessagingChannelForEnvKey,
     getHermesToolGatewayProviderName: (targetSandbox) =>
       getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+    agentName: agent?.name,
   });
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -3007,10 +2997,9 @@ async function createSandbox(
   const plannedMessagingState =
     envMessagingState?.plan.sandboxName === sandboxName ? envMessagingState : undefined;
   const plannedMessagingPlan = plannedMessagingState?.plan;
-  const configuredMessagingChannels =
-    getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels;
   sandboxBuildPatchConfig.prepareSandboxBuildPatchConfig({
-    configuredMessagingChannels,
+    configuredMessagingChannels:
+      getChannelsFromPlan(plannedMessagingPlan) ?? activeMessagingChannels,
   });
   const { buildId } = await sandboxDockerfilePatchFlow.prepareSandboxDockerfilePatch({
     agent,
@@ -3038,6 +3027,7 @@ async function createSandbox(
       extraPlaceholderKeys,
       getDashboardForwardPort,
       hermesDashboardState,
+      manageDashboard,
       openshellShellCommand,
     });
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
@@ -3056,10 +3046,10 @@ async function createSandbox(
       dockerGpuCreatePatch.maybeApplyDuringCreate();
       return false;
     },
+    readyCheckOutputPatterns: agentDefs.isTerminalAgent(agent) ? [] : undefined,
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
     traceEvent: onboardTracing.addTraceEvent,
   });
-
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
     process.removeListener("exit", initialSandboxPolicy.cleanup);
   }
@@ -3155,18 +3145,15 @@ async function createSandbox(
     process.exit(1);
   }
 
-  // Wait for the branded dashboard to become fully ready (web server live)
-  // This prevents port forwards from connecting to a non-existent port
-  // or seeing 502/503 errors during initial load.
-  // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
-  // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
-  console.log("  Waiting for NemoClaw dashboard to become ready...");
-  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
-    sandboxName,
-    port: effectiveDashboardPort,
-    runCaptureOpenshell,
-    sleep: sleepSeconds,
-  });
+  if (manageDashboard) {
+    console.log("  Waiting for NemoClaw dashboard to become ready...");
+    sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+      sandboxName,
+      port: effectiveDashboardPort,
+      runCaptureOpenshell,
+      sleep: sleepSeconds,
+    });
+  }
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     // Runs the GPU proof, preserving Docker-GPU patch Error-phase diagnostics
@@ -3183,34 +3170,29 @@ async function createSandbox(
     });
   }
 
-  // Release any stale forward on the dashboard port before claiming it for the new sandbox.
-  // A previous onboard run may have left the port forwarded to a different sandbox,
-  // which would silently prevent the new sandbox's dashboard from being reachable.
-  // Auto-allocates the next free port if the preferred one is taken (Fixes #2174).
-  // Roll back the just-created openshell sandbox on unrecoverable allocation
-  // failure so the registry and `openshell sandbox list` don't drift (#2174).
-  const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
-    rollbackSandboxOnFailure: true,
-  });
-  // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
-  // see the final port (they re-read process.env.CHAT_UI_URL independently).
-  if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
-    chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+  let actualDashboardPort = 0;
+  let finalHermesDashboardState = hermesDashboardState;
+  if (manageDashboard) {
+    actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
+      rollbackSandboxOnFailure: true,
+    });
+    if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
+      chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
+    }
+    process.env.CHAT_UI_URL = chatUiUrl;
+    finalHermesDashboardState = hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
+    hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
   }
-  process.env.CHAT_UI_URL = chatUiUrl;
-  const finalHermesDashboardState =
-    hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
-  hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
   const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
+  const inferenceSelection = sandboxRegistration.selection;
   sandboxRegistration.registerCreatedSandbox({
     sandboxName,
-    model,
-    provider,
+    inferenceSelection: inferenceSelection(sandboxName, provider, model, preferredInferenceApi),
     runtimeFields: sandboxRuntimeFields,
     agent,
     agentVersionKnown: !fromDockerfile,
@@ -3296,6 +3278,9 @@ async function selectAndValidateOllamaModel(
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
+  const confirm = (question: string, defaultIsYes: boolean) =>
+    promptYesNoOrDefault(question, null, defaultIsYes);
+  const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
@@ -3338,7 +3323,7 @@ async function selectAndValidateOllamaModel(
         }
       }
     }
-    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
@@ -3482,11 +3467,7 @@ async function handleRoutedSelection(
   if (routedCredential) {
     saveCredential(routerCredentialEnv, routedCredential);
   }
-
-  const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-  if (_providerKeyHint && !resolveProviderCredential(routerCredentialEnv)) {
-    saveCredential(routerCredentialEnv, _providerKeyHint);
-  }
+  providerKeyBridge.stageRouterProviderKeyBridge(routerCredentialEnv);
   if (isNonInteractive()) {
     if (!resolveProviderCredential(routerCredentialEnv)) {
       console.error(
@@ -3779,17 +3760,9 @@ async function handleRemoteProviderSelection(
     console.log(`  Using ${remoteConfig.label} with model: ${state.model}`);
     return "selected";
   }
-
   hydrateCredentialEnv(state.credentialEnv);
-
   if (selected.key === "build") {
-    const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    const existingNvidiaKey = ["NVIDIA_INFERENCE_API_KEY", "NVIDIA_API_KEY"]
-      .map((envName) => normalizeCredentialValue(process.env[envName] ?? ""))
-      .find(Boolean);
-    if (_nvProviderKey && !existingNvidiaKey) {
-      process.env.NVIDIA_INFERENCE_API_KEY = _nvProviderKey;
-    }
+    providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
       state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
@@ -3814,15 +3787,7 @@ async function handleRemoteProviderSelection(
       return "retry-selection";
     }
   } else {
-    const _providerKeyHint = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-    if (_providerKeyHint && state.credentialEnv) {
-      const existingCredentialKey = normalizeCredentialValue(
-        process.env[state.credentialEnv] ?? "",
-      );
-      if (!existingCredentialKey) {
-        process.env[state.credentialEnv] = _providerKeyHint;
-      }
-    }
+    providerKeyBridge.stageRemoteProviderKeyBridge(state.credentialEnv);
 
     const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
     const defaultModel =
@@ -3960,6 +3925,7 @@ async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
+  recoverProvider = true,
 ): Promise<{
   model: string | null;
   provider: string;
@@ -4013,7 +3979,6 @@ async function setupNim(
     : null;
   const agentProviderOptions = getAgentInferenceProviderOptions(agent);
 
-  // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
   const { options, hermesProviderAvailable } = buildInferenceProviderMenu({
     remoteProviderConfig: REMOTE_PROVIDER_CONFIG,
@@ -4068,9 +4033,9 @@ async function setupNim(
           isWindowsHostOllama,
           windowsHostOllamaSupported: windowsHostOllamaDockerRequirement.supported,
           hermesProviderAvailable,
-          readRecordedProvider,
-          readRecordedNimContainer,
-          readRecordedModel,
+          readRecordedProvider: recoverProvider ? readRecordedProvider : () => null,
+          readRecordedNimContainer: recoverProvider ? readRecordedNimContainer : () => null,
+          readRecordedModel: recoverProvider ? readRecordedModel : () => null,
         });
         if (providerSelection.kind === "failure") {
           reportProviderSelectionFailure({
@@ -4652,7 +4617,6 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
-  stepMutationOptions: { updateMachine: false },
 });
 
 const sandboxCancelRollback = installSandboxCancelRollback({
@@ -4669,6 +4633,8 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordStateResult =
   onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
+const recordCompatibleStateResult =
+  onboardRuntimeBoundary.recordCompatibleStateResult.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
@@ -4690,7 +4656,6 @@ function skippedStepMessage(
 }
 
 // ── Main ─────────────────────────────────────────────────────────
-
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
@@ -4707,6 +4672,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         env: process.env,
         stdinIsTty: Boolean(process.stdin && process.stdin.isTTY),
         stdoutIsTty: Boolean(process.stdout && process.stdout.isTTY),
+        persistedSessionStatus: onboardSession.loadSession()?.status ?? null,
       },
       {
         isNonInteractive,
@@ -4834,13 +4800,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     );
     await onboardRuntimeBoundary.recordOnboardStarted(resume);
-    await recordStateResult(advanceTo("preflight", { metadata: { state: "init" } }));
-    // Backstop for the resume path: a session may exist (so the early guard
-    // skipped because resume === true) but never have recorded a sandboxName
-    // — sandbox creation could have failed before that step ran. Without a
-    // --name or env-var seed, the downstream prompt path would fall back to
-    // 'my-assistant' under no TTY, exactly the silent-default the early
-    // guard is meant to prevent.
+    await (resume ? recordCompatibleStateResult : recordStateResult)(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    // Resume backstop: a session may exist without a sandboxName if sandbox
+    // creation failed before that step. Non-interactive --from cannot infer a
+    // safe name in that state.
     if (
       resume &&
       cannotPrompt &&
@@ -4858,15 +4823,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     let completed = false;
-    process.once("exit", (code) => {
-      if (!completed && code !== 0) {
-        const current = onboardSession.loadSession();
-        const failedStep = current?.lastStepStarted;
-        if (failedStep) {
-          onboardSession.markStepFailed(failedStep, "Onboarding exited before the step completed.");
-        }
-      }
-    });
+    registerIncompleteOnboardExitHandlerForSession(onboardSession, () => completed);
 
     const agent = await selectOnboardAgent({
       agentFlag: opts.agent,
@@ -4961,7 +4918,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         detectGpu: nim.detectGpu,
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
-        assertCdiNvidiaGpuSpecPresent,
+        assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
         rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
@@ -5012,7 +4969,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [preflightPhase, gatewayPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
 
     const initialContext = initialFlowResult.context;
@@ -5134,6 +5091,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           setupMessagingChannels,
           readMessagingPlanFromEnv,
           writePlanToEnv,
+          clearPlanEnv,
           getRegistrySandboxMessagingPlan,
           promptValidatedSandboxName,
           selectResourceProfileForSandbox: () =>
@@ -5153,15 +5111,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           exitProcess: (code) => process.exit(code),
         },
       });
-
     const coreFlowResult = await runCoreOnboardFlowSlice({
       context: coreFlowContext,
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [providerInferencePhase, sandboxPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
     });
-
     const coreContext = coreFlowResult.context;
     session = coreContext.session;
     sandboxName = coreContext.sandboxName;
@@ -5267,7 +5223,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
           // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe.port, gatewayHealthEndpoint: agent?.healthProbe.url }),
+          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress(), dashboardHealthEndpoint: agent?.dashboard.healthPath, gatewayPort: agent?.healthProbe?.port, gatewayHealthEndpoint: agent?.healthProbe?.url }),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") =
             require("./verify-deployment");
@@ -5313,7 +5269,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       runtime: onboardRuntimeBoundary.getRuntime(),
       phases: [branchSetupPhase, policiesPhase, finalizationPhase],
       resume,
-      recordStateResult,
+      recordStateResult: recordCompatibleStateResult,
       afterPoliciesResultApplied: () => {
         sandboxCancelRollback.disarm();
       },
@@ -5321,6 +5277,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         liveFinalFlowContext = context;
       },
     });
+    completed = true;
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
@@ -5454,6 +5411,7 @@ module.exports = {
   getSandboxPromptDefault,
   getRequestedSandboxAgentName,
   normalizeSandboxAgentName,
+  registerIncompleteOnboardExitHandlerForSession,
   hydrateCredentialEnv,
   pruneKnownHostsEntries,
   shouldIncludeBuildContextPath,

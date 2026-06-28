@@ -1,0 +1,142 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Live Vitest replacement for test/e2e/test-device-auth-health.sh.
+ *
+ * Preserves the legacy #2342 contract with real install/onboard, sandbox HTTP
+ * probes, `nemoclaw status`, host port-forward checks, and gateway recovery:
+ * device-auth 401 responses must not be misreported as Health Offline.
+ */
+
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { resultText } from "../fixtures/clients/index.ts";
+import { trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import { expect, test } from "../fixtures/e2e-test.ts";
+import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import {
+  assertDockerAvailable,
+  bestEffort,
+  cleanupDeviceAuthSandbox,
+  commandEnv,
+  DASHBOARD_PORT,
+  httpCodeFromSandbox,
+  installDeviceAuthSandbox,
+  maybeWriteHostHealthExpectation,
+  SANDBOX_NAME,
+  waitForRecoveryArtifact,
+} from "./device-auth-health-helpers.ts";
+
+const LIVE_TIMEOUT_MS = 30 * 60_000;
+
+function assertStatusNotOffline(output: string, context: string): void {
+  expect(output, `${context} must not report the #2342 false Health Offline state`).not.toMatch(
+    /offline/i,
+  );
+}
+
+test.skipIf(!shouldRunLiveE2EScenarios())(
+  "device auth health probes treat 401 as live instead of offline (#2342)",
+  { timeout: LIVE_TIMEOUT_MS },
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
+    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const installLog = artifacts.pathFor("phase-1-install-device-auth-health.log");
+
+    await artifacts.writeJson("scenario.json", {
+      id: "device-auth-health",
+      runner: "vitest",
+      legacySource: "test/e2e/test-device-auth-health.sh",
+      boundary: "install.sh + OpenShell sandbox exec + NemoClaw status + host curl",
+      sandboxName: SANDBOX_NAME,
+      dashboardPort: DASHBOARD_PORT,
+      contracts: [
+        "onboard succeeds with device auth enabled",
+        "/health is reachable from inside the sandbox",
+        "the authenticated dashboard root may return 401 without being treated as offline",
+        "nemoclaw status reports the gateway as live, not Health Offline",
+        "status remains non-offline after a gateway kill/recovery attempt",
+      ],
+    });
+
+    const dockerInfo = await host.command("docker", ["info"], {
+      artifactName: "phase-0-docker-info",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    });
+    assertDockerAvailable(dockerInfo, skip);
+
+    cleanup.add(`destroy device-auth sandbox ${SANDBOX_NAME}`, () =>
+      cleanupDeviceAuthSandbox(host, sandbox),
+    );
+    await bestEffort(() => cleanupDeviceAuthSandbox(host, sandbox));
+
+    const install = await installDeviceAuthSandbox(host, apiKey, installLog);
+    expect(install.exitCode, resultText(install)).toBe(0);
+
+    await host.expectListed(SANDBOX_NAME, {
+      artifactName: "phase-1-nemoclaw-list-device-auth-health",
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    });
+
+    const health = await httpCodeFromSandbox(sandbox, "/health", "phase-2-sandbox-health-code");
+    expect(health.exitCode, resultText(health)).toBe(0);
+    expect(health.stdout.trim()).toBe("200");
+
+    const root = await httpCodeFromSandbox(sandbox, "/", "phase-2-sandbox-root-code");
+    expect(root.exitCode, resultText(root)).toBe(0);
+    expect(["200", "401"], `dashboard root returned ${root.stdout.trim()}`).toContain(
+      root.stdout.trim(),
+    );
+
+    const status = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-3-nemoclaw-status-device-auth-health",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(status.exitCode, resultText(status)).toBe(0);
+    assertStatusNotOffline(resultText(status), "initial status");
+    expect(resultText(status)).toMatch(/running|online|healthy|OpenClaw|Ready/i);
+
+    const hostHealth = await host.command(
+      "curl",
+      [
+        "-so",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "5",
+        `http://127.0.0.1:${DASHBOARD_PORT}/health`,
+      ],
+      {
+        artifactName: "phase-4-host-health-code",
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    await maybeWriteHostHealthExpectation(hostHealth, (codes, message, actual) =>
+      expect(codes, message).toContain(actual),
+    );
+
+    await sandbox.execShell(
+      SANDBOX_NAME,
+      trustedSandboxShellScript("pkill -f 'openclaw.*gateway' 2>/dev/null || true"),
+      {
+        artifactName: "phase-5-kill-gateway-process",
+        env: commandEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+
+    const recoveryStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-5-nemoclaw-status-after-gateway-kill",
+      env: commandEnv(),
+      timeoutMs: 120_000,
+    });
+    expect(recoveryStatus.exitCode, resultText(recoveryStatus)).toBe(0);
+    assertStatusNotOffline(resultText(recoveryStatus), "recovery status");
+    await waitForRecoveryArtifact(artifacts, sandbox);
+  },
+);

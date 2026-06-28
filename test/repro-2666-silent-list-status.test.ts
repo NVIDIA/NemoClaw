@@ -28,8 +28,8 @@ import {
   getSandboxInventory,
   type ListSandboxesCommandDeps,
   renderSandboxInventoryText,
-} from "../dist/lib/inventory/index.js";
-import { recoverRegistryEntriesWithFallback } from "../dist/lib/list-command-deps.js";
+} from "../src/lib/inventory/index.js";
+import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
@@ -67,7 +67,7 @@ function buildDepsWithThrowingRecovery(): ListSandboxesCommandDeps {
   };
 }
 
-describe("#2666 — silent empty output regression", () => {
+describe("silent empty output regression (#2666)", () => {
   it("nemoclaw list renders the registry-only listing when recovery fails", async () => {
     const deps = buildDepsWithThrowingRecovery();
     const inventory = await getSandboxInventory(deps);
@@ -90,7 +90,7 @@ describe("#2666 — silent empty output regression", () => {
   });
 });
 
-describe("#2666 — list-command-deps resilience wrapper", () => {
+describe("list-command-deps resilience wrapper (#2666)", () => {
   // Exercises the actual exported `recoverRegistryEntriesWithFallback` from
   // src/lib/list-command-deps.ts, not a parallel re-implementation. If the
   // production wrapper regresses, these tests fail.
@@ -145,7 +145,7 @@ describe("#2666 — list-command-deps resilience wrapper", () => {
   });
 });
 
-describe("#2666 — subprocess regression: simulated (container-stopped + foreign-port-holder)", () => {
+describe("simulated container-stopped and foreign-port-holder subprocess regression (#2666)", () => {
   // End-to-end test that runs the real `nemoclaw` binary against a fake
   // `openshell` shell script simulating the bug repro: the openshell sandbox
   // container is stopped AND a foreign listener holds port 8080. In that

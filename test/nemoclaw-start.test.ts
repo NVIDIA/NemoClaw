@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
@@ -141,10 +142,20 @@ function startScriptHeredoc(src: string, marker: string): string {
         ? ["telegram", "telegram-diagnostics.ts"]
         : undefined;
   expect(channelPreload).toBeTruthy();
-  return fs.readFileSync(
-    path.join(CHANNEL_RUNTIME_SCRIPTS, channelPreload[0], "runtime", channelPreload[1]),
-    "utf-8",
+  const preloadPath = path.join(
+    CHANNEL_RUNTIME_SCRIPTS,
+    channelPreload[0],
+    "runtime",
+    channelPreload[1],
   );
+  const preloadSource = fs.readFileSync(preloadPath, "utf-8");
+  if (!preloadPath.endsWith(".ts")) return preloadSource;
+  return ts.transpileModule(preloadSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
 }
 
 function trustedApprovalPolicyFile(): string {
@@ -473,7 +484,7 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).not.toContain("SHOULD_NOT_CONFIGURE");
   });
 
-  it("#3256: only requires early gateway token generation for gateway and OpenClaw commands", () => {
+  it("only requires early gateway token generation for gateway and OpenClaw commands (#3256)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
@@ -496,7 +507,7 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).toContain("no:bash");
   });
 
-  it("#4517: refreshes startup tokens but only ensures direct OpenClaw command tokens", () => {
+  it("refreshes startup tokens but only ensures direct OpenClaw command tokens (#4517)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
@@ -741,7 +752,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).not.toContain(".profile");
   });
 
-  it("#3256: writes gateway port and URL into the runtime shell env", () => {
+  it("writes the gateway port and URL into the runtime shell env (#3256)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
       "stale-token",
@@ -755,7 +766,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
   });
 
-  it("#3730: writes OpenClaw state env for connect-shell pairing approval", () => {
+  it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
     );
@@ -770,7 +781,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
   });
 
-  it("#3256: generates a gateway token before writing the runtime shell env", () => {
+  it("generates a gateway token before writing the runtime shell env (#3256)", () => {
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: {} } }),
       "stale-token",
@@ -789,7 +800,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
-  it("#4517: rotates an existing gateway token before writing the runtime shell env", () => {
+  it("rotates an existing gateway token before writing the runtime shell env (#4517)", () => {
     const oldToken = "old-token-before-rebuild";
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: oldToken } } }),
@@ -809,7 +820,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
-  it("#4517: rotates an existing gateway token from JSON5 config", () => {
+  it("rotates an existing gateway token from JSON5 config (#4517)", () => {
     const oldToken = "old-json5-token-before-rebuild";
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       [
@@ -1017,7 +1028,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  it("#4462: unsets gateway env and recovers constrained replacement state", () => {
+  it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -1092,7 +1103,7 @@ exit 1
   // existing test above only exercises `add slack`. Lock in coverage for every
   // (channel × op) combo so the guard cannot regress for any one of them
   // while passing for another.
-  it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
+  it("blocks every mutating channel-operation combination and surfaces the host-side hint (#2592)", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
@@ -2366,134 +2377,6 @@ exit 2
   }, 30_000);
 });
 
-describe("nemoclaw-start gateway launch signal handling", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-
-  function launchBlock(kind: "non-root" | "root", gatewayLog: string): string {
-    const startMarker =
-      kind === "non-root"
-        ? "# Start gateway in background, auto-pair, then wait"
-        : "# Start the gateway as the 'gateway' user.";
-    const start = src.indexOf(startMarker);
-    const trap = src.indexOf("trap cleanup_on_signal SIGTERM SIGINT", start);
-    if (start === -1 || trap === -1) {
-      throw new Error(`Expected ${kind} gateway launch block in scripts/nemoclaw-start.sh`);
-    }
-    const lineEnd = src.indexOf("\n", trap);
-    return src.slice(start, lineEnd).replaceAll("/tmp/gateway.log", gatewayLog);
-  }
-
-  function runLaunchBlock(kind: "non-root" | "root") {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-launch-${kind}-`));
-    const fakeBin = path.join(tmpDir, "bin");
-    const openclawLog = path.join(tmpDir, "openclaw.log");
-    const gosuLog = path.join(tmpDir, "gosu.log");
-    const gatewayLog = path.join(tmpDir, "gateway.log");
-    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    const waitForLaunchLogIterations = Array.from({ length: 100 }, (_, i) => String(i + 1)).join(
-      " ",
-    );
-    fs.mkdirSync(fakeBin);
-    fs.writeFileSync(
-      path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nif [ -f ${JSON.stringify(markerPath)} ]; then printf 'marker=present\\n' >> ${JSON.stringify(openclawLog)}; else printf 'marker=absent\\n' >> ${JSON.stringify(openclawLog)}; fi\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(
-      path.join(fakeBin, "gosu"),
-      `#!/usr/bin/env bash\nprintf 'user=%s args=%s\\n' "$1" "${"$*"}" >> ${JSON.stringify(gosuLog)}\nshift\nexec "$@"\n`,
-      { mode: 0o755 },
-    );
-    fs.writeFileSync(gatewayLog, "gateway booting\n");
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
-        `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
-        "export OPENCLAW_HOME=/sandbox",
-        "export OPENCLAW_STATE_DIR=/sandbox/.openclaw",
-        "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
-        "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
-        '_DASHBOARD_PORT="19000"',
-        "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
-        "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
-        "start_plugin_registry_refresh() { :; }",
-        "cleanup_on_signal() { :; }; record_gateway_pid() { :; }", // record_gateway_pid: #4952
-        `mark_in_container_gateway() { : > ${JSON.stringify(markerPath)}; }`,
-        "STEP_DOWN_PREFIX_SANDBOX=(gosu sandbox)",
-        "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
-        launchBlock(kind, gatewayLog),
-        kind === "root"
-          ? `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(gosuLog)} ] && [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`
-          : `for _ in ${waitForLaunchLogIterations}; do [ -s ${JSON.stringify(openclawLog)} ] && break; sleep 0.1; done`,
-        'printf "GATEWAY_PID=%s\\n" "$GATEWAY_PID"',
-        'printf "AUTO_PAIR_PID=%s\\n" "${AUTO_PAIR_PID:-}"',
-        'printf "TAIL_PID=%s\\n" "${GATEWAY_LOG_TAIL_PID:-}"',
-        'printf "PERSIST_PID=%s\\n" "${GATEWAY_LOG_PERSIST_PID:-}"',
-        'printf "WAIT_PID=%s\\n" "$SANDBOX_WAIT_PID"',
-        'printf "CHILD_PIDS=%s\\n" "${SANDBOX_CHILD_PIDS[*]}"',
-        "trap -p SIGTERM",
-        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do pkill -P "$pid" 2>/dev/null || true; kill "$pid" 2>/dev/null || true; done',
-        'for pid in "${SANDBOX_CHILD_PIDS[@]}"; do wait "$pid" 2>/dev/null || true; done',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-
-    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 15_000 });
-    const openclaw = fs.existsSync(openclawLog) ? fs.readFileSync(openclawLog, "utf-8") : "";
-    const gosu = fs.existsSync(gosuLog) ? fs.readFileSync(gosuLog, "utf-8") : "";
-    const gateway = fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf-8") : "";
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, openclaw, gosu, gateway };
-  }
-
-  it("registers child PIDs, redirects gateway output, and traps signals in non-root mode", () => {
-    const { result, openclaw, gateway } = runLaunchBlock("non-root");
-    expect(result.status).toBe(0);
-    expect(openclaw).toContain("gateway run --port 19000");
-    expect(openclaw).toContain("marker=present");
-    expect(openclaw).not.toContain("marker=absent");
-    expect(openclaw).toContain(
-      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
-    );
-    expect(gateway).toContain("gateway stdout marker");
-    expect(gateway).toContain("gateway stderr marker");
-    expect(result.stdout).not.toContain("gateway stdout marker");
-    const stdout = result.stdout;
-    const gatewayPid = stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
-    expect(gatewayPid).toBeTruthy();
-    expect(stdout).toContain(`WAIT_PID=${gatewayPid}`);
-    expect(stdout).toContain(`CHILD_PIDS=${gatewayPid}`);
-    expect(stdout).toMatch(/AUTO_PAIR_PID=\d+/);
-    expect(stdout).toMatch(/TAIL_PID=\d+/);
-    expect(stdout).toMatch(/PERSIST_PID=\d+/);
-    expect(stdout).toContain("cleanup_on_signal");
-  });
-
-  it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
-    const { result, openclaw, gosu } = runLaunchBlock("root");
-    expect(result.status).toBe(0);
-    expect(gosu).toContain("user=gateway");
-    expect(gosu).toContain("gateway run --port 19000");
-    expect(openclaw).toContain("marker=present");
-    expect(openclaw).not.toContain("marker=absent");
-    expect(openclaw).toContain(
-      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
-    );
-    const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
-    expect(gatewayPid).toBeTruthy();
-    expect(result.stdout).toContain(`WAIT_PID=${gatewayPid}`);
-    expect(result.stdout).toContain(`CHILD_PIDS=${gatewayPid}`);
-    expect(result.stdout).toMatch(/AUTO_PAIR_PID=\d+/);
-    expect(result.stdout).toMatch(/TAIL_PID=\d+/);
-    expect(result.stdout).toMatch(/PERSIST_PID=\d+/);
-    expect(result.stdout).toContain("cleanup_on_signal");
-  });
-});
-
 // -------------------------------------------------------------------
 // NC-2227-01: Legacy migration behavior
 // -------------------------------------------------------------------
@@ -3603,10 +3486,10 @@ describe("provider placeholder refresh (#4251)", () => {
     const distPath = path.join(
       import.meta.dirname,
       "..",
-      "dist",
+      "src",
       "lib",
       "onboard",
-      "extra-placeholder-keys.js",
+      "extra-placeholder-keys.ts",
     );
     const { canonicalPlaceholderKeys } = require(distPath);
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();

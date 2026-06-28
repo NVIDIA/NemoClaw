@@ -11,7 +11,9 @@ Status: Active development. Interfaces may change without notice.
 
 ## Agent Skills
 
-This repo ships agent skills under `.agents/skills/`, organized into three audience buckets: `nemoclaw-user-*` (end users), `nemoclaw-maintainer-*` (project maintainers), and `nemoclaw-contributor-*` (codebase contributors). Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
+This repo ships agent skills under `.agents/skills/`.
+Use `nemoclaw-user-guide` for end-user documentation routing, `nemoclaw-contributor-*` for contributor workflows, and `nemoclaw-maintainer-*` for maintainer workflows.
+Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision guide mapping tasks to skills.
 
 ## Architecture
 
@@ -28,8 +30,12 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
 | `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
-| `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
+| `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
+
+Package-specific guides:
+
+- Messaging architecture and channel migration guidance: [`src/lib/messaging/AGENTS.md`](src/lib/messaging/AGENTS.md)
 
 ## Quick Reference
 
@@ -39,6 +45,11 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | Build plugin | `cd nemoclaw && npm run build` |
 | Watch mode | `cd nemoclaw && npm run dev` |
 | Run all tests | `npm test` |
+| Render behavior-oriented test tree | `npm run test:spec` |
+| Run fast source tests | `npm run test:fast` |
+| Run integration tests | `npm run test:integration` |
+| Run package contracts | `npm run test:package` |
+| Run live E2E scenarios | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
 | Run all linters | `make check` |
 | Run all hooks manually | `npx prek run --all-files` |
@@ -53,23 +64,31 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 - **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
-- **Docs**: Fern MDX for migrated pages; legacy MyST Markdown remains during the transition for generated skills and parity checks
+- **Docs**: Fern MDX for user-facing pages, with Markdown routes exposed by Fern for AI documentation clients
 - **Tooling scripts**: Bash and Python
 
 The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.
 
 ### Testing Strategy
 
-Tests are organized into three Vitest projects defined in `vitest.config.ts`:
+Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 
-1. **`cli`** — `test/**/*.test.{js,ts}` — integration tests for CLI behavior
-2. **`plugin`** — `nemoclaw/src/**/*.test.ts` — unit tests co-located with source
-3. **`e2e-branch-validation`** — `test/e2e/brev-e2e.test.ts` — validates a branch from source on ephemeral Brev instance (requires `BREV_API_TOKEN`)
+1. **`cli`** — `src/**/*.test.ts` — CLI unit tests importing source
+2. **`integration`** — `test/**/*.test.{js,ts}` — root integration tests importing source; excludes the explicit lanes below
+3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
+4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
+5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
+6. **`e2e-vitest-support`** — fast tests for the E2E fixture/support layer
+7. **`e2e-scenarios-live`** — opt-in live scenarios that mutate real external state
+8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:
 
 - Root-level tests (`test/`) use ESM imports
 - Plugin tests use TypeScript and are co-located with their source files
+- Import CLI source from ordinary tests. Put genuine compiled-artifact assertions under `test/package-contract/`.
+- Keep project globs disjoint; `npm run test:projects:check` derives membership from Vitest and rejects overlap.
+- Write behavior-oriented titles, put local issue references in a final `(#1234)` suffix, and use `npm run test:spec` for the hierarchical specification view.
 - Mock external dependencies; don't call real NVIDIA APIs in unit tests
 - E2E tests run on ephemeral Brev cloud instances
 
@@ -149,6 +168,14 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 2. Run `make check` to verify your environment is set up correctly
 3. Check that `npm test` passes before starting
 
+### Git and GitHub Access Failures
+
+Follow `.agents/skills/_shared/git-github-hard-stop.md`: if SSH, `gh`, authentication, authorization, remote access, or push permission fails, stop and ask the user instead of working around access. Do not stop for ordinary merge conflicts or dirty-worktree state; resolve mechanical conflicts in the relevant workflow and ask the user only when resolution would change behavior or contributor intent.
+
+### Pull Request Follow-Up
+
+Follow `.agents/skills/_shared/pr-follow-up.md`: after opening or pushing to a PR, monitor required CI and automated review comments, address valid CodeRabbit and PR Review Advisor findings, and consult the user when feedback is ambiguous or design-changing.
+
 ### Common Patterns
 
 **Adding a CLI command:**
@@ -189,8 +216,9 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 - Treat `docs/` as the source of truth for user-facing documentation and follow `docs/CONTRIBUTING.md`.
 - After completing development changes, run a documentation writer subagent before final handoff. Give it the changed files, behavior summary, and test evidence so it can update docs or report that no doc changes are needed.
-- For normal docs changes, include only source pages under `docs/`. Do not edit generated user skills under `.agents/skills/nemoclaw-user-*/`.
-- During release prep, run `nemoclaw-contributor-update-docs`, make doc version bumps, regenerate user skills, and open the docs refresh PR with both docs and generated user skills.
+- For normal docs changes, include source pages under `docs/`.
+- Update `.agents/skills/nemoclaw-user-guide/SKILL.md` only when the AI-agent docs routing guidance changes.
+- During release prep, run `nemoclaw-contributor-update-docs`, make doc version bumps, and open the docs refresh PR with the docs changes.
 
 ## PR Requirements
 

@@ -56,7 +56,15 @@ describe("final onboard flow phases", () => {
     await runFinalOnboardFlowSlice({
       context: context({ resume: true }),
       runtime: {
-        session: async () => createSession(),
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state: "openclaw",
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 1,
+            },
+          }),
         applyResult: async () => createSession(),
       },
       phases,

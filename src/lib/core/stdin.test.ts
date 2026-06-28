@@ -48,7 +48,7 @@ describe("readLineFromStdin", () => {
     ["returns buffered bytes when EOF arrives before a newline", ["y", 0], "y"],
     ["returns null on a hard error with no buffered bytes", ["EBADF"], null],
     ["returns buffered bytes when a hard error interrupts mid-line", ["y", "e", "EBADF"], "ye"],
-  ] as const)("%s", (_label, events, expected) => {
+  ] as const)("handles the table case: %s", (_label, events, expected) => {
     expect(readLineFromStdin({ readSync: makeReadSync([...events]), sleep: vi.fn() })).toBe(
       expected,
     );

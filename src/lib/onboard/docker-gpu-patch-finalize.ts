@@ -85,6 +85,22 @@ export function rollbackToBackupContainer(
   return isZeroStatus(started);
 }
 
+/**
+ * Roll back a Docker GPU patch that failed *before* the supervisor wait — e.g.
+ * the recreate `docker run` itself failed after the original sandbox was already
+ * renamed to the backup. Restores the pre-patch sandbox so onboarding never
+ * leaves an orphaned `*-nemoclaw-gpu-backup-*` container (which otherwise
+ * collides on the next retry) (#5512). Accepts raw deps so the real
+ * `docker start`/`docker rename` defaults are resolved even when the caller's
+ * deps only carry the recreate subset.
+ */
+export function rollbackDockerGpuPatchOnRecreateFailure(
+  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  deps: DockerGpuPatchDeps = {},
+): boolean {
+  return rollbackToBackupContainer(refs, resolveRollbackDeps(deps));
+}
+
 export type DockerGpuPatchFinalizeOptions = {
   result: DockerGpuPatchResult;
   supervisorReady: boolean;

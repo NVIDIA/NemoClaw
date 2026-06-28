@@ -34,9 +34,6 @@ describe("direct credential env guard", () => {
     "const x = process.env.HOME;",
     "const x = process.env.PATH;",
 
-    // NEMOCLAW_PROVIDER_KEY is a user-facing override, not credential resolution.
-    "const x = process.env.NEMOCLAW_PROVIDER_KEY;",
-
     // Correct patterns — allowed
     'const key = getCredential("NVIDIA_INFERENCE_API_KEY");',
     'const key = resolveProviderCredential("NVIDIA_INFERENCE_API_KEY");',
@@ -59,6 +56,7 @@ describe("direct credential env guard", () => {
     // Static reads of known credential keys
     ["const key = process.env.NVIDIA_INFERENCE_API_KEY;", "NVIDIA_INFERENCE_API_KEY"],
     ["const key = process.env.NVIDIA_API_KEY;", "NVIDIA_API_KEY"],
+    ["const key = process.env.NEMOCLAW_PROVIDER_KEY;", "NEMOCLAW_PROVIDER_KEY"],
     ["const key = process.env.OPENAI_API_KEY;", "OPENAI_API_KEY"],
     ["const key = process.env.ANTHROPIC_API_KEY;", "ANTHROPIC_API_KEY"],
     ["const key = process.env.GEMINI_API_KEY;", "GEMINI_API_KEY"],
@@ -72,11 +70,16 @@ describe("direct credential env guard", () => {
     // Bracketed string-literal reads
     ['const key = process.env["NVIDIA_INFERENCE_API_KEY"];', "NVIDIA_INFERENCE_API_KEY"],
     ['const key = process.env["NVIDIA_API_KEY"];', "NVIDIA_API_KEY"],
+    ['const key = process.env["NEMOCLAW_PROVIDER_KEY"];', "NEMOCLAW_PROVIDER_KEY"],
     ['if (!process.env["OPENAI_API_KEY"]) {}', "OPENAI_API_KEY"],
 
     // Dynamic read with credential-containing variable name
     ["if (!process.env[credentialEnv]) {}", "[credentialEnv]"],
     ["const x = process.env[resolvedCredentialEnv];", "[resolvedCredentialEnv]"],
+    [
+      'const HOSTED_INFERENCE_PROVIDER_KEY_ENV = "NEMOCLAW_PROVIDER_KEY";\nconst key = process.env[HOSTED_INFERENCE_PROVIDER_KEY_ENV];',
+      "NEMOCLAW_PROVIDER_KEY",
+    ],
 
     // Suppression token inside non-comment text must not suppress.
     [
@@ -87,11 +90,17 @@ describe("direct credential env guard", () => {
     expect(findDirectCredentialEnvReads(code)).toMatchObject([{ key }]);
   });
 
-  it("onboard.ts has zero violations", () => {
+  it("onboarding credential boundary files have zero violations", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const result = spawnSync(
       "npx",
-      ["tsx", "scripts/checks/direct-credential-env.ts", "src/lib/onboard.ts"],
+      [
+        "tsx",
+        "scripts/checks/direct-credential-env.ts",
+        "src/lib/onboard.ts",
+        "src/lib/onboard/provider-key-bridge.ts",
+        "src/lib/onboard/providers.ts",
+      ],
       {
         cwd: repoRoot,
         encoding: "utf-8",

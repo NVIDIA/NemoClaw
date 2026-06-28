@@ -6,12 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildOpenClawRecoveryScript, buildRecoveryScript } from "../../../dist/lib/agent/runtime";
-import {
-  buildGatewayGuardRecoveryLines,
-  GATEWAY_PRELOAD_GUARDS,
-} from "../../../dist/lib/agent/runtime-recovery-preload";
 import { minimalAgent } from "./hermes-recovery-boundary-fixtures";
+import { buildOpenClawRecoveryScript, buildRecoveryScript } from "./runtime";
+import { buildGatewayGuardRecoveryLines, GATEWAY_PRELOAD_GUARDS } from "./runtime-recovery-preload";
 
 const [SAFETY_NET_GUARD, CIAO_GUARD] = GATEWAY_PRELOAD_GUARDS;
 
@@ -43,8 +40,12 @@ function makeHarness() {
     hostileMarker: path.join(root, "hostile-proxy-env-sourced"),
   };
 
-  fs.writeFileSync(paths.sourceSafetyNet, "module.exports = 'trusted safety net';\n");
-  fs.writeFileSync(paths.sourceCiao, "module.exports = 'trusted ciao guard';\n");
+  fs.writeFileSync(paths.sourceSafetyNet, "module.exports = 'trusted safety net';\n", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(paths.sourceCiao, "module.exports = 'trusted ciao guard';\n", {
+    mode: 0o644,
+  });
 
   return paths;
 }

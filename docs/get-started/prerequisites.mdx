@@ -32,7 +32,7 @@ If you cannot add memory, configure at least 8 GB of swap to work around the iss
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
 | Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
-| Platform   | See [Platforms](#platforms) below |
+| Platform   | Refer to [Platforms](#platforms) below |
 
 On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
@@ -42,7 +42,9 @@ The installer also requires `strings` from `binutils` to verify the OpenShell bi
 <Warning title="Docker Group Access">
 NemoClaw needs Docker access.
 On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
-Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+Members of the `docker` group can control the daemon with root-level impact.
+Grant this access only to trusted local accounts.
+On shared or managed systems, use your organization's approved Docker access path.
 For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 </Warning>
 
@@ -62,7 +64,9 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 </Warning>
 
 <Note title="Docker Storage Driver">
-On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `$$nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
+On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled, `$$nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image.
+The containerd image store is the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros.
+The `fuse-overlayfs`-enabled image bypasses a kernel-level nested-overlay limitation in k3s.
 You do not need manual setup.
 Refer to the [troubleshooting guide](../reference/troubleshooting) for the override knobs and a manual `daemon.json` alternative.
 </Note>
@@ -76,14 +80,14 @@ The table comes from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoC
 {/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
-| Linux | Docker | Tested | Primary tested path. |
-| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| DGX Spark | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
+| Linux | Docker | Tested | Primary tested path. Ubuntu 24.04 is the validated distro in production source (`DEFAULT_COMPAT_IMAGE` in `src/lib/onboard/docker-driver-gateway-launch.ts:10` and the preflight tests pin 24.04 only); the installer's package-manager probes assume apt-get. Other distros (Ubuntu 22.04, Fedora, Rocky, Alma, NixOS, Arch) may work but are not validated. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Start the container runtime (Colima or Docker Desktop) before running the installer. Xcode Command Line Tools (`xcode-select --install`) are typically required for Node native modules during install. NemoClaw recommends them but does not enforce them during preflight. |
+| DGX Spark | Docker | Tested | Use the standard installer and `$$nemoclaw onboard`. For an end-to-end walkthrough with local inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
 {/* platform-matrix:end */}
 
 ## Next Steps
 
-- [Prepare Windows for NemoClaw](prerequisites/windows-preparation) if you are using Windows.
-- [Quickstart](quickstart) to install NemoClaw and launch your first sandboxed agent.
-- [Agent Skills](../resources/agent-skills) to load NemoClaw guidance into an AI coding assistant before setup.
+- Use [Prepare Windows for NemoClaw](prerequisites/windows-preparation) if you are using Windows.
+- [Quickstart](quickstart) installs NemoClaw and launches your first sandboxed agent.
+- [AI Agent Docs](../resources/agent-skills) lets your AI coding assistant fetch NemoClaw Markdown docs before setup.

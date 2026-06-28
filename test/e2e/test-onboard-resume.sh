@@ -15,10 +15,10 @@
 #   - Docker running
 #   - openshell CLI installed
 #   - Node.js available
-#   - NVIDIA_INFERENCE_API_KEY set before starting the test
+#   - local fake OpenAI-compatible endpoint reachable from host and sandbox
 #
 # Usage:
-#   NVIDIA_INFERENCE_API_KEY=... bash test/e2e/test-onboard-resume.sh
+#   bash test/e2e/test-onboard-resume.sh
 
 set -uo pipefail
 
@@ -77,13 +77,19 @@ fi
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
-# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
-. "$(dirname "${BASH_SOURCE[0]}")/lib/ci-compatible-inference.sh"
+# shellcheck source=test/e2e/lib/hermetic-compatible-inference.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/hermetic-compatible-inference.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+
+cleanup_on_exit() {
+  nemoclaw_e2e_stop_hermetic_compatible_inference
+  _nemoclaw_sandbox_teardown
+}
+trap cleanup_on_exit EXIT
 
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
-RESTORE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-}"
+EXPECTED_PROVIDER="compatible-endpoint"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Pre-cleanup
@@ -123,25 +129,20 @@ else
   exit 1
 fi
 
-if [[ -z "$RESTORE_API_KEY" ]]; then
-  fail "NVIDIA_INFERENCE_API_KEY not set or invalid — required for resume completion"
-  exit 1
-fi
-pass "NVIDIA_INFERENCE_API_KEY is set"
-
-export NVIDIA_INFERENCE_API_KEY="$RESTORE_API_KEY"
-nemoclaw_e2e_configure_compatible_inference || exit 1
-HOSTED_INFERENCE_BASE_URL="$(nemoclaw_e2e_hosted_inference_base_url)"
-EXPECTED_PROVIDER="$(nemoclaw_e2e_expected_route_provider)"
-
-if nemoclaw_e2e_probe_hosted_inference; then
-  pass "Network access to ${HOSTED_INFERENCE_BASE_URL}"
+if nemoclaw_e2e_start_hermetic_compatible_inference; then
+  pass "Configured onboard resume test for hermetic compatible-endpoint inference at ${FAKE_OPENAI_BASE_URL}"
 else
-  fail "Cannot reach ${HOSTED_INFERENCE_BASE_URL}"
+  fail "Fake OpenAI-compatible endpoint failed to start"
+  sed 's/^/    /' "${FAKE_OPENAI_LOG:-/dev/null}" 2>/dev/null || true
   exit 1
 fi
 
-pass "Exported NVIDIA_INFERENCE_API_KEY for the resume run (host writes nothing to disk; OpenShell gateway is the system of record)"
+if curl -sf "${FAKE_OPENAI_BASE_URL}/models" >/dev/null 2>&1; then
+  pass "Network access to fake OpenAI-compatible endpoint"
+else
+  fail "Cannot reach fake OpenAI-compatible endpoint at ${FAKE_OPENAI_BASE_URL}"
+  exit 1
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (forced failure after sandbox creation)
@@ -209,6 +210,13 @@ case $? in
   0) pass "Session file recorded openclaw completion and policy failure" ;;
   *) fail "Session file did not record the expected interrupted state" ;;
 esac
+
+if nemoclaw_e2e_assert_hermetic_compatible_inference_used; then
+  pass "Fake OpenAI-compatible endpoint handled authenticated inference"
+else
+  fail "Fake OpenAI-compatible endpoint did not record authenticated inference"
+  sed 's/^/    /' "$FAKE_OPENAI_REQUESTS_FILE" 2>/dev/null || true
+fi
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Resume and complete
@@ -312,6 +320,98 @@ if [ -f "$REGISTRY" ] && grep -q "$SANDBOX_NAME" "$REGISTRY"; then
   pass "Registry contains resumed sandbox entry"
 else
   fail "Registry does not contain resumed sandbox entry"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 3.5: Implicit resume (plain `onboard`, no --resume flag) — #5470
+# ══════════════════════════════════════════════════════════════════
+# The fix auto-detects resume from a persisted in_progress session. The
+# section above proves explicit `--resume`; this proves a plain `onboard`
+# rerun resumes on its own, and that `--fresh` suppresses it.
+section "Phase 3.5: Implicit resume from in_progress session"
+
+# Re-mark the now-complete session as in_progress so a plain `onboard` has
+# something to auto-resume. Everything is already provisioned, so the resume
+# skips every cached step and finishes fast.
+# Mimic an interrupted-but-resumable session: status "in_progress" AND
+# resumable !== false. Phase 3 marks the completed session `resumable: false`,
+# so flipping status alone would (correctly) be rejected as "no resumable
+# session"; resetting resumable reconstructs the interrupted shape the resume
+# machine accepts (session-bootstrap.ts:140).
+set_session_in_progress() {
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.status = "in_progress";
+    data.resumable = true;
+    fs.writeFileSync(file, JSON.stringify(data, null, 2));
+  ' "$SESSION_FILE"
+}
+
+set_session_in_progress
+info "Running plain onboard (no --resume) on an in_progress session..."
+IMPLICIT_LOG="$(mktemp)"
+env -u NVIDIA_INFERENCE_API_KEY -u COMPATIBLE_API_KEY \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+  NEMOCLAW_POLICY_MODE=skip \
+  node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$IMPLICIT_LOG" 2>&1
+implicit_exit=$?
+implicit_output="$(cat "$IMPLICIT_LOG")"
+rm -f "$IMPLICIT_LOG"
+
+if [ $implicit_exit -eq 0 ]; then
+  pass "Implicit resume (plain onboard) completed successfully"
+else
+  fail "Implicit resume exited $implicit_exit (expected 0)"
+  echo "$implicit_output"
+fi
+
+if echo "$implicit_output" | grep -q "(resume mode)"; then
+  pass "Plain onboard auto-detected resume mode from in_progress session"
+else
+  fail "Plain onboard did not show '(resume mode)' for an in_progress session"
+fi
+
+if echo "$implicit_output" | grep -q "\[resume\] Skipping\|\[reuse\] Skipping"; then
+  pass "Implicit resume skipped cached steps"
+else
+  fail "Implicit resume did not skip any cached steps"
+fi
+
+# --fresh must suppress the auto-resume even with an in_progress session.
+# Fail-fast at preflight (step 1, before sandbox recreation) so this stays
+# cheap and non-destructive; the banner is emitted before that step.
+set_session_in_progress
+info "Running onboard --fresh on the same in_progress session (fail-fast)..."
+FRESH_LOG="$(mktemp)"
+NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
+  NEMOCLAW_POLICY_MODE=skip \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=preflight \
+  node "$REPO/bin/nemoclaw.js" onboard --fresh --non-interactive >"$FRESH_LOG" 2>&1
+fresh_exit=$?
+fresh_output="$(cat "$FRESH_LOG")"
+rm -f "$FRESH_LOG"
+
+# Confirm the run actually executed and aborted at preflight, so the
+# banner-absence assertion below is meaningful (not a vacuous pass from an
+# unrelated early failure).
+if [ $fresh_exit -ne 0 ] && echo "$fresh_output" | grep -q "\[e2e\] Forced onboarding failure at step 'preflight'."; then
+  pass "--fresh run failed fast at preflight as intended"
+else
+  fail "--fresh run did not fail at preflight as expected (exit $fresh_exit)"
+  echo "$fresh_output"
+fi
+
+if echo "$fresh_output" | grep -q "(resume mode)"; then
+  fail "--fresh did not suppress auto-resume (unexpected '(resume mode)')"
+else
+  pass "--fresh suppressed auto-resume despite an in_progress session"
 fi
 
 # ══════════════════════════════════════════════════════════════════

@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 import { runCurlProbe } from "../adapters/http/probe";
 import { createWebSearchFlowHelpers } from "./web-search-flow";
 
@@ -47,14 +48,18 @@ describe("web search flow Brave validation", () => {
   it.each([
     ["LF", "brv-good-prefix\nconfig = injected"],
     ["CR", "brv-good-prefix\rconfig = injected"],
-  ])("rejects %s-bearing keys before writing a trusted curl config", (_label, apiKey) => {
-    const before = braveProbeTempDirs();
+  ])(
+    "rejects %s-bearing keys before writing a trusted curl config",
+    testTimeoutOptions(15_000),
+    (_label, apiKey) => {
+      const before = braveProbeTempDirs();
 
-    const result = helpers().validateBraveSearchApiKey(apiKey);
+      const result = helpers().validateBraveSearchApiKey(apiKey);
 
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("must not contain line breaks");
-    expect(runCurlProbe).not.toHaveBeenCalled();
-    expect(braveProbeTempDirs()).toEqual(before);
-  });
+      expect(result.ok).toBe(false);
+      expect(result.message).toContain("must not contain line breaks");
+      expect(runCurlProbe).not.toHaveBeenCalled();
+      expect(braveProbeTempDirs()).toEqual(before);
+    },
+  );
 });

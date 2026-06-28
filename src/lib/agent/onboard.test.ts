@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+import type { AgentDefinition } from "./defs";
+// Import source directly so tests cannot pass against a stale build.
 import {
   collectHermesStartupDiagnostics,
   handleAgentSetup,
   printDashboardUi,
   verifyAgentBinaryAvailable,
-} from "../../../dist/lib/agent/onboard";
-import type { AgentDefinition } from "./defs";
+} from "./onboard";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
   return {
@@ -18,6 +18,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     healthProbe: { url: "http://127.0.0.1:19000/", port: 19000, timeout_seconds: 5 },
     forwardPort: 19000,
     dashboard: { kind: "ui", label: "UI", path: "/", healthPath: "/health", auth: "url_token" },
+    webAuth: { method: "none", env: null },
     configPaths: {
       dir: "/tmp/agent",
       configFile: "/tmp/agent/config.yaml",
@@ -27,11 +28,11 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "agent --version",
     expectedVersion: null,
     hasDevicePairing: false,
     phoneHomeHosts: [],
-    messagingPlatforms: [],
     dockerfileBasePath: null,
     dockerfilePath: null,
     startScriptPath: null,
@@ -94,7 +95,7 @@ const buildUrlsLoopback = (token: string | null, port: number): string[] => {
   return [`http://127.0.0.1:${port}/${hash}`];
 };
 
-describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)", () => {
+describe("printDashboardUi with port 8642 outside the chat UI (#2078)", () => {
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
   const noteSpy = vi.fn();
 
@@ -383,6 +384,25 @@ describe("handleAgentSetup guards", () => {
 
     expect(result).toEqual({ available: true });
     expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+  });
+
+  it("reports a configured binary path that exists but is not executable", () => {
+    let script = "";
+    const result = verifyAgentBinaryAvailable(
+      "alpha",
+      makeAgent({ name: "hermes", binary_path: "/usr/local/bin/hermes" }),
+      (args) => {
+        script = String(args[7] || "");
+        return "openshell noise\nNEMOCLAW_AGENT_BINARY_CHECK:not_executable";
+      },
+    );
+
+    expect(result).toEqual({
+      available: false,
+      reason: "not_executable",
+      binaryPath: "/usr/local/bin/hermes",
+    });
+    expect(script).toContain("[ -e '/usr/local/bin/hermes' ] && [ ! -x '/usr/local/bin/hermes' ]");
   });
 });
 

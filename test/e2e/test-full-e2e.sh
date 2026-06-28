@@ -447,7 +447,7 @@ rm -f "$ssh_config"
 
 agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/null) || true
 
-if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
+if e2e_text_contains_integer_42 "$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
 else
   fail "[LIVE] openclaw agent: expected '42' in agent reply, got: ${agent_reply:0:200}"

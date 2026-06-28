@@ -109,6 +109,7 @@ export async function upsertStickyComment({
   body,
   label,
   userAgent,
+  bodyForComment,
 }: {
   repo: string;
   pr: string;
@@ -117,22 +118,30 @@ export async function upsertStickyComment({
   body: string;
   label: string;
   userAgent?: string;
+  bodyForComment?: (comment: GitHubComment) => string;
 }): Promise<void> {
   try {
     const existing = await findExistingComment(repo, pr, token, marker, userAgent);
     if (existing) {
       await githubApi(`repos/${repo}/issues/comments/${existing.id}`, token, {
         method: "PATCH",
-        body: { body },
+        body: { body: bodyForComment ? bodyForComment(existing) : body },
         userAgent,
       });
       console.log(`Updated ${label} comment on ${repo}#${pr}`);
     } else {
-      await githubApi(`repos/${repo}/issues/${pr}/comments`, token, {
+      const created = await githubApi<GitHubComment>(`repos/${repo}/issues/${pr}/comments`, token, {
         method: "POST",
         body: { body },
         userAgent,
       });
+      if (bodyForComment) {
+        await githubApi(`repos/${repo}/issues/comments/${created.id}`, token, {
+          method: "PATCH",
+          body: { body: bodyForComment(created) },
+          userAgent,
+        });
+      }
       console.log(`Created ${label} comment on ${repo}#${pr}`);
     }
   } catch (error: unknown) {

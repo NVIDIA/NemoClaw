@@ -51,6 +51,7 @@ import {
 } from "./connect-autopair-budget";
 import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
@@ -211,9 +212,20 @@ function exitOnSecretBoundaryRefusal(
 }
 
 function runSandboxConnectProbe(sandboxName: string): void {
-  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) {
+    runTerminalAgentConnectProbe({
+      agent,
+      agentName,
+      capture: captureOpenshell,
+      ensureInferenceRoute: ensureSandboxInferenceRoute,
+      sandboxName,
+    });
+    return;
+  }
+
+  const processCheck = checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
   if (!processCheck.checked) {
     console.error(
       `  Probe failed: could not inspect the ${agentName} gateway inside sandbox '${sandboxName}'.`,
@@ -830,6 +842,42 @@ function exitWithSpawnResult(result: SpawnLikeResult): void {
   process.exit(1);
 }
 
+function restoreInteractiveTerminal(): void {
+  if (!process.stdin.isTTY) return;
+
+  try {
+    const stdin = process.stdin as typeof process.stdin & {
+      setRawMode?: (mode: boolean) => unknown;
+    };
+    stdin.setRawMode?.(false);
+  } catch {
+    // Best-effort: still try `stty sane` below.
+  }
+
+  try {
+    spawnSync("stty", ["sane"], {
+      stdio: ["inherit", "ignore", "ignore"],
+      cwd: ROOT,
+      env: process.env,
+    });
+  } catch {
+    // Terminal cleanup must never mask the original connect failure.
+  }
+}
+
+function isLikelySshDisconnect(result: SpawnLikeResult): boolean {
+  return result.status === 255 || result.signal === "SIGHUP" || result.signal === "SIGPIPE";
+}
+
+function exitWithConnectSpawnResult(sandboxName: string, result: SpawnLikeResult): void {
+  if (isLikelySshDisconnect(result)) {
+    restoreInteractiveTerminal();
+    console.error("");
+    console.error(`  Gateway connection lost. Reconnect with: ${CLI_NAME} ${sandboxName} connect`);
+  }
+  exitWithSpawnResult(result);
+}
+
 export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
@@ -1043,7 +1091,11 @@ export async function connectSandbox(
   ) {
     console.log("");
     const agentName = sb?.agent || "openclaw";
-    const agentCmd = agentName === "openclaw" ? "openclaw tui" : agentName;
+    const terminalCommand = agentRuntime.getTerminalCommand(
+      agentRuntime.getSessionAgent(sandboxName),
+      "interactive",
+    );
+    const agentCmd = terminalCommand ?? (agentName === "openclaw" ? "openclaw tui" : agentName);
     console.log(`  ${G}✓${R} Connecting to sandbox '${sandboxName}'`);
     console.log(
       `  ${D}Inside the sandbox, run \`${agentCmd}\` to start chatting with the agent.${R}`,
@@ -1058,5 +1110,5 @@ export async function connectSandbox(
     cwd: ROOT,
     env: process.env,
   });
-  exitWithSpawnResult(result);
+  exitWithConnectSpawnResult(sandboxName, result);
 }

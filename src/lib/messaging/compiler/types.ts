@@ -14,6 +14,6 @@ export interface ManifestCompilerContext {
   readonly isInteractive: boolean;
   readonly configuredChannels: readonly MessagingChannelId[];
   readonly disabledChannels?: readonly MessagingChannelId[];
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }

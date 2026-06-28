@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { WebSearchConfig } from "../../inference/web-search";
-import type { OnboardFlowContext } from "./flow-context";
+import {
+  assertProviderSelectedContext,
+  mergeProviderModelSelectedContext,
+  mergeSandboxCreatedContext,
+  type OnboardFlowContext,
+} from "./flow-context";
 import { runCoreOnboardFlowSequence } from "./flow-slices";
 import {
   handleProviderInferenceState,
@@ -52,6 +57,7 @@ export function createCoreOnboardFlowPhases<
     async run(context) {
       const providerInferenceResult = await handleProviderInferenceState({
         resume: context.resume,
+        fresh: context.fresh,
         session: context.session,
         gpu: context.gpu,
         sandboxName: context.sandboxName,
@@ -75,8 +81,7 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeProviderModelSelectedContext(context, {
           session: providerInferenceResult.session,
           sandboxName: providerInferenceResult.sandboxName,
           model: providerInferenceResult.model,
@@ -88,7 +93,7 @@ export function createCoreOnboardFlowPhases<
           preferredInferenceApi: providerInferenceResult.preferredInferenceApi,
           nimContainer: providerInferenceResult.nimContainer,
           webSearchConfig: providerInferenceResult.webSearchConfig,
-        },
+        }),
         result: providerInferenceResult.stateResults,
       };
     },
@@ -97,9 +102,7 @@ export function createCoreOnboardFlowPhases<
   const sandboxPhase: OnboardSequencePhase<Context> = {
     state: "sandbox",
     async run(context) {
-      if (!context.model || !context.provider || !context.sandboxGpuConfig) {
-        throw new Error("Onboarding state is incomplete before sandbox setup.");
-      }
+      assertProviderSelectedContext(context, "sandbox setup");
       const sandboxStateResult = await handleSandboxState({
         resume: context.resume,
         fresh: context.fresh,
@@ -123,14 +126,13 @@ export function createCoreOnboardFlowPhases<
       });
 
       return {
-        context: {
-          ...context,
+        context: mergeSandboxCreatedContext(context, {
           session: sandboxStateResult.session,
           sandboxName: sandboxStateResult.sandboxName,
-          webSearchConfig: sandboxStateResult.webSearchConfig ?? null,
+          webSearchConfig: sandboxStateResult.webSearchConfig,
           selectedMessagingChannels: sandboxStateResult.selectedMessagingChannels,
           webSearchSupported: sandboxStateResult.webSearchSupported,
-        },
+        }),
         result: sandboxStateResult.stateResult,
       };
     },
@@ -146,20 +148,36 @@ export async function runCoreOnboardFlowSlice<Context extends OnboardFlowContext
   resume: boolean;
   recordStateResult(result: OnboardStateResult): Promise<unknown>;
 }): Promise<OnboardMachineRunnerResult<Context>> {
-  // Compatibility bridge for live host glue while legacy step helpers remain a
-  // second machine snapshot writer. OnboardRuntimeBoundary records skipped
-  // stale/already-reached transition results from handlers whose source state
-  // was advanced by markStepStarted()/markStepComplete() in the durable session.
-  // Keep resume and ahead-state sessions here so provider/sandbox repair checks
-  // still run. Remove this path once legacy step helpers no longer advance
-  // session.machine and handler FSM results are the only transition source.
+  // Compatibility bridge for live resume repair when durable machine snapshots
+  // are already downstream of this slice even though provider/sandbox
+  // repair/backstop checks must still re-run. Those ahead-state snapshots can
+  // come from legacy/test step mutation that explicitly opts into
+  // `updateMachine === true` or from repaired-resume replay of persisted
+  // sessions. This slice cannot eliminate that source locally because the
+  // repair/backstop checks are still modeled as imperative resume work rather
+  // than strict FSM recovery states. The tolerated downstream family includes
+  // sandbox branch states and the final slice handoff states: openclaw,
+  // agent_setup, policies, finalizing, and post_verify. Phase tests cover
+  // ahead-state resume and terminal-state rejection; remove this fallback once
+  // those checks are strict FSM recovery states and legacy machine step mutation
+  // is gone.
   return runLiveOnboardFlowSlice({
     context: options.context,
     runtime: options.runtime,
     phases: options.phases,
-    resume: options.resume,
     runWhenState: ["provider_selection"],
-    compatibilityWhenState: ["inference", "sandbox", "openclaw", "agent_setup"],
+    compatibilityWhenState: options.resume
+      ? [
+          "provider_selection",
+          "inference",
+          "sandbox",
+          "openclaw",
+          "agent_setup",
+          "policies",
+          "finalizing",
+          "post_verify",
+        ]
+      : ["inference", "sandbox", "openclaw", "agent_setup"],
     runSlice: runCoreOnboardFlowSequence,
     applyCompatibleResult: options.recordStateResult,
   });

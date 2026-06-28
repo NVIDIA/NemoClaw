@@ -15,6 +15,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Live Vitest migration for test/e2e/test-openclaw-skill-cli-e2e.sh.
@@ -160,7 +161,7 @@ runOpenClawSkillCliTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "Docker is available before install/onboard",
-        "NVIDIA_API_KEY is present and nvapi-prefixed",
+        "NVIDIA_INFERENCE_API_KEY is staged as the compatible endpoint credential",
         "install.sh creates/recreates a real OpenClaw sandbox",
         "OPENCLAW_HOME, OPENCLAW_STATE_DIR, and OPENCLAW_WORKSPACE_DIR reach the sandbox runtime shell",
         "openclaw skills install <path> accepts a non-managed source directory inside the sandbox",
@@ -171,8 +172,8 @@ runOpenClawSkillCliTest(
       ],
     });
 
-    const apiKey = secrets.required("NVIDIA_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_API_KEY must start with nvapi-").toBe(true);
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     const docker = await host.command("docker", ["info"], {
       artifactName: "prereq-docker-info-openclaw-skill-cli",
@@ -201,7 +202,7 @@ runOpenClawSkillCliTest(
         artifactName: "install-and-onboard-openclaw-skill-cli",
         cwd: REPO_ROOT,
         env: testEnv(home, {
-          NVIDIA_API_KEY: apiKey,
+          ...hosted.env,
           NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
           NEMOCLAW_RECREATE_SANDBOX: "1",
         }),

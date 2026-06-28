@@ -205,6 +205,7 @@ network_policies:
         "  telegram: {}",
         "  discord: {}",
         "  slack: {}",
+        "  teams: {}",
         "  wechat_bridge: {}",
         "",
       ].join("\n"),
@@ -235,6 +236,7 @@ network_policies:
     expect(policyNames?.has("discord")).toBe(true);
     expect(policyNames?.has("telegram")).toBe(false);
     expect(policyNames?.has("slack")).toBe(false);
+    expect(policyNames?.has("teams")).toBe(false);
     expect(policyNames?.has("wechat_bridge")).toBe(false);
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
@@ -276,5 +278,19 @@ network_policies:
     expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
     expect(prepared.policyPath).not.toBe(basePolicyPath);
     expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("does not merge OpenClaw OTEL policy at create time for terminal agents", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+    expect(prepared.cleanup).toBeUndefined();
   });
 });

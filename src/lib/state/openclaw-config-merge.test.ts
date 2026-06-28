@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { mergeOpenClawRestoredConfig } from "../../../dist/lib/state/openclaw-config-merge";
+import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge";
 
 describe("mergeOpenClawRestoredConfig", () => {
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {
@@ -56,6 +56,28 @@ describe("mergeOpenClawRestoredConfig", () => {
       customAgents: { researcher: { prompt: "be thorough" } },
     });
     expect((merged as { channels: Record<string, unknown> }).channels.slack).toBeUndefined();
+  });
+
+  it("keeps the rebuilt gateway section — including the reload pin — over the backup's (#4710)", () => {
+    // gateway.reload.mode="hot" is what keeps the in-sandbox gateway from
+    // SIGUSR1-restarting itself out from under the nemoclaw-start respawn
+    // loop. A backup taken before the pin existed (or carrying a different
+    // mode) must not reintroduce restart-mode reloads on restore.
+    const merged = mergeOpenClawRestoredConfig(
+      {
+        gateway: {
+          auth: { token: "stale-token" },
+          reload: { mode: "hybrid" },
+          controlUi: { allowInsecureAuth: true },
+        },
+      },
+      { gateway: { auth: { token: "fresh-token" }, reload: { mode: "hot" } } },
+    ) as { gateway: unknown };
+
+    expect(merged.gateway).toEqual({
+      auth: { token: "fresh-token" },
+      reload: { mode: "hot" },
+    });
   });
 
   it("does not resurrect managed channels when the rebuilt config omits channels", () => {

@@ -96,7 +96,7 @@ process.stdout.write(JSON.stringify(calls));
     encoding: "utf8",
     env: {
       ...process.env,
-      PROBES_MODULE: path.join(process.cwd(), "dist/lib/inference/onboard-probes.js"),
+      PROBES_MODULE: path.join(process.cwd(), "src/lib/inference/onboard-probes.ts"),
       SMOKE_INVOCATIONS: JSON.stringify(invocations),
       VITEST: "false",
     },

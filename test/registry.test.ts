@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
@@ -14,7 +14,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
 const require = createRequire(import.meta.url);
-const registry = require("../dist/lib/state/registry");
+const registry = require("../src/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
@@ -69,16 +69,24 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("alpha");
   });
 
-  it("stores provided model/provider at registration time", () => {
+  it("stores durable inference metadata at registration time", () => {
     registry.registerSandbox({
       name: "alpha",
       gpuEnabled: false,
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
     });
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(data.sandboxes.alpha.model).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
+    expect(data.sandboxes.alpha.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(data.sandboxes.alpha.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(data.sandboxes.alpha.preferredInferenceApi).toBe("openai-completions");
+    expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
@@ -102,6 +110,111 @@ describe("registry", () => {
     // The second registration must not retarget the first sandbox's binding.
     expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
     expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
+  it("registry serialization and update strip recoveredFromGateway display marker (#5714)", () => {
+    // The transient #5714 display markers must never reach sandboxes.json even
+    // if a caller force-passes one through updateSandbox(). They are not part of
+    // the durable SandboxEntry type; serializeSandboxEntryForDisk strips them.
+    registry.registerSandbox({ name: "alpha", model: "m", provider: "p" });
+    registry.updateSandbox("alpha", {
+      policies: ["npm"],
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.policies).toEqual(["npm"]);
+    expect(data.sandboxes.alpha.recoveredFromGateway).toBeUndefined();
+    expect(data.sandboxes.alpha.livePhase).toBeUndefined();
+  });
+
+  it("normalizes configured inference fields into a discriminated view", () => {
+    const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
+    const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
+    const missingModel = { name: "gamma", provider: "nvidia-prod", model: null };
+    const blankProvider = { name: "delta", provider: "", model: "nvidia/test" };
+    const blankModel = { name: "epsilon", provider: "nvidia-prod", model: "   " };
+
+    expect(registry.getSandboxEntryInference(configured)).toEqual({
+      kind: "configured",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(registry.getSandboxEntryInference(missingProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
+  });
+
+  it("normalizes gateway binding fields into a discriminated view", () => {
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "alpha",
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-name", gatewayPort: 8080 }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({ name: "missing-port", gatewayName: "nemoclaw" }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "invalid-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 0,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "too-high-port",
+        gatewayName: "nemoclaw",
+        gatewayPort: 65536,
+      }),
+    ).toEqual({ kind: "missing" });
+    expect(
+      registry.getSandboxEntryGatewayBinding({
+        name: "blank-gateway",
+        gatewayName: "",
+        gatewayPort: 8080,
+      }),
+    ).toEqual({ kind: "missing" });
+  });
+
+  it("normalizes sandbox entries without mutating the raw registry entry", () => {
+    const raw = {
+      name: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 8080,
+    };
+
+    const normalized = registry.normalizeSandboxEntryView(raw);
+
+    expect(normalized).toEqual({
+      name: "alpha",
+      raw,
+      inference: { kind: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+      gateway: { kind: "registered", gatewayName: "nemoclaw", gatewayPort: 8080 },
+    });
+    expect(normalized.raw).toBe(raw);
+  });
+
+  it("normalizes invalid typed fields to missing views", () => {
+    const normalized = registry.normalizeSandboxEntryView({
+      name: "invalid",
+      provider: "",
+      model: "nvidia/test",
+      gatewayName: "nemoclaw",
+      gatewayPort: 65536,
+    });
+
+    expect(normalized.inference).toEqual({ kind: "unconfigured" });
+    expect(normalized.gateway).toEqual({ kind: "missing" });
   });
 
   it("first registered becomes default", () => {
@@ -602,7 +715,7 @@ describe("advisory file locking", () => {
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
     const registryPath = path.resolve(
-      path.join(import.meta.dirname, "..", "dist", "lib", "state", "registry.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
     );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes
