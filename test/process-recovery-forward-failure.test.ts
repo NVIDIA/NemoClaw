@@ -7,9 +7,11 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkAndRecoverSandboxProcesses } from "../dist/lib/actions/sandbox/process-recovery.js";
 
-const requireDist = createRequire(import.meta.url);
+const requireSource = createRequire(import.meta.url);
+const { checkAndRecoverSandboxProcesses } = requireSource(
+  "../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -77,11 +79,11 @@ function compactTeamsMessagingPlan(port = "3978") {
 
 describe("checkAndRecoverSandboxProcesses primary forward failure", () => {
   it("reports failure when a messaging forward cannot recover even if the primary is healthy", () => {
-    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
-    const registry = requireDist("../dist/lib/state/registry.js");
-    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireDist("node:child_process");
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
+    const registry = requireSource("../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+    const childProcess = requireSource("node:child_process");
 
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -122,11 +124,11 @@ beta  127.0.0.1  18789  12345  running`,
   });
 
   it("reports failure when the primary forward cannot recover even if secondary forwards recover", () => {
-    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
-    const registry = requireDist("../dist/lib/state/registry.js");
-    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireDist("node:child_process");
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.ts");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.ts");
+    const registry = requireSource("../src/lib/state/registry.ts");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.ts");
+    const childProcess = requireSource("node:child_process");
     let teamsForwardStarted = false;
 
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({

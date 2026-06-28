@@ -23,6 +23,11 @@ CONTEXT_SECRET_VALUE_PATTERN='[A-Za-z0-9_.+\/=-]{10,}'
 # Upstream dcode does not expose a stable machine-readable TUI ready marker.
 # Keep this localized heuristic prompt-shaped; do not match banner-only text.
 TUI_READY_PATTERN='(what would you like|what do you want|enter (your )?(task|message|prompt)|describe (the )?(task|change)|how can i help)'
+# New dcode homes enter a first-run modal before the coding prompt. Match only
+# the pinned upstream name screen so Expect can take its documented skip path.
+# deepagents-code 0.1.12 has no non-interactive first-run switch for its name screen.
+# Remove this compatibility path once the pinned TUI exposes a stable skip or ready contract.
+TUI_ONBOARDING_PATTERN='(your name \(optional\)|what should deep agents call you)'
 SENSITIVE_CAPTURE_FILES=()
 
 ok() { printf '%s\n' "${PREFIX}: OK ($*)"; }
@@ -138,8 +143,11 @@ make_capture_dir() {
 
 run_tui_expect() {
   local raw_capture_file="$1"
+  local marker_capture_file="$2"
   env \
     NEMOCLAW_TUI_CAPTURE="$raw_capture_file" \
+    NEMOCLAW_TUI_MARKERS="$marker_capture_file" \
+    NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN" \
     NEMOCLAW_TUI_READY_PATTERN="$TUI_READY_PATTERN" \
     NEMOCLAW_TUI_SANDBOX_NAME="$SANDBOX_NAME" \
     NEMOCLAW_TUI_TIMEOUT="$TUI_TIMEOUT" \
@@ -147,44 +155,108 @@ run_tui_expect() {
 set timeout $env(NEMOCLAW_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_TUI_SANDBOX_NAME)
 set capture $env(NEMOCLAW_TUI_CAPTURE)
+set markers $env(NEMOCLAW_TUI_MARKERS)
+set onboarding_pattern $env(NEMOCLAW_TUI_ONBOARDING_PATTERN)
 set ready_pattern $env(NEMOCLAW_TUI_READY_PATTERN)
 log_file -a $capture
 
+proc append_marker {markers marker} {
+  set fh [open $markers a]
+  puts $fh $marker
+  close $fh
+}
+
 set cmd [list openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; dcode; status=$?; printf "\nNEMOCLAW_TUI_EXIT:%s\n" "$status"}]
 spawn {*}$cmd
+set saw_onboarding 0
+set ready_match ""
 expect {
   -nocase -re $ready_pattern {
-    puts "\nNEMOCLAW_TUI_READY"
-    send -- "\003"
+    set ready_match $expect_out(0,string)
+  }
+  -nocase -re $onboarding_pattern {
+    append_marker $markers "$expect_out(0,string)"
+    append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"
+    puts "\nNEMOCLAW_TUI_ONBOARDING_SKIPPED"
+    send -- "\033"
+    set saw_onboarding 1
   }
   timeout {
+    append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
     puts "\nNEMOCLAW_TUI_TIMEOUT"
     send -- "\003"
     exit 20
   }
   eof {
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
     exit 21
   }
 }
 
+if {$saw_onboarding} {
+  expect {
+    -nocase -re $ready_pattern {
+      set ready_match $expect_out(0,string)
+    }
+    timeout {
+      append_marker $markers "NEMOCLAW_TUI_TIMEOUT"
+      puts "\nNEMOCLAW_TUI_TIMEOUT"
+      send -- "\003"
+      exit 20
+    }
+    eof {
+      append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"
+      puts "\nNEMOCLAW_TUI_EOF_BEFORE_READY"
+      exit 21
+    }
+  }
+}
+
+append_marker $markers "$ready_match"
+append_marker $markers "NEMOCLAW_TUI_READY"
+puts "\nNEMOCLAW_TUI_READY"
+# Idle dcode arms quit on the first Ctrl-C and exits on the second.
+send -- "\003"
+after 250
+catch {send -- "\003"}
+
 set timeout 20
 expect {
   -re {NEMOCLAW_TUI_EXIT:([0-9]+)} {
+    append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     puts "\nNEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"
     exit 0
   }
   timeout {
+    append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"
     puts "\nNEMOCLAW_TUI_EXIT_TIMEOUT"
     send -- "\003"
     exit 22
   }
   eof {
+    append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"
     puts "\nNEMOCLAW_TUI_EOF_BEFORE_EXIT"
     exit 23
   }
 }
 EXPECT
+}
+
+print_sanitized_capture_excerpt() {
+  local plain_capture_file="$1"
+  if [ ! -r "$plain_capture_file" ]; then
+    info "sanitized TUI capture unavailable for diagnostics"
+    return
+  fi
+  if contains_secret <"$plain_capture_file"; then
+    info "sanitized TUI capture omitted because secret-shaped data remains"
+    return
+  fi
+
+  printf '%s\n' "${PREFIX}: sanitized capture excerpt (last 20000 bytes):" >&2
+  tail -c 20000 -- "$plain_capture_file" >&2
+  printf '\n%s\n' "${PREFIX}: end sanitized capture excerpt" >&2
 }
 
 assert_clean_exit_code() {
@@ -244,26 +316,33 @@ main() {
     exit 1
   fi
 
-  local capture_dir raw_capture_file expect_log_file combined_capture_file plain_capture_file
+  local capture_dir raw_capture_file marker_capture_file expect_log_file combined_capture_file plain_capture_file
   capture_dir="$(make_capture_dir)"
   raw_capture_file="${capture_dir}/${PREFIX}.raw.log"
+  marker_capture_file="${capture_dir}/${PREFIX}.markers.log"
   expect_log_file="${capture_dir}/${PREFIX}.expect.log"
   combined_capture_file="${capture_dir}/${PREFIX}.combined.log"
   plain_capture_file="${capture_dir}/${PREFIX}.sanitized.log"
-  SENSITIVE_CAPTURE_FILES=("$raw_capture_file" "$expect_log_file" "$combined_capture_file")
+  SENSITIVE_CAPTURE_FILES=(
+    "$raw_capture_file"
+    "$marker_capture_file"
+    "$expect_log_file"
+    "$combined_capture_file"
+  )
   : >"$raw_capture_file"
+  : >"$marker_capture_file"
   : >"$expect_log_file"
 
   info "Running Deep Agents Code TUI startup check in sandbox: $SANDBOX_NAME"
   info "Capture directory: $capture_dir"
 
-  set +e
-  run_tui_expect "$raw_capture_file" >"$expect_log_file" 2>&1
   local expect_rc
+  set +e
+  run_tui_expect "$raw_capture_file" "$marker_capture_file" >"$expect_log_file" 2>&1
   expect_rc=$?
   set -e
 
-  cat "$raw_capture_file" "$expect_log_file" >"$combined_capture_file"
+  cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file" >"$combined_capture_file"
   strip_terminal_control_sequences <"$combined_capture_file" >"$plain_capture_file"
   local secret_detected=0
   if contains_secret <"$plain_capture_file"; then
@@ -281,6 +360,7 @@ main() {
     pass "finite expect harness reached startup and observed exit"
   else
     fail_test "finite expect harness exited ${expect_rc}"
+    print_sanitized_capture_excerpt "$plain_capture_file"
   fi
 
   if grep -q "NEMOCLAW_TUI_READY" "$plain_capture_file" && is_tui_ready_capture <"$plain_capture_file"; then

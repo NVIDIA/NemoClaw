@@ -7,19 +7,16 @@
 // Without this gate, a destructive sandbox rebuild can run and fail late at
 // Dockerfile patching.
 //
-// Why dist + vi.spyOn (matches policy-channel-conflict.test.ts): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`. In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`. We `require()` the COMPILED module + its real compiled
-// dependency modules from dist/ (one shared require cache) and `vi.spyOn`
-// the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");

@@ -8,7 +8,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const SHIELDS_DIST = path.resolve("dist/lib/shields/index.js");
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+const SHIELDS_SOURCE = path.join(REPO_ROOT, "src", "lib", "shields", "index.ts");
+const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
 
 describe("shields command exit serialization", () => {
   it("releases the token-bound lock before a repeated shields-down exits the process", () => {
@@ -30,12 +32,14 @@ describe("shields command exit serialization", () => {
       const result = spawnSync(
         process.execPath,
         [
+          "--require",
+          SOURCE_REQUIRE_HOOK,
           "-e",
-          `require(${JSON.stringify(SHIELDS_DIST)}).shieldsDown("alpha", { processToken: ${JSON.stringify("a".repeat(32))} });`,
+          `require(${JSON.stringify(SHIELDS_SOURCE)}).shieldsDown("alpha", { processToken: ${JSON.stringify("a".repeat(32))} });`,
         ],
         {
           encoding: "utf-8",
-          env: { ...process.env, HOME: home, NEMOCLAW_NON_INTERACTIVE: "1" },
+          env: { ...process.env, HOME: home, NEMOCLAW_NON_INTERACTIVE: "1", NODE_OPTIONS: "" },
           timeout: 10_000,
         },
       );

@@ -141,7 +141,7 @@ export const VLLM_MODELS: readonly VllmModelDef[] = [
       "--max-cudagraph-capture-size",
       "128",
       "--speculative-config",
-      `'{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
+      `'{"method":"mtp","num_speculative_tokens":3}'`,
       "--max-num-batched-tokens",
       "8192",
       "--max-num-seqs",
@@ -214,8 +214,8 @@ export const VLLM_EXTRA_ARGS_ENV = "NEMOCLAW_VLLM_EXTRA_ARGS_JSON";
 /**
  * Look up the requested express-vLLM model from `NEMOCLAW_VLLM_MODEL`.
  * Returns `null` when the env var is empty so the caller can fall back to
- * the per-platform profile default (Station prefers Qwen3.6-27B, Spark the
- * Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
+ * the per-platform profile default (Station prefers DeepSeek V4 Flash, Spark
+ * the Qwen3.6-35B-A3B NVFP4 checkpoint, and the generic Linux profile prefers
  * Nemotron-Nano-4B for VRAM headroom).
  *
  * Match is case-insensitive against either the `envValue` slug or the full

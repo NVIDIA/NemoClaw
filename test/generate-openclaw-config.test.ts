@@ -356,13 +356,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18789"]);
   });
 
-  it("#3256: emits gateway.port from a non-default CHAT_UI_URL port", () => {
+  it("emits gateway.port from a non-default CHAT_UI_URL port (#3256)", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18790" });
     expect(config.gateway.port).toBe(18790);
     expect(config.gateway.controlUi.allowedOrigins).toEqual(["http://127.0.0.1:18790"]);
   });
 
-  it("#3256: lets NEMOCLAW_DASHBOARD_PORT drive gateway.port when set", () => {
+  it("lets NEMOCLAW_DASHBOARD_PORT drive gateway.port when set (#3256)", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "",
       NEMOCLAW_DASHBOARD_PORT: "18790",
@@ -402,7 +402,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://remote.example");
   });
 
-  it("includes portless origin for reverse-proxy access (Fixes #3000)", () => {
+  it("includes a portless origin for reverse-proxy access (#3000)", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-abc123.brevlab.com:18789",
     });
@@ -616,7 +616,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
-  it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
+  it("routes Discord gateway traffic through OpenClaw's managed proxy (#3894)", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -844,7 +844,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.agents.defaults.heartbeat).toEqual({ every: "30m" });
   });
 
-  it("disables heartbeat when set to 0m (NemoClaw#2880)", () => {
+  it("disables heartbeat when set to 0m (#2880)", () => {
     const config = runConfigScript({ NEMOCLAW_AGENT_HEARTBEAT_EVERY: "0m" });
     expect(config.agents.defaults.heartbeat).toEqual({ every: "0m" });
   });
@@ -1375,23 +1375,21 @@ describe("generate-openclaw-config.mts: config generation", () => {
     }
   }, 20_000);
 
-  // #4780: Nemotron generates invalid JS for OpenClaw's native code-based tool
-  // search (`tool_search_code`): CommonJS `require`, `openclaw.tools.search`
-  // called with an object instead of a string, `tool_describe`/`tool_call`
-  // invoked with bad ids. The run still succeeds via fallback, but the logs are
-  // flooded with `[tools] tool_search_code failed` errors. Disabling native
-  // tool search for this managed-inference route routes the model back to the
-  // structured tool-calling surface it handles correctly.
+  // #4780: Nemotron can generate invalid JS for OpenClaw's native
+  // `tool_search_code`. The Super and Ultra managed-inference manifests disable
+  // it so both models use the structured tool-calling surface they handle.
   it("disables native OpenClaw Tool Search for Nemotron managed inference (#4780)", () => {
-    const config = runConfigScript({
-      NEMOCLAW_MODEL: "nvidia/nemotron-3-super-120b-a12b",
-      NEMOCLAW_PROVIDER_KEY: "inference",
-      NEMOCLAW_PRIMARY_MODEL_REF: "inference/nvidia/nemotron-3-super-120b-a12b",
-      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
-      NEMOCLAW_INFERENCE_API: "openai-completions",
-    });
+    for (const model of ["nvidia/nemotron-3-super-120b-a12b", "nvidia/nvidia/nemotron-3-ultra"]) {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: model,
+        NEMOCLAW_PROVIDER_KEY: "inference",
+        NEMOCLAW_PRIMARY_MODEL_REF: `inference/${model}`,
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+      });
 
-    expect(config.tools?.toolSearch).toBe(false);
+      expect(config.tools?.toolSearch, model).toBe(false);
+    }
   });
 
   it("does not disable native Tool Search for Nemotron on non-matching routes (#4780)", () => {
@@ -1818,13 +1816,13 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.plugins.entries.xai.enabled).toBe(false);
   });
 
-  it("#4246: enables the discord plugin entry when Discord channel is configured", () => {
+  it("enables the discord plugin entry when Discord is configured (#4246)", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.plugins.entries.discord).toEqual({ enabled: true });
   });
 
-  it("#4246: omits the discord plugin entry when Discord channel is not configured", () => {
+  it("omits the discord plugin entry when Discord is not configured (#4246)", () => {
     const config = runConfigScript();
     expect(config.plugins.entries.discord).toBeUndefined();
   });

@@ -8,8 +8,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const INDEX_MODULE = "../../../dist/lib/shields/index.js";
+const requireSource = createRequire(import.meta.url);
+const INDEX_MODULE = "./index.js";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const LOCK_TOKEN = "a".repeat(64);
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
@@ -24,7 +24,7 @@ const CURRENT_GUARD_HELP = [
   "--rollback-shields-mode",
 ].join(" ");
 
-type ShieldsModule = typeof import("../../../dist/lib/shields/index");
+type ShieldsModule = typeof import("./index");
 
 function hermesTarget() {
   return {
@@ -58,17 +58,17 @@ describe("legacy Hermes shields compatibility", () => {
     homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-legacy-hermes-"));
     vi.stubEnv("HOME", homeDir);
     spies = [];
-    delete require.cache[requireDist.resolve(INDEX_MODULE)];
+    delete require.cache[requireSource.resolve(INDEX_MODULE)];
 
-    const runner = requireDist("../../../dist/lib/runner.js");
-    const policy = requireDist("../../../dist/lib/policy/index.js");
-    const config = requireDist("../../../dist/lib/sandbox/config.js");
-    const privilegedExec = requireDist("../../../dist/lib/sandbox/privileged-exec.js");
-    const dockerExec = requireDist("../../../dist/lib/adapters/docker/exec.js");
-    const stateDirLock = requireDist("../../../dist/lib/shields/state-dir-lock.js");
-    const audit = requireDist("../../../dist/lib/shields/audit.js");
-    const permissiveRuntime = requireDist("../../../dist/lib/shields/permissive-runtime.js");
-    const tempFiles = requireDist("../../../dist/lib/onboard/temp-files.js");
+    const runner = requireSource("../runner.js");
+    const policy = requireSource("../policy/index.js");
+    const config = requireSource("../sandbox/config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
+    const stateDirLock = requireSource("./state-dir-lock.js");
+    const audit = requireSource("./audit.js");
+    const permissiveRuntime = requireSource("./permissive-runtime.js");
+    const tempFiles = requireSource("../onboard/temp-files.js");
 
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     dockerExecSpy = vi.spyOn(dockerExec, "dockerExecFileSync");
@@ -107,13 +107,13 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(console, "error").mockImplementation(() => undefined),
     );
 
-    shields = requireDist(INDEX_MODULE);
+    shields = requireSource(INDEX_MODULE);
   });
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
     vi.unstubAllEnvs();
-    delete require.cache[requireDist.resolve(INDEX_MODULE)];
+    delete require.cache[requireSource.resolve(INDEX_MODULE)];
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 

@@ -11,7 +11,7 @@ import {
   normalizeReadModesForDockerCopy,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} from "../dist/lib/sandbox/build-context";
+} from "../src/lib/sandbox/build-context";
 
 describe("sandbox build context staging", () => {
   function writeBuildContextFixture(sourceRoot: string) {

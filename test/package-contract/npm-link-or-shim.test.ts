@@ -5,11 +5,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-import { DEV_SHIM_MARKER } from "../src/lib/domain/dev/npm-link-or-shim";
+import { DEV_SHIM_MARKER } from "../../src/lib/domain/dev/npm-link-or-shim";
 
-const repoRoot = path.join(import.meta.dirname, "..");
+const repoRoot = path.join(import.meta.dirname, "../..");
 const scriptUnderTest = path.join(repoRoot, "scripts", "npm-link-or-shim.sh");
 const compiledCli = path.join(repoRoot, "dist", "nemoclaw.js");
 

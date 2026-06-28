@@ -16,7 +16,7 @@ import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
-import * as destroy from "../dist/lib/actions/sandbox/destroy.js";
+import * as destroy from "../src/lib/actions/sandbox/destroy.js";
 
 type OpenshellResult = { status: number | null };
 
@@ -106,7 +106,7 @@ describe("wipeSandboxState (#5449)", () => {
   // shell-quoted but fed straight into `rm -rf -- ...` inside `cd ${dir}`,
   // where the relative form would traverse outside the agent config dir.
   // Validate paths against the resolved config dir and skip with a warning.
-  it("skips a state_dir whose resolved path escapes the agent config dir (#5455 PRA-6)", () => {
+  it("skips a state_dir whose resolved path escapes the agent config dir for PRA-6 (#5455)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
@@ -138,7 +138,7 @@ describe("wipeSandboxState (#5449)", () => {
     }
   });
 
-  it("skips a state_file whose resolved path escapes the agent config dir (#5455 PRA-6)", () => {
+  it("skips a state_file whose resolved path escapes the agent config dir for PRA-6 (#5455)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
@@ -168,7 +168,7 @@ describe("wipeSandboxState (#5449)", () => {
   // script intact, single-quoted, with no expansion or word-splitting risk.
   // shellQuote already handles this; the assertion locks the contract in so a
   // future refactor of the targets-construction can't accidentally drop it.
-  it("shell-quotes accepted manifest paths so metacharacters cannot break out of `rm -rf` (#5455 PRA-3)", () => {
+  it("shell-quotes accepted manifest paths so metacharacters cannot break out of `rm -rf` for PRA-3 (#5455)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },
@@ -209,7 +209,7 @@ describe("wipeSandboxState (#5449)", () => {
       dir: "/sandbox/.openclaw/../../etc",
       label: "absolute path escapes after agent subdir via `..`",
     },
-  ])("refuses to wipe when the agent config dir is unsafe ($label) (#5455 PRA-2)", ({ dir }) => {
+  ])("refuses to wipe when the $label agent config dir is unsafe for PRA-2 (#5455)", ({ dir }) => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir },
@@ -239,7 +239,7 @@ describe("wipeSandboxState (#5449)", () => {
   // re-onboard must NOT inherit USER.md from the prior sandbox. The proof
   // here is that the wipe script targets workspace/ under the agent config
   // dir AND contains no path escape that could rm -rf outside it.
-  it("targets workspace/ under the agent config dir and never contains a `..` escape (#5455 PRA-7)", () => {
+  it("targets workspace/ under the agent config dir without a `..` escape for PRA-7 (#5455)", () => {
     const { deps, runOpenshell } = buildDeps();
 
     destroy.wipeSandboxState("test-sb", deps as never);
@@ -269,7 +269,7 @@ describe("wipeSandboxState (#5449)", () => {
   // clean state. Skips on Windows because the `cd ... && rm -rf` script
   // is POSIX-shell-only.
   it.skipIf(process.platform === "win32")(
-    "actually deletes USER.md / SOUL.md when the constructed script is executed (#5455 PRA-1/PRA-2 behavioral)",
+    "deletes USER.md and SOUL.md when the constructed script executes for PRA-1 and PRA-2 (#5455)",
     () => {
       const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-wipe-behavioral-"));
       try {
@@ -390,7 +390,7 @@ describe("wipeSandboxState (#5449)", () => {
       stateFiles: [{ path: "config.toml" }, { path: "hooks.json" }],
       label: "langchain-deepagents-code",
     },
-  ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir (#5455 Ultra PRA-2)", ({
+  ])("wipes the shipped $label manifest shape under its own /sandbox/<agent> dir for Ultra PRA-2 (#5455)", ({
     agent,
     configDir,
     stateDirs,
@@ -418,7 +418,7 @@ describe("wipeSandboxState (#5449)", () => {
   // state_dirs and state_files must still issue the wipe so the multi-agent
   // `workspace-*` glob runs, but the `rm -rf --` argv must not collapse into
   // a syntactically broken command.
-  it("issues a syntactically valid wipe even when state_dirs and state_files are both empty (#5455 Ultra PRA-2)", () => {
+  it("issues a syntactically valid wipe with empty state_dirs and state_files for Ultra PRA-2 (#5455)", () => {
     const { deps, runOpenshell } = buildDeps({
       loadAgent: vi.fn(() => ({
         configPaths: { dir: "/sandbox/.openclaw" },

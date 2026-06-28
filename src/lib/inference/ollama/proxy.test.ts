@@ -5,9 +5,9 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const PROXY_DIST = require.resolve("../../../../dist/lib/inference/ollama/proxy");
-const LOCAL_DIST = require.resolve("../../../../dist/lib/inference/local");
-const CREDS_DIST = require.resolve("../../../../dist/lib/credentials/store");
+const PROXY_DIST = require.resolve("./proxy");
+const LOCAL_DIST = require.resolve("../local");
+const CREDS_DIST = require.resolve("../../credentials/store");
 
 interface MockSetup {
   installed: string[];
@@ -15,7 +15,7 @@ interface MockSetup {
 }
 
 function loadProxyWithMocks(setup: MockSetup): {
-  proxy: typeof import("../../../../dist/lib/inference/ollama/proxy");
+  proxy: typeof import("./proxy");
   promptArgs: string[];
   restore: () => void;
 } {

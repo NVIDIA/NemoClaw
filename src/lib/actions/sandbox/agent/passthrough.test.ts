@@ -402,7 +402,7 @@ describe("runAgentPassthrough", () => {
     expect(exit).toHaveBeenCalledWith(2);
   });
 
-  it("prints recovery hints with exit 1 before selector rejection when the sandbox phase is non-Ready (covers the literal #5655 stopped-sandbox repro `agent -m ping`)", async () => {
+  it("prints recovery hints with exit 1 before selector rejection for the literal stopped-sandbox repro `agent -m ping` (#5655)", async () => {
     ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, exit, proc } = makeProcMock();

@@ -8,14 +8,16 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
+
+const requireSource = createRequire(import.meta.url);
+const {
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
   executeSandboxExecCommand,
   resolveSandboxDashboardPort,
-} from "../dist/lib/actions/sandbox/process-recovery.js";
-
-const requireDist = createRequire(import.meta.url);
+} = requireSource(
+  "../src/lib/actions/sandbox/process-recovery.ts",
+) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -255,7 +257,7 @@ describe("classifyForwardHealthWithReachability", () => {
 
 describe("executeSandboxExecCommand", () => {
   it("parses stdout-framed root exec output after the startup marker", () => {
-    const childProcess = requireDist("node:child_process");
+    const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: [
@@ -274,7 +276,7 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("rejects a non-frame preamble that contains the startup marker", () => {
-    const childProcess = requireDist("node:child_process");
+    const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: [
@@ -292,7 +294,7 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("passes a newline-free Hermes validator payload to OpenShell", () => {
-    const childProcess = requireDist("node:child_process");
+    const childProcess = requireSource("node:child_process");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
@@ -316,8 +318,8 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
-    const childProcess = requireDist("node:child_process");
-    const dockerExec = requireDist("../dist/lib/adapters/docker/exec.js");
+    const childProcess = requireSource("node:child_process");
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "OpenShell transport preamble\n",

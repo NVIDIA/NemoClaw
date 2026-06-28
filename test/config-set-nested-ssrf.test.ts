@@ -16,9 +16,9 @@ function restoreCachedModule(modulePath: string, previous: unknown): void {
 
 function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore {
   const priorPrivilegedExec = require.cache[privilegedExecPath];
-  const timerBoundLockPath = require.resolve("../dist/lib/shields/timer-bound-lock");
+  const timerBoundLockPath = require.resolve("../src/lib/shields/timer-bound-lock");
   const priorTimerBoundLock = require.cache[timerBoundLockPath];
-  const openClawConfigLockPath = require.resolve("../dist/lib/shields/openclaw-config-lock");
+  const openClawConfigLockPath = require.resolve("../src/lib/shields/openclaw-config-lock");
   const priorOpenClawConfigLock = require.cache[openClawConfigLockPath];
   requireCache[privilegedExecPath] = {
     id: privilegedExecPath,
@@ -79,10 +79,10 @@ function installMockPrivilegedExec(privilegedExecPath: string): MockGuardRestore
 
 describe("config set nested URL SSRF enforcement", () => {
   it("rejects nested object/array URL values that target private hosts", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -125,7 +125,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "https://api.nvidia.com/v1",
         fallback: ["https://example.com/v1", { internal: "http://localhost:8080/internal" }],
@@ -160,10 +160,10 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("validates the key before doing URL or DNS validation", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -210,7 +210,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
 
       await expect(
         configSet("sandbox-ssrf-test", {
@@ -243,10 +243,10 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("accepts nested object/array URL values when all are public", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -290,7 +290,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "https://93.184.216.34/v1",
         fallback: ["http://93.184.216.35/v1", { backup: "https://93.184.216.36/v2" }],
@@ -336,10 +336,10 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("ignores nested non-http URL-like strings and does not crash", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -382,7 +382,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         ftpUrl: "ftp://files.example.com",
         plainText: "not-a-url",
@@ -422,10 +422,10 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("recognizes mixed-case http and https schemes in nested values", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -468,7 +468,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "HTTP://93.184.216.34/v1",
         fallback: ["HtTpS://93.184.216.35/v2", { backup: "hTtP://93.184.216.36/v3" }],
@@ -507,10 +507,10 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("redacts credentials, query strings, and fragments in validation errors", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -553,7 +553,7 @@ describe("config set nested URL SSRF enforcement", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     try {
-      const { configSet } = require("../dist/lib/sandbox/config");
+      const { configSet } = require("../src/lib/sandbox/config");
       const nestedValue = JSON.stringify({
         primary: "http://user:pass@127.0.0.1:8080/private/path?token=secret#frag",
       });
@@ -600,11 +600,11 @@ describe("config set nested URL SSRF enforcement", () => {
   });
 
   it("records the config rotate-token audit action as rotate_token (not shields_down)", async () => {
-    const sandboxConfigPath = require.resolve("../dist/lib/sandbox/config");
-    const openshellPath = require.resolve("../dist/lib/adapters/openshell/client");
-    const shieldsAuditPath = require.resolve("../dist/lib/shields/audit");
-    const sessionPath = require.resolve("../dist/lib/state/onboard-session");
-    const credStorePath = require.resolve("../dist/lib/credentials/store");
+    const sandboxConfigPath = require.resolve("../src/lib/sandbox/config");
+    const openshellPath = require.resolve("../src/lib/adapters/openshell/client");
+    const shieldsAuditPath = require.resolve("../src/lib/shields/audit");
+    const sessionPath = require.resolve("../src/lib/state/onboard-session");
+    const credStorePath = require.resolve("../src/lib/credentials/store");
 
     const priorSandboxConfig = require.cache[sandboxConfigPath];
     const priorOpenshell = require.cache[openshellPath];
@@ -667,7 +667,7 @@ describe("config set nested URL SSRF enforcement", () => {
     process.env.ROTATE_NEW_TOKEN = "nvapi-rotated-value";
 
     try {
-      const { configRotateToken } = require("../dist/lib/sandbox/config");
+      const { configRotateToken } = require("../src/lib/sandbox/config");
 
       await expect(
         configRotateToken("rotate-test", { fromEnv: "ROTATE_NEW_TOKEN" }),

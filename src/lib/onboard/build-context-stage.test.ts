@@ -6,9 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { CUSTOM_BUILD_CONTEXT_WARN_BYTES } from "../../../dist/lib/onboard/custom-build-context";
-import { stageCreateSandboxBuildContext } from "../../../dist/lib/onboard/build-context-stage";
+import { stageCreateSandboxBuildContext } from "./build-context-stage";
+import { CUSTOM_BUILD_CONTEXT_WARN_BYTES } from "./custom-build-context";
 
 const tmpDirs: string[] = [];
 

@@ -134,7 +134,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
 };
 
 try {
-  const { lockAgentConfig } = require("./dist/lib/shields/index.js");
+  const { lockAgentConfig } = require("./src/lib/shields/index.ts");
   lockAgentConfig(
     "sandbox-pod",
     {

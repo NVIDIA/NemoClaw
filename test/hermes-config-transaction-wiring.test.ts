@@ -6,6 +6,8 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+const SOURCE_REQUIRE_HOOK = path.join(import.meta.dirname, "helpers", "onboard-script-mocks.cjs");
+
 describe("Hermes host config transaction wiring", () => {
   it("passes the exact read digest and serialized update to the sealed write transaction", () => {
     const rawConfig = "model:\n  default: trusted-model\n";
@@ -14,7 +16,7 @@ describe("Hermes host config transaction wiring", () => {
 const Module = require("node:module");
 const path = require("node:path");
 const root = process.cwd();
-const dist = (...parts) => path.join(root, "dist", "lib", ...parts);
+const source = (...parts) => "./" + path.join("src", "lib", ...parts);
 function installMock(filename, exports) {
   const resolved = require.resolve(filename);
   const replacement = new Module(resolved);
@@ -26,32 +28,32 @@ function installMock(filename, exports) {
 
 const rawConfig = ${JSON.stringify(rawConfig)};
 let captured = null;
-installMock(dist("runner.js"), { validateName: () => undefined, ROOT: root });
-installMock(dist("state", "registry.js"), {
+installMock(source("runner.js"), { validateName: () => undefined, ROOT: root });
+installMock(source("state", "registry.js"), {
   getSandbox: () => ({ name: "alpha", agent: "hermes" }),
 });
-installMock(dist("agent", "defs.js"), {
+installMock(source("agent", "defs.js"), {
   loadAgent: () => ({
     configPaths: { dir: "/sandbox/.hermes", configFile: "config.yaml", format: "yaml" },
   }),
 });
-installMock(dist("adapters", "openshell", "client.js"), {
+installMock(source("adapters", "openshell", "client.js"), {
   captureOpenshellCommand: () => ({ status: 0, output: rawConfig }),
   runOpenshellCommand: () => ({ status: 0 }),
 });
-installMock(dist("sandbox", "privileged-exec.js"), {
+installMock(source("sandbox", "privileged-exec.js"), {
   privilegedSandboxExecArgv: (sandboxName, command, stdin) => [
     "docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command,
   ],
 });
-installMock(dist("adapters", "docker", "exec.js"), {
+installMock(source("adapters", "docker", "exec.js"), {
   dockerExecFileSync: (argv, options) => {
     captured = { argv, options };
     return "updated=1\n";
   },
 });
 
-const config = require(dist("sandbox", "config.js"));
+const config = require(source("sandbox", "config.js"));
 const target = config.resolveAgentConfig("alpha");
 const parsed = config.readSandboxConfig("alpha", target);
 parsed.model.default = "trusted-model-v2";
@@ -59,9 +61,10 @@ config.writeSandboxConfig("alpha", target, parsed);
 process.stdout.write(JSON.stringify(captured));
 `;
 
-    const result = spawnSync(process.execPath, ["-e", script], {
+    const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, "-e", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
+      env: { ...process.env, NODE_OPTIONS: "" },
       timeout: 5000,
     });
 

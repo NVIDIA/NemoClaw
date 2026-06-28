@@ -11,8 +11,6 @@ const mocks = vi.hoisted(() => ({
   runDeployAction: vi.fn().mockResolvedValue(undefined),
   runOnboardAction: vi.fn().mockResolvedValue(undefined),
   runOpenshell: vi.fn(() => ({ status: 0 })),
-  runSetupAction: vi.fn().mockResolvedValue(undefined),
-  runSetupSparkAction: vi.fn().mockResolvedValue(undefined),
   version: vi.fn(),
 }));
 
@@ -26,8 +24,6 @@ vi.mock("./maintenance", () => ({
 }));
 vi.mock("./onboard", () => ({
   runOnboardAction: mocks.runOnboardAction,
-  runSetupAction: mocks.runSetupAction,
-  runSetupSparkAction: mocks.runSetupSparkAction,
 }));
 vi.mock("../adapters/openshell/runtime", () => ({ runOpenshell: mocks.runOpenshell }));
 vi.mock("./root-help", () => ({ help: mocks.help, version: mocks.version }));
@@ -39,8 +35,6 @@ import {
   runGarbageCollectImagesAction,
   runOnboardAction,
   runOpenshellProviderCommand,
-  runSetupAction,
-  runSetupSparkAction,
   runUpgradeSandboxesAction,
   setGlobalCliActionRuntimeHooksForTest,
   showRootHelp,
@@ -54,18 +48,14 @@ describe("global cli action facade", () => {
   });
 
   it("forwards onboarding, deploy, maintenance, and help actions", async () => {
-    await runOnboardAction(["--resume"]);
-    await runSetupAction(["--fresh"]);
-    await runSetupSparkAction(["--name", "alpha"]);
+    await runOnboardAction({ resume: true });
     await runDeployAction("gpu-alpha");
     await runBackupAllAction();
     await runGarbageCollectImagesAction({ dryRun: true });
     showRootHelp();
     showVersion();
 
-    expect(mocks.runOnboardAction).toHaveBeenCalledWith(["--resume"]);
-    expect(mocks.runSetupAction).toHaveBeenCalledWith(["--fresh"]);
-    expect(mocks.runSetupSparkAction).toHaveBeenCalledWith(["--name", "alpha"]);
+    expect(mocks.runOnboardAction).toHaveBeenCalledWith({ resume: true });
     expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
     expect(mocks.backupAll).toHaveBeenCalledWith();
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });

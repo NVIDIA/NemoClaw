@@ -5,11 +5,15 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RebuildSandbox =
-  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
+const rebuildModulePath = "./rebuild.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(rebuildModulePath);
+delete require.cache[requireDist.resolve(rebuildModulePath)];
 
 type RebuildFlowStep = {
   status: string;
@@ -157,28 +161,26 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const gatewayDrift = requireDist("../../../../dist/lib/adapters/openshell/gateway-drift.js");
-  const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-  const sandboxList = requireDist("../../../../dist/lib/openshell-sandbox-list.js");
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const agentDefs = requireDist("../../../../dist/lib/agent/defs.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const onboardMod = requireDist("../../../../dist/lib/onboard.js");
-  const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxState = requireDist("../../../../dist/lib/state/sandbox.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const destroy = requireDist("../../../../dist/lib/actions/sandbox/destroy.js");
-  const rebuildShields = requireDist("../../../../dist/lib/actions/sandbox/rebuild-shields.js");
-  const nim = requireDist("../../../../dist/lib/inference/nim.js");
-  const policies = requireDist("../../../../dist/lib/policy/index.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
-  const messagingHostForwardLifecycle = requireDist(
-    "../../../../dist/lib/actions/sandbox/messaging-host-forward-lifecycle.js",
-  );
-  const messaging = requireDist("../../../../dist/lib/messaging/index.js");
-  const shields = requireDist("../../../../dist/lib/shields/index.js");
+  const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+  const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const sandboxList = requireDist("../../openshell-sandbox-list.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentDefs = requireDist("../../agent/defs.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const onboardMod = requireDist("../../onboard.js");
+  const onboardSession = requireDist("../../state/onboard-session.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxState = requireDist("../../state/sandbox.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const destroy = requireDist("./destroy.js");
+  const rebuildShields = requireDist("./rebuild-shields.js");
+  const nim = requireDist("../../inference/nim.js");
+  const policies = requireDist("../../policy/index.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
+  const messaging = requireDist("../../messaging/index.js");
+  const shields = requireDist("../../shields/index.js");
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -552,7 +554,7 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint while ignoring hostile ambient values for PRA-4 (#5735)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
     // be absent during recreate so onboard --resume uses the validated session

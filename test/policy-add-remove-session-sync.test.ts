@@ -20,7 +20,7 @@
 // handling.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -68,7 +68,8 @@ function buildPreamble({
   sessionPolicyPresets?: string[] | null;
   sessionMissing?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+  const j = (p: string) =>
+    JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
   return String.raw`
 const onboard = require(${j("onboard.js")});
 onboard.isNonInteractive = () => true;

@@ -359,7 +359,7 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
   }
 }
 
-describe("Issue #2273: atomic rebuild", () => {
+describe("atomic rebuild (#2273)", () => {
   describe("Layer 2: preflight credential check", () => {
     it("cancels interactive rebuild before credential preflight or backup on non-affirmative input", {
       timeout: 60_000,
@@ -616,7 +616,7 @@ describe("Issue #2273: atomic rebuild", () => {
     it.each([
       ["ollama-local"],
       ["vllm-local"],
-    ])("migrates legacy %s sandbox off OPENAI_API_KEY (GH #2519)", (provider) => {
+    ])("migrates a legacy %s sandbox off OPENAI_API_KEY (#2519)", (provider) => {
       // Pre-fix sandboxes recorded credentialEnv="OPENAI_API_KEY" even
       // though local inference never actually needed it. After the fix,
       // the wizard records null. Rebuild must accept the legacy value,

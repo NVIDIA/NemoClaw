@@ -6,8 +6,8 @@ import os from "node:os";
 
 import { describe, expect, it } from "vitest";
 
-import { AGENT_ALIASES } from "../dist/lib/agent/aliases";
-import { resolveAgentNameAlias } from "../dist/lib/agent/defs";
+import { AGENT_ALIASES } from "../src/lib/agent/aliases";
+import { resolveAgentNameAlias } from "../src/lib/agent/defs";
 import { INSTALLER_PAYLOAD, TEST_SYSTEM_PATH } from "./helpers/installer-sourced-env";
 
 const AVAILABLE_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"];

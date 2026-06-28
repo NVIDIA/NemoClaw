@@ -22,7 +22,7 @@ import { WARMUP_SESSION_ID_PREFIX } from "./warmup-session";
 // the OpenShell-exec wrapping the leaf depends on — and the
 // finalization.test.ts ordering tests pin the provoke→approve wiring.
 
-describe("scope-upgrade warm-up timeout bound (#4504-v2)", () => {
+describe("scope-upgrade warm-up timeout bound v2 (#4504)", () => {
   it("uses a fixed 30s outer cap so a wedged warm-up can never block onboard", () => {
     // The `-m "ping"` one-shot returns fast even when it falls back to embedded
     // mode; 30s covers gateway-connect + the scope-upgrade request plus
@@ -42,7 +42,7 @@ describe("scope-upgrade warm-up timeout bound (#4504-v2)", () => {
   });
 });
 
-describe("warm-up payload survives OpenShell exec (#4504-v2)", () => {
+describe("warm-up payload survives OpenShell exec in v2 (#4504)", () => {
   // The leaf wraps its in-sandbox script with the shared `wrapSandboxShellScript`
   // (OpenShell exec rejects newline-bearing args). These cases pin that wrapper
   // contract — the exact mechanism the warm-up exec relies on — without needing
@@ -83,7 +83,7 @@ describe("warm-up tags its throwaway session for user-facing filters (#5511)", (
     expect(WARMUP_SCRIPT).toContain(`--session-id "${WARMUP_SESSION_ID_PREFIX}$$-$(date +%s)"`);
   });
 
-  it("keeps the #4504-v2 provoke run foreground and within the original budget", () => {
+  it("keeps the v2 provoke run foreground and within the original budget (#4504)", () => {
     expect(WARMUP_SCRIPT).toContain('openclaw agent --agent main -m "ping" \\');
     expect(WARMUP_SCRIPT).toContain(">/dev/null 2>&1 || true");
     expect(WARMUP_SCRIPT).not.toContain("setsid");

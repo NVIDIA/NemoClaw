@@ -50,7 +50,8 @@ function parseResultPayload<T extends Record<string, unknown>>(
 }
 
 function buildPreamble(agentName: string): string {
-  const d = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+  const d = (p: string) =>
+    JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
   return String.raw`
 const resolver = require(${d("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";

@@ -75,7 +75,7 @@ describe("setupSelectedMessagingChannels", () => {
     vi.restoreAllMocks();
   });
 
-  it("#4068 prints Telegram group privacy-mode setup guidance during onboarding", async () => {
+  it("prints Telegram group privacy-mode setup guidance during onboarding (#4068)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
     process.env.TELEGRAM_REQUIRE_MENTION = "1";
     process.env.TELEGRAM_ALLOWED_IDS = "123456789";
@@ -573,7 +573,7 @@ describe("setupMessagingChannels", () => {
     expect(output).toContain("slack — already configured");
   });
 
-  it("#5696 exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value", async () => {
+  it("exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value (#5696)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
     process.env.TELEGRAM_GROUP_POLICY = "lockdown";
     const errors: string[] = [];

@@ -555,7 +555,7 @@ export function runConnect(
         ...recoveryEnv,
         ...extraEnv,
       },
-      timeout: execTimeout(15_000),
+      timeout: execTimeout(30_000),
     },
   );
 }

@@ -5,20 +5,20 @@ import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const PROCESS_RECOVERY_MODULE = "../../../../dist/lib/actions/sandbox/process-recovery.js";
-const TIMER_BOUND_LOCK_MODULE = "../../../../dist/lib/shields/timer-bound-lock.js";
-const AGENT_RUNTIME_MODULE = "../../../../dist/lib/agent/runtime.js";
+const requireSource = createRequire(import.meta.url);
+const PROCESS_RECOVERY_MODULE = "./process-recovery.js";
+const TIMER_BOUND_LOCK_MODULE = "../../shields/timer-bound-lock.js";
+const AGENT_RUNTIME_MODULE = "../../agent/runtime.js";
 
 describe("gateway process recovery timer ownership", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    delete require.cache[requireDist.resolve(PROCESS_RECOVERY_MODULE)];
+    delete require.cache[requireSource.resolve(PROCESS_RECOVERY_MODULE)];
   });
 
   it("rechecks the timer generation after waiting and carries the current token", () => {
-    delete require.cache[requireDist.resolve(PROCESS_RECOVERY_MODULE)];
-    const timerBound = requireDist(
+    delete require.cache[requireSource.resolve(PROCESS_RECOVERY_MODULE)];
+    const timerBound = requireSource(
       TIMER_BOUND_LOCK_MODULE,
     ) as typeof import("../../shields/timer-bound-lock");
     const actualWithTimerBoundLock = timerBound.withTimerBoundShieldsMutationLock;
@@ -38,12 +38,14 @@ describe("gateway process recovery timer ownership", () => {
           withLockAsync: vi.fn(),
         }),
     );
-    const agentRuntime = requireDist(AGENT_RUNTIME_MODULE) as typeof import("../../agent/runtime");
+    const agentRuntime = requireSource(
+      AGENT_RUNTIME_MODULE,
+    ) as typeof import("../../agent/runtime");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
       runtime: { kind: "terminal" },
     } as never);
 
-    const recovery = requireDist(PROCESS_RECOVERY_MODULE) as typeof import("./process-recovery");
+    const recovery = requireSource(PROCESS_RECOVERY_MODULE) as typeof import("./process-recovery");
     expect(recovery.checkAndRecoverSandboxProcesses("terminal-box", { quiet: true })).toEqual({
       checked: true,
       wasRunning: null,

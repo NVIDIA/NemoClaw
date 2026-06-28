@@ -7,7 +7,7 @@ import {
   GatewayTokenCommandError,
   parseGatewayTokenArgs,
   runGatewayTokenCommand,
-} from "../../dist/lib/gateway-token-command";
+} from "./gateway-token-command";
 
 function makeSinks() {
   const out: string[] = [];

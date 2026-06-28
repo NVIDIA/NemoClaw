@@ -1,13 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
-async function loadVerifier(): Promise<typeof import("../../../dist/lib/shields/verify-lock")> {
-  const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "verify-lock.js");
-  return import(distModulePath);
+async function loadVerifier(): Promise<typeof import("./verify-lock")> {
+  return import("./verify-lock");
 }
 
 const target = {

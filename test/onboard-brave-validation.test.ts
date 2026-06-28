@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { testTimeout } from "./helpers/timeouts";
 
@@ -62,7 +62,7 @@ function runConfigureWebSearch(spec: { status: string; body: string; apiKey: str
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "configure-web-search.js");
   const outputPath = path.join(tmpDir, "outcome.json");
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const outputPathLiteral = JSON.stringify(outputPath);
 
   setupBraveCurlShim(fakeBin, {
@@ -157,9 +157,9 @@ function runInteractiveConfigureWebSearch(spec: { answers: string[] }): {
   const fakeBin = path.join(tmpDir, "bin");
   const scriptPath = path.join(tmpDir, "configure-web-search-interactive.js");
   const outputPath = path.join(tmpDir, "outcome.json");
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const credentialsPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
   );
   const outputPathLiteral = JSON.stringify(outputPath);
 
@@ -274,11 +274,11 @@ describe("configureWebSearch (non-interactive)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-prompt-"));
     const scriptPath = path.join(tmpDir, "web-search-prompt-check.cjs");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
-    const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+    const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
 
     const script = `
 let promptCalls = 0;
@@ -335,9 +335,9 @@ const { loadAgent } = require(${agentDefsPath});
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "configure-web-search-saved.js");
     const outputPath = path.join(tmpDir, "outcome.json");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     setupBraveCurlShim(fakeBin, { status: "200", body: '{"web":{"results":[]}}' });
     fs.writeFileSync(

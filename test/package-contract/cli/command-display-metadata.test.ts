@@ -4,7 +4,7 @@
 import { Config as OclifConfig } from "@oclif/core";
 import { describe, expect, it } from "vitest";
 
-import { COMMANDS, visibleCommands } from "./command-registry";
+import { COMMANDS, visibleCommands } from "../../../dist/lib/cli/command-registry";
 
 describe("public command display metadata", () => {
   it("loads public display entries for root help and docs checks", () => {

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ensureHermesDashboardPortForwardIfEnabled,
   getHermesDashboardRecoveryConfig,
-} from "../../../../dist/lib/actions/sandbox/hermes-dashboard-recovery";
+} from "./hermes-dashboard-recovery";
 
 describe("Hermes dashboard recovery helpers", () => {
   it("reads recovery config only for enabled Hermes dashboard sandboxes", () => {

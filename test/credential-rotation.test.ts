@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi, beforeEach } from "vitest";
 import { createRequire } from "node:module";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
@@ -37,12 +37,12 @@ function isCredentialRotationInternals(value: object | null): value is Credentia
 
 function isRegistryModule(
   value: object | null,
-): value is typeof import("../dist/lib/state/registry.js") {
+): value is typeof import("../src/lib/state/registry.js") {
   return isRecord(value) && typeof value.getSandbox === "function";
 }
 
 function loadCredentialRotationInternals(): CredentialRotationInternals {
-  const loaded = require("../dist/lib/onboard.js");
+  const loaded = require("../src/lib/onboard.js");
   const record = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isCredentialRotationInternals(record)) {
     throw new Error("Expected onboard internals to expose credential rotation helpers");
@@ -50,8 +50,8 @@ function loadCredentialRotationInternals(): CredentialRotationInternals {
   return record;
 }
 
-function loadRegistryModule(): typeof import("../dist/lib/state/registry.js") {
-  const loaded = require("../dist/lib/state/registry.js");
+function loadRegistryModule(): typeof import("../src/lib/state/registry.js") {
+  const loaded = require("../src/lib/state/registry.js");
   const record = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isRegistryModule(record)) {
     throw new Error("Expected registry module to expose getSandbox");
@@ -62,7 +62,7 @@ function loadRegistryModule(): typeof import("../dist/lib/state/registry.js") {
 describe("credential rotation detection", () => {
   let hashCredential: CredentialRotationInternals["hashCredential"];
   let detectMessagingCredentialRotation: CredentialRotationInternals["detectMessagingCredentialRotation"];
-  let registry: typeof import("../dist/lib/state/registry.js");
+  let registry: typeof import("../src/lib/state/registry.js");
 
   beforeEach(() => {
     // Fresh imports to avoid cross-test contamination

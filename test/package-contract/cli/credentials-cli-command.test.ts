@@ -6,7 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+const REPO_ROOT = path.join(import.meta.dirname, "../../..");
 const COMMAND_PATHS = {
   common: path.join(REPO_ROOT, "dist", "lib", "credentials", "command-support.js"),
   credentials: path.join(REPO_ROOT, "dist", "commands", "credentials.js"),
@@ -15,9 +15,9 @@ const COMMAND_PATHS = {
 };
 const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
 type CredentialsCommandClasses = {
-  CredentialsCommand: typeof import("../dist/commands/credentials.js").default;
-  CredentialsListCommand: typeof import("../dist/commands/credentials/list.js").default;
-  CredentialsResetCommand: typeof import("../dist/commands/credentials/reset.js").default;
+  CredentialsCommand: typeof import("../../../src/commands/credentials.js").default;
+  CredentialsListCommand: typeof import("../../../src/commands/credentials/list.js").default;
+  CredentialsResetCommand: typeof import("../../../src/commands/credentials/reset.js").default;
 };
 type SpawnLikeResult = { status: number | null; stdout?: string; stderr?: string };
 type RuntimeRecovery = {

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { classifyGatewayRestartFailure } from "../../../../dist/lib/actions/sandbox/gateway-restart";
-import { restartSandboxGateway } from "../../../../dist/lib/actions/sandbox/process-recovery";
-import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../../../dist/lib/agent/gateway-restart-markers";
+import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
+import { classifyGatewayRestartFailure } from "./gateway-restart";
+import { restartSandboxGateway } from "./process-recovery";
 
 afterEach(() => {
   vi.restoreAllMocks();

@@ -8,10 +8,10 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const INDEX_MODULE = "../../../dist/lib/shields/index.js";
+const requireSource = createRequire(import.meta.url);
+const INDEX_MODULE = "./index.js";
 
-type ShieldsModule = typeof import("../../../dist/lib/shields/index");
+type ShieldsModule = typeof import("./index");
 
 function openClawTarget() {
   return {
@@ -39,14 +39,14 @@ describe("OpenClaw shields top-config transaction", () => {
     vi.stubEnv("HOME", homeDir);
     spies = [];
     events = [];
-    delete require.cache[requireDist.resolve(INDEX_MODULE)];
+    delete require.cache[requireSource.resolve(INDEX_MODULE)];
 
-    const runner = requireDist("../../../dist/lib/runner.js");
-    const config = requireDist("../../../dist/lib/sandbox/config.js");
-    const privilegedExec = requireDist("../../../dist/lib/sandbox/privileged-exec.js");
-    const dockerExec = requireDist("../../../dist/lib/adapters/docker/exec.js");
-    const stateDirLock = requireDist("../../../dist/lib/shields/state-dir-lock.js");
-    const openClawLock = requireDist("../../../dist/lib/shields/openclaw-config-lock.js");
+    const runner = requireSource("../runner.js");
+    const config = requireSource("../sandbox/config.js");
+    const privilegedExec = requireSource("../sandbox/privileged-exec.js");
+    const dockerExec = requireSource("../adapters/docker/exec.js");
+    const stateDirLock = requireSource("./state-dir-lock.js");
+    const openClawLock = requireSource("./openclaw-config-lock.js");
 
     dockerExecSpy = vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((cmd) => {
       const argv = cmd as string[];
@@ -99,13 +99,13 @@ describe("OpenClaw shields top-config transaction", () => {
       vi.spyOn(console, "error").mockImplementation(() => undefined),
     );
 
-    shields = requireDist(INDEX_MODULE);
+    shields = requireSource(INDEX_MODULE);
   });
 
   afterEach(() => {
     for (const spy of spies) spy.mockRestore();
     vi.unstubAllEnvs();
-    delete require.cache[requireDist.resolve(INDEX_MODULE)];
+    delete require.cache[requireSource.resolve(INDEX_MODULE)];
     fs.rmSync(homeDir, { recursive: true, force: true });
   });
 

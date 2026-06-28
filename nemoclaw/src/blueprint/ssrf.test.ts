@@ -258,7 +258,7 @@ describe("isPrivateIp – CIDR boundary precision", () => {
     ["128.0.0.0", false], // just above 127.0.0.0/8
     ["192.167.255.255", false], // just below 192.168.0.0/16
     ["192.169.0.0", false], // just above 192.168.0.0/16
-  ])("boundary %s → private=%s", (ip, expected) => {
+  ])("classifies boundary address %s as private=%s", (ip, expected) => {
     expect(isPrivateIp(ip)).toBe(expected);
   });
 });
@@ -277,7 +277,7 @@ describe("isPrivateIp – IPv6 edge cases", () => {
     ["fd00::0", true], // first address in fd00::/8 (within fc00::/7)
     ["fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", true], // last address in fc00::/7 ULA range
     ["fe00::1", false], // just above fc00::/7 (link-local starts at fe80::)
-  ])("IPv6 %s → private=%s", (ip, expected) => {
+  ])("classifies IPv6 address %s as private=%s", (ip, expected) => {
     expect(isPrivateIp(ip)).toBe(expected);
   });
 

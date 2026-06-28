@@ -43,8 +43,8 @@ function listPolicyFiles(): string[] {
   return files;
 }
 
-describe("Issue #2749 — additional coverage on top of existing tls:terminate guard", () => {
-  it("PARSE SAFETY: every policy YAML input still parses after deletions", () => {
+describe("keeps policy YAML valid while removing `tls: terminate` (#2749)", () => {
+  it("parses every policy YAML input after deletions", () => {
     for (const file of listPolicyFiles()) {
       const content = fs.readFileSync(file, "utf-8");
       // js-yaml throws on syntactic damage (dangling list markers, broken
@@ -57,7 +57,7 @@ describe("Issue #2749 — additional coverage on top of existing tls:terminate g
     }
   });
 
-  it("OVER-DELETION GUARD: `tls: skip` entries for WS pass-through are preserved", () => {
+  it("preserves `tls: skip` entries for WebSocket pass-through", () => {
     // The PR removes `tls: terminate` (deprecated) but the body explicitly
     // calls out that `tls: skip` for WebSocket pass-through should stay.
     // Confirm at least one built-in preset still has `tls: skip` so a

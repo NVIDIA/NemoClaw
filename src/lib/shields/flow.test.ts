@@ -10,7 +10,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const shieldsModulePath = "../../../dist/lib/shields/index.js";
+const shieldsModulePath = "./index.js";
 const HUNG_FORWARD_OWNER_SOURCE = `
 const { spawn } = require("node:child_process");
 const childScriptPath = process.argv[2];
@@ -29,11 +29,11 @@ type ShieldsHarness = {
   auditSpy: MockInstance;
   logSpy: MockInstance;
   runSpy: MockInstance;
-  shieldsDown: typeof import("../../../dist/lib/shields/index.js").shieldsDown;
-  shieldsStatus: typeof import("../../../dist/lib/shields/index.js").shieldsStatus;
-  shieldsUp: typeof import("../../../dist/lib/shields/index.js").shieldsUp;
-  isShieldsDown: typeof import("../../../dist/lib/shields/index.js").isShieldsDown;
-  synchronizeAutoRestoreWithShieldsDown: typeof import("../../../dist/lib/shields/index.js").synchronizeAutoRestoreWithShieldsDown;
+  shieldsDown: typeof import("./index.js").shieldsDown;
+  shieldsStatus: typeof import("./index.js").shieldsStatus;
+  shieldsUp: typeof import("./index.js").shieldsUp;
+  isShieldsDown: typeof import("./index.js").isShieldsDown;
+  synchronizeAutoRestoreWithShieldsDown: typeof import("./index.js").synchronizeAutoRestoreWithShieldsDown;
 };
 
 let tmpDir: string;
@@ -52,20 +52,20 @@ type HarnessOptions = {
 
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   delete require.cache[requireDist.resolve(shieldsModulePath)];
-  delete require.cache[requireDist.resolve("../../../dist/lib/shields/timer-bound-lock.js")];
-  delete require.cache[requireDist.resolve("../../../dist/lib/shields/transition-lock.js")];
-  delete require.cache[requireDist.resolve("../../../dist/lib/sandbox/privileged-exec.js")];
+  delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
+  delete require.cache[requireDist.resolve("./transition-lock.js")];
+  delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const runner = requireDist("../../../dist/lib/runner.js");
-  const policy = requireDist("../../../dist/lib/policy/index.js");
-  const sandboxConfig = requireDist("../../../dist/lib/sandbox/config.js");
-  const registry = requireDist("../../../dist/lib/state/registry.js");
-  const privilegedExec = requireDist("../../../dist/lib/sandbox/privileged-exec.js");
-  const dockerExec = requireDist("../../../dist/lib/adapters/docker/exec.js");
-  const audit = requireDist("../../../dist/lib/shields/audit.js");
+  const runner = requireDist("../runner.js");
+  const policy = requireDist("../policy/index.js");
+  const sandboxConfig = requireDist("../sandbox/config.js");
+  const registry = requireDist("../state/registry.js");
+  const privilegedExec = requireDist("../sandbox/privileged-exec.js");
+  const dockerExec = requireDist("../adapters/docker/exec.js");
+  const audit = requireDist("./audit.js");
   const childProcess = requireDist("node:child_process");
   let openClawPosture: "locked" | "mutable" = "mutable";
 
@@ -180,8 +180,8 @@ describe("shields command flow", () => {
     vi.unstubAllEnvs();
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete require.cache[requireDist.resolve(shieldsModulePath)];
-    delete require.cache[requireDist.resolve("../../../dist/lib/shields/timer-bound-lock.js")];
-    delete require.cache[requireDist.resolve("../../../dist/lib/shields/transition-lock.js")];
+    delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
+    delete require.cache[requireDist.resolve("./transition-lock.js")];
   });
 
   it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", () => {
@@ -335,7 +335,7 @@ describe("shields command flow", () => {
       { stdio: "ignore" },
     );
     expect(owner.pid).toBeTypeOf("number");
-    const timerControl = requireDist("../../../dist/lib/shields/timer-control.js");
+    const timerControl = requireDist("./timer-control.js");
     const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
     expect(ownerStartIdentity).toBeTypeOf("string");
     fs.writeFileSync(
@@ -399,7 +399,7 @@ describe("shields command flow", () => {
       stdio: "ignore",
     });
     expect(owner.pid).toBeTypeOf("number");
-    const timerControl = requireDist("../../../dist/lib/shields/timer-control.js");
+    const timerControl = requireDist("./timer-control.js");
     const ownerStartIdentity = timerControl.readProcessStartIdentity(owner.pid);
     expect(ownerStartIdentity).toBeTypeOf("string");
     fs.writeFileSync(
@@ -439,7 +439,7 @@ describe("shields command flow", () => {
         snapshotPath: string,
       ) => void;
     };
-    const transitionLockPath = requireDist.resolve("../../../dist/lib/shields/transition-lock.js");
+    const transitionLockPath = path.join(import.meta.dirname, "transition-lock.ts");
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
 
@@ -451,6 +451,8 @@ describe("shields command flow", () => {
       const owner = spawn(
         process.execPath,
         [
+          "--import",
+          "tsx",
           "-e",
           [
             `const {withShieldsTransitionLock}=require(${JSON.stringify(transitionLockPath)})`,
