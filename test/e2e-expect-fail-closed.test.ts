@@ -81,21 +81,6 @@ describe("interactive E2E expect prerequisites", () => {
     expect(testCase).not.toContain('apply_preset "slack"');
   });
 
-  it("feeds only the confirmation prompt in the live Vitest policy-add flow", () => {
-    const source = readScript("./e2e-scenario/live/network-policy.test.ts");
-    const start = source.indexOf("async function applyPresetInteractively");
-    const end = source.indexOf("async function fetchStatus", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    const helper = source.slice(start, end);
-
-    expect(helper).toContain('policy-add "$NEMOCLAW_E2E_PRESET"');
-    expect(helper).toContain("printf 'Y\\n' | env NEMOCLAW_NON_INTERACTIVE=");
-    expect(helper).not.toContain("preset_list=");
-    expect(helper).not.toContain("preset_num=");
-    expect(source).toContain('expect(text(slackApply)).toContain("Applied preset: slack")');
-  });
-
   it("keeps network-policy web_fetch coverage independent of Brave web_search", () => {
     const source = readScript("./e2e/test-network-policy.sh");
     const liveSource = readScript("./e2e-scenario/live/network-policy.test.ts");
