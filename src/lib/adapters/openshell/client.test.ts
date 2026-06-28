@@ -118,6 +118,47 @@ describe("openshell helpers", () => {
     expect(result.status).toBe(0);
   });
 
+  it("can replace the parent environment for credential-bearing OpenShell commands", () => {
+    const previous = process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
+    process.env.NEMOCLAW_TEST_UNRELATED_SECRET = "must-not-leak";
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+    try {
+      runOpenshellCommand("openshell", ["provider", "create"], {
+        replaceEnv: true,
+        env: { PATH: "/safe/bin", MCP_TOKEN: "selected-secret" },
+        spawnSyncImpl: (_command, _args, options) => {
+          observedEnv = options.env;
+          return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+        },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
+      else process.env.NEMOCLAW_TEST_UNRELATED_SECRET = previous;
+    }
+
+    expect(observedEnv).toEqual({ PATH: "/safe/bin", MCP_TOKEN: "selected-secret" });
+  });
+
+  it("filters unrelated parent secrets from ordinary OpenShell commands", () => {
+    const previous = process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
+    process.env.NEMOCLAW_TEST_UNRELATED_SECRET = "must-not-leak";
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+    try {
+      runOpenshellCommand("openshell", ["status"], {
+        spawnSyncImpl: (_command, _args, options) => {
+          observedEnv = options.env;
+          return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
+        },
+      });
+    } finally {
+      if (previous === undefined) delete process.env.NEMOCLAW_TEST_UNRELATED_SECRET;
+      else process.env.NEMOCLAW_TEST_UNRELATED_SECRET = previous;
+    }
+
+    expect(observedEnv?.NEMOCLAW_TEST_UNRELATED_SECRET).toBeUndefined();
+    expect(observedEnv?.PATH).toBe(process.env.PATH);
+  });
+
   it("passes timeout and maxBuffer options through to OpenShell spawn calls", () => {
     const observedOptions: Array<{ timeout?: number; maxBuffer?: number }> = [];
     const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {

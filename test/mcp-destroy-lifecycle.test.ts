@@ -40,7 +40,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
-      stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }),
+      stdout: "ready",
       stderr: "",
     };
   }
@@ -51,22 +51,25 @@ globalActions.runOpenshellProviderCommand = (args) => {
       : { status: 1, stdout: "", stderr: "Provider not found" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    const names = [...attachedProviders];
+    const danglingName = names.find((name) => !providers.has(name));
+    if (danglingName) {
+      return {
+        status: 9,
+        stdout: "",
+        stderr: "FailedPrecondition: provider '" + danglingName + "' not found",
+      };
+    }
     return {
       status: 0,
-      stdout: JSON.stringify({
-        attachments: [...attachedProviders].map((name) => {
-          const provider = providers.get(name);
-          return {
-            name,
-            provider_present: !!provider,
-            provider_id: provider?.id ?? "",
-            provider_resource_version: provider ? 1 : 0,
-            credential_keys: provider ? [provider.credential] : [],
-            bound_provider_id: provider?.id ?? "",
-            bound_credential_keys: provider ? [provider.credential] : [],
-          };
-        }),
-      }),
+      stdout:
+        names.length > 0
+          ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\n" +
+            names
+              .map((name) => name + " generic 1 0")
+              .join("\\n") +
+            "\\n"
+          : "No providers attached to sandbox " + args[3] + ".\\n",
       stderr: "",
     };
   }
@@ -127,7 +130,7 @@ processRecovery.executeSandboxCommand = (_sandbox, command) => {
 };
 processRecovery.executeSandboxExecCommand = (_sandbox, command) => ({
   status:
-    command.includes("authenticated-mcp-policy-bound-credential-rewrite-v1") ||
+    command.includes("allow_all_known_mcp_methods") ||
     command.includes('[ -z "\${') ||
     command.includes("openshell:resolve:env:GITHUB_TOKEN") ||
     command.includes("openshell:resolve:env:SLACK_TOKEN")
@@ -289,9 +292,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.secretPresent).toBe(false);
     expect(payload.providers).toContain("alpha-mcp-github");
     expect(
-      payload.calls.some((call) =>
-        call.startsWith("sandbox provider attach alpha alpha-mcp-github "),
-      ),
+      payload.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
     ).toBe(true);
     expect(payload.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
     expect(payload.policyApplyCalls).toBe(1);
@@ -357,9 +358,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.afterFinalize.customPolicies.map((policy) => policy.name)).toEqual(["operator"]);
     expect(payload.providers).not.toContain("alpha-mcp-github");
     expect(
-      payload.calls.some((call) =>
-        call.startsWith("sandbox provider detach alpha alpha-mcp-github "),
-      ),
+      payload.calls.some((call) => call === "sandbox provider detach alpha alpha-mcp-github"),
     ).toBe(true);
     expect(
       payload.adapterCalls.some((call) => call.includes("config") && call.includes("remove")),
@@ -411,9 +410,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       expect(payload.message).toContain("provider detach failed");
       expect(payload.attached).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
       expect(
-        payload.calls.some((call) =>
-          call.startsWith("sandbox provider attach alpha alpha-mcp-github "),
-        ),
+        payload.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
       ).toBe(true);
       expect(payload.adapterRegistered).toBe(true);
     });
@@ -463,9 +460,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.detachedBeforeAbort).toEqual([]);
     expect(payload.attachedAfterAbort).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
     expect(
-      payload.calls.some((call) =>
-        call.startsWith("sandbox provider attach alpha alpha-mcp-github "),
-      ),
+      payload.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
     ).toBe(true);
     expect(payload.adapterRegistered).toBe(true);
   });
@@ -530,9 +525,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.afterRetry.customPolicies).toBeUndefined();
     expect(payload.providers).toEqual([]);
     expect(
-      payload.calls.filter((call) =>
-        call.startsWith("sandbox provider detach alpha alpha-mcp-github "),
-      ),
+      payload.calls.filter((call) => call === "sandbox provider detach alpha alpha-mcp-github"),
     ).toHaveLength(1);
   });
 
@@ -581,7 +574,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(
       payload.calls
         .slice(0, payload.callsAfterFirstPrepare)
-        .some((call) => call.startsWith("sandbox provider detach alpha alpha-mcp-github ")),
+        .some((call) => call === "sandbox provider detach alpha alpha-mcp-github"),
     ).toBe(true);
     expect(
       payload.calls

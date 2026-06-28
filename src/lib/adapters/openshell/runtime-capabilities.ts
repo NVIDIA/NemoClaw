@@ -2,24 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Compiled into the OpenShell sandbox supervisor that requires verified TLS,
- * binds HTTP Host to the approved origin, and rejects MCP query drift before
- * credential replacement.
+ * Present in the OpenShell sandbox supervisor once native Streamable HTTP MCP
+ * policy support is available. OpenShell current main has no structured
+ * capability-attestation API, so NemoClaw uses this existing implementation
+ * string only to reject stale sandbox runtimes before applying an MCP policy.
  */
-export const OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER =
-  "authenticated-mcp-policy-bound-credential-rewrite-v1";
-
-/**
- * Attested by the gateway and embedded in the sandbox supervisor when exact,
- * policy-authorized lifecycle commands use the internal control relay without
- * a host listener or workload-accessible privileged principal.
- */
-export const OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER = "policy-authorized-lifecycle-exec-v1";
-
-export const OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION = "nemoclaw.hermes-mcp-config-transaction-v1";
-
-export const OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES = [
-  OPENSHELL_MCP_TRANSPORT_CAPABILITY_MARKER,
-  OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER,
-  OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION,
-] as const;
+export const OPENSHELL_MCP_POLICY_CAPABILITY_MARKER = "allow_all_known_mcp_methods";

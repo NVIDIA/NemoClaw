@@ -48,6 +48,12 @@ const ALLOWED_ENV_PREFIXES = ["LC_", "XDG_", "OPENSHELL_", "GRPC_"];
 
 // ── Public API ─────────────────────────────────────────────────
 
+export function isSubprocessEnvNameAllowed(name: string): boolean {
+  return (
+    ALLOWED_ENV_NAMES.has(name) || ALLOWED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
+  );
+}
+
 /**
  * When any HTTP proxy is forwarded, augment NO_PROXY so the host proxy is
  * never asked to forward traffic destined for the host loopback, the
@@ -102,7 +108,7 @@ export function buildSubprocessEnv(extra?: Record<string, string>): Record<strin
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
-    if (ALLOWED_ENV_NAMES.has(key) || ALLOWED_ENV_PREFIXES.some((p) => key.startsWith(p))) {
+    if (isSubprocessEnvNameAllowed(key)) {
       env[key] = value;
     }
   }

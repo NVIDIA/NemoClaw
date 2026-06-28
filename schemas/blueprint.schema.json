@@ -171,15 +171,8 @@
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "protocol": { "type": "string", "enum": ["rest"] },
         "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
-        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip", "require"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
         "access": { "type": "string", "enum": ["full"] },
-        "credential_keys": {
-          "type": "array",
-          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-          "minItems": 1,
-          "maxItems": 64,
-          "uniqueItems": true
-        },
         "rules": {
           "type": "array",
           "items": { "$ref": "#/$defs/rule" },

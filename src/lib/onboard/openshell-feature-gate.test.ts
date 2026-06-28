@@ -9,8 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasRequiredOpenshellMessagingFeatures,
   REQUIRED_OPENSHELL_MCP_FEATURES,
-  REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE,
-  REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE,
+  REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
 } from "./openshell-feature-gate";
 
 describe("OpenShell MCP feature gate", () => {
@@ -24,7 +23,7 @@ describe("OpenShell MCP feature gate", () => {
       fs.writeFileSync(gateway, `binary ${REQUIRED_OPENSHELL_MCP_FEATURES[1]}`);
       fs.writeFileSync(
         sandbox,
-        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.slice(2).join(" ")} ${REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE} ${REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE}`,
+        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.slice(2).join(" ")} ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}`,
       );
 
       expect(
@@ -57,14 +56,14 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
-  it("requires transport and lifecycle markers from the exact sandbox runtime binary", () => {
+  it("requires native MCP policy support from the exact sandbox runtime binary", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
     try {
       const openshell = path.join(dir, "openshell");
       const sandbox = path.join(dir, "openshell-sandbox");
       fs.writeFileSync(
         openshell,
-        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.join(" ")} ${REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE}`,
+        `binary ${REQUIRED_OPENSHELL_MCP_FEATURES.join(" ")} ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}`,
       );
       fs.writeFileSync(sandbox, "binary without the transport boundary");
 
@@ -80,7 +79,7 @@ describe("OpenShell MCP feature gate", () => {
     }
   });
 
-  it("defers a compressed VM supervisor check to the in-sandbox lifecycle probe", () => {
+  it("defers a compressed VM supervisor check to the in-sandbox runtime probe", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
     try {
       const openshell = path.join(dir, "openshell");

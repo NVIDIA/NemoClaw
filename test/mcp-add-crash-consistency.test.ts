@@ -31,6 +31,7 @@ const marked = (name) => fs.existsSync(marker(name));
 const providerId = "11111111-2222-4333-8444-555555555555";
 const foreignProviderId = "99999999-8888-4777-8666-555555555555";
 let providerGetCount = 0;
+let observedProviderName = null;
 
 const registry = require("./src/lib/state/registry.js");
 const globalActions = require("./src/lib/actions/global.js");
@@ -47,9 +48,10 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 
 globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "status" && args[1] === "--output" && args[2] === "json") {
-    return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw", capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
+    return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
+    observedProviderName = args[2];
     providerGetCount += 1;
     if (crashAfter === "race" && providerGetCount === 2) mark("provider");
     if (crashAfter === "late-race" && providerGetCount === 3) mark("provider");
@@ -58,17 +60,29 @@ globalActions.runOpenshellProviderCommand = (args) => {
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "provider" && (args[1] === "create" || args[1] === "update")) {
+    if (args[1] === "create") observedProviderName = args[args.indexOf("--name") + 1];
+    if (args[1] === "update") observedProviderName = args[2];
     mark("provider");
     if (args[1] === "update") mark("updated");
     if (crashAfter === "provider") process.exit(86);
-    return { status: 0, stdout: args[1] === "create" ? JSON.stringify({ id: providerId, resource_version: 1 }) : "updated", stderr: "" };
+    return { status: 0, stdout: args[1] === "create" ? "Created provider" : "Updated provider", stderr: "" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
     const attached = marked("attached");
-    const liveId = marked("foreign-provider") ? foreignProviderId : providerId;
-    return { status: 0, stdout: JSON.stringify({ attachments: attached ? [{ name: "crash-test-mcp-fake", provider_present: marked("provider"), provider_id: liveId, provider_resource_version: marked("updated") ? 2 : 1, credential_keys: ["FAKE_MCP_SECRET"], bound_provider_id: providerId, bound_credential_keys: ["FAKE_MCP_SECRET"] }] : [] }), stderr: "" };
+    const providerName = observedProviderName ?? registry.getSandbox("crash-test")?.mcp?.bridges?.fake?.providerName;
+    if (attached && !marked("provider")) {
+      return { status: 1, stdout: "", stderr: "FailedPrecondition: provider '" + providerName + "' not found" };
+    }
+    return {
+      status: 0,
+      stdout: attached
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        : "No providers attached to sandbox crash-test.\n",
+      stderr: "",
+    };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "attach") {
+    observedProviderName = args[4];
     mark("attached");
     return { status: 0, stdout: "attached", stderr: "" };
   }
@@ -161,6 +175,7 @@ const crashAfterProviderDelete = ${JSON.stringify(crashAfterProviderDelete)};
 const marker = (name) => path.join(process.env.HOME, name + ".marker");
 const marked = (name) => fs.existsSync(marker(name));
 const providerId = "11111111-2222-4333-8444-555555555555";
+let observedProviderName = null;
 
 const globalActions = require("./src/lib/actions/global.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
@@ -176,21 +191,39 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 
 globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "status" && args[1] === "--output" && args[2] === "json") {
-    return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw", capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
+    return { status: 0, stdout: JSON.stringify({ gateway: "nemoclaw" }), stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
+    observedProviderName = args[2];
     return marked("provider")
       ? { status: 0, stdout: "Id: " + providerId + "\nType: generic\nResource version: 1\nCredential keys: FAKE_MCP_SECRET\n", stderr: "" }
       : { status: 1, stdout: "", stderr: "NotFound: provider" };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    observedProviderName = args[4];
+    const wasAttached = marked("attached");
     fs.rmSync(marker("attached"), { force: true });
-    return marked("provider")
-      ? { status: 0, stdout: "detached", stderr: "" }
-      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+    return {
+      status: 0,
+      stdout: wasAttached
+        ? "Detached provider " + observedProviderName + " from sandbox crash-test.\n"
+        : "Provider " + observedProviderName + " was not attached to sandbox crash-test.\n",
+      stderr: "",
+    };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-    return { status: 0, stdout: JSON.stringify({ attachments: marked("attached") ? [{ name: "crash-test-mcp-fake", provider_present: marked("provider"), provider_id: marked("provider") ? providerId : "", provider_resource_version: marked("provider") ? 1 : 0, credential_keys: marked("provider") ? ["FAKE_MCP_SECRET"] : [], bound_provider_id: providerId, bound_credential_keys: ["FAKE_MCP_SECRET"] }] : [] }), stderr: "" };
+    const attached = marked("attached");
+    const providerName = observedProviderName ?? require("./src/lib/state/registry.js").getSandbox("crash-test")?.mcp?.bridges?.fake?.providerName;
+    if (attached && !marked("provider")) {
+      return { status: 1, stdout: "", stderr: "FailedPrecondition: provider '" + providerName + "' not found" };
+    }
+    return {
+      status: 0,
+      stdout: attached
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\n" + providerName + " generic 1 0\n"
+        : "No providers attached to sandbox crash-test.\n",
+      stderr: "",
+    };
   }
   if (args[0] === "provider" && args[1] === "delete") {
     if (!marked("provider")) {
@@ -257,7 +290,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-    return { status: 0, stdout: "", stderr: "" };
+    return { status: 0, stdout: "No providers attached to sandbox crash-test.\n", stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
 };
@@ -367,9 +400,9 @@ describe("MCP add crash consistency", () => {
         expect(committed).toMatchObject({
           server: "fake",
           env: ["FAKE_MCP_SECRET"],
-          providerName: "crash-test-mcp-fake",
           policyName: "mcp-bridge-fake",
         });
+        expect(committed.providerName).toBe(pending.providerName);
         expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(true);
         expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(true);
         expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(true);
@@ -482,12 +515,13 @@ describe("MCP remove crash consistency", () => {
     try {
       const added = runAddProcess(home, "");
       expect(added.status, `${added.stdout}\n${added.stderr}`).toBe(0);
+      const providerName = readBridge(home).providerName;
 
       const crashed = runRemoveProcess(home, true);
       expect(crashed.status, `${crashed.stdout}\n${crashed.stderr}`).toBe(87);
       expect(readBridge(home)).toMatchObject({
         server: "fake",
-        providerName: "crash-test-mcp-fake",
+        providerName,
       });
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "policy.marker"))).toBe(false);

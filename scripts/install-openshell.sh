@@ -137,9 +137,7 @@ required_driver_bins_present() {
 }
 
 OPENSHELL_FEATURE_CHECK_ERROR=""
-OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE="authenticated-mcp-policy-bound-credential-rewrite-v1"
-OPENSHELL_SANDBOX_LIFECYCLE_FEATURE="policy-authorized-lifecycle-exec-v1"
-OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION="nemoclaw.hermes-mcp-config-transaction-v1"
+OPENSHELL_SANDBOX_MCP_FEATURE="allow_all_known_mcp_methods"
 
 openshell_required_feature_strings() {
   local openshell_bin="$1"
@@ -176,9 +174,7 @@ openshell_required_feature_strings() {
 ${candidate_strings}"
     if [[ "$binary_strings" == *"request-body-credential-rewrite"* ]] \
       && [[ "$binary_strings" == *"websocket-credential-rewrite"* ]] \
-      && [[ "$binary_strings" == *"allow_all_known_mcp_methods"* ]] \
-      && [[ "$binary_strings" == *"$OPENSHELL_SANDBOX_LIFECYCLE_FEATURE"* ]] \
-      && [[ "$binary_strings" == *"$OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION"* ]]; then
+      && [[ "$binary_strings" == *"$OPENSHELL_SANDBOX_MCP_FEATURE"* ]]; then
       break
     fi
   done
@@ -211,22 +207,14 @@ openshell_has_required_messaging_features() {
     OPENSHELL_FEATURE_CHECK_ERROR="OpenShell installed binaries are missing websocket-credential-rewrite support."
     return 1
   fi
-  if [[ "$binary_strings" != *"allow_all_known_mcp_methods"* ]]; then
+  if [[ "$binary_strings" != *"$OPENSHELL_SANDBOX_MCP_FEATURE"* ]]; then
     OPENSHELL_FEATURE_CHECK_ERROR="OpenShell installed binaries are missing MCP/JSON-RPC L7 policy support."
     return 1
   fi
-  if [[ "$binary_strings" != *"$OPENSHELL_SANDBOX_LIFECYCLE_FEATURE"* ]]; then
-    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell installed binaries are missing policy-authorized lifecycle exec support."
-    return 1
-  fi
-  if [[ "$binary_strings" != *"$OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION"* ]]; then
-    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell installed binaries are missing the Hermes MCP lifecycle operation."
-    return 1
-  fi
 
-  # TLS enforcement and Host binding execute in openshell-sandbox. A marker in
-  # the CLI or gateway cannot prove that the credential-rewriting runtime has
-  # this boundary, so inspect that exact binary and fail closed.
+  # MCP policy enforcement and credential replacement execute in
+  # openshell-sandbox. When that host artifact is present, require the native
+  # MCP policy marker from that exact binary.
   sandbox_bin="$(command -v openshell-sandbox 2>/dev/null || true)"
   sibling_sandbox_bin="$(dirname "$openshell_bin")/openshell-sandbox"
   if [ -f "$sibling_sandbox_bin" ]; then
@@ -241,16 +229,8 @@ openshell_has_required_messaging_features() {
     return 0
   fi
   sandbox_strings="$(strings "$sandbox_bin" 2>/dev/null || true)"
-  if [[ "$sandbox_strings" != *"$OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE"* ]]; then
-    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing TLS-required, Host-bound credential replacement support."
-    return 1
-  fi
-  if [[ "$sandbox_strings" != *"$OPENSHELL_SANDBOX_LIFECYCLE_FEATURE"* ]]; then
-    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing policy-authorized lifecycle exec support."
-    return 1
-  fi
-  if [[ "$sandbox_strings" != *"$OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION"* ]]; then
-    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing the Hermes MCP lifecycle operation."
+  if [[ "$sandbox_strings" != *"$OPENSHELL_SANDBOX_MCP_FEATURE"* ]]; then
+    OPENSHELL_FEATURE_CHECK_ERROR="OpenShell sandbox runtime is missing MCP/JSON-RPC L7 policy support."
     return 1
   fi
   return 0

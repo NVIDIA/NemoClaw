@@ -10,6 +10,7 @@ import {
   MCP_SERVER_URL_MAX_LENGTH,
 } from "../../security/mcp-url-target";
 import type { McpBridgeEntry } from "../../state/registry";
+import { isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
   McpBridgeError,
   type ParsedEnvReference,
@@ -62,6 +63,12 @@ export function validateMcpCredentialEnvName(name: string): void {
       2,
     );
   }
+  if (isSubprocessEnvNameAllowed(name)) {
+    throw new McpBridgeError(
+      `MCP credential environment name '${name}' is reserved for host subprocess control and could be forwarded outside the provider mutation. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
+      2,
+    );
+  }
   if (OPENSHELL_RAW_CHILD_ENV_KEYS.has(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is materialized as a raw child-process value by OpenShell's Google Cloud compatibility path. Use a distinct secret name to preserve the host-only credential boundary.`,
@@ -91,7 +98,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
   }
   if (parsed.protocol !== "https:") {
     throw new McpBridgeError(
-      "Authenticated MCP server URLs must use https:// so OpenShell can require verified TLS before credential replacement.",
+      "Authenticated MCP server URLs must use https:// so the configured MCP client uses TLS when OpenShell forwards credential-bearing requests.",
       2,
     );
   }
@@ -330,18 +337,27 @@ export function resolveCredentialEnv(env: readonly ParsedEnvReference[]): Record
   return resolved;
 }
 
-export function buildMcpBridgeProviderName(sandboxName: string, server: string): string {
+export function buildMcpBridgeProviderName(
+  sandboxName: string,
+  server: string,
+  instanceId?: string,
+): string {
   validateSandboxName(sandboxName);
   validateMcpServerName(server);
+  if (instanceId !== undefined && !/^[a-f0-9]{16}$/.test(instanceId)) {
+    throw new McpBridgeError("Invalid MCP provider instance ID.");
+  }
   const serverSlug = server
     .toLowerCase()
     .replace(/_/g, "-")
     .replace(/[^a-z0-9-]/g, "-");
-  const base = `${sandboxName}-mcp-${serverSlug}`.replace(/-+/g, "-").replace(/^-|-$/g, "");
+  const base = `${sandboxName}-mcp-${serverSlug}${instanceId ? `-${instanceId}` : ""}`
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
   if (base.length <= 63) return base;
   const hash = crypto
     .createHash("sha256")
-    .update(`${sandboxName}:${server}`)
+    .update(`${sandboxName}:${server}:${instanceId ?? "stable"}`)
     .digest("hex")
     .slice(0, MCP_PROVIDER_HASH_BYTES * 2);
   const suffix = `-${hash}`;

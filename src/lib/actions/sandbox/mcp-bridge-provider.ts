@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import { stripAnsi } from "../../adapters/openshell/client";
-import { OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES } from "../../adapters/openshell/runtime-capabilities";
+import { OPENSHELL_MCP_POLICY_CAPABILITY_MARKER } from "../../adapters/openshell/runtime-capabilities";
 import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
@@ -32,12 +32,8 @@ export type McpProviderInspection = {
 
 export type McpProviderAttachment = {
   name: string;
-  providerPresent: boolean;
   providerId: string | null;
-  providerResourceVersion: number | null;
   credentialKeys: string[];
-  boundProviderId: string | null;
-  boundCredentialKeys: string[];
 };
 
 export type McpProviderAttachmentInspection = {
@@ -47,49 +43,17 @@ export type McpProviderAttachmentInspection = {
 
 const MCP_PROVIDER_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
 
-export function assertMcpGatewayCapability(): void {
-  const gateway = runOpenshellProviderCommand(["status", "--output", "json"], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  }) as OpenShellCommandResult;
-  let gatewayCapabilities: string[] = [];
-  if (gateway.status === 0) {
-    try {
-      const parsed: unknown = JSON.parse(stripAnsi(commandOutput(gateway)));
-      const capabilities =
-        parsed && typeof parsed === "object"
-          ? (parsed as { capabilities?: unknown }).capabilities
-          : undefined;
-      if (Array.isArray(capabilities) && capabilities.every((item) => typeof item === "string")) {
-        gatewayCapabilities = capabilities;
-      }
-    } catch {
-      // Old CLIs and human output fail closed below.
-    }
-  }
-  if (
-    !OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES.every((capability) =>
-      gatewayCapabilities.includes(capability),
-    )
-  ) {
-    throw new McpBridgeError(
-      `The selected OpenShell gateway does not attest the complete authenticated MCP policy, provider-CAS, durable-reservation, and scoped-binding contract. Upgrade/restart OpenShell before enabling authenticated MCP.`,
-    );
-  }
-}
-
 export function assertMcpTransportRuntimeCapability(sandboxName: string): void {
-  assertMcpGatewayCapability();
-  const markerChecks = OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES.map(
-    (capability) => `grep -aF -m 1 -- ${shellQuote(capability)} /proc/1/exe >/dev/null 2>&1`,
-  );
   const result = executeSandboxExecCommand(
     sandboxName,
-    ["[ -r /proc/1/exe ] || exit 1", ...markerChecks].join("\n"),
+    [
+      "[ -r /proc/1/exe ] || exit 1",
+      `grep -aF -m 1 -- ${shellQuote(OPENSHELL_MCP_POLICY_CAPABILITY_MARKER)} /proc/1/exe >/dev/null 2>&1`,
+    ].join("\n"),
   );
   if (!result || result.status !== 0) {
     throw new McpBridgeError(
-      `Sandbox '${sandboxName}' is missing OpenShell's TLS-required, Host-bound MCP credential replacement or policy-authorized lifecycle capability. Upgrade OpenShell and rebuild the sandbox before enabling authenticated MCP.`,
+      `Sandbox '${sandboxName}' is missing OpenShell's native MCP/JSON-RPC policy runtime. Upgrade OpenShell and rebuild the sandbox before enabling authenticated MCP.`,
     );
   }
 }
@@ -161,59 +125,56 @@ export function inspectMcpProvider(providerName: string | undefined): McpProvide
   };
 }
 
+export function parseMcpProviderAttachmentNames(output: string): string[] {
+  const clean = stripAnsi(output).replace(/\r/g, "").trim();
+  if (/^No providers attached to sandbox\b/m.test(clean)) return [];
+  const lines = clean
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headerIndex = lines.findIndex((line) =>
+    /^NAME\s+TYPE\s+CREDENTIAL_KEYS\s+CONFIG_KEYS$/.test(line),
+  );
+  if (headerIndex < 0) throw new Error("missing provider attachment table header");
+  return lines.slice(headerIndex + 1).map((line) => {
+    const match = line.match(/^(\S+)\s+(\S+)\s+(\d+)\s+(\d+)$/);
+    if (!match?.[1]) throw new Error("invalid provider attachment table row");
+    return match[1];
+  });
+}
+
 export function inspectMcpProviderAttachments(
   sandboxName: string,
 ): McpProviderAttachmentInspection {
-  const result = runOpenshellProviderCommand(
-    ["sandbox", "provider", "list", sandboxName, "--json"],
-    { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-  ) as OpenShellCommandResult;
+  const result = runOpenshellProviderCommand(["sandbox", "provider", "list", sandboxName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  }) as OpenShellCommandResult;
   const output = commandOutput(result);
   if (result.status !== 0) {
     return { attachments: null, error: output || "provider attachment inspection failed" };
   }
   try {
-    const parsed: unknown = JSON.parse(stripAnsi(output));
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      !Array.isArray((parsed as { attachments?: unknown }).attachments)
-    ) {
-      throw new Error("missing attachments array");
-    }
-    const attachments = (parsed as { attachments: unknown[] }).attachments.map((value) => {
-      if (!value || typeof value !== "object") throw new Error("invalid attachment record");
-      const record = value as Record<string, unknown>;
-      const stringArray = (field: string): string[] => {
-        const raw = record[field];
-        if (!Array.isArray(raw) || raw.some((item) => typeof item !== "string")) {
-          throw new Error(`invalid ${field}`);
-        }
-        return raw as string[];
-      };
-      if (typeof record.name !== "string" || typeof record.provider_present !== "boolean") {
-        throw new Error("invalid attachment identity");
-      }
-      const providerResourceVersion = record.provider_resource_version;
+    const clean = stripAnsi(output).replace(/\r/g, "").trim();
+    if (/^No providers attached to sandbox\b/m.test(clean)) return { attachments: [] };
+    const names = parseMcpProviderAttachmentNames(clean);
+    const attachments = names.map((name) => {
+      const provider = inspectMcpProvider(name);
       if (
-        typeof providerResourceVersion !== "number" ||
-        !Number.isSafeInteger(providerResourceVersion) ||
-        providerResourceVersion < 0
+        provider.exists !== true ||
+        !provider.id ||
+        !provider.resourceVersion ||
+        !provider.type ||
+        !provider.credentialKeys
       ) {
-        throw new Error("invalid provider_resource_version");
+        throw new Error(
+          provider.error ?? `attached provider '${name}' disappeared or has incomplete metadata`,
+        );
       }
       return {
-        name: record.name,
-        providerPresent: record.provider_present,
-        providerId:
-          typeof record.provider_id === "string" && record.provider_id ? record.provider_id : null,
-        providerResourceVersion: providerResourceVersion > 0 ? providerResourceVersion : null,
-        credentialKeys: stringArray("credential_keys"),
-        boundProviderId:
-          typeof record.bound_provider_id === "string" && record.bound_provider_id
-            ? record.bound_provider_id
-            : null,
-        boundCredentialKeys: stringArray("bound_credential_keys"),
+        name,
+        providerId: provider.id,
+        credentialKeys: provider.credentialKeys,
       };
     });
     return { attachments };
@@ -238,18 +199,16 @@ function exactAttachment(
   };
 }
 
-function attachmentIsExactlyBound(
+function attachmentMatchesCurrentProviderSnapshot(
   attachment: McpProviderAttachment | undefined,
   entry: McpBridgeEntry,
 ): boolean {
   return (
     !!attachment &&
-    attachment.providerPresent &&
     attachment.providerId === entry.providerId &&
-    attachment.boundProviderId === entry.providerId &&
     entry.env.length === 1 &&
-    attachment.boundCredentialKeys.length === 1 &&
-    attachment.boundCredentialKeys[0] === entry.env[0]
+    attachment.credentialKeys.length === 1 &&
+    attachment.credentialKeys[0] === entry.env[0]
   );
 }
 
@@ -271,7 +230,7 @@ export function assertNoAttachedProviderCredentialCollision(
   );
   if (collision) {
     throw new McpBridgeError(
-      `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to reserve the key for MCP before exact provider activation.`,
+      `Credential key '${credentialKey}' is already supplied by attached provider '${collision.name}' with ID '${collision.providerId ?? "missing"}'. Refusing to reserve the key for MCP before provider activation.`,
     );
   }
 }
@@ -374,26 +333,11 @@ export function buildMcpBridgeProviderArgs(
   providerName: string,
   env: readonly ParsedEnvReference[],
   envValues: Record<string, string>,
-  expectedProviderId?: string,
-  expectedProviderResourceVersion?: number,
 ): string[] {
   const args =
     action === "create"
-      ? ["provider", "create", "--name", providerName, "--type", "generic", "--output", "json"]
+      ? ["provider", "create", "--name", providerName, "--type", "generic"]
       : ["provider", "update", providerName];
-  if (action === "update") {
-    if (!expectedProviderId || !expectedProviderResourceVersion) {
-      throw new McpBridgeError(
-        `OpenShell provider '${providerName}' update requires an exact provider ID and resource version.`,
-      );
-    }
-    args.push(
-      "--expected-id",
-      expectedProviderId,
-      "--expected-resource-version",
-      String(expectedProviderResourceVersion),
-    );
-  }
   for (const entry of env) {
     validateMcpCredentialEnvName(entry.name);
     const value = envValues[entry.name];
@@ -402,29 +346,6 @@ export function buildMcpBridgeProviderArgs(
     }
   }
   return args;
-}
-
-function parseCreatedProviderIdentity(output: string): {
-  id: string;
-  resourceVersion: number;
-} | null {
-  try {
-    const parsed: unknown = JSON.parse(stripAnsi(output));
-    if (!parsed || typeof parsed !== "object") return null;
-    const record = parsed as Record<string, unknown>;
-    if (
-      typeof record.id !== "string" ||
-      !MCP_PROVIDER_ID_RE.test(record.id) ||
-      typeof record.resource_version !== "number" ||
-      !Number.isSafeInteger(record.resource_version) ||
-      record.resource_version <= 0
-    ) {
-      return null;
-    }
-    return { id: record.id, resourceVersion: record.resource_version };
-  } catch {
-    return null;
-  }
 }
 
 export function upsertMcpProvider(
@@ -484,9 +405,9 @@ export function upsertMcpProvider(
     );
   }
   const action = inspection.exists ? "update" : "create";
-  // Close as much of the inspect-to-mutate window as the current name-based
-  // OpenShell CLI permits. Create remains protected by gateway MustCreate;
-  // update additionally requires the same immutable ID immediately before it.
+  // Close as much of the inspect-to-mutate window as OpenShell current main's
+  // name-based provider CLI permits. Re-read immutable identity immediately
+  // before and after every mutation; main does not expose provider CAS flags.
   const beforeMutation = inspectMcpProvider(providerName);
   if (action === "create" && beforeMutation.exists !== false) {
     const detail =
@@ -506,14 +427,7 @@ export function upsertMcpProvider(
     );
   }
   const result = runOpenshellProviderCommand(
-    buildMcpBridgeProviderArgs(
-      action,
-      providerName,
-      env,
-      envValues,
-      options.expectedProviderId,
-      beforeMutation.resourceVersion ?? undefined,
-    ),
+    buildMcpBridgeProviderArgs(action, providerName, env, envValues),
     {
       ignoreError: true,
       env: envValues,
@@ -521,27 +435,11 @@ export function upsertMcpProvider(
     },
   ) as OpenShellCommandResult;
   if (result.status !== 0) {
-    // A transport error can arrive after the gateway committed the update.
-    // Converge only when a fresh read proves the same immutable provider and
-    // exact credential shape at a newer CAS version.
-    const converged = inspectMcpProvider(providerName);
-    const updateCommitted =
-      action === "update" &&
-      providerMatchesCredential(converged, envNames[0], options.expectedProviderId) &&
-      converged.resourceVersion !== null &&
-      converged.resourceVersion > (beforeMutation.resourceVersion ?? 0);
-    if (updateCommitted) {
-      return { action: "updated", inspection: converged };
-    }
+    // Never infer that our update committed from a later resource-version
+    // increase: a concurrent writer can advance the same provider after our
+    // command failed. A non-zero result is ambiguous and must fail closed.
     throw new McpBridgeError(
       commandOutput(result, envValues) || `Failed to ${action} MCP provider '${providerName}'.`,
-    );
-  }
-  const createdIdentity =
-    action === "create" ? parseCreatedProviderIdentity(commandOutput(result, envValues)) : null;
-  if (action === "create" && !createdIdentity) {
-    throw new McpBridgeError(
-      `OpenShell did not return a machine-readable immutable identity for newly created provider '${providerName}'. Refusing to adopt any same-name object.`,
     );
   }
   const after = inspectMcpProvider(providerName);
@@ -551,7 +449,7 @@ export function upsertMcpProvider(
         `OpenShell did not return a stable provider ID after ${action} for '${providerName}'. Refusing later MCP side effects.`,
     );
   }
-  const expectedProviderId = action === "create" ? createdIdentity?.id : options.expectedProviderId;
+  const expectedProviderId = action === "create" ? after.id : options.expectedProviderId;
   if (
     !after.resourceVersion ||
     !providerMatchesCredential(after, envNames[0], expectedProviderId) ||
@@ -603,25 +501,13 @@ export function attachProvider(sandboxName: string, entry: McpBridgeEntry): void
     throw new McpBridgeError(`OpenShell provider '${entry.providerName}' has incomplete metadata.`);
   }
   const result = runOpenshellProviderCommand(
-    [
-      "sandbox",
-      "provider",
-      "attach",
-      sandboxName,
-      entry.providerName,
-      "--expected-provider-id",
-      inspection.id,
-      "--expected-provider-resource-version",
-      String(inspection.resourceVersion),
-      "--credential-key",
-      entry.env[0] ?? "",
-    ],
+    ["sandbox", "provider", "attach", sandboxName, entry.providerName],
     { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
   ) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
     const afterError = exactAttachment(sandboxName, entry);
-    if (attachmentIsExactlyBound(afterError.attachment, entry)) return;
+    if (attachmentMatchesCurrentProviderSnapshot(afterError.attachment, entry)) return;
     throw new McpBridgeError(
       output ||
         afterError.inspection.error ||
@@ -629,10 +515,10 @@ export function attachProvider(sandboxName: string, entry: McpBridgeEntry): void
     );
   }
   const after = exactAttachment(sandboxName, entry);
-  if (!attachmentIsExactlyBound(after.attachment, entry)) {
+  if (!attachmentMatchesCurrentProviderSnapshot(after.attachment, entry)) {
     throw new McpBridgeError(
       after.inspection.error ??
-        `OpenShell did not persist the exact provider ID and credential-key binding for '${entry.providerName}' after attach.`,
+        `OpenShell did not persist the expected provider identity and credential shape for '${entry.providerName}' after attach.`,
     );
   }
 }
@@ -643,6 +529,20 @@ function validateMcpCredentialSnapshotPath(snapshotPath: string): void {
   if (!MCP_CREDENTIAL_SNAPSHOT_PATH_RE.test(snapshotPath)) {
     throw new McpBridgeError("Invalid MCP credential revision snapshot path.");
   }
+}
+
+/**
+ * Provider synchronization proofs must observe a fresh OpenShell-mediated exec
+ * environment. A direct Docker exec does not receive OpenShell provider state
+ * and could otherwise make an absent credential look successfully revoked.
+ */
+function executeMcpCredentialProofCommand(
+  sandboxName: string,
+  command: string,
+): ReturnType<typeof executeSandboxExecCommand> {
+  return executeSandboxExecCommand(sandboxName, command, undefined, {
+    allowLocalDockerFallback: false,
+  });
 }
 
 function mcpCredentialPlaceholderValidatorShell(envName: string): string[] {
@@ -718,7 +618,7 @@ export function buildMcpCredentialReadinessCommand(
 export function snapshotMcpCredentialRevision(sandboxName: string, entry: McpBridgeEntry): string {
   assertAuthenticatedBridgeEntry(entry);
   const snapshotPath = `/tmp/nemoclaw-mcp-provider-sync-${crypto.randomUUID()}`;
-  const result = executeSandboxExecCommand(
+  const result = executeMcpCredentialProofCommand(
     sandboxName,
     buildMcpCredentialRevisionSnapshotCommand(entry.env[0], snapshotPath),
   );
@@ -755,7 +655,7 @@ export function waitForAttachedMcpCredential(
       // Each exec is a fresh OpenShell process. A status-zero comparison proves
       // the supervisor has consumed the provider_env_revision without ever
       // printing either a placeholder or a credential value.
-      const probe = executeSandboxExecCommand(
+      const probe = executeMcpCredentialProofCommand(
         sandboxName,
         buildMcpCredentialReadinessCommand(envName, options.previousRevisionSnapshotPath),
       );
@@ -785,8 +685,8 @@ export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBrid
   );
   const revoked = waitUntil(
     () =>
-      executeSandboxExecCommand(sandboxName, buildMcpCredentialDetachedCommand(envName))?.status ===
-      0,
+      executeMcpCredentialProofCommand(sandboxName, buildMcpCredentialDetachedCommand(envName))
+        ?.status === 0,
     Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 30,
     1_000,
   );
@@ -816,7 +716,7 @@ export function detachProvider(
   if (!entry.providerId) {
     if (options.bestEffort) return "unknown";
     throw new McpBridgeError(
-      `MCP server '${entry.server}' has no immutable provider ID for exact detach.`,
+      `MCP server '${entry.server}' has no recorded provider ID for prechecked detach.`,
     );
   }
   const before = exactAttachment(sandboxName, entry);
@@ -828,30 +728,17 @@ export function detachProvider(
   }
   if (!before.attachment) return "absent";
   if (
-    before.attachment.boundProviderId !== entry.providerId ||
-    !before.attachment.boundCredentialKeys.includes(entry.env[0])
+    before.attachment.providerId !== entry.providerId ||
+    before.attachment.credentialKeys.length !== 1 ||
+    before.attachment.credentialKeys[0] !== entry.env[0]
   ) {
     if (options.bestEffort) return "unknown";
     throw new McpBridgeError(
-      `Provider attachment '${entry.providerName}' is not bound to MCP server '${entry.server}' and immutable provider ID '${entry.providerId}'.`,
+      `Provider attachment '${entry.providerName}' does not match MCP server '${entry.server}'. Expected stable provider ID '${entry.providerId}', found '${before.attachment.providerId ?? "missing"}', with credential keys '${before.attachment.credentialKeys.join(", ") || "none"}'.`,
     );
   }
-  const expectedResourceVersion =
-    before.attachment.providerId === entry.providerId && before.attachment.providerResourceVersion
-      ? before.attachment.providerResourceVersion
-      : 1;
   const result = runOpenshellProviderCommand(
-    [
-      "sandbox",
-      "provider",
-      "detach",
-      sandboxName,
-      entry.providerName,
-      "--expected-provider-id",
-      entry.providerId,
-      "--expected-provider-resource-version",
-      String(expectedResourceVersion),
-    ],
+    ["sandbox", "provider", "detach", sandboxName, entry.providerName],
     {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -867,8 +754,59 @@ export function detachProvider(
   throw new McpBridgeError(
     output ||
       after.inspection.error ||
-      `OpenShell did not confirm removal of provider attachment and scoped credential binding '${entry.providerName}'.`,
+      `OpenShell did not confirm removal of provider attachment '${entry.providerName}'.`,
   );
+}
+
+/**
+ * Remove a dangling provider name from the sandbox spec after the provider
+ * object itself has been independently proven absent. OpenShell main cannot
+ * list attachments while a referenced provider is missing, but its detach
+ * command removes the name directly from the sandbox spec under CAS.
+ */
+export function detachMissingProviderReference(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+): ProviderDetachOutcome {
+  if (!entry.providerName) return "absent";
+  assertAuthenticatedBridgeEntry(entry);
+  const before = inspectMcpProvider(entry.providerName);
+  if (before.exists !== false) {
+    const detail =
+      before.exists === null
+        ? (before.error ?? "provider inspection failed")
+        : `provider ID '${before.id ?? "unparseable"}' is present`;
+    throw new McpBridgeError(
+      `OpenShell provider '${entry.providerName}' is not provably absent before dangling-reference cleanup: ${detail}.`,
+    );
+  }
+  const result = runOpenshellProviderCommand(
+    ["sandbox", "provider", "detach", sandboxName, entry.providerName],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  ) as OpenShellCommandResult;
+  const output = commandOutput(result);
+  if (result.status !== 0) {
+    throw new McpBridgeError(
+      output || `Failed to remove dangling provider reference '${entry.providerName}'.`,
+    );
+  }
+  const afterProvider = inspectMcpProvider(entry.providerName);
+  if (afterProvider.exists !== false) {
+    throw new McpBridgeError(
+      afterProvider.error ??
+        `A same-name provider appeared while removing dangling reference '${entry.providerName}'. Refusing to create or adopt it.`,
+    );
+  }
+  const cleanOutput = stripAnsi(output);
+  if (!/\bDetached provider\b|\bwas not attached to sandbox\b/i.test(cleanOutput)) {
+    throw new McpBridgeError(
+      `OpenShell returned an unrecognized result while removing dangling provider reference '${entry.providerName}'.`,
+    );
+  }
+  return providerDetachChangedState(result.status, output) ? "detached" : "absent";
 }
 
 export function deleteProvider(
@@ -878,27 +816,22 @@ export function deleteProvider(
   if (!entry.providerName) return;
   const inspection = inspectMcpProviderForMutation(entry, "delete", options);
   if (!inspection?.exists || !inspection.id || !inspection.resourceVersion) return;
-  const result = runOpenshellProviderCommand(
-    [
-      "provider",
-      "delete",
-      entry.providerName,
-      "--expected-id",
-      inspection.id,
-      "--expected-resource-version",
-      String(inspection.resourceVersion),
-    ],
-    {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      suppressOutput: true,
-    } as Record<string, unknown>,
-  ) as OpenShellCommandResult;
+  const result = runOpenshellProviderCommand(["provider", "delete", entry.providerName], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    suppressOutput: true,
+  } as Record<string, unknown>) as OpenShellCommandResult;
   if (result.status !== 0) {
     const output = commandOutput(result);
     if (options.allowMissing && /not\s+found|NotFound/i.test(output)) return;
     if (options.bestEffort) return;
     throw new McpBridgeError(output || `Failed to delete MCP provider '${entry.providerName}'.`);
+  }
+  const after = inspectMcpProvider(entry.providerName);
+  if (after.exists !== false && !options.bestEffort) {
+    throw new McpBridgeError(
+      after.error ?? `OpenShell provider '${entry.providerName}' still exists after delete.`,
+    );
   }
 }
 

@@ -34,20 +34,25 @@ runs:
         }
 
         try_image() {
-          local ref="$1" version
+          local ref="$1" version digest_ref
           if ! docker pull "$ref" >/dev/null 2>&1; then
             return 1
           fi
-          version="$(glibc_version "$ref" || true)"
+          digest_ref="$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F -m 1 "${image}@sha256:" || true)"
+          if [[ -z "$digest_ref" ]]; then
+            echo "::warning::Hermes sandbox base image ${ref} did not expose an immutable GHCR repo digest (may be a fresh tag); building locally"
+            return 1
+          fi
+          version="$(glibc_version "$digest_ref" || true)"
           if ! glibc_ok "$version"; then
             echo "::warning::Hermes sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
             return 1
           fi
-          if ! mcp_runtime_ok "$ref"; then
+          if ! mcp_runtime_ok "$digest_ref"; then
             echo "::warning::Hermes sandbox base image ${ref} lacks the required MCP Streamable HTTP runtime"
             return 1
           fi
-          echo "HERMES_BASE_IMAGE=${ref}" >> "$GITHUB_ENV"
+          echo "HERMES_BASE_IMAGE=${digest_ref}" >> "$GITHUB_ENV"
           return 0
         }
 

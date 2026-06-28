@@ -16,13 +16,10 @@ describe("MCP OpenShell policy", () => {
   it("generates a protocol:mcp policy for the target endpoint and adapter binaries", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
-      buildMcpBridgePolicyYaml(
-        "GitHub_Server",
-        "https://api.githubcopilot.com/mcp",
-        "mcporter",
-        "GITHUB_TOKEN",
-        ["8.8.8.8", "2606:4700:4700::1111"],
-      ),
+      buildMcpBridgePolicyYaml("GitHub_Server", "https://api.githubcopilot.com/mcp", "mcporter", [
+        "8.8.8.8",
+        "2606:4700:4700::1111",
+      ]),
     ) as {
       preset: { name: string };
       network_policies: Record<
@@ -33,8 +30,6 @@ describe("MCP OpenShell policy", () => {
             port: number;
             path: string;
             protocol: string;
-            tls: string;
-            credential_keys: string[];
             mcp: {
               max_body_bytes: number;
               strict_tool_names?: boolean;
@@ -57,8 +52,6 @@ describe("MCP OpenShell policy", () => {
       path: "/mcp",
       protocol: "mcp",
       enforcement: "enforce",
-      tls: "require",
-      credential_keys: ["GITHUB_TOKEN"],
       mcp: {
         max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
         strict_tool_names: true,
@@ -115,20 +108,18 @@ describe("MCP OpenShell policy", () => {
     ]);
   });
 
-  it("rejects an invalid credential binding key before policy generation", () => {
-    expect(() =>
-      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "mcporter", "TOKEN=raw"),
-    ).toThrow(/environment variable name/i);
+  it("emits only fields supported by OpenShell current main", () => {
+    const policy = YAML.parse(
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "mcporter"),
+    ) as { network_policies: Record<string, { endpoints: Array<Record<string, unknown>> }> };
+    const endpoint = policy.network_policies.mcp_bridge_srv.endpoints[0];
+    expect(endpoint).not.toHaveProperty("credential_keys");
+    expect(endpoint).not.toHaveProperty("tls");
   });
 
   it("allows the OpenShell host alias with private-network SSRF guards", () => {
     const policy = YAML.parse(
-      buildMcpBridgePolicyYaml(
-        "local",
-        "https://host.openshell.internal:31337/mcp",
-        "mcporter",
-        "LOCAL_MCP_TOKEN",
-      ),
+      buildMcpBridgePolicyYaml("local", "https://host.openshell.internal:31337/mcp", "mcporter"),
     ) as {
       network_policies: Record<string, { endpoints: Array<{ allowed_ips: string[] }> }>;
     };
@@ -143,17 +134,12 @@ describe("MCP OpenShell policy", () => {
 
   it("scopes binaries to the selected agent adapter", () => {
     const hermes = YAML.parse(
-      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "hermes-config", "MCP_TOKEN"),
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "hermes-config"),
     ) as {
       network_policies: Record<string, { binaries: Array<{ path: string }> }>;
     };
     const deepAgents = YAML.parse(
-      buildMcpBridgePolicyYaml(
-        "srv",
-        "https://mcp.example.test/mcp",
-        "deepagents-config",
-        "MCP_TOKEN",
-      ),
+      buildMcpBridgePolicyYaml("srv", "https://mcp.example.test/mcp", "deepagents-config"),
     ) as {
       network_policies: Record<string, { binaries: Array<{ path: string }> }>;
     };
@@ -176,5 +162,8 @@ describe("MCP OpenShell policy", () => {
     );
     expect(long.length).toBeLessThanOrEqual(63);
     expect(long).toMatch(/^sandbox-name-with-a-long-prefix-mcp-servername-[a-f0-9]{16}$/);
+    expect(buildMcpBridgeProviderName("alpha", "GitHub_Server", "0123456789abcdef")).toBe(
+      "alpha-mcp-github-server-0123456789abcdef",
+    );
   });
 });

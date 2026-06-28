@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import crypto from "node:crypto";
+
 import type { AgentDefinition, AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
@@ -28,12 +30,12 @@ import {
   removeGeneratedPolicy,
 } from "./mcp-bridge-policy";
 import {
-  assertMcpGatewayCapability,
   assertNoAttachedProviderCredentialCollision,
   assertMcpProviderRecoverable,
   assertMcpTransportRuntimeCapability,
   attachProvider,
   deleteProvider,
+  detachMissingProviderReference,
   detachProvider,
   inspectMcpProvider,
   inspectMcpProviderAttachments,
@@ -78,8 +80,8 @@ export {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
   buildDeepAgentsMcpStatusCommand,
-  buildHermesMcpLifecycleExecArgs,
-  buildHermesMcpLifecycleProbeCommand,
+  buildHermesMcpExecArgs,
+  buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
   buildOpenClawMcporterInspectCommand,
   buildOpenClawMcporterRegisterCommand,
@@ -110,6 +112,8 @@ export {
   buildMcpBridgeProviderArgs,
   buildMcpCredentialReadinessCommand,
   buildMcpCredentialRevisionSnapshotCommand,
+  detachMissingProviderReference,
+  parseMcpProviderAttachmentNames,
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge-provider";
@@ -192,7 +196,6 @@ function assertPreparedMcpAddResourcesAbsent(
     entry.server,
     entry.url,
     adapter,
-    entry.env[0],
     resolvedAddresses,
   );
   const policyState = policies.getPresetContentGatewayState(sandboxName, policyContent);
@@ -243,7 +246,14 @@ async function addMcpBridgeUnlocked(
     );
   }
   const providerName =
-    envNames.length > 0 ? buildMcpBridgeProviderName(sandboxName, options.server) : undefined;
+    envNames.length > 0
+      ? (existingEntry?.providerName ??
+        buildMcpBridgeProviderName(
+          sandboxName,
+          options.server,
+          crypto.randomBytes(8).toString("hex"),
+        ))
+      : undefined;
   const policyName = buildMcpBridgePolicyName(options.server);
   assertNoDerivedResourceCollision(sandbox, options.server, providerName, policyName);
   const requestedEntry: McpBridgeEntry = {
@@ -429,13 +439,28 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     .filter((entry): entry is McpBridgeEntry => !!entry);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpTransportRuntimeCapability(sandboxName);
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
   // Prove every policy key is absent or still matches its recorded ownership
   // before inspecting or updating any provider. `applyGeneratedPolicy` repeats
   // this check immediately before mutation to close the preflight-to-apply race.
   for (const entry of targetEntries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
-  for (const entry of targetEntries) assertMcpProviderRecoverable(entry);
+  const providerInspectionByServer = new Map<string, McpProviderInspection>();
+  for (const entry of targetEntries) {
+    providerInspectionByServer.set(entry.server, assertMcpProviderRecoverable(entry));
+  }
+  const missingProviderEntries = targetEntries.filter(
+    (entry) => providerInspectionByServer.get(entry.server)?.exists === false,
+  );
+  // Detach every dangling name before asking the supervisor for a fresh exec.
+  // Provider environment resolution can remain blocked while any missing name
+  // is still present in the sandbox spec.
+  for (const entry of missingProviderEntries) {
+    detachMissingProviderReference(sandboxName, entry);
+  }
+  assertMcpTransportRuntimeCapability(sandboxName);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, targetEntries);
+  for (const entry of missingProviderEntries) {
+    waitForDetachedMcpCredential(sandboxName, entry);
+  }
   for (const [name, storedEntry] of targets) {
     // Validated as a complete authenticated entry before gateway side effects.
     if (!storedEntry) continue;
@@ -443,21 +468,10 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
     const resolvedAddresses = resolvedByServer.get(entry.server);
-    const credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
+    let credentialRevisionSnapshotPath: string | undefined;
     try {
-      const beforeUpsert = inspectMcpProvider(entry.providerName);
-      if (beforeUpsert.exists === false) {
-        // A prior provider may have disappeared while its exact scoped
-        // attachment remains durable in the sandbox spec. Revoke that old ID
-        // before creating a replacement, and keep the old registry identity
-        // until replacement creation succeeds.
-        const detachOutcome = detachProvider(sandboxName, entry);
-        if (detachOutcome === "unknown") {
-          throw new McpBridgeError(
-            `Could not prove revocation of the prior immutable provider '${entry.providerId}' for MCP server '${entry.server}'. Preserved the prior registry identity and refused to create a replacement provider.`,
-          );
-        }
-        waitForDetachedMcpCredential(sandboxName, entry);
+      if (providerInspectionByServer.get(entry.server)?.exists !== false) {
+        credentialRevisionSnapshotPath = snapshotMcpCredentialRevision(sandboxName, entry);
       }
       const providerResult = upsertMcpProvider(entry.providerName ?? "", envRefs, {
         allowExisting: true,
@@ -608,8 +622,8 @@ function inspectExactMcpDestroyProvider(
 /**
  * Build the cleanup manifest when a gateway-pinned `sandbox list` has already
  * proved the sandbox is absent. No sandbox exec/adapter mutation is possible
- * in this branch; exact provider ownership is still required before delete
- * confirmation and final cleanup.
+ * in this branch; the current provider ID/type/key metadata must still match
+ * the registry before delete confirmation and final cleanup.
  */
 export async function prepareMcpBridgesForAbsentSandboxDestroy(
   sandboxName: string,
@@ -853,7 +867,6 @@ export async function finalizeMcpBridgesAfterSandboxDelete(
   if (entries.length === 0) return;
 
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpGatewayCapability();
 
   const sandbox = assertMcpDestroySnapshotCurrent(sandboxName, entries);
   if (!sandbox.mcp?.destroyPendingAt) {
@@ -1165,9 +1178,6 @@ async function removeMcpBridgeUnlocked(
     ? entry.adapter
     : getBridgeAdapter(getSandboxAgent(sandbox));
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpTransportRuntimeCapability(sandboxName);
-  assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
-
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
   let providerOwnershipProved = !entry.providerName;
@@ -1216,6 +1226,24 @@ async function removeMcpBridgeUnlocked(
     }
   }
 
+  let missingProviderReferenceDetached = false;
+  if (providerWasMissing && providerOwnershipProved && entry.providerName) {
+    try {
+      detachMissingProviderReference(sandboxName, entry);
+      missingProviderReferenceDetached = true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!options.force) throw new McpBridgeError(detail);
+      failures.push(detail);
+    }
+  }
+
+  // A dangling provider name can prevent fresh sandbox execs on OpenShell
+  // main, so clear that host-side spec reference before probing or mutating the
+  // in-sandbox adapter.
+  assertMcpTransportRuntimeCapability(sandboxName);
+  assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+
   const adapterEnvValues = resolveCredentialEnv(entry.env.map((envName) => ({ name: envName })));
   let adapterCleanupProved = true;
   try {
@@ -1234,32 +1262,21 @@ async function removeMcpBridgeUnlocked(
   let reservationCleanupProved = !entry.providerName && adapterCleanupProved;
   if (adapterCleanupProved && providerOwnershipProved && entry.providerName) {
     try {
-      if (providerWasMissing && !entry.providerId) {
-        // A create response lost before immutable-ID persistence is never
-        // adoptable. If the operator independently removed that provider, an
-        // authoritative structured attachment snapshot plus fresh-exec
-        // revocation can nevertheless prove there is no runtime binding to
-        // clean, without naming or deleting any replacement object.
-        const attachments = inspectMcpProviderAttachments(sandboxName);
-        if (!attachments.attachments) {
-          throw new McpBridgeError(
-            attachments.error ??
-              `Could not prove absence of legacy provider attachment '${entry.providerName}'.`,
-          );
-        }
-        if (attachments.attachments.some((attachment) => attachment.name === entry.providerName)) {
-          throw new McpBridgeError(
-            `Legacy provider attachment '${entry.providerName}' still exists but the immutable provider ID was never persisted. Refusing inexact detach.`,
-          );
-        }
-        waitForDetachedMcpCredential(sandboxName, entry);
+      // OpenShell main cannot list a sandbox whose spec references a missing
+      // provider. Remove that dangling name directly before using the normal
+      // table-backed detach path for a provider that still exists.
+      const detachOutcome = providerWasMissing
+        ? missingProviderReferenceDetached
+          ? "detached"
+          : "unknown"
+        : detachProvider(sandboxName, entry);
+      if (detachOutcome !== "unknown") {
+        // A missing provider has no credential left to revoke. Its stock CLI
+        // detach result is authoritative for the sandbox-spec reference, and
+        // skipping a fresh-exec probe lets cleanup proceed even if another
+        // unrelated provider reference is also dangling.
+        if (!providerWasMissing) waitForDetachedMcpCredential(sandboxName, entry);
         reservationCleanupProved = true;
-      } else {
-        const detachOutcome = detachProvider(sandboxName, entry);
-        if (detachOutcome !== "unknown") {
-          waitForDetachedMcpCredential(sandboxName, entry);
-          reservationCleanupProved = true;
-        }
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
@@ -1287,8 +1304,10 @@ async function removeMcpBridgeUnlocked(
     entry.providerName
   ) {
     try {
-      // Recheck immediately before the mutable-name delete so a same-name
-      // replacement cannot inherit ownership from the earlier preflight.
+      // Recheck immediately before the mutable-name delete to narrow the
+      // replacement window. OpenShell main does not expose an atomic
+      // identity-conditioned delete, so concurrent direct provider mutation
+      // remains outside this lifecycle command's safety boundary.
       inspectExactMcpDestroyProvider(entry, {
         allowMissing: false,
         force: options.force,

@@ -3,7 +3,6 @@
 
 import { runOpenshellProviderCommand } from "../../actions/global";
 import type { AgentMcpAdapter } from "../../agent/defs";
-import { OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION } from "../../adapters/openshell/runtime-capabilities";
 import { shellQuote } from "../../runner";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
@@ -126,13 +125,13 @@ function buildHermesMcpRemoveCommand(entry: McpBridgeEntry, force = false): stri
   return [HERMES_MCP_TRANSACTION_HELPER, "remove", "--payload", JSON.stringify(payload)];
 }
 
-const HERMES_MCP_LIFECYCLE_TIMEOUT_SECONDS = 620;
-const HERMES_MCP_LIFECYCLE_PROBE_TIMEOUT_SECONDS = 30;
+const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
+const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 
-export function buildHermesMcpLifecycleExecArgs(
+export function buildHermesMcpExecArgs(
   sandboxName: string,
   command: readonly string[],
-  timeoutSeconds = HERMES_MCP_LIFECYCLE_TIMEOUT_SECONDS,
+  timeoutSeconds = HERMES_MCP_EXEC_TIMEOUT_SECONDS,
 ): string[] {
   return [
     "sandbox",
@@ -141,13 +140,13 @@ export function buildHermesMcpLifecycleExecArgs(
     sandboxName,
     "--timeout",
     String(timeoutSeconds),
-    "--lifecycle",
+    "--no-tty",
     "--",
     ...command,
   ];
 }
 
-export function buildHermesMcpLifecycleProbeCommand(): string[] {
+export function buildHermesMcpProbeCommand(): string[] {
   return [HERMES_MCP_TRANSACTION_HELPER, "probe"];
 }
 
@@ -513,9 +512,9 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
 }
 
 /**
- * Prove the running Hermes sandbox has the compiled operation/path contract,
- * policy grant, protected packaged helper, supervisor auth path, and successful
- * invocation before changing a global provider, policy, attachment, or adapter.
+ * Prove the running Hermes sandbox contains the packaged transaction helper
+ * and can invoke it through OpenShell current main's ordinary exec path before
+ * changing a global provider, policy, attachment, or adapter.
  */
 export function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
@@ -525,10 +524,10 @@ export function assertAgentMcpMutationRuntimeCapability(
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
     result = runOpenshellProviderCommand(
-      buildHermesMcpLifecycleExecArgs(
+      buildHermesMcpExecArgs(
         sandboxName,
-        buildHermesMcpLifecycleProbeCommand(),
-        HERMES_MCP_LIFECYCLE_PROBE_TIMEOUT_SECONDS,
+        buildHermesMcpProbeCommand(),
+        HERMES_MCP_PROBE_TIMEOUT_SECONDS,
       ),
       {
         ignoreError: true,
@@ -539,19 +538,14 @@ export function assertAgentMcpMutationRuntimeCapability(
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot authorize the managed MCP lifecycle operation. Upgrade OpenShell and rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
     );
   }
   const response = parseLastJsonObject(result.stdout || "");
-  if (
-    result.status !== 0 ||
-    result.error ||
-    response?.ok !== true ||
-    response.capability !== OPENSHELL_HERMES_MCP_LIFECYCLE_OPERATION
-  ) {
+  if (result.status !== 0 || result.error || response?.ok !== true) {
     const detail = commandOutput(result).trim();
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot authorize the exact managed MCP lifecycle operation. Upgrade OpenShell and rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${detail ? `: ${detail}` : "."}`,
     );
   }
 }
@@ -567,14 +561,13 @@ function runHermesAdapterCommand(
     requireReload?: boolean;
   } = {},
 ): void {
-  // OpenShell current main maps the closed policy operation to a fixed helper
-  // path and argv contract, protects the packaged files from runtime workload
-  // replacement, and executes with ordinary workload authority. There is no
-  // shell, listener, proxy, or persistent privileged service; argv carries only
-  // an OpenShell placeholder. This path check does not claim image provenance.
+  // OpenShell current main executes this fixed helper argv with ordinary
+  // workload authority. There is no listener, proxy, persistent service, or
+  // MCP traffic on this control path; argv carries only an OpenShell
+  // placeholder and endpoint metadata.
   let result: ReturnType<typeof runOpenshellProviderCommand>;
   try {
-    result = runOpenshellProviderCommand(buildHermesMcpLifecycleExecArgs(sandboxName, command), {
+    result = runOpenshellProviderCommand(buildHermesMcpExecArgs(sandboxName, command), {
       ignoreError: true,
       stdio: ["ignore", "pipe", "pipe"],
       // The remote supervisor enforces 620s; keep a small transport margin so

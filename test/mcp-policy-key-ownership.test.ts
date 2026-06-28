@@ -202,7 +202,7 @@ describe("MCP-generated network policy ownership", () => {
       `#!/bin/sh
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
-  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1","policy-authorized-lifecycle-exec-v1","nemoclaw.hermes-mcp-config-transaction-v1"]}'
+  printf '%s\n' 'ready'
   exit 0
 fi
 if [ "$1 $2" = "provider get" ]; then
@@ -288,11 +288,11 @@ bridge.addMcpBridge("alpha", {
       `#!/bin/sh
 printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
 if [ "$1 $2 $3" = "status --output json" ]; then
-  printf '%s\n' '{"capabilities":["authenticated-mcp-policy-bound-credential-rewrite-v1","policy-authorized-lifecycle-exec-v1","nemoclaw.hermes-mcp-config-transaction-v1"]}'
+  printf '%s\n' 'ready'
   exit 0
 fi
 if [ "$1 $2 $3" = "sandbox provider list" ]; then
-  printf '%s\n' '{"attachments":[]}'
+  printf '%s\n' 'No providers attached to sandbox alpha.'
   exit 0
 fi
 if [ "$1 $2" = "provider get" ]; then
@@ -305,7 +305,7 @@ if [ "$1 $2" = "provider get" ]; then
 fi
 if [ "$1 $2" = "provider create" ]; then
   : > ${JSON.stringify(providerStatePath)}
-  printf '%s\n' '{"id":"11111111-2222-4333-8444-555555555555","resource_version":1}'
+  printf '%s\n' 'Created provider.'
 fi
 if [ "$1 $2" = "provider delete" ]; then
   rm -f -- ${JSON.stringify(providerStatePath)}
@@ -392,13 +392,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
-      stdout: JSON.stringify({
-        capabilities: [
-          "authenticated-mcp-policy-bound-credential-rewrite-v1",
-          "policy-authorized-lifecycle-exec-v1",
-          "nemoclaw.hermes-mcp-config-transaction-v1",
-        ],
-      }),
+      stdout: "ready",
       stderr: "",
     };
   }
@@ -447,7 +441,7 @@ registry.registerSandbox({
 });
 registry.addCustomPolicy("alpha", {
   name: entry.policyName,
-  content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter, entry.env[0]),
+  content: bridge.buildMcpBridgePolicyYaml(entry.server, entry.url, entry.adapter),
   sourcePath: "generated:nemoclaw-mcp-bridge",
 });
 

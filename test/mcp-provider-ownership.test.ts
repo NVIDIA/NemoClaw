@@ -34,7 +34,7 @@ gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
 globalActions.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
-    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
+    return { status: 0, stdout: "ready", stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {
@@ -44,7 +44,13 @@ globalActions.runOpenshellProviderCommand = (args) => {
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-    return { status: 0, stdout: JSON.stringify({ attachments: attached ? [{ name: "alpha-mcp-fake", provider_present: true, provider_id: liveId, provider_resource_version: 4, credential_keys: ["EXPECTED_TOKEN"], bound_provider_id: expectedId, bound_credential_keys: ["EXPECTED_TOKEN"] }] : [] }), stderr: "" };
+    return {
+      status: 0,
+      stdout: attached
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\\nalpha-mcp-fake generic 1 0\\n"
+        : "No providers attached to sandbox alpha.\\n",
+      stderr: "",
+    };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
     attached = false;
@@ -121,7 +127,7 @@ describe("MCP provider ownership", () => {
         payload.calls.some((call) =>
           call.startsWith("sandbox provider detach alpha alpha-mcp-fake"),
         ),
-      ).toBe(true);
+      ).toBe(boundary === "delete");
       expect(payload.bridgePresent).toBe(true);
     });
   }
@@ -151,12 +157,16 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 99999999-8888-4777-8666-555555555555\\nType: generic\\nResource version: 4\\nCredential keys: EXPECTED_TOKEN\\n",
+      stdout: "Id: 99999999-8888-4777-8666-555555555555\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
       stderr: "",
     };
   }
   if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
-    return { status: 0, stdout: JSON.stringify({ attachments: [{ name: "alpha-mcp-fake", provider_present: true, provider_id: "99999999-8888-4777-8666-555555555555", provider_resource_version: 4, credential_keys: ["EXPECTED_TOKEN"], bound_provider_id: "11111111-2222-4333-8444-555555555555", bound_credential_keys: ["EXPECTED_TOKEN"] }] }), stderr: "" };
+    return {
+      status: 0,
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n",
+      stderr: "",
+    };
   }
   throw new Error("unexpected call: " + args.join(" "));
 };
@@ -203,6 +213,160 @@ bridge.statusMcpBridge("alpha", "fake").then(
     expect(status.provider.detail).toContain("Expected stable provider ID");
   });
 
+  it("clears multiple dangling stock OpenShell provider references without listing between them", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-dangling-"));
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+const globalActions = require("./src/lib/actions/global.js");
+const calls = [];
+const attached = new Set(["alpha-mcp-fake", "alpha-mcp-second"]);
+globalActions.runOpenshellProviderCommand = (args) => {
+  calls.push(args.join(" "));
+  if (args[0] === "provider" && args[1] === "get") {
+    return { status: 1, stdout: "", stderr: "NotFound: provider" };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    return attached.size > 0
+      ? { status: 9, stdout: "", stderr: "FailedPrecondition: provider '" + [...attached][0] + "' not found" }
+      : { status: 0, stdout: "No providers attached to sandbox alpha.\n", stderr: "" };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    attached.delete(args[4]);
+    return {
+      status: 0,
+      stdout: "Detached provider " + args[4] + " from sandbox alpha.\n",
+      stderr: "",
+    };
+  }
+  throw new Error("unexpected call: " + args.join(" "));
+};
+const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+const entry = {
+  server: "fake",
+  agent: "openclaw",
+  url: "https://mcp.example.test/mcp",
+  env: ["EXPECTED_TOKEN"],
+  providerName: "alpha-mcp-fake",
+  providerId: "11111111-2222-4333-8444-555555555555",
+  policyName: "mcp-bridge-fake",
+  adapter: "mcporter",
+  addedAt: "2026-06-01T00:00:00.000Z",
+};
+const before = providerActions.inspectMcpProviderAttachments("alpha");
+const firstOutcome = providerActions.detachMissingProviderReference("alpha", entry);
+const afterFirst = providerActions.inspectMcpProviderAttachments("alpha");
+const secondOutcome = providerActions.detachMissingProviderReference("alpha", {
+  ...entry,
+  server: "second",
+  providerName: "alpha-mcp-second",
+  providerId: "22222222-3333-4444-8555-666666666666",
+  policyName: "mcp-bridge-second",
+});
+const after = providerActions.inspectMcpProviderAttachments("alpha");
+process.stdout.write(JSON.stringify({ before, firstOutcome, afterFirst, secondOutcome, after, calls }));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      before: { attachments: null; error: string };
+      firstOutcome: string;
+      afterFirst: { attachments: null; error: string };
+      secondOutcome: string;
+      after: { attachments: unknown[] };
+      calls: string[];
+    };
+    expect(payload.before.attachments).toBeNull();
+    expect(payload.before.error).toContain("provider 'alpha-mcp-fake' not found");
+    expect(payload.firstOutcome).toBe("detached");
+    expect(payload.afterFirst.attachments).toBeNull();
+    expect(payload.afterFirst.error).toContain("provider 'alpha-mcp-second' not found");
+    expect(payload.secondOutcome).toBe("detached");
+    expect(payload.after.attachments).toEqual([]);
+    expect(payload.calls).toEqual([
+      "sandbox provider list alpha",
+      "provider get alpha-mcp-fake",
+      "sandbox provider detach alpha alpha-mcp-fake",
+      "provider get alpha-mcp-fake",
+      "sandbox provider list alpha",
+      "provider get alpha-mcp-second",
+      "sandbox provider detach alpha alpha-mcp-second",
+      "provider get alpha-mcp-second",
+      "sandbox provider list alpha",
+    ]);
+  });
+
+  it("does not treat a concurrent writer's resource-version advance as our update", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-update-race-"));
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+process.env.EXPECTED_TOKEN = "host-only-secret";
+const globalActions = require("./src/lib/actions/global.js");
+const calls = [];
+let resourceVersion = 4;
+globalActions.runOpenshellProviderCommand = (args) => {
+  calls.push(args.join(" "));
+  if (args[0] === "provider" && args[1] === "get") {
+    return {
+      status: 0,
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: " + resourceVersion + "\nCredential keys: EXPECTED_TOKEN\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "provider" && args[1] === "update") {
+    resourceVersion = 5;
+    return {
+      status: 9,
+      stdout: "",
+      stderr: "Aborted: provider was modified concurrently (current resource_version: 5)",
+    };
+  }
+  throw new Error("unexpected call: " + args.join(" "));
+};
+const providerActions = require("./src/lib/actions/sandbox/mcp-bridge-provider.js");
+let message = "";
+try {
+  providerActions.upsertMcpProvider(
+    "alpha-mcp-fake",
+    [{ name: "EXPECTED_TOKEN" }],
+    {
+      allowExisting: true,
+      expectedProviderId: "11111111-2222-4333-8444-555555555555",
+    },
+  );
+} catch (error) {
+  message = error.message;
+}
+process.stdout.write(JSON.stringify({ message, resourceVersion, calls }));
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home },
+    });
+    fs.rmSync(home, { recursive: true, force: true });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      message: string;
+      resourceVersion: number;
+      calls: string[];
+    };
+    expect(payload.resourceVersion).toBe(5);
+    expect(payload.message).toContain("modified concurrently");
+    expect(payload.calls).toEqual([
+      "provider get alpha-mcp-fake",
+      "provider get alpha-mcp-fake",
+      "provider update alpha-mcp-fake --credential EXPECTED_TOKEN",
+    ]);
+    expect(JSON.stringify(payload.calls)).not.toContain("host-only-secret");
+  });
+
   it("never detaches or deletes a non-matching provider in force mode", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-owner-"));
     const script = `
@@ -228,7 +392,7 @@ processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "", stde
 globalActions.runOpenshellProviderCommand = (args) => {
   calls.push(args.join(" "));
   if (args[0] === "status") {
-    return { status: 0, stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }), stderr: "" };
+    return { status: 0, stdout: "ready", stderr: "" };
   }
   if (args[0] === "provider" && args[1] === "get") {
     return {

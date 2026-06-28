@@ -31,6 +31,7 @@ import { ROOT, shellQuote } from "../../runner";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
+import { buildSubprocessEnv } from "../../subprocess-env";
 import { classifyForwardHealthWithReachability, isLocalForwardReachable } from "./forward-health";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import {
@@ -48,6 +49,10 @@ export type SandboxCommandResult = {
   status: number;
   stdout: string;
   stderr: string;
+};
+
+export type SandboxExecCommandOptions = {
+  allowLocalDockerFallback?: boolean;
 };
 
 type SandboxPortAgent = { forwardPort?: unknown; runtime?: { kind?: unknown } } | null;
@@ -152,6 +157,8 @@ export function executeSandboxCommand(
   command: string,
 ): SandboxCommandResult | null {
   const sshConfigResult = captureSandboxSshConfig(sandboxName, {
+    env: buildSubprocessEnv(),
+    replaceEnv: true,
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
@@ -176,7 +183,12 @@ export function executeSandboxCommand(
         `openshell-${sandboxName}`,
         command,
       ],
-      { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
+      {
+        encoding: "utf-8",
+        env: buildSubprocessEnv(),
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 15000,
+      },
     );
     return {
       status: result.status ?? 1,
@@ -210,6 +222,7 @@ function findLocalDockerSandboxContainer(sandboxName: string): string | null {
   try {
     const result = dockerSpawnSync(["ps", "--format", "{{.ID}}\t{{.Names}}"], {
       encoding: "utf-8",
+      env: buildSubprocessEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 5000,
     });
@@ -235,6 +248,7 @@ function executeLocalDockerSandboxCommand(
   try {
     const result = dockerSpawnSync(["exec", "-u", "root", containerId, "sh", "-c", markedCommand], {
       encoding: "utf-8",
+      env: buildSubprocessEnv(),
       stdio: ["ignore", "pipe", "pipe"],
       timeout,
     });
@@ -248,6 +262,7 @@ export function executeSandboxExecCommand(
   sandboxName: string,
   command: string,
   timeout = 15000,
+  options: SandboxExecCommandOptions = {},
 ): SandboxCommandResult | null {
   const markedCommand = buildSandboxExecMarkedCommand(command);
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
@@ -260,16 +275,16 @@ export function executeSandboxExecCommand(
       {
         cwd: ROOT,
         encoding: "utf-8",
-        env: process.env,
+        env: buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
         timeout: effectiveTimeout,
       },
     );
-    return (
-      parseSandboxCommandResult(result) ??
-      executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout)
-    );
+    const parsed = parseSandboxCommandResult(result);
+    if (parsed || options.allowLocalDockerFallback === false) return parsed;
+    return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
   } catch {
+    if (options.allowLocalDockerFallback === false) return null;
     return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
   }
 }

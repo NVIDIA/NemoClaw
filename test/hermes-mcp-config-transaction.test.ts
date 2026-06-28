@@ -160,7 +160,7 @@ else:
     expect(result.stdout).toContain("does not identify the trusted launcher");
   });
 
-  it("allows an authenticated same-UID lifecycle entrypoint to reload the trusted gateway", () => {
+  it("allows an ordinary same-UID sandbox exec to reload the trusted gateway", () => {
     const result = runPython(`
 import importlib.util, json, signal, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
@@ -172,21 +172,14 @@ sandbox_uid = 1000
 gateway_pid = 4242
 gateway_state = {"start_time": 99}
 observed = {
-    "closed_fds": [],
     "trusted_pids": [],
 }
 module.os.geteuid = lambda: sandbox_uid
+module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 observed["entrypoint_uid"] = module.os.geteuid()
 module.pwd.getpwnam = lambda name: (_ for _ in ()).throw(
     AssertionError("same-UID reload must not resolve a separate gateway identity")
 )
-
-module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "9"
-def read_lifecycle_authority(fd):
-    observed["lifecycle_uid"] = module.os.geteuid()
-    return (321, 0, 0, module.LIFECYCLE_AUTH_HANDSHAKE)
-module._read_lifecycle_authority = read_lifecycle_authority
-module.os.close = lambda fd: observed["closed_fds"].append(fd)
 
 snapshot = types.SimpleNamespace(mode=0o600, uid=sandbox_uid, gid=sandbox_uid)
 guard = types.SimpleNamespace(
@@ -243,18 +236,16 @@ print(json.dumps(observed, sort_keys=True))
     expect(JSON.parse(lines[0] ?? "{}")).toEqual({ changed: true, ok: true, reloaded: true });
     expect(JSON.parse(lines[1] ?? "{}")).toEqual({
       action: "add",
-      closed_fds: [9],
       entrypoint_uid: 1000,
       exit_code: 0,
       gateway_check_uid: 1000,
       gateway_owner_uid: 1000,
       health_uid: 1000,
       helper_uid: 1000,
-      lifecycle_uid: 1000,
       signal_name: "SIGUSR1",
       signal_pid: 4242,
       signal_uid: 1000,
-      trusted_pids: [4242, 4242],
+      trusted_pids: [4242, 4242, 4242],
     });
   });
 
@@ -324,56 +315,46 @@ print(json.dumps({"changed": changed}))
     }
   });
 
-  it("rejects sandbox-originated mutation outside policy-authorized lifecycle exec", () => {
+  it("rejects ordinary exec in a root-separated Hermes topology", () => {
     const result = runPython(`
-import importlib.util, sys
+import importlib.util, json, stat, sys, types
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 module.os.geteuid = lambda: 1000
+module.os.lstat = lambda path: types.SimpleNamespace(st_mode=stat.S_IFREG | 0o444, st_uid=0)
 payload = {
     "server": "fake",
     "url": "https://mcp.example.test/mcp",
     "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
     "replace_existing": False,
 }
-operations = (
-    lambda: module.execute("add", payload),
-    module.probe,
-)
 errors = []
-for operation in operations:
+for operation in (lambda: module.execute("add", payload), module.probe):
     try:
         operation()
     except PermissionError as error:
         errors.append(str(error))
-if len(errors) != len(operations):
+if len(errors) != 2:
     raise SystemExit(9)
-module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "9"
-module._read_lifecycle_authority = lambda fd: (123, 1000, 1000, module.LIFECYCLE_AUTH_HANDSHAKE)
-try:
-    module.execute("add", payload)
-except PermissionError:
-    pass
-else:
-    raise SystemExit(10)
-print(errors[0])
+print(json.dumps(errors))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("requires OpenShell policy-authorized lifecycle execution");
+    expect(result.stdout).toContain("requires a same-uid OpenShell sandbox runtime");
   });
 
-  it("runs one-shot mutation only with the exact root-peer lifecycle handshake", () => {
+  it("runs a one-shot mutation through the stock OpenShell exec topology", () => {
     const result = runPython(`
 import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "9"
-module._read_lifecycle_authority = lambda fd: (123, 0, 0, module.LIFECYCLE_AUTH_HANDSHAKE)
+module.os.geteuid = lambda: 1000
+module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
+module._gateway_identity = lambda: (123, 456)
 module.apply_transaction_and_reload = lambda action, payload: {
     "ok": True, "changed": True, "reloaded": True
 }
@@ -390,44 +371,21 @@ print(json.dumps(result, sort_keys=True))
     expect(JSON.parse(result.stdout)).toEqual({ changed: true, ok: true, reloaded: true });
   });
 
-  it("requires exact handshake EOF and consumes the one-shot auth descriptor", () => {
+  it("probes the same-UID helper without mutating config", () => {
     const result = runPython(`
-import importlib.util, json, os, sys
+import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-closed = []
-module.os.close = lambda fd: closed.append(fd)
-module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "9"
-module._read_lifecycle_authority = lambda fd: (
-    123, 0, 0, module.LIFECYCLE_AUTH_HANDSHAKE + b"suffix"
-)
-try:
-    module.probe()
-except PermissionError:
-    pass
-else:
-    raise SystemExit(9)
-if module.LIFECYCLE_AUTH_FD_ENV in module.os.environ or closed != [9]:
-    raise SystemExit(10)
-module.os.environ[module.LIFECYCLE_AUTH_FD_ENV] = "10"
-module._read_lifecycle_authority = lambda fd: (
-    123, 0, 0, module.LIFECYCLE_AUTH_HANDSHAKE
-)
-result = module.probe()
-print(json.dumps({"result": result, "closed": closed, "env": module.LIFECYCLE_AUTH_FD_ENV in os.environ}, sort_keys=True))
+module.os.geteuid = lambda: 1000
+module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
+module._gateway_identity = lambda: (123, 456)
+print(json.dumps(module.probe(), sort_keys=True))
 `);
 
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({
-      closed: [9, 10],
-      env: false,
-      result: {
-        capability: "nemoclaw.hermes-mcp-config-transaction-v1",
-        ok: true,
-      },
-    });
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
   it("restores config and hashes when runtime reload fails", () => {

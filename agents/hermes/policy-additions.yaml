@@ -54,8 +54,6 @@ landlock:
 process:
   run_as_user: sandbox
   run_as_group: sandbox
-  lifecycle_operations:
-    - nemoclaw.hermes-mcp-config-transaction-v1
 
 network_policies:
   managed_inference:

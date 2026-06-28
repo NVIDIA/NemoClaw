@@ -50,19 +50,12 @@
         "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
         "protocol": { "type": "string", "enum": ["rest", "websocket", "json-rpc", "mcp"] },
         "enforcement": { "type": "string", "enum": ["enforce", "audit"] },
-        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip", "require"] },
+        "tls": { "type": "string", "enum": ["terminate", "passthrough", "skip"] },
         "access": { "type": "string", "enum": ["full"] },
         "json_rpc": { "$ref": "#/$defs/jsonRpcOptions" },
         "mcp": { "$ref": "#/$defs/mcpOptions" },
         "websocket_credential_rewrite": { "type": "boolean" },
         "request_body_credential_rewrite": { "type": "boolean" },
-        "credential_keys": {
-          "type": "array",
-          "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
-          "minItems": 1,
-          "maxItems": 64,
-          "uniqueItems": true
-        },
         "allowed_ips": {
           "type": "array",
           "items": { "type": "string", "minLength": 1 },

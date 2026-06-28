@@ -5,18 +5,14 @@
 """Transactional Hermes MCP config mutation and gateway reload control.
 
 This helper never proxies MCP traffic and never handles raw service
-credentials. NemoClaw invokes it as a one-shot, policy-authorized OpenShell
-lifecycle command in the Hermes sandbox namespaces. OpenShell validates this
-fixed image path and interpreter chain against runtime workload replacement
-before running it as the ordinary workload identity with a one-shot
-supervisor-authenticated control descriptor; this is not image provenance, and
-no persistent control listener is exposed to sandbox processes.
+credentials. NemoClaw invokes it as a one-shot ordinary OpenShell sandbox exec
+command in the Hermes sandbox namespaces. No persistent control listener or
+host-side MCP data-plane process is exposed.
 """
 
 from __future__ import annotations
 
 import argparse
-import errno
 import http.client
 import importlib.util
 import ipaddress
@@ -26,9 +22,7 @@ import grp
 import pwd
 import re
 import signal
-import socket
 import stat
-import struct
 import sys
 import time
 from types import ModuleType
@@ -41,12 +35,8 @@ CONFIG_PATH = "/sandbox/.hermes/config.yaml"
 HERMES_DIR = "/sandbox/.hermes"
 STRICT_HASH_PATH = "/etc/nemoclaw/hermes.config-hash"
 GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
+ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
 RELOAD_TIMEOUT_SECONDS = 300
-LIFECYCLE_AUTH_FD_ENV = "OPENSHELL_LIFECYCLE_AUTH_FD"
-LIFECYCLE_AUTH_HANDSHAKE = (
-    b"openshell-lifecycle-auth-v1:nemoclaw.hermes-mcp-config-transaction-v1\n"
-)
-LIFECYCLE_CAPABILITY = "nemoclaw.hermes-mcp-config-transaction-v1"
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]{0,127}$"
@@ -489,62 +479,39 @@ def reload_gateway() -> bool:
     raise TimeoutError("Hermes gateway did not complete its managed MCP reload")
 
 
-def _read_lifecycle_authority(fd: int) -> tuple[int, int, int, bytes]:
-    """Consume the exact root-peer handshake from an inherited Unix stream."""
-    if not hasattr(socket, "SO_PEERCRED"):
-        raise PermissionError("OpenShell lifecycle authentication requires Linux SO_PEERCRED")
-    with socket.fromfd(fd, socket.AF_UNIX, socket.SOCK_STREAM) as control:
-        control.settimeout(2)
-        credentials = control.getsockopt(
-            socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i")
-        )
-        peer_pid, peer_uid, peer_gid = struct.unpack("3i", credentials)
-        chunks: list[bytes] = []
-        remaining = len(LIFECYCLE_AUTH_HANDSHAKE) + 1
-        while remaining > 0:
-            chunk = control.recv(remaining)
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        handshake = b"".join(chunks)
-    return peer_pid, peer_uid, peer_gid, handshake
+def _assert_non_root_lifecycle_identity() -> None:
+    """Allow only an active same-uid Hermes workload topology.
 
-
-def _require_lifecycle_identity() -> None:
-    """Consume the one-shot inherited supervisor socket capability."""
-    raw_fd = os.environ.get(LIFECYCLE_AUTH_FD_ENV, "")
-    if not re.fullmatch(r"[0-9]{1,7}", raw_fd):
-        raise PermissionError(
-            "Hermes MCP mutation requires OpenShell policy-authorized lifecycle execution"
-        )
-    fd = int(raw_fd)
+    Root-started sandboxes stamp a root-owned read-only runtime marker and run
+    Hermes as the dedicated gateway uid. OpenShell current main starts the
+    workload and gateway as the sandbox uid. Direct sandbox execution cannot
+    cross from the former topology into the latter.
+    """
     try:
-        peer_pid, peer_uid, _peer_gid, handshake = _read_lifecycle_authority(fd)
-    finally:
-        os.environ.pop(LIFECYCLE_AUTH_FD_ENV, None)
-        try:
-            os.close(fd)
-        except OSError as close_error:
-            # Preserve the authentication failure when an injected or stale FD
-            # was already invalid; every other close failure remains actionable.
-            if close_error.errno != errno.EBADF:
-                raise
-    if peer_pid <= 0 or peer_uid != 0 or handshake != LIFECYCLE_AUTH_HANDSHAKE:
+        root_marker = os.lstat(ROOT_LIFECYCLE_MARKER)
+    except FileNotFoundError:
+        root_marker = None
+    if root_marker is not None:
+        if not stat.S_ISREG(root_marker.st_mode) or root_marker.st_uid != 0:
+            raise PermissionError("Hermes root lifecycle marker is unsafe")
         raise PermissionError(
-            "Hermes MCP mutation requires OpenShell policy-authorized lifecycle execution"
+            "Hermes MCP mutation requires a same-uid OpenShell sandbox runtime"
         )
+    if _gateway_identity() is None:
+        raise RuntimeError("Hermes gateway is not running for managed MCP reload")
 
 
 def probe() -> dict[str, object]:
-    """Prove the packaged helper's supported lifecycle invocation without mutation."""
-    _require_lifecycle_identity()
-    return {"ok": True, "capability": LIFECYCLE_CAPABILITY}
+    """Prove the packaged helper is available without mutating config."""
+    if os.geteuid() != 0:
+        _assert_non_root_lifecycle_identity()
+    return {"ok": True}
 
 
 def execute(action: str, payload: dict[str, object]) -> dict[str, object]:
-    _require_lifecycle_identity()
     _validate_payload(action, payload)
+    if os.geteuid() != 0:
+        _assert_non_root_lifecycle_identity()
     return apply_transaction_and_reload(action, payload)
 
 

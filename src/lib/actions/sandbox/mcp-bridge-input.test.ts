@@ -73,6 +73,24 @@ describe("MCP CLI parsing", () => {
     ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);
   });
 
+  it("rejects host subprocess control and allowlist names as MCP credentials", () => {
+    for (const name of [
+      "PATH",
+      "HOME",
+      "HTTP_PROXY",
+      "SSL_CERT_FILE",
+      "KUBECONFIG",
+      "LC_ALL",
+      "XDG_CONFIG_HOME",
+      "OPENSHELL_GATEWAY",
+      "GRPC_TRACE",
+    ]) {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+      ).toThrow(/reserved for host subprocess control/);
+    }
+  });
+
   it("rejects host stdio commands", () => {
     expect(() =>
       parseMcpAddArgs([
@@ -240,8 +258,6 @@ describe("MCP CLI parsing", () => {
       "alpha-mcp-github",
       "--type",
       "generic",
-      "--output",
-      "json",
       "--credential",
       "TOKEN",
     ]);

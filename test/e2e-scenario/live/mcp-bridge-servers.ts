@@ -14,6 +14,7 @@ export interface StartedHttpServer {
 }
 
 export interface FakeMcpHttpsServer extends StartedHttpServer {
+  setSecret(secret: string): void;
   requests: Array<{
     method: string;
     path: string;
@@ -222,6 +223,7 @@ export async function startFakeMcpHttpsServer(options: {
   resultToken?: string;
   tls?: { cert: Buffer; key: Buffer };
 }): Promise<FakeMcpHttpsServer> {
+  let expectedSecret = options.secret;
   const tls =
     options.tls ??
     (() => {
@@ -272,7 +274,7 @@ export async function startFakeMcpHttpsServer(options: {
       jsonResponse(res, 405, { error: { message: "method not allowed" } });
       return;
     }
-    if (auth !== `Bearer ${options.secret}`) {
+    if (auth !== `Bearer ${expectedSecret}`) {
       jsonResponse(res, 401, { error: { message: "missing rewritten bearer credential" } });
       return;
     }
@@ -354,6 +356,9 @@ export async function startFakeMcpHttpsServer(options: {
   return {
     port: requireTcpPort(server, "fake MCP endpoint"),
     requests,
+    setSecret: (secret: string) => {
+      expectedSecret = secret;
+    },
     close: () => closeServer(server),
   };
 }

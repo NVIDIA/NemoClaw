@@ -17,11 +17,11 @@ NemoClaw lets a sandboxed agent use MCP Streamable HTTP servers without copying 
 The integration has three parts:
 
 - An OpenShell provider stores credentials outside the sandbox.
-- A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp`, binds its credential key to that policy, and applies explicit JSON-RPC MCP method rules.
+- A generated OpenShell network policy grants the MCP endpoint through `protocol: mcp` and applies explicit JSON-RPC MCP method rules.
 - An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.
-NemoClaw requires an OpenShell build that exposes the `protocol: mcp` policy capability and the TLS-required, Host-bound credential replacement runtime before it enables managed MCP servers.
+NemoClaw requires an OpenShell build from current main that exposes native `protocol: mcp` policy handling and provider-backed credential replacement before it enables managed MCP servers.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
 NemoClaw does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
@@ -59,6 +59,7 @@ Do not reuse OpenShell's Google Cloud compatibility names as MCP bearer keys.
 NemoClaw rejects `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GCP_LOCATION`, `GCP_SERVICE_ACCOUNT_EMAIL`, `GOOSE_PROVIDER`, `ANTHROPIC_VERTEX_PROJECT_ID`, and `VERTEX_LOCATION` because OpenShell exposes those non-secret configuration names as child-process values.
 NemoClaw also rejects `GCE_METADATA_HOST`, which OpenShell rewrites for its metadata emulator.
 Choose a dedicated name such as `MY_SERVICE_MCP_TOKEN`.
+NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
 Every endpoint must use HTTPS, including endpoints reached through an OpenShell host alias.
@@ -69,6 +70,7 @@ Endpoint paths must be literal and canonical, so NemoClaw rejects percent escape
 NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy.
 `restart` resolves the hostname again before updating that policy.
 An OpenShell host alias can identify a native MCP service you already run, but NemoClaw does not start or wrap that service.
+That service must present a certificate valid for the alias, signed by a CA already trusted by the sandbox supervisor; installing a new CA requires restarting the supervisor before registration.
 
 ## Authenticated MCP Security Boundary
 
@@ -76,18 +78,14 @@ Authenticated MCP is the intended configuration.
 The agent stores only the `openshell:resolve:env:KEY` placeholder.
 OpenShell keeps the raw credential in its provider store and combines credential replacement with the generated MCP policy at egress.
 
-For each request, OpenShell first evaluates the effective network policy for the host, port, runtime identity, literal endpoint path, and MCP method.
-The generated endpoint also sets `tls: require`.
-It also declares the single `credential_keys` entry that OpenShell globally reserves for this route.
-OpenShell rejects plaintext CONNECT payloads and direct forward-proxy requests before replacement, validates upstream TLS, requires the HTTP `Host` header to match the approved origin exactly, and rejects MCP query-string drift.
-The generated MCP policy grants only the configured target and explicit MCP profile.
-Only a request that passes policy reaches OpenShell's credential replacement stage, where OpenShell replaces the authorization placeholder immediately before writing the request upstream.
-An endpoint, TLS mode, Host header, path, query, binary, or method not granted by an attached policy is denied without being rewritten or sent to the server.
+For the normal MCP client path, OpenShell evaluates the effective network policy for the destination host and port, adapter binary, literal endpoint path, and MCP method before it replaces placeholders in the allowed HTTP request headers.
+The generated MCP policy grants only the configured destination, path, adapter binaries, pinned addresses, and explicit MCP method profile.
+NemoClaw accepts only canonical HTTPS MCP URLs and writes the credential placeholder only into the `Authorization` header.
 
-OpenShell treats a declared credential key as globally reserved.
-The placeholder can resolve only when this MCP endpoint's origin, path, runtime identity, and method policy all allow the request.
-A broader REST, L4, or later-added network policy cannot authorize that key elsewhere or widen the authoritative MCP decision.
-NemoClaw also rejects credential-key reuse between managed MCP servers so each key has one policy binding.
+OpenShell current main attaches static provider credentials at sandbox scope; it does not reserve a credential key exclusively for one endpoint, expose an immutable provider binding on an attachment, provide a `tls: require` policy mode, bind the HTTP `Host` header to the policy destination, or include query parameters in MCP path matching.
+Consequently, the generated policy narrows the managed MCP client path but cannot prevent a separate broader inspected-HTTP policy in the same sandbox from resolving an attached placeholder.
+NemoClaw rejects credential-key reuse between its managed MCP servers and requires a dedicated provider for each definition, but operators must also avoid granting broader routes to the same adapter runtime.
+The generated agent configuration uses the canonical HTTPS URL, but current-main policy cannot stop malicious code running as an allowed adapter binary from deliberately changing the scheme, Host header, or query string.
 Use a dedicated, least-privilege token and a unique environment key for every server.
 
 Use an MCP service you trust with the credential it receives.
@@ -110,15 +108,9 @@ mcp_servers:
 ```
 
 Hermes config changes and gateway reloads stay inside the sandbox.
-NemoClaw invokes the validated transaction helper as a one-shot, policy-authorized `openshell sandbox exec --lifecycle` command.
-The Hermes process policy grants a closed operation ID that OpenShell maps to the NemoClaw image's exact root-owned helper path and fixed argument shape; OpenShell reauthorizes the request in the gateway and supervisor, validates the helper and its interpreter chain, and runs it directly through the existing authenticated gateway-to-supervisor control stream.
-Root ownership and non-writability enforce immutability against the running workload; they do not establish image provenance, code signing, or semantic trust.
-The operation keeps the normal workload uid, gid, supplementary groups, Landlock policy, seccomp policy, and empty credential environment.
-The supported helper entrypoint additionally consumes a one-shot inherited Unix descriptor with a root supervisor peer and the exact lifecycle handshake; ordinary sandbox exec does not receive that descriptor or select the private control target.
-This descriptor authenticates the packaged helper's supported invocation route; it is an orchestration check, not an additional privilege boundary against code already running as the workload identity.
-Lifecycle mode grants no additional uid, gid, groups, Linux capabilities, provider credentials, filesystem or network access, or persistent privileged channel, and OpenShell keeps provider values and policy mutation outside the sandbox.
-The helper updates the managed compatibility hash, validates the PID against the trusted Hermes gateway launcher before signaling it, and verifies loopback health after reload.
-There is no host listener, shell, persistent control socket, or service for this operation.
+NemoClaw invokes the validated transaction helper as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable path and argument shape.
+The helper runs as the normal sandbox identity, rejects the legacy root-separated runtime topology, validates the gateway PID and launcher before signaling it, updates the managed compatibility hash, verifies loopback health after reload, and rolls back the config and hashes if reload fails.
+There is no host listener, persistent control socket, MCP relay, or service for this operation.
 The command carries no MCP traffic or raw service credential, and its payload contains only the endpoint definition and OpenShell placeholder.
 
 LangChain Deep Agents Code writes an HTTP entry under its user-level discovery path, `/sandbox/.deepagents/.mcp.json`.
@@ -165,30 +157,32 @@ $$nemoclaw my-sandbox mcp restart github
 unset GITHUB_TOKEN
 ```
 
-`restart` updates the existing OpenShell provider, waits until the sandbox has received a new opaque provider revision, reapplies the exact generated policy, and refreshes the agent adapter.
+`restart` requires a successful OpenShell provider update, waits until the sandbox has received a new opaque provider revision, reapplies the generated policy, and refreshes the agent adapter.
+An ambiguous or failed update is never treated as successful merely because another writer advanced the provider revision.
 The raw value is passed only to the OpenShell provider command through its process environment, and it is not added to argv, NemoClaw state, or sandbox configuration.
 Revoke the old credential upstream after the command succeeds.
 If the provider was deleted, the same command recreates it from the exported value.
 
-When the host variable is not exported, `restart` reuses an existing exact-match provider without reading its credential.
+When the host variable is not exported, `restart` reuses an existing provider whose current ID, type, and credential-key metadata match the registry without reading its credential.
 If the provider is missing, export the recorded variable before retrying.
 Running `restart` without a server name refreshes every managed MCP server.
 Export only the variables whose credentials you intend to replace.
 
 ### Rebuild and Destroy
 
-`rebuild` preserves each exact-match OpenShell provider and its credential.
+`rebuild` preserves each provider that matches the recorded ID, type, and credential-key metadata at inspection time.
 It removes the agent adapter entry and detaches the provider before replacing the sandbox.
 It then reattaches the provider, waits for credential readiness, reapplies the generated policy, and restores the adapter.
 If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state.
 A later `mcp restart` can retry an incomplete post-rebuild restore.
 
-`destroy` removes the adapter entry and detaches exact-match providers before asking OpenShell to delete the sandbox.
+`destroy` removes the adapter entry and detaches providers that match the recorded metadata before asking OpenShell to delete the sandbox.
 If deletion is refused, NemoClaw restores the previous MCP state.
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
-Even with `--force`, NemoClaw never deletes a global provider whose exact credential-key ownership cannot be proved.
+NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
+OpenShell current main still performs update, attach, detach, and delete by mutable provider name, so those checks are not an atomic identity binding; do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
 
-`remove --force` performs best-effort cleanup only where ownership can still be proved.
+`remove --force` performs best-effort cleanup only where the recorded metadata still matches at inspection time.
 It never deletes an unowned or drifted same-key live policy.
 If any cleanup step leaves a residual, the command exits nonzero and preserves the managed MCP registry entry so cleanup can be retried.
 It never detaches the provider from other sandboxes, so a residual provider may require manual cleanup.

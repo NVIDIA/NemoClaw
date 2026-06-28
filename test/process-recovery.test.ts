@@ -333,6 +333,30 @@ describe("executeSandboxExecCommand", () => {
       expect.stringContaining("echo SECRET_BOUNDARY_OK"),
     ]);
   });
+
+  it("does not let Docker fallback satisfy a strict provider credential proof", () => {
+    const childProcess = requireSource("node:child_process");
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.js");
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 1,
+      stdout: "OpenShell transport failed before the child marker\n",
+      stderr: "gateway unavailable\n",
+    } as never);
+    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\n",
+      stderr: "",
+    } as never);
+
+    const result = withFakeOpenshellBinary(() =>
+      executeSandboxExecCommand("hermes-box", '[ -z "${FAKE_MCP_SECRET+x}" ]', undefined, {
+        allowLocalDockerFallback: false,
+      }),
+    );
+
+    expect(result).toBeNull();
+    expect(dockerSpawnSync).not.toHaveBeenCalled();
+  });
 });
 
 describe("checkAndRecoverSandboxProcesses", () => {

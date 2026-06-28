@@ -15,11 +15,7 @@ const LEGACY_OPENSHELL_VERSION = "0.0.44";
 const OPENSHELL_REWRITE_FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite";
 const OPENSHELL_MCP_FEATURE_MARKER = "allow_all_known_mcp_methods";
-const OPENSHELL_LIFECYCLE_FEATURE_MARKER = "policy-authorized-lifecycle-exec-v1";
-const OPENSHELL_HERMES_MCP_OPERATION = "nemoclaw.hermes-mcp-config-transaction-v1";
-const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER} ${OPENSHELL_LIFECYCLE_FEATURE_MARKER} ${OPENSHELL_HERMES_MCP_OPERATION}`;
-const OPENSHELL_MCP_TRANSPORT_FEATURE_MARKER =
-  "authenticated-mcp-policy-bound-credential-rewrite-v1";
+const OPENSHELL_FEATURE_MARKERS = `${OPENSHELL_REWRITE_FEATURE_MARKERS} ${OPENSHELL_MCP_FEATURE_MARKER}`;
 type OpenShellFeaturePlacement = "openshell" | "gateway" | "split-mcp-gateway" | "none";
 
 function writeExecutable(target: string, contents: string) {
@@ -57,7 +53,7 @@ function runWithInstalledVersion(
     featurePlacement === "gateway"
       ? OPENSHELL_FEATURE_MARKERS
       : featurePlacement === "split-mcp-gateway"
-        ? `${OPENSHELL_MCP_FEATURE_MARKER} ${OPENSHELL_LIFECYCLE_FEATURE_MARKER} ${OPENSHELL_HERMES_MCP_OPERATION}`
+        ? OPENSHELL_MCP_FEATURE_MARKER
         : "";
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
@@ -89,14 +85,14 @@ exit 99`,
               : [
                   {
                     name: "openshell-sandbox",
-                    markers: `${OPENSHELL_MCP_TRANSPORT_FEATURE_MARKER} ${OPENSHELL_LIFECYCLE_FEATURE_MARKER} ${OPENSHELL_HERMES_MCP_OPERATION}`,
+                    markers: OPENSHELL_MCP_FEATURE_MARKER,
                   },
                 ]),
             ...(options.driverBins === "gateway-vm"
               ? [
                   {
                     name: "openshell-driver-vm",
-                    markers: `${OPENSHELL_MCP_TRANSPORT_FEATURE_MARKER} ${OPENSHELL_LIFECYCLE_FEATURE_MARKER} ${OPENSHELL_HERMES_MCP_OPERATION}`,
+                    markers: OPENSHELL_MCP_FEATURE_MARKER,
                   },
                 ]
               : []),
@@ -330,7 +326,7 @@ mkdir -p "$(dirname "$dest")"
 cat > "$dest" <<'EOF'
 #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi
-# ${OPENSHELL_FEATURE_MARKERS} ${OPENSHELL_MCP_TRANSPORT_FEATURE_MARKER}
+# ${OPENSHELL_FEATURE_MARKERS}
 exit 0
 EOF
 chmod +x "$dest"
@@ -454,7 +450,7 @@ openshell)
   printf '#!/usr/bin/env bash\\nif [ "$1" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; else exit 0; fi\\n# ${OPENSHELL_FEATURE_MARKERS}\\n' > "$dest"
   ;;
 openshell-sandbox|openshell-driver-vm)
-  printf '#!/usr/bin/env bash\\n# ${OPENSHELL_MCP_TRANSPORT_FEATURE_MARKER} ${OPENSHELL_LIFECYCLE_FEATURE_MARKER} ${OPENSHELL_HERMES_MCP_OPERATION}\\nexit 0\\n' > "$dest"
+  printf '#!/usr/bin/env bash\\n# ${OPENSHELL_MCP_FEATURE_MARKER}\\nexit 0\\n' > "$dest"
   ;;
 *)
   printf '#!/usr/bin/env bash\\nexit 0\\n' > "$dest"

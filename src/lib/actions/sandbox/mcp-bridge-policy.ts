@@ -13,11 +13,7 @@ import {
   MCP_BRIDGE_POLICY_SOURCE,
   McpBridgeError,
 } from "./mcp-bridge-contracts";
-import {
-  parseMcpUrl,
-  validateMcpCredentialEnvName,
-  validateMcpServerName,
-} from "./mcp-bridge-validation";
+import { parseMcpUrl, validateMcpServerName } from "./mcp-bridge-validation";
 
 export const MCP_BRIDGE_POLICY_MAX_BODY_BYTES = 131_072;
 export const MCP_BRIDGE_ALLOWED_METHODS = [
@@ -105,10 +101,8 @@ export function buildMcpBridgePolicyYaml(
   server: string,
   url: string,
   adapter: AgentMcpAdapter,
-  credentialKey: string,
   resolvedAddresses?: readonly string[],
 ): string {
-  validateMcpCredentialEnvName(credentialKey);
   const parsed = parseMcpUrl(url);
   const key = buildMcpBridgePolicyKey(server);
   const allowedIps = allowedIpsForEndpoint(parsed.hostname, resolvedAddresses);
@@ -127,15 +121,6 @@ export function buildMcpBridgePolicyYaml(
             path: endpointPath(parsed),
             protocol: "mcp",
             enforcement: "enforce",
-            // OpenShell durably reserves this key for the immutable sandbox
-            // lifetime. It resolves only while an exact provider-ID binding
-            // is active and this endpoint, binary, path, and MCP method policy
-            // authorize the request.
-            credential_keys: [credentialKey],
-            // Authenticated MCP must never downgrade credential replacement to
-            // plaintext. OpenShell rejects non-TLS CONNECT payloads and direct
-            // forward-proxy requests for this endpoint before replacement.
-            tls: "require",
             ...(allowedIps ? { allowed_ips: allowedIps } : {}),
             mcp: {
               max_body_bytes: MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
@@ -159,13 +144,7 @@ export function applyGeneratedPolicy(
   resolvedAddresses?: readonly string[],
 ): void {
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
-  const content = buildMcpBridgePolicyYaml(
-    entry.server,
-    entry.url,
-    adapter,
-    entry.env[0],
-    resolvedAddresses,
-  );
+  const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
   const previousPolicy = registry
     .getCustomPolicies(sandboxName)
@@ -231,7 +210,7 @@ export function applyGeneratedPolicy(
 
 function generatedPolicyContent(entry: McpBridgeEntry): string {
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
-  return buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, entry.env[0]);
+  return buildMcpBridgePolicyYaml(entry.server, entry.url, adapter);
 }
 
 export function assertGeneratedPolicyMutationSafe(

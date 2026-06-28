@@ -85,7 +85,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
-      stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }),
+      stdout: "ready",
       stderr: "",
     };
   }
@@ -155,7 +155,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args.join(" ") === "status --output json") {
     return {
       status: 0,
-      stdout: JSON.stringify({ capabilities: ["authenticated-mcp-policy-bound-credential-rewrite-v1", "policy-authorized-lifecycle-exec-v1", "nemoclaw.hermes-mcp-config-transaction-v1"] }),
+      stdout: "ready",
       stderr: "",
     };
   }

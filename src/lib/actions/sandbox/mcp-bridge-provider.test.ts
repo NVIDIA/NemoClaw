@@ -5,16 +5,22 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 
-import { describe, expect, it } from "vitest";
-
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildMcpCredentialReadinessCommand,
   buildMcpCredentialRevisionSnapshotCommand,
+  parseMcpProviderAttachmentNames,
   parseMcpProviderMetadata,
   providerDetachChangedState,
 } from "./mcp-bridge";
+import { snapshotMcpCredentialRevision, waitForDetachedMcpCredential } from "./mcp-bridge-provider";
+import * as processRecovery from "./process-recovery";
 
 describe("OpenShell MCP provider state", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("parses provider type and credential keys without values", () => {
     expect(
       parseMcpProviderMetadata(`
@@ -48,6 +54,22 @@ Provider:
     expect(
       providerDetachChangedState(0, "Provider alpha-mcp-github was not attached to sandbox alpha."),
     ).toBe(false);
+  });
+
+  it("parses the stock OpenShell sandbox provider table", () => {
+    expect(
+      parseMcpProviderAttachmentNames(`
+NAME              TYPE     CREDENTIAL_KEYS   CONFIG_KEYS
+alpha-mcp-github  generic  1                 0
+alpha-mcp-slack   generic  1                 0
+`),
+    ).toEqual(["alpha-mcp-github", "alpha-mcp-slack"]);
+    expect(parseMcpProviderAttachmentNames("No providers attached to sandbox alpha.\n")).toEqual(
+      [],
+    );
+    expect(() => parseMcpProviderAttachmentNames("unexpected output\n")).toThrow(
+      /attachment table header/,
+    );
   });
 
   it("accepts current revision-scoped placeholders without exposing their value", () => {
@@ -157,6 +179,63 @@ Provider:
     } finally {
       fs.rmSync(snapshotPath, { force: true });
     }
+  });
+
+  it("uses an OpenShell-only exec for provider credential proofs", () => {
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
+
+    expect(() =>
+      snapshotMcpCredentialRevision("alpha", {
+        server: "github",
+        agent: "openclaw",
+        adapter: "mcporter",
+        url: "https://mcp.example.test/mcp",
+        env: ["GITHUB_TOKEN"],
+        providerName: "alpha-mcp-github-0123456789abcdef",
+        providerId: "11111111-2222-4333-8444-555555555555",
+        policyName: "mcp-bridge-github",
+        addedAt: "2026-06-01T00:00:00.000Z",
+      }),
+    ).toThrow(/Could not capture the current OpenShell credential revision/);
+    expect(exec).toHaveBeenCalledWith("alpha", expect.stringContaining("GITHUB_TOKEN"), undefined, {
+      allowLocalDockerFallback: false,
+    });
+  });
+
+  it("fails detach verification when the strict OpenShell exec is unavailable", () => {
+    const previousTimeout = process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS;
+    process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = "1";
+    const exec = vi.spyOn(processRecovery, "executeSandboxExecCommand").mockReturnValue(null);
+    vi.spyOn(Date, "now").mockReturnValueOnce(0).mockReturnValueOnce(0).mockReturnValue(1_000);
+
+    try {
+      expect(() =>
+        waitForDetachedMcpCredential("alpha", {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://mcp.example.test/mcp",
+          env: ["GITHUB_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          providerId: "11111111-2222-4333-8444-555555555555",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ).toThrow(/did not confirm credential 'GITHUB_TOKEN' was revoked/);
+    } finally {
+      if (previousTimeout === undefined) {
+        delete process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS;
+      } else {
+        process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS = previousTimeout;
+      }
+    }
+
+    expect(exec).toHaveBeenCalledWith(
+      "alpha",
+      expect.stringContaining("GITHUB_TOKEN+x"),
+      undefined,
+      { allowLocalDockerFallback: false },
+    );
   });
 
   it("requires a changed credential revision after provider updates", () => {

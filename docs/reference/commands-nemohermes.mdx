@@ -1015,7 +1015,7 @@ NemoClaw registers that credential in an OpenShell provider, installs a generate
 Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments.
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
 All endpoints must use HTTPS, and persisted MCP URLs cannot contain query strings, percent-escaped or glob-style paths, or port zero.
-OpenShell globally reserves the credential key for the generated policy, requires verified TLS and an exact Host match, then enforces the endpoint, runtime, path, query, and MCP-method boundary before replacing the placeholder; broader overlapping policies cannot widen that decision, and denied requests are neither rewritten nor sent upstream.
+NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, and explicit MCP methods. OpenShell current main evaluates that policy before replacing the attached provider placeholder in the allowed request header. Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
 The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 
@@ -1043,7 +1043,7 @@ nemohermes my-assistant mcp status [server] [--json]
 Refresh one MCP server registration, or every server on the sandbox when no server is supplied.
 Restart reapplies the generated policy, reattaches the OpenShell provider when needed, and refreshes the sandbox agent adapter registration.
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
-Otherwise, restart reuses an existing exact-match provider.
+Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
 
 ```bash
@@ -1053,8 +1053,8 @@ nemohermes my-assistant mcp restart [server]
 ### `nemohermes <name> mcp remove`
 
 Remove an MCP server from a sandbox.
-NemoClaw unregisters the sandbox agent adapter, detaches and deletes the exact-match OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
-The command fails closed on drift. `--force` continues best-effort cleanup of independently provable resources, but never claims a non-matching provider or policy and preserves registry state when residuals remain.
+NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
+The command fails closed on observed drift. `--force` continues best-effort cleanup of independently matching resources and preserves registry state when residuals remain. OpenShell current main mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
 ```bash
 nemohermes my-assistant mcp remove github [--force]
@@ -1062,7 +1062,7 @@ nemohermes my-assistant mcp remove github [--force]
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Best-effort cleanup of provably owned resources; preserves registry state when residuals remain |
+| `--force` | Best-effort cleanup of resources whose current metadata match the registry; preserves registry state when residuals remain |
 
 ### `nemohermes <name> skill install <path>`
 

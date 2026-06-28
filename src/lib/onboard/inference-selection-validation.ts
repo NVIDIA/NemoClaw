@@ -81,6 +81,12 @@ export interface InferenceSelectionValidationHelpers {
 export function createInferenceSelectionValidationHelpers(
   deps: InferenceSelectionValidationDeps,
 ): InferenceSelectionValidationHelpers {
+  function exitNonInteractiveValidationFailure(): never {
+    process.exitCode = 1;
+    (process.exit as (code?: number) => void)(1);
+    throw new Error("Non-interactive endpoint validation failed.");
+  }
+
   function printValidationFailure(
     label: string,
     probe?: { failures?: unknown[]; message?: unknown },
@@ -111,7 +117,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
-        process.exit(1);
+        exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -146,7 +152,7 @@ export function createInferenceSelectionValidationHelpers(
     if (!probe.ok) {
       printValidationFailure(label, probe);
       if (deps.isNonInteractive()) {
-        process.exit(1);
+        exitNonInteractiveValidationFailure();
       }
       const retry = await deps.promptValidationRecovery(
         label,
@@ -189,7 +195,7 @@ export function createInferenceSelectionValidationHelpers(
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
-      process.exit(1);
+      exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,
@@ -219,7 +225,7 @@ export function createInferenceSelectionValidationHelpers(
     }
     printValidationFailure(label, probe);
     if (deps.isNonInteractive()) {
-      process.exit(1);
+      exitNonInteractiveValidationFailure();
     }
     const retry = await deps.promptValidationRecovery(
       label,

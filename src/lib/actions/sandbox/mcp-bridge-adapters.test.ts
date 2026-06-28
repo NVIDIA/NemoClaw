@@ -12,8 +12,8 @@ import {
   buildDeepAgentsMcpRegisterCommand,
   buildDeepAgentsMcpRemoveCommand,
   buildDeepAgentsMcpStatusCommand,
-  buildHermesMcpLifecycleExecArgs,
-  buildHermesMcpLifecycleProbeCommand,
+  buildHermesMcpExecArgs,
+  buildHermesMcpProbeCommand,
   buildHermesMcpRegisterCommand,
   buildOpenClawMcporterInspectCommand,
   buildOpenClawMcporterRegisterCommand,
@@ -233,31 +233,29 @@ describe("MCP adapters", () => {
       headers: { Authorization: "Bearer openshell:resolve:env:GITHUB_TOKEN" },
       replace_existing: false,
     });
-    expect(buildHermesMcpLifecycleExecArgs("hermes-box", command)).toEqual([
+    expect(buildHermesMcpExecArgs("hermes-box", command)).toEqual([
       "sandbox",
       "exec",
       "--name",
       "hermes-box",
       "--timeout",
       "620",
-      "--lifecycle",
+      "--no-tty",
       "--",
       ...command,
     ]);
-    expect(buildHermesMcpLifecycleProbeCommand()).toEqual([
+    expect(buildHermesMcpProbeCommand()).toEqual([
       "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
       "probe",
     ]);
-    expect(
-      buildHermesMcpLifecycleExecArgs("hermes-box", buildHermesMcpLifecycleProbeCommand(), 30),
-    ).toEqual([
+    expect(buildHermesMcpExecArgs("hermes-box", buildHermesMcpProbeCommand(), 30)).toEqual([
       "sandbox",
       "exec",
       "--name",
       "hermes-box",
       "--timeout",
       "30",
-      "--lifecycle",
+      "--no-tty",
       "--",
       "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py",
       "probe",
