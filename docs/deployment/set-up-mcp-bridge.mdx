@@ -30,10 +30,13 @@ No NemoClaw host process remains running after an `mcp` lifecycle command return
 
 ## Architecture Decision
 
+**Status:** Accepted on June 27, 2026, as the normative design for the next NemoClaw release and the implementation that supersedes the original acceptance text in NVIDIA/NemoClaw#566.
+
 This native OpenShell design supersedes the original host-side stdio-to-HTTP proxy proposed in NVIDIA/NemoClaw#566.
 NemoClaw does not accept an inline secret-and-command tuple, persist a raw MCP service credential, or operate a host-side MCP data-plane process.
 The only supported managed path is authenticated Streamable HTTP through an OpenShell `protocol: mcp` policy, with the raw credential held by the OpenShell provider and replaced only on an authorized outbound request.
 Host-side MCP data-plane bridges, proxies, relays, listeners, and stdio translation are explicitly out of scope for this feature.
+The original issue's Claude-style `-e KEY=VALUE -- <command>`, plaintext `http://host.docker.internal:<port>`, stored environment value, and `127.0.0.1` proxy clauses are rejected by this decision rather than deferred implementation work.
 
 ## Add an MCP Server
 

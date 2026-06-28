@@ -485,6 +485,19 @@ export function inspectAgentAdapterRegistration(
   return parseAdapterRegistrationInspection(result, entry);
 }
 
+function verifyAgentAdapterRegistration(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+  entry: McpBridgeEntry,
+): void {
+  const inspection = inspectAgentAdapterRegistration(sandboxName, adapter, entry);
+  if (inspection.state === "registered") return;
+  const detail = inspection.state === "error" ? inspection.detail : inspection.state;
+  throw new McpBridgeError(
+    `${adapter} config verification failed after adding '${entry.server}': ${detail}.`,
+  );
+}
+
 function parseLastJsonObject(output: string): Record<string, unknown> | null {
   for (const line of output.trim().split(/\r?\n/).reverse()) {
     try {
@@ -626,6 +639,7 @@ export function registerAgentAdapter(
         `Hermes MCP config registration failed for '${entry.server}'.`,
         { envValues, requireReload: true },
       );
+      verifyAgentAdapterRegistration(sandboxName, adapter, entry);
       return;
     case "deepagents-config":
       runAdapterCommand(
@@ -635,6 +649,7 @@ export function registerAgentAdapter(
         `Deep Agents Code MCP config registration failed for '${entry.server}'.`,
         { envValues },
       );
+      verifyAgentAdapterRegistration(sandboxName, adapter, entry);
       return;
   }
 }

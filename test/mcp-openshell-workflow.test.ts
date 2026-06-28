@@ -18,7 +18,7 @@ type Job = {
 type Workflow = {
   on?: {
     workflow_dispatch?: {
-      inputs?: Record<string, { default?: unknown; options?: unknown[] }>;
+      inputs?: Record<string, { default?: unknown; description?: string; options?: unknown[] }>;
     };
   };
   jobs: Record<string, Job>;
@@ -64,6 +64,13 @@ describe("MCP OpenShell workflow boundary", () => {
       installStep(workflow(".github/workflows/e2e-vitest-scenarios.yaml").jobs["mcp-bridge-vitest"])
         ?.env?.NEMOCLAW_OPENSHELL_FORCE_INSTALL,
     ).toBe("1");
+    for (const candidate of [nightly, vitest]) {
+      const description =
+        candidate.on?.workflow_dispatch?.inputs?.openshell_channel?.description ?? "";
+      expect(description).toContain("stable advertises all required MCP/lifecycle capabilities");
+      expect(description).toContain("passes the lifecycle probe");
+      expect(description).toContain("switch to stable");
+    }
   });
 
   it("offers only stable, current-main dev, and auto channels", () => {

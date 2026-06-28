@@ -22,7 +22,7 @@ on:
         type: string
         default: ""
       openshell_channel:
-        description: "OpenShell integration target. Dev tracks current OpenShell main."
+        description: "OpenShell integration target. Default stays dev until stable advertises all required MCP/lifecycle capabilities and passes the lifecycle probe; then switch to stable."
         required: false
         default: "dev"
         type: choice

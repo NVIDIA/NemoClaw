@@ -23,12 +23,15 @@ export const REQUIRED_OPENSHELL_SANDBOX_MCP_TRANSPORT_FEATURE =
 export const REQUIRED_OPENSHELL_SANDBOX_LIFECYCLE_FEATURE =
   OPENSHELL_LIFECYCLE_EXEC_CAPABILITY_MARKER;
 
-// OpenShell current main (NVIDIA/OpenShell#1865) does not expose a CLI or RPC
-// capability query for these security boundaries. The marker strings are
-// compiled into the components that implement them, so checking the complete
-// installed binary set is the only fail-closed preflight available today.
-// Replace this scan with the authoritative capability query once OpenShell
-// publishes one; a version check alone is not sufficient for moving dev builds.
+// This scan is the fail-closed preflight available before an installed gateway
+// can answer the structured `provider status --output json` capability query.
+// Runtime MCP mutations additionally require that query and the exact Hermes
+// lifecycle probe. Keep MCP E2E defaults on the checksummed current-main `dev`
+// channel until the first stable OpenShell release advertises every capability
+// in OPENSHELL_REQUIRED_MCP_GATEWAY_CAPABILITIES and passes the in-sandbox
+// lifecycle probe. At that point switch workflow defaults to `stable`; retain
+// the artifact scan, structured query, and runtime probe as downgrade guards.
+// A version check alone is not sufficient for moving or mixed-component builds.
 
 export function hasRequiredOpenshellMessagingFeatures(options: {
   openshellBin: string | null;
