@@ -5,6 +5,12 @@ import type { StdioOptions } from "node:child_process";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
+import {
+  buildCompatibleEndpointSmokeRequestScript,
+  RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
+  SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION,
+  totalRetryBackoffSeconds,
+} from "./smoke-retry-classifier";
 
 type CompatibleEndpointSmokeAgent =
   | {
@@ -38,7 +44,10 @@ const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
 const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
   (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
-    (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS - 1) * COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS +
+    totalRetryBackoffSeconds(
+      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+    ) +
     COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
   1000;
 
@@ -202,6 +211,7 @@ export function buildCompatibleEndpointSandboxSmokeScript(
     COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
   );
   const retryMaxTokens = positiveInt(options.retryMaxTokens, 1024);
+  const smokeRequestScript = buildCompatibleEndpointSmokeRequestScript();
 
   return `
 set -eu
@@ -255,8 +265,8 @@ PYCFG
 
 payload_file="$(mktemp)"
 response_file="$(mktemp)"
-error_file="$(mktemp)"
-trap 'rm -f "$payload_file" "$response_file" "$error_file"' EXIT
+status_file="$(mktemp)"
+trap 'rm -f "$payload_file" "$response_file" "$status_file"' EXIT
 
 write_payload() {
   python3 - "$MODEL" "$1" >"$payload_file" <<'PYPAYLOAD'
@@ -275,49 +285,54 @@ print(json.dumps({
 PYPAYLOAD
 }
 
-run_smoke_request() {
-  curl -sS --connect-timeout 10 --max-time "$SMOKE_REQUEST_TIMEOUT_SECONDS" \
-    "$INFERENCE_URL" \
-    -H "Content-Type: application/json" \
-    -d "@$payload_file" >"$response_file" 2>"$error_file" || {
-    rc=$?
-    printf 'curl exit %s: ' "$rc" >&2
-    cat "$error_file" >&2
-    return "$rc"
-  }
-}
+${smokeRequestScript}
 
 check_response() {
-  python3 - "$response_file" "$1" "$2" "$3" <<'PYRESP'
+  python3 - "$response_file" "$status_file" "$1" "$2" "$3" <<'PYRESP'
 import json
-import re
+import os
 import sys
 
 path = sys.argv[1]
-attempt = sys.argv[2]
-max_tokens = sys.argv[3]
-can_retry = sys.argv[4] == "1"
+status_path = sys.argv[2]
+attempt = sys.argv[3]
+max_tokens = sys.argv[4]
+can_retry = sys.argv[5] == "1"
+with open(status_path, "r", encoding="utf-8") as f:
+    http_status = f.read().strip()
+if len(http_status) != 3 or not http_status.isdigit():
+    print("inference.local returned invalid curl HTTP status metadata", file=sys.stderr)
+    sys.exit(1)
+http_status_code = int(http_status)
+response_bytes = os.path.getsize(path)
 try:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 except Exception as exc:
-    body = ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            body = f.read(1000)
-    except Exception:
-        pass
-    status_match = re.search(r"<(?:title|h1)>\\s*([1-5][0-9][0-9])\\b", body, re.IGNORECASE)
-    status_detail = "; http_status=%s" % status_match.group(1) if status_match else ""
     print(
-        "inference.local returned non-JSON response: %s; response_bytes=%s%s"
-        % (exc, len(body.encode("utf-8", errors="replace")), status_detail),
+        "inference.local returned non-JSON response: %s; response_bytes=%s; http_status=%s"
+        % (exc, response_bytes, http_status),
         file=sys.stderr,
     )
-    retryable_gateway_error = bool(
-        status_match and 500 <= int(status_match.group(1)) <= 599
-    )
+    retryable_gateway_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
     sys.exit(3 if can_retry and retryable_gateway_error else 1)
+
+retryable_http_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
+if retryable_http_error:
+    print(
+        "inference.local returned transient HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
+    sys.exit(3 if can_retry else 1)
+
+if not (${SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION}):
+    print(
+        "inference.local returned terminal HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 choices = data.get("choices")
 choice = choices[0] if isinstance(choices, list) and choices and isinstance(choices[0], dict) else {}
@@ -353,6 +368,12 @@ print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 PYRESP
 }
 
+# OpenShell provider refresh has no route-ready acknowledgement for a reused
+# sandbox, so this first authenticated request retries only explicit transport
+# and HTTP 5xx signals while keeping config/content failures strict.
+# Remove this retry when provider refresh exposes a route-ready acknowledgement.
+# Timeout escalation extends onboarding but not propagation readiness after exit 28.
+# Three attempts sleep twice: 5s after attempt 1, then 10s after attempt 2.
 attempt=1
 while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   max_tokens="$RETRY_MAX_TOKENS"
@@ -364,11 +385,7 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
 
   write_payload "$max_tokens"
   status=0
-  request_failed=0
-  run_smoke_request || {
-    status=$?
-    request_failed=1
-  }
+  run_smoke_request || status=$?
   if [ "$status" -eq 0 ]; then
     can_retry=0
     if [ "$attempt" -lt "$SMOKE_ATTEMPTS" ]; then
@@ -379,17 +396,18 @@ while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
   if [ "$status" -eq 0 ]; then
     exit 0
   fi
-  if [ "$request_failed" -eq 0 ] && [ "$status" -ne 2 ] && [ "$status" -ne 3 ]; then
+  if [ "$status" -ne 2 ] && [ "$status" -ne 3 ] && [ "$status" -ne 4 ]; then
     exit "$status"
   fi
   if [ "$attempt" -ge "$SMOKE_ATTEMPTS" ]; then
     exit "$status"
   fi
+  retry_delay=$((SMOKE_RETRY_DELAY_SECONDS * attempt))
   if [ "$status" -ne 2 ]; then
     printf 'inference.local smoke attempt %s/%s failed; retrying in %ss\n' \
-      "$attempt" "$SMOKE_ATTEMPTS" "$SMOKE_RETRY_DELAY_SECONDS" >&2
+      "$attempt" "$SMOKE_ATTEMPTS" "$retry_delay" >&2
   fi
-  sleep "$SMOKE_RETRY_DELAY_SECONDS"
+  sleep "$retry_delay"
   attempt=$((attempt + 1))
 done
   `.trim();

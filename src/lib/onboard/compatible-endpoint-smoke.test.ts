@@ -1,11 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  runSmokeScript,
+  writeFakeCurl,
+  writeFakeSleep,
+  writeSmokeConfig,
+} from "./__test-helpers__/compatible-endpoint-smoke-helpers";
 
 vi.mock("../inference/config", () => ({
   INFERENCE_ROUTE_URL: "https://inference.local/v1",
@@ -21,63 +26,6 @@ import {
 } from "./compatible-endpoint-smoke";
 
 describe("compatible endpoint sandbox smoke helpers", () => {
-  function writeSmokeConfig(tmpDir: string, model: string): string {
-    const configDir = path.join(tmpDir, ".openclaw");
-    fs.mkdirSync(configDir, { recursive: true });
-    const configPath = path.join(configDir, "openclaw.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({
-        agents: { defaults: { model: { primary: `inference/${model}` } } },
-        models: {
-          providers: {
-            inference: {
-              baseUrl: "https://inference.local/v1",
-              apiKey: "unused",
-            },
-          },
-        },
-      }),
-    );
-    return configPath;
-  }
-
-  function writeFakeCurl(
-    tmpDir: string,
-    bodyForCall: string,
-  ): { binDir: string; callFile: string } {
-    const binDir = path.join(tmpDir, "bin");
-    const callFile = path.join(tmpDir, "curl-calls");
-    fs.mkdirSync(binDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(binDir, "curl"),
-      `#!/usr/bin/env bash
-set -eu
-call_file="${callFile}"
-count=0
-if [ -f "$call_file" ]; then
-  count="$(cat "$call_file")"
-fi
-count=$((count + 1))
-printf '%s' "$count" >"$call_file"
-${bodyForCall}
-`,
-      { mode: 0o755 },
-    );
-    return { binDir, callFile };
-  }
-
-  function runSmokeScript(script: string, tmpDir: string, binDir: string) {
-    return spawnSync("sh", ["-c", script], {
-      cwd: tmpDir,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        PATH: `${binDir}:${process.env.PATH || ""}`,
-      },
-    });
-  }
-
   it("runs only for OpenClaw compatible-endpoint sandboxes with messaging", () => {
     expect(shouldRunCompatibleEndpointSandboxSmoke("compatible-endpoint", ["telegram"])).toBe(true);
     expect(
@@ -122,7 +70,7 @@ ${bodyForCall}
     expect(runOpenshell).toHaveBeenNthCalledWith(
       2,
       expect.any(Array),
-      expect.objectContaining({ timeout: 220_000 }),
+      expect.objectContaining({ timeout: 225_000 }),
     );
   });
 
@@ -139,6 +87,25 @@ ${bodyForCall}
     expect(script).toContain("SMOKE_REQUEST_TIMEOUT_SECONDS=60");
     expect(script).toContain("SMOKE_RETRY_DELAY_SECONDS=5");
     expect(script).toContain("MODEL='provider/model'\\'''");
+  });
+
+  it("shell-quotes hostile model text through the generated smoke script", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-quoting-"));
+    const sentinel = path.join(tmpDir, "model-command-ran");
+    const model = "foo'bar`baz$(touch " + sentinel + ")";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, requestFile } = writeFakeCurl(
+      tmpDir,
+      `printf '%s\\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      configPath,
+      retryDelaySeconds: 0,
+    });
+    const result = runSmokeScript(script, tmpDir, binDir);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(fs.readFileSync(requestFile, "utf-8")).model).toBe(model);
+    expect(fs.existsSync(sentinel)).toBe(false);
   });
 
   it("retries a reasoning-only length response before failing the sandbox smoke", () => {
@@ -203,6 +170,140 @@ fi
     expect(result.stderr).toContain("inference.local returned non-JSON response");
     expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
     expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("retries a parseable JSON HTTP 500 response", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-500-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -eq 1 ]; then
+  printf '%s\n' '__HTTP_STATUS__=500'
+  printf '%s\n' '{"error":{"message":"temporary gateway failure"}}'
+else
+  printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+fi
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stderr).toContain("transient HTTP 500");
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("backs off for 5s then 10s between three attempts", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-backoff-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -lt 3 ]; then
+  printf '%s\n' '__HTTP_STATUS__=500'
+  printf '%s\n' '{"error":{"message":"temporary gateway failure"}}'
+else
+  printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+fi
+`,
+    );
+    const sleepFile = writeFakeSleep(tmpDir, binDir);
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 5,
+    });
+    const result = runSmokeScript(script, tmpDir, binDir);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("retrying in 5s");
+    expect(result.stderr).toContain("retrying in 10s");
+    expect(fs.readFileSync(sleepFile, "utf-8")).toBe("5\n10\n");
+  });
+
+  it("does not retry a parseable JSON HTTP 429 response", () => {
+    // Fail closed: a blind replay cannot honor Retry-After and amplifies overload.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-json-429-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+printf '%s\n' '__HTTP_STATUS__=429'
+printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).not.toContain("INFERENCE_SMOKE_OK");
+    expect(result.stderr).toContain("terminal HTTP 429");
+    expect(result.stderr).not.toContain("retrying in");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
+  });
+
+  it.each([
+    6, 7, 28, 52, 55, 56,
+  ])("retries transient curl exit %i before succeeding", (exitCode) => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-retry-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(
+      tmpDir,
+      String.raw`
+if [ "$count" -eq 1 ]; then
+  exit ${exitCode}
+fi
+printf '%s\n' '{"choices":[{"message":{"content":"PONG"},"finish_reason":"stop"}]}'
+`,
+    );
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("INFERENCE_SMOKE_OK PONG");
+    expect(result.stderr).toContain(`curl exit ${exitCode}`);
+    expect(result.stderr).toContain("smoke attempt 1/3 failed; retrying in 0s");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("2");
+  });
+
+  it("does not retry a permanent curl exit", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compat-smoke-curl-terminal-"));
+    const model = "nvidia/nemotron-3-ultra";
+    const configPath = writeSmokeConfig(tmpDir, model);
+    const { binDir, callFile } = writeFakeCurl(tmpDir, "exit 2");
+    const script = buildCompatibleEndpointSandboxSmokeScript(model, {
+      attempts: 3,
+      configPath,
+      retryDelaySeconds: 0,
+    });
+
+    const result = runSmokeScript(script, tmpDir, binDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("curl exit 2");
+    expect(result.stderr).not.toContain("retrying in");
+    expect(fs.readFileSync(callFile, "utf-8")).toBe("1");
   });
 
   it("does not retry a permanent JSON response validation failure", () => {
