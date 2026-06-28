@@ -79,31 +79,41 @@ function traceGithubFixture(options: {
     artifactDataById.set(artifactId, zippedTimingSummary(summary));
   }
 
+  const listWorkflowRunArtifacts = Symbol("listWorkflowRunArtifacts");
+  const listWorkflowRuns = Symbol("listWorkflowRuns");
+  const listTags = Symbol("listTags");
+  const paginateHandlers = new Map<symbol, (args: Record<string, any>) => unknown[]>([
+    [
+      listWorkflowRunArtifacts,
+      (args) => {
+        const artifactId = artifactIdsByRunId.get(Number(args.run_id));
+        return artifactId === undefined ? [] : [{ id: artifactId, name: "cloud-onboard-traces" }];
+      },
+    ],
+    [
+      listTags,
+      () =>
+        (options.tags ?? []).map((tag) => ({
+          name: tag.name,
+          commit: { sha: tag.sha },
+        })),
+    ],
+  ]);
+
   const github: any = {
     rest: {
       actions: {
-        listWorkflowRunArtifacts: Symbol("listWorkflowRunArtifacts"),
-        listWorkflowRuns: Symbol("listWorkflowRuns"),
+        listWorkflowRunArtifacts,
+        listWorkflowRuns,
         downloadArtifact: async ({ artifact_id }: { artifact_id: number }) => ({
           data: artifactDataById.get(artifact_id) ?? Buffer.alloc(0),
         }),
       },
-      repos: {
-        listTags: Symbol("listTags"),
-      },
+      repos: { listTags },
     },
     paginate: async (endpoint: symbol, args: Record<string, any>) => {
-      if (endpoint === github.rest.actions.listWorkflowRunArtifacts) {
-        const artifactId = artifactIdsByRunId.get(Number(args.run_id));
-        return artifactId === undefined ? [] : [{ id: artifactId, name: "cloud-onboard-traces" }];
-      }
-      if (endpoint === github.rest.repos.listTags) {
-        return (options.tags ?? []).map((tag) => ({
-          name: tag.name,
-          commit: { sha: tag.sha },
-        }));
-      }
-      throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`);
+      const handler = paginateHandlers.get(endpoint);
+      return (handler ?? (() => { throw new Error(`Unexpected paginate endpoint: ${String(endpoint)}`); }))(args);
     },
   };
 
