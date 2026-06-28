@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
-import { resultText } from "../fixtures/clients/command.ts";
+import { resultText, shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
@@ -32,10 +32,6 @@ const liveTest =
   process.platform === "linux" && (shouldRunLiveE2E() || shouldRunInstallerIntegration())
     ? test
     : test.skip;
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
 
 function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {

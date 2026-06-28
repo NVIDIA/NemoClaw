@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_SUITE_DIR = path.join(REPO_ROOT, "test/e2e");
+const LIVE_TEST_DIR = path.join(E2E_SUITE_DIR, "live");
 const MIGRATION_DOC = path.join(E2E_SUITE_DIR, "docs", "MIGRATION.md");
 const README_DOC = path.join(E2E_SUITE_DIR, "docs", "README.md");
 const FORBIDDEN_MUTABLE_MIGRATION_MODULE = path.join(
@@ -40,5 +41,19 @@ describe("E2E migration source-of-truth hygiene", () => {
     expect(contents).not.toContain("Full deep migration");
     expect(contents).not.toContain("Per-script tracker");
     expect(contents).not.toContain("Merge gate:");
+  });
+
+  it("keeps shell quoting centralized after the migration helper audit", () => {
+    const localDefinitions = fs
+      .readdirSync(LIVE_TEST_DIR, { recursive: true })
+      .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".ts"))
+      .filter((entry) =>
+        /\b(?:function|const)\s+shellQuote\b/u.test(read(path.join(LIVE_TEST_DIR, entry))),
+      );
+
+    expect(
+      localDefinitions,
+      "Import shellQuote from test/e2e/fixtures/clients/command.ts instead of adding a local copy",
+    ).toEqual([]);
   });
 });

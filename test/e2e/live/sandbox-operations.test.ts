@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { containsInteger42Answer } from "../../helpers/e2e-answer-assertions.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
@@ -32,10 +33,6 @@ type CleanupRegistry = { add(name: string, run: () => Promise<void> | void): voi
 
 function resultText(result: ProcessResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function outputContainsSandbox(result: ProcessResult, sandboxName: string): boolean {

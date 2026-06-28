@@ -1206,7 +1206,9 @@ jobs:
       # This free-standing job checks out and executes the PR target ref. It
       # keeps privileged host dependency setup inline in trusted workflow YAML
       # rather than loading a repo-local action from the target ref after
-      # checkout. Workflow contract tests pin the retry and install behavior.
+      # checkout. Only expect and iptables are allowed here: the TUI driver and
+      # egress-isolation assertion require them. Workflow contract tests pin
+      # the retry behavior and exact package list.
       - name: "Install issue #4434 host dependencies"
         shell: bash
         run: |
@@ -1869,7 +1871,8 @@ jobs:
       # Expect is a reviewed host-tool consumer for the interactive policy-add
       # test. Keep this privileged setup inline in trusted workflow YAML. This
       # job executes a selected target ref, so it must not load a repo-local
-      # action from that ref with sudo privileges.
+      # action from that ref with sudo privileges. Only expect is allowed here;
+      # iptables is scoped to the issue #4434 egress-isolation job.
       - name: Install network-policy host dependencies
         shell: bash
         run: |

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
-
+import { readFreeStandingJobsInventory } from "../tools/e2e/workflow-boundary.mts";
 import { buildSystemPrompt } from "../tools/e2e-advisor/analyze.mts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -86,11 +86,17 @@ function runPrepareTargetCheckout(env: {
 describe("E2E recommendation advisor prompt", () => {
   it("requires resume and repair E2E for onboarding machine compatibility changes", () => {
     const prompt = buildSystemPrompt();
+    const inventory = readFreeStandingJobsInventory();
+    const expectedSelectors = ["onboard-resume", "onboard-repair", "cloud-onboard"];
 
     expect(prompt).toContain("Onboarding resume rule");
-    expect(prompt).toContain("onboard-resume-e2e");
-    expect(prompt).toContain("onboard-repair-e2e");
     expect(prompt).toContain("src/lib/onboard/machine");
+    for (const selector of expectedSelectors) {
+      expect(prompt).toContain(`\`${selector}\``);
+      expect(inventory.allowedJobs).toContain(selector);
+      expect(inventory.targetToJob.get(selector)).toBe(selector);
+    }
+    expect(prompt).not.toMatch(/`(?:onboard-resume|onboard-repair|cloud-onboard)-e2e`/u);
   });
 
   it("pins advisor workflow actions to full commit SHAs", () => {

@@ -6,8 +6,8 @@
  * OpenClaw sandbox, `nemoclaw inference set` switches the running route, then
  * OpenShell route state, OpenClaw config/hash state, registry/session state,
  * inference.local, and a real OpenClaw agent turn are checked from the live
- * host/sandbox boundary. Helpers stay local because this is one focused
- * free-standing migration rather than a new shared fixture family.
+ * host/sandbox boundary. Target-specific helpers stay local; shared shell
+ * primitives come from the fixture layer's production-backed helper.
  */
 
 import fs from "node:fs";
@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { shellQuote } from "../fixtures/clients/command.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   type SandboxClient,
@@ -125,10 +126,6 @@ function stripAnsi(value: string): string {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function uniqueSandboxName(prefix: string): string {

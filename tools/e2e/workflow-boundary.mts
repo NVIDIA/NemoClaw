@@ -387,6 +387,42 @@ function requireRunDoesNotContain(
   }
 }
 
+function validateInlineHostDependencyInstall(
+  errors: string[],
+  jobName: string,
+  steps: readonly WorkflowStep[],
+  stepName: string,
+  expectedPackages: readonly string[],
+): void {
+  const step = requireJobStep(errors, jobName, steps, stepName);
+  if (step?.uses) {
+    errors.push(
+      `${jobName} host dependency setup must stay inline in trusted workflow YAML`,
+    );
+  }
+  for (const fragment of [
+    "for attempt in 1 2 3",
+    "sudo apt-get update",
+    'if [ "$attempt" -eq 3 ]; then',
+    "apt-get update failed after 3 attempts",
+    "sleep $((attempt * 5))",
+  ]) {
+    requireRunContains(errors, step, fragment);
+  }
+
+  const installPrefix = "sudo apt-get install -y --no-install-recommends ";
+  const installLines = stringValue(step?.run)
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("sudo apt-get install "));
+  const expectedInstall = `${installPrefix}${expectedPackages.join(" ")}`;
+  if (installLines.length !== 1 || installLines[0] !== expectedInstall) {
+    errors.push(
+      `${jobName} host dependency install must be exactly '${expectedInstall}'`,
+    );
+  }
+}
+
 function requireUploadPathContains(
   errors: string[],
   uploadPath: string,
@@ -1063,27 +1099,13 @@ function validateNetworkPolicyJob(
     );
   }
 
-  const installHostDependencies = requireJobStep(
+  validateInlineHostDependencyInstall(
     errors,
     jobName,
     steps,
     "Install network-policy host dependencies",
+    ["expect"],
   );
-  if (installHostDependencies?.uses) {
-    errors.push(
-      "network-policy-vitest host dependency setup must stay inline in trusted workflow YAML",
-    );
-  }
-  for (const fragment of [
-    "for attempt in 1 2 3",
-    "sudo apt-get update",
-    'if [ "$attempt" -eq 3 ]; then',
-    "apt-get update failed after 3 attempts",
-    "sleep $((attempt * 5))",
-    "sudo apt-get install -y --no-install-recommends expect",
-  ]) {
-    requireRunContains(errors, installHostDependencies, fragment);
-  }
 
   const setupNode = namedStep(steps, "Set up Node");
   if (!setupNode)
@@ -1186,6 +1208,25 @@ function validateNetworkPolicyJob(
       "network-policy artifact upload retention-days must be 14",
     );
   }
+}
+
+function validateIssue4434HostDependencies(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "issue-4434-tui-unreachable-inference";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  validateInlineHostDependencyInstall(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    "Install issue #4434 host dependencies",
+    ["expect", "iptables"],
+  );
 }
 
 function validateCommonEgressAgentJob(
@@ -7920,6 +7961,7 @@ export function validateE2eWorkflowBoundary(
     "issue-4434-tui-unreachable-inference",
     "issue-4434-tui-unreachable-inference",
   );
+  validateIssue4434HostDependencies(errors, jobs);
   validateDiagnosticsJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceJob(errors, jobs);
   validateSnapshotCommandsJob(errors, jobs);
