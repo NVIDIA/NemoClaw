@@ -440,4 +440,61 @@ describe("credentials oclif commands", () => {
     expect(output.stderr).toContain("UNSET_PROVIDER_KEY");
     expect(output.stderr).toContain("is not set in the current shell");
   });
+
+  it("credentials add rejects --config keys that look credential-shaped", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "api_key=tvly-leaked-12345",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("looks credential-shaped");
+      expect(output.stderr).not.toContain("tvly-leaked-12345");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add rejects --config entries missing the KEY=VALUE form", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "region-without-equals",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--config must be in KEY=VALUE form");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
 });

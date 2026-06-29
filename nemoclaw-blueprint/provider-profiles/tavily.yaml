@@ -20,10 +20,10 @@ endpoints:
     access: read-write
     enforcement: enforce
 binaries:
+  - /opt/venv/bin/python3
+  - /usr/bin/python3
+  - /usr/local/bin/python3
   - /usr/local/bin/node
   - /usr/bin/node
-  - /usr/local/bin/curl
   - /usr/bin/curl
-  - /usr/local/bin/python3
-  - /opt/venv/bin/python3
 inference_capable: false

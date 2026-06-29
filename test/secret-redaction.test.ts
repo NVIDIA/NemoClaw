@@ -24,6 +24,7 @@ describe("secret redaction consistency (#1736)", () => {
       name: "GitHub PAT (fine-grained)",
       token: "github_pat_" + "d".repeat(50),
     },
+    { name: "Tavily API key", token: "tvly-" + "e".repeat(30) },
   ];
 
   // Tokens added for messaging integrations (#2336). They are covered by

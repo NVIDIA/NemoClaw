@@ -21,7 +21,10 @@ export type CredentialsAddResult = {
   failureLines: readonly string[];
 };
 
-const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]*$/;
+const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
+const CONFIG_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
+const CONFIG_KEY_DENYLIST =
+  /(?:^|_)(?:key|token|secret|password|credential|authorization|bearer|api[_-]?key)(?:_|$)/i;
 
 function ok(successLines: readonly string[]): CredentialsAddResult {
   return { exitCode: 0, successLines, failureLines: [] };
@@ -61,8 +64,8 @@ export async function runCredentialsAddAction(
     }
     if (!ENV_NAME_PATTERN.test(credential)) {
       return fail([
-        `  --credential '${credential}' is not a valid env variable name.`,
-        `  Use an uppercase env name (e.g. \`--credential TAVILY_API_KEY\`).`,
+        "  --credential must be a valid env variable name.",
+        "  Use an uppercase env name (e.g. `--credential TAVILY_API_KEY`).",
       ]);
     }
     if (!process.env[credential]) {
@@ -73,12 +76,23 @@ export async function runCredentialsAddAction(
     }
   }
 
-  const validatedConfig: string[] = [];
   for (const entry of configPairs) {
-    if (!entry.includes("=")) {
-      return fail([`  --config '${entry}' must be in KEY=VALUE form.`]);
+    const eq = entry.indexOf("=");
+    if (eq <= 0) {
+      return fail(["  --config must be in KEY=VALUE form."]);
     }
-    validatedConfig.push(entry);
+    const key = entry.slice(0, eq);
+    if (!CONFIG_KEY_PATTERN.test(key)) {
+      return fail([
+        "  --config key must be alphanumeric / underscore (e.g. `--config region=us-east-1`).",
+      ]);
+    }
+    if (CONFIG_KEY_DENYLIST.test(key)) {
+      return fail([
+        `  --config '${key}' looks credential-shaped. Use --credential <ENV_NAME> instead so the value`,
+        "  stays in the host environment and never enters argv.",
+      ]);
+    }
   }
 
   const recoveryFailureLines: string[] = [];
@@ -97,7 +111,7 @@ export async function runCredentialsAddAction(
       openshellArgs.push("--credential", credential);
     }
   }
-  for (const configPair of validatedConfig) {
+  for (const configPair of configPairs) {
     openshellArgs.push("--config", configPair);
   }
 

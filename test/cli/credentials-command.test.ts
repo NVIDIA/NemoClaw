@@ -70,7 +70,16 @@ describe("credentials CLI dispatch", () => {
   it("credentials add rejects --credential values that are not uppercase env names", () => {
     const r = run("credentials add tavily-search --type tavily --credential tavily-api-key");
     expect(r.code).not.toBe(0);
-    expect(r.out).toContain("is not a valid env variable name");
+    expect(r.out).toContain("--credential must be a valid env variable name");
+    expect(r.out).not.toContain("tavily-api-key");
+  });
+
+  it("credentials add never echoes a secret-shaped --credential value", () => {
+    const r = run(
+      "credentials add tavily-search --type tavily --credential tvly-secret-leaked-9999",
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).not.toContain("tvly-secret-leaked-9999");
   });
 
   it("credentials reset without provider uses oclif required-arg validation", () => {

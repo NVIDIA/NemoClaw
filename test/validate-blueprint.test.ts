@@ -113,6 +113,7 @@ type ProviderProfile = {
   id?: string;
   credentials?: ProviderProfileCredential[];
   endpoints?: ProviderProfileEndpoint[];
+  binaries?: string[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -499,6 +500,17 @@ describe("Tavily Search provider profile", () => {
         access: "read-write",
         enforcement: "enforce",
       }),
+    ]);
+  });
+
+  it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
+    expect(profile.binaries).toEqual([
+      "/opt/venv/bin/python3",
+      "/usr/bin/python3",
+      "/usr/local/bin/python3",
+      "/usr/local/bin/node",
+      "/usr/bin/node",
+      "/usr/bin/curl",
     ]);
   });
 });
