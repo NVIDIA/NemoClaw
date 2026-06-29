@@ -36,9 +36,15 @@ const canRun = process.platform === "linux" && python3Available();
 
 type WrapperRun = {
   status: number | null;
+  stdout: string;
   stderr: string;
   realInvoked: boolean;
   realArgs: string;
+};
+
+type StubBehaviour = {
+  stdout?: string;
+  exitCode?: number;
 };
 
 // Run the wrapper against a temp install: a copy of the wrapper alongside the
@@ -50,7 +56,7 @@ type WrapperRun = {
 function runWrapper(
   args: string[],
   env: Record<string, string>,
-  opts: { shadowPython?: boolean } = {},
+  opts: { shadowPython?: boolean; stub?: StubBehaviour } = {},
 ): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
   try {
@@ -59,11 +65,16 @@ function runWrapper(
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
 
     const marker = path.join(dir, "real-invoked.txt");
-    fs.writeFileSync(
-      path.join(dir, "hermes.real"),
-      `#!/usr/bin/env bash\nprintf '%s' "$*" > ${JSON.stringify(marker)}\nexit 0\n`,
-      { mode: 0o755 },
-    );
+    const stubStdout = opts.stub?.stdout ?? "";
+    const stubExit = opts.stub?.exitCode ?? 0;
+    const stubScript = [
+      "#!/usr/bin/env bash",
+      `printf '%s' "$*" > ${JSON.stringify(marker)}`,
+      stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
+      `exit ${stubExit}`,
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
 
     // Optionally plant a malicious `python3` earlier on PATH that would no-op
     // the guard (exit 0). The wrapper must ignore it and use a trusted absolute
@@ -87,6 +98,7 @@ function runWrapper(
     const realInvoked = fs.existsSync(marker);
     return {
       status: result.status,
+      stdout: result.stdout ?? "",
       stderr: result.stderr ?? "",
       realInvoked,
       realArgs: realInvoked ? fs.readFileSync(marker, "utf-8") : "",
@@ -152,5 +164,71 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.status).toBe(0);
     expect(run.realInvoked).toBe(true);
     expect(run.realArgs).toBe("--version");
+  });
+
+  it("masks api_key values in `config show` Python dict output", () => {
+    const fixture = [
+      "◆ Model",
+      "  Model:        {'default': 'meta/llama-3.1-8b-instruct', 'provider': 'custom',",
+      "                 'base_url': 'https://inference.local/v1',",
+      "                 'api_key': 'sk-OPENSHELL-PROXY-REWRITE'}",
+      "  Max turns:    60",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      { stub: { stdout: fixture, exitCode: 0 } },
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.realInvoked).toBe(true);
+    expect(run.realArgs).toBe("config show");
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain("'api_key': 'sk-****'");
+    expect(run.stdout).toContain("'default': 'meta/llama-3.1-8b-instruct'");
+    expect(run.stdout).toContain("'base_url': 'https://inference.local/v1'");
+    expect(run.stdout).toContain("Max turns:    60");
+  });
+
+  it("masks api_key values in `config show` JSON and YAML output", () => {
+    const fixture = [
+      '{"providers": {"nemoclaw-inference": {"api_key": "sk-OPENSHELL-PROXY-REWRITE"}}}',
+      "providers:",
+      "  nemoclaw-inference:",
+      "    api_key: sk-OPENSHELL-PROXY-REWRITE",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      { stub: { stdout: fixture, exitCode: 0 } },
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain('"api_key": "sk-****"');
+    expect(run.stdout).toContain("api_key: sk-****");
+  });
+
+  it("propagates the real binary's non-zero exit through the `config show` pipe", () => {
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      { stub: { stdout: "api_key: sk-fake-value", exitCode: 7 } },
+    );
+
+    expect(run.status).toBe(7);
+    expect(run.stdout).toContain("api_key: sk-****");
+  });
+
+  it("leaves non-`config show` output untouched even when api_key shapes appear", () => {
+    const fixture = "providers:\n  nemoclaw-inference:\n    api_key: sk-OPENSHELL-PROXY-REWRITE";
+    const run = runWrapper(
+      ["config", "list"],
+      {},
+      { stub: { stdout: fixture, exitCode: 0 } },
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("sk-OPENSHELL-PROXY-REWRITE");
   });
 });
