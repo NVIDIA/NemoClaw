@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policy";
+import { describe, expect, it } from "vitest";
+import { applyPreset, buildPolicyGetCommand, buildPolicySetCommand } from "../src/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;
@@ -19,7 +19,7 @@ function isOnboardReadinessInternals(value: object | null): value is OnboardRead
   );
 }
 
-const loadedOnboardReadinessInternals = require("../dist/lib/onboard");
+const loadedOnboardReadinessInternals = require("../src/lib/onboard");
 const onboardReadinessInternals =
   typeof loadedOnboardReadinessInternals === "object" && loadedOnboardReadinessInternals !== null
     ? loadedOnboardReadinessInternals
@@ -94,7 +94,10 @@ describe("sandbox readiness parsing", () => {
 
   it("treats Running phase with ANSI codes as alive", () => {
     expect(
-      isSandboxReady("\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago", "my-assistant"),
+      isSandboxReady(
+        "\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago",
+        "my-assistant",
+      ),
     ).toBeTruthy();
   });
 

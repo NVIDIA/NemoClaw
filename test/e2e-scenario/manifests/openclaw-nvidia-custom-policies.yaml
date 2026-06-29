@@ -26,4 +26,4 @@ spec:
   state:
     workspaceRef: default
     credentialRefs:
-      - NVIDIA_API_KEY
+      - NVIDIA_INFERENCE_API_KEY

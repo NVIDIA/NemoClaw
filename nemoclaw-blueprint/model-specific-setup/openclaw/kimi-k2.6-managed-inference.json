@@ -11,6 +11,7 @@
   },
   "effects": {
     "openclawCompat": {
+      "supportsStore": false,
       "requiresStringContent": true,
       "maxTokensField": "max_tokens",
       "requiresToolResultName": true

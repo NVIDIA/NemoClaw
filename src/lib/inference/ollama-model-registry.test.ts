@@ -12,7 +12,7 @@ import {
   OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES,
   OLLAMA_MODEL_REGISTRY,
   SMALLEST_OLLAMA_MODEL_TAG,
-} from "../../../dist/lib/inference/ollama-model-registry";
+} from "./ollama-model-registry";
 
 describe("OLLAMA_MODEL_REGISTRY", () => {
   it("is ordered largest-first by requiredMemoryMB", () => {
@@ -102,9 +102,9 @@ describe("fittableOllamaModelTags", () => {
   });
 
   it("uses totalMemoryMB when availableMemoryMB is absent so legacy detection still works", () => {
-    expect(
-      fittableOllamaModelTags({ type: "nvidia", totalMemoryMB: 131_072 }).length,
-    ).toBe(OLLAMA_MODEL_REGISTRY.length);
+    expect(fittableOllamaModelTags({ type: "nvidia", totalMemoryMB: 131_072 }).length).toBe(
+      OLLAMA_MODEL_REGISTRY.length,
+    );
   });
 });
 

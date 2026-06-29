@@ -107,12 +107,32 @@ installer_version_for_display() {
 agent_display_name() {
   case "${1:-}" in
     hermes) printf "Hermes" ;;
+    langchain-deepagents-code) printf "LangChain Deep Agents Code" ;;
     openclaw | "") printf "OpenClaw" ;;
     *)
       local first rest
       first="$(printf "%.1s" "$1" | tr '[:lower:]' '[:upper:]')"
       rest="${1#?}"
       printf "%s%s" "$first" "$rest"
+      ;;
+  esac
+}
+
+canonical_agent_name() {
+  local raw="${1:-}" normalized
+  normalized="$(printf "%s" "$raw" | tr '[:upper:]_ ' '[:lower:]--' | sed -E 's/-+/-/g; s/^-//; s/-$//')"
+  case "$normalized" in
+    nemoclaw | nemo-claw | openclaw)
+      printf "openclaw"
+      ;;
+    nemohermes | nemo-hermes | hermes)
+      printf "hermes"
+      ;;
+    nemo-deepagents | nemo-deepagent | nemodeepagents | nemodeepagent | dcode | deepagent | deepagents | deep-agent | deep-agents | deepagentcode | deepagentscode | deepagent-code | deepagents-code | deep-agent-code | deep-agents-code | langchain | langchain-code | langchaindeepagent | langchaindeepagents | langchain-deepagent | langchain-deepagents | langchaindeepagentcode | langchaindeepagentscode | langchain-deepagent-code | langchain-deepagents-code | langchain-deep-agent | langchain-deep-agents | langchain-deep-agent-code | langchain-deep-agents-code)
+      printf "langchain-deepagents-code"
+      ;;
+    *)
+      printf "%s" "$raw"
       ;;
   esac
 }
@@ -269,9 +289,14 @@ resolve_default_sandbox_name() {
   fi
 
   local fallback="my-assistant"
-  if [[ "${NEMOCLAW_AGENT:-}" == "hermes" ]]; then
-    fallback="hermes"
-  fi
+  case "${NEMOCLAW_AGENT:-}" in
+    hermes)
+      fallback="hermes"
+      ;;
+    langchain-deepagents-code)
+      fallback="deepagents-code"
+      ;;
+  esac
   printf "%s" "${sandbox_name:-$fallback}"
 }
 
@@ -473,12 +498,48 @@ print_cli_path_refresh_actions() {
   printf "  ${C_DIM}Or open a new terminal after updating your shell profile.${C_RESET}\n"
 }
 
+# Surface the silent agent fallback. When a non-interactive install (a Brev
+# launchable or other automated deploy) completes on the default OpenClaw
+# runtime *because* NEMOCLAW_AGENT was never set, say so loudly. A launchable
+# that meant to provision a different agent (for example Hermes) otherwise looks
+# identical to an OpenClaw deploy and the mistake is only visible from the live
+# page's RUNTIME field. (#5211)
+warn_default_agent_fallback() {
+  local resolved_agent="${1:-}"
+
+  # Only meaningful once a sandbox was actually provisioned.
+  [[ "${ONBOARD_RAN:-false}" == true ]] || return 0
+  # An explicit NEMOCLAW_AGENT (even =openclaw) is an intentional choice — stay
+  # quiet. The bug is the *unset* case falling back to openclaw.
+  [[ -z "${NEMOCLAW_AGENT:-}" ]] || return 0
+  # Only the default-to-openclaw outcome is worth flagging.
+  [[ "$resolved_agent" == "openclaw" || -z "$resolved_agent" ]] || return 0
+  # Interactive users who skipped NEMOCLAW_AGENT chose OpenClaw on purpose; the
+  # silent fallback only traps automated launchable deploys.
+  installer_non_interactive || return 0
+
+  printf "\n"
+  printf "  ${C_YELLOW}${C_BOLD}Note: deployed the default OpenClaw runtime (RUNTIME = OpenClaw).${C_RESET}\n"
+  printf "  ${C_YELLOW}NEMOCLAW_AGENT was not set, so the installer defaulted to OpenClaw.${C_RESET}\n"
+  printf "  ${C_DIM}If you intended a different agent (for example Hermes), the launchable${C_RESET}\n"
+  printf "  ${C_DIM}or environment must export NEMOCLAW_AGENT before install, for example:${C_RESET}\n"
+  printf "  %s\$%s curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_AGENT=hermes bash\n" \
+    "$C_GREEN" "$C_RESET"
+}
+
 print_done() {
   local elapsed=$((SECONDS - _INSTALL_START))
   local _needs_cli_refresh=false
   needs_shell_reload && _needs_cli_refresh=true
 
-  info "=== Installation complete ==="
+  # #5735: do not claim a clean install when the post-onboard auto-upgrade of a
+  # pre-existing sandbox failed (it may have been destroyed before its recreate
+  # failed). Surface an explicit incomplete/recovery status instead.
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    warn "=== Installation completed with warnings ==="
+  else
+    info "=== Installation complete ==="
+  fi
   printf "\n"
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
@@ -499,6 +560,7 @@ print_done() {
       fi
       printf "  ${C_DIM}Use the Start chatting section above for browser and terminal options.${C_RESET}\n"
     fi
+    warn_default_agent_fallback "$agent_name"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
@@ -522,6 +584,11 @@ print_done() {
     print_cli_path_refresh_actions
     printf "  %s$%s %s onboard\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN"
   fi
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    printf "\n"
+    printf "  ${C_YELLOW}${C_BOLD}Existing sandbox upgrade did not finish.${C_RESET}\n"
+    printf "  ${C_YELLOW}One or more pre-existing sandboxes failed to upgrade. See the messages above for the affected sandbox name, any preserved backup path, and recovery steps (${C_BOLD}%s onboard --resume${C_RESET}${C_YELLOW} / ${C_BOLD}%s <name> rebuild${C_RESET}${C_YELLOW}).${C_RESET}\n" "$_CLI_BIN" "$_CLI_BIN"
+  fi
   printf "\n"
   printf "  ${C_BOLD}GitHub${C_RESET}  ${C_DIM}https://github.com/nvidia/nemoclaw${C_RESET}\n"
   printf "  ${C_BOLD}Docs${C_RESET}    ${C_DIM}https://docs.nvidia.com/nemoclaw/latest/${C_RESET}\n"
@@ -543,7 +610,7 @@ usage() {
   printf "    --version, -v        Print installer version and exit\n"
   printf "    --help, -h           Show this help message and exit\n\n"
   printf "  ${C_DIM}Environment:${C_RESET}\n"
-  printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
+  printf "    NVIDIA_INFERENCE_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
@@ -570,9 +637,7 @@ usage() {
   printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (kept behind OpenShell provider rewrite)\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
-  printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
-  printf "    SLACK_BOT_TOKEN               Auto-enable Slack policy support\n"
-  printf "    TELEGRAM_BOT_TOKEN            Auto-enable Telegram policy support\n"
+  printf "    Messaging credential env vars Auto-enable matching messaging policy support\n"
   printf "\n"
 }
 
@@ -806,11 +871,20 @@ MIN_NODE_VERSION="22.16.0"
 MIN_NPM_MAJOR=10
 
 # ── Agent branding — adapt user-visible names to the active agent ──
+if [[ -n "${NEMOCLAW_AGENT:-}" ]]; then
+  NEMOCLAW_AGENT="$(canonical_agent_name "$NEMOCLAW_AGENT")"
+  export NEMOCLAW_AGENT
+fi
 case "${NEMOCLAW_AGENT:-openclaw}" in
   hermes)
     _CLI_DISPLAY="NemoHermes"
     _AGENT_PRODUCT="Hermes"
     _CLI_BIN="nemohermes"
+    ;;
+  langchain-deepagents-code)
+    _CLI_DISPLAY="NemoDeepAgents"
+    _AGENT_PRODUCT="LangChain Deep Agents Code"
+    _CLI_BIN="nemo-deepagents"
     ;;
   *)
     _CLI_DISPLAY="NemoClaw"
@@ -835,6 +909,10 @@ ONBOARD_RAN=false
 # auto-onboarding (#3276).
 _CLI_PATH=""
 _PREEXISTING_SANDBOX_COUNT=0
+# #5735: set when the post-onboard auto-upgrade of pre-existing sandboxes
+# reported a failure. A failed/destructive rebuild must not be reported as a
+# clean install, so print_done downgrades the final banner when this is true.
+_UPGRADE_SANDBOXES_FAILED=false
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -1492,8 +1570,8 @@ is_real_nemoclaw_cli() {
   local expected_name="${2:-$_CLI_BIN}"
   local version_output
   version_output="$("$bin_path" --version 2>/dev/null)" || return 1
-  # Real CLI outputs: "nemoclaw v0.1.0" or "nemohermes v0.1.0"
-  # (or any semver, with optional pre-release/build metadata).
+  # Real CLI outputs: "nemoclaw v0.1.0", "nemohermes v0.1.0", or
+  # "nemo-deepagents v0.1.0" (or any semver, with optional pre-release/build metadata).
   [[ "$version_output" =~ ^${expected_name}[[:space:]]+v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?([+][0-9A-Za-z.-]+)?$ ]]
 }
 
@@ -2081,8 +2159,9 @@ run_onboard() {
     info "Starting a fresh onboarding session (--fresh)."
     onboard_cmd+=(--fresh)
   elif command_exists node && [[ -f "$session_file" ]]; then
-    # Classify the session: "resume" (auto-attach --resume), "failed"
-    # (last run reported a step failure — user must choose), "skip"
+    # Classify the session: "resume" (auto-attach --resume), "fresh-recover"
+    # (interrupted before sandbox creation — nothing to resume, start over),
+    # "failed" (last run reported a step failure — user must choose), "skip"
     # (complete / missing / unreadable — nothing to resume), or "corrupt".
     local session_state
     session_state="$(
@@ -2096,7 +2175,19 @@ run_onboard() {
           } else if (data.status === "failed" || data.failure) {
             out = "failed";
           } else if (data.status === "in_progress") {
-            out = "resume";
+            // A run interrupted before confirmed sandbox creation has no
+            // sandbox to resume. Auto-attaching --resume here dead-ends at the
+            // CLI non-interactive resume guard (#2753) with no recovery path
+            // for curl|bash installs (#5626), so start fresh instead. Only
+            // auto-resume once the session has both the sandbox name and the
+            // completed sandbox step that onboard-session.ts records.
+            const sandboxCreated =
+              typeof data.sandboxName === "string" &&
+              data.sandboxName.trim() !== "" &&
+              data.steps &&
+              data.steps.sandbox &&
+              data.steps.sandbox.status === "complete";
+            out = sandboxCreated ? "resume" : "fresh-recover";
           } else {
             // Unknown or missing status — do not auto-resume a file we
             // cannot classify against what onboard-session.ts actually
@@ -2113,6 +2204,11 @@ run_onboard() {
       resume)
         info "Found an interrupted onboarding session — resuming it."
         onboard_cmd+=(--resume)
+        ;;
+      fresh-recover)
+        # #5626: interrupted before sandbox creation; nothing to resume.
+        info "Found an interrupted onboarding session with no sandbox yet — starting fresh."
+        onboard_cmd+=(--fresh)
         ;;
       failed)
         # #2430: a previous run failed. The user's provider/inference
@@ -2165,6 +2261,7 @@ run_onboard() {
   # whenever the binary is found on disk; if it is empty the caller has
   # already errored out via verify_nemoclaw's "binary not found" branch.
   local cli_invoke="${_CLI_PATH:-$_CLI_BIN}"
+  local status=0
   if [ "${NON_INTERACTIVE:-}" = "1" ]; then
     onboard_cmd+=(--non-interactive)
     if [ "${ACCEPT_THIRD_PARTY_SOFTWARE:-}" = "1" ]; then
@@ -2174,18 +2271,17 @@ run_onboard() {
     # forward --yes so the Ollama size-confirmation gate does not abort
     # the unattended download (the size is still printed to logs).
     onboard_cmd+=(--yes)
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif [ -t 0 ]; then
-    "$cli_invoke" "${onboard_cmd[@]}"
+    "$cli_invoke" "${onboard_cmd[@]}" || status=$?
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Installer stdin is piped; attaching onboarding to /dev/tty…"
-    local status=0
     "$cli_invoke" "${onboard_cmd[@]}" <&3 || status=$?
     exec 3<&-
-    return "$status"
   else
     error "Interactive onboarding requires a TTY. Re-run in a terminal or set NEMOCLAW_NON_INTERACTIVE=1 with --yes-i-accept-third-party-software."
   fi
+  return "$status"
 }
 
 # Make sure Docker is installed and the current user can run it without
@@ -2193,6 +2289,39 @@ run_onboard() {
 # instructions to relogin/newgrp — Linux only loads group membership at
 # login, so the rest of this script (onboard, etc.) would fail otherwise.
 # Skipped on macOS (Docker Desktop) and inside WSL (host-managed Docker).
+report_unexpected_docker_access() {
+  # If Docker is reachable, installation can continue. Still surface the
+  # unusual QA/security posture where a non-root user outside the docker group
+  # can control the daemon, because that makes "non-docker user denied" checks
+  # non-reproducible on this host.
+  if [ "$(id -u 2>/dev/null || printf 1)" -eq 0 ]; then
+    return 0
+  fi
+
+  local current_user
+  current_user="$(id -un 2>/dev/null || printf unknown)"
+
+  if id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+  if id -nG 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
+    return 0
+  fi
+
+  info "Docker is reachable even though user '$current_user' is not in the docker group."
+  info "This host grants Docker daemon access through another path, so a negative test that expects 'docker info' to fail for non-docker users will not reproduce here."
+  if [ -n "${DOCKER_HOST:-}" ]; then
+    info "DOCKER_HOST is set to: $DOCKER_HOST"
+  else
+    info "DOCKER_HOST is not set; check for a docker wrapper, socket ACLs, sudo/policy rules, or host-specific daemon access configuration."
+  fi
+  local socket_state
+  socket_state="$(stat -Lc '%a %U %G %n' /var/run/docker.sock 2>/dev/null || true)"
+  if [ -n "$socket_state" ]; then
+    info "Docker socket: $socket_state"
+  fi
+}
+
 ensure_docker() {
   case "$(uname -s)" in
     Darwin | MINGW* | MSYS*) return 0 ;;
@@ -2202,6 +2331,7 @@ ensure_docker() {
   fi
   # Fast path: docker info works → already set up (root, or already-active group).
   if docker info >/dev/null 2>&1; then
+    report_unexpected_docker_access
     return 0
   fi
 
@@ -2349,17 +2479,24 @@ detect_express_platform() {
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
+  local inference_disclosure=""
   local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
 
   case "$platform" in
     "DGX Spark")
-      inference_summary="managed local Ollama with model qwen3.6:35b"
+      if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+        inference_summary="managed local vLLM with model ${NEMOCLAW_VLLM_MODEL}"
+      else
+        inference_summary="managed local vLLM using the DGX Spark profile default model"
+      fi
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
+      inference_disclosure="Managed vLLM pulls the configured vLLM image/model and runs a local vLLM inference container."
       sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
@@ -2391,6 +2528,9 @@ describe_express_install() {
   esac
 
   printf "  Express install will configure %s.\n" "$inference_summary"
+  if [ -n "$inference_disclosure" ]; then
+    printf "  %s\n" "$inference_disclosure"
+  fi
   printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
@@ -2452,8 +2592,10 @@ maybe_offer_express_install() {
       case "$platform" in
         "DGX Spark")
           export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
-          export NEMOCLAW_PROVIDER=install-ollama
-          export NEMOCLAW_MODEL=qwen3.6:35b
+          export NEMOCLAW_PROVIDER=install-vllm
+          if [ -n "${NEMOCLAW_VLLM_MODEL:-}" ]; then
+            export NEMOCLAW_VLLM_MODEL
+          fi
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
@@ -2584,15 +2726,26 @@ main() {
       warn "Set NEMOCLAW_SINGLE_SESSION=1 to abort the installer when sessions are active."
     fi
     if run_installer_host_preflight; then
-      run_onboard
+      run_onboard || error "Onboarding did not complete successfully."
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
       if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
         info "Checking for sandboxes that need upgrading…"
-        "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
+        # #5735: a non-zero exit here can mean an existing sandbox was rebuilt
+        # destructively and its recreate failed. Record it so print_done reports
+        # the install as incomplete with recovery guidance instead of a clean
+        # banner. The CLI already prints the affected sandbox name and the
+        # preserved backup path on failure.
+        if ! "$_cli_runner" upgrade-sandboxes --auto 2>&1; then
+          _UPGRADE_SANDBOXES_FAILED=true
+          warn "One or more existing sandboxes could not be upgraded automatically."
+          warn "Review the messages above — affected sandboxes may need '${_CLI_BIN} onboard --resume' or '${_CLI_BIN} <name> rebuild', and any backup path shown above can restore workspace state."
+        fi
       fi
       restore_onboard_forward_after_post_checks || error "Hermes host forward restore failed."
+    elif [ "${NON_INTERACTIVE:-}" = "1" ]; then
+      error "Skipping onboarding until the host prerequisites above are fixed."
     else
       warn "Skipping onboarding until the host prerequisites above are fixed."
     fi
@@ -2600,7 +2753,22 @@ main() {
     warn "Skipping onboarding — could not locate the ${_CLI_BIN} executable on disk."
   fi
 
+  finalize_install
+}
+
+# Print the completion summary, then propagate a fatal/non-zero result when the
+# post-onboard auto-upgrade of a pre-existing sandbox failed (#5735, PRA-5). The
+# new sandbox may have onboarded fine, but a failed auto-upgrade can have left an
+# *existing* sandbox destroyed or backup-only, so the install must not be
+# reported as success. print_done() has already shown the affected sandbox and
+# recovery guidance (and the "completed with warnings" banner); exiting non-zero
+# here is what keeps automation and operators from treating it as a clean
+# install. Extracted from main() so it is unit-testable.
+finalize_install() {
   print_done
+  if [[ "${_UPGRADE_SANDBOXES_FAILED:-false}" == true ]]; then
+    error "Installation incomplete: one or more existing sandboxes failed to upgrade. See the recovery guidance above."
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then

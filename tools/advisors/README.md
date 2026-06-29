@@ -8,7 +8,7 @@ Shared implementation helpers for NemoClaw advisor workflows.
 The advisor entrypoints stay domain-specific under `tools/e2e-advisor/` and
 `tools/pr-review-advisor/`, while this directory owns common infrastructure:
 
-- read-only Pi SDK session execution;
+- read-only Pi SDK session execution, including deterministic synthetic tool-result preloading for known advisor context;
 - Git diff and metadata helpers;
 - JSON extraction and sanitization helpers;
 - artifact path and file I/O helpers;

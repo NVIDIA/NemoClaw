@@ -26,6 +26,11 @@
 
 exclude: ^(nemoclaw/dist/|nemoclaw/node_modules/|docs/_build/|\.venv/|uv\.lock$)
 
+# Stage-less hooks run only while creating a commit. Hooks for later Git
+# lifecycle stages declare their own `stages` explicitly below.
+default_stages:
+  - pre-commit
+
 # Which git hook shims `prek install` writes (separate from each hook's `stages:`).
 # https://prek.j178.dev/configuration/#default_install_hook_types
 default_install_hook_types:
@@ -42,9 +47,11 @@ repos:
     hooks:
       - id: trailing-whitespace
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: end-of-file-fixer
         exclude: ^skills/[^/]+/skill\.oms\.sig$
+        stages: [pre-commit]
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
@@ -71,7 +78,7 @@ repos:
         name: SPDX license headers (insert if missing)
         entry: bash scripts/check-spdx-headers.sh --fix
         language: system
-        files: ^(nemoclaw/src/.*\.ts|scripts/export-catalog-skills\.py|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
         exclude: ^nemoclaw-blueprint/.*__init__\.py$
         pass_filenames: true
         priority: 4
@@ -81,9 +88,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx docs/reference/platform-support.mdx'
         language: system
-        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|docs/reference/platform-support\.mdx|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 
@@ -98,6 +105,7 @@ repos:
           - "2"
           - -ci
           - -bn
+        stages: [pre-commit]
         priority: 5
 
   - repo: local
@@ -106,7 +114,7 @@ repos:
         name: Biome format
         entry: npx biome format --write --no-errors-on-unmatched
         language: system
-        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|scripts/.*\.(js|ts)|test/.*\.js|nemoclaw/src/.*\.ts)$
+        files: ^(biome\.json|package(-lock)?\.json|nemoclaw/package(-lock)?\.json|commitlint\.config\.js|bin/.*\.js|scripts/.*\.js|test/.*\.js|.*\.ts)$
         pass_filenames: true
         priority: 5
 
@@ -117,7 +125,7 @@ repos:
         name: Biome lint fixes
         entry: npx biome lint --write
         language: system
-        files: ^(commitlint\.config\.js|bin/.*\.js|src/.*\.ts|scripts/.*\.(js|ts)|test/.*\.js|docs/_ext/.*\.js|nemoclaw/src/.*\.ts)$
+        files: ^(commitlint\.config\.js|bin/.*\.js|scripts/.*\.js|test/.*\.js|docs/_ext/.*\.js|.*\.ts)$
         pass_filenames: true
         priority: 6
 
@@ -129,6 +137,7 @@ repos:
         priority: 10
       - id: check-added-large-files
         args: ["--maxkb=2000"]
+        stages: [pre-commit]
         priority: 10
       - id: check-case-conflict
         priority: 10
@@ -141,8 +150,10 @@ repos:
       - id: detect-private-key
         priority: 10
       - id: check-executables-have-shebangs
+        stages: [pre-commit]
         priority: 10
       - id: check-shebang-scripts-are-executable
+        stages: [pre-commit]
         priority: 10
 
   - repo: local
@@ -201,16 +212,6 @@ repos:
     rev: v0.22.0
     hooks:
       - id: markdownlint-cli2
-        priority: 10
-
-  - repo: local
-    hooks:
-      - id: docs-to-skills-dry-run
-        name: Verify docs-to-skills output
-        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
-        language: system
-        files: ^(docs/.*\.mdx?$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
-        pass_filenames: false
         priority: 10
 
   # ── commit-msg hooks ────────────────────────────────────────────────────────
@@ -284,7 +285,7 @@ repos:
       - id: test-cli
         name: Test (CLI)
         entry: >-
-          bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
+          bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --project integration --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="src/**/*.ts" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
         files: ^(bin/|src/.*\.(ts|tsx|js|mjs|cjs)$|test/.*\.(ts|tsx|js|mjs|cjs)$)
@@ -320,7 +321,7 @@ repos:
         entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
-        files: ^(\.agents/skills/|docs/.*\.mdx?$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        files: ^(\.agents/skills/|skills/|test/skills-frontmatter\.test\.ts$)
         priority: 20
 
 default_language_version:

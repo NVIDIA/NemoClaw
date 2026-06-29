@@ -5,7 +5,7 @@ name: Run E2E script
 
 description: >-
   Runs a repository E2E script from an already-checked-out workspace and uploads
-  the configured artifacts when the script fails.
+  configured failure artifacts plus optional sanitized trace summary artifacts.
 
 inputs:
   script:
@@ -21,6 +21,18 @@ inputs:
   artifact-path:
     description: Newline-capable artifact path glob list.
     required: true
+  always-artifact-name:
+    description: Optional sanitized trace artifact name to upload after every script run.
+    required: false
+    default: ""
+  always-artifact-path:
+    description: Optional legacy trace summary path; trusted code writes uploads to RUNNER_TEMP.
+    required: false
+    default: ""
+  always-artifact-trace-source-path:
+    description: Optional target-controlled trace path to reduce to a trusted timing-only summary before upload.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -53,7 +65,28 @@ runs:
           exit 1
         fi
 
-        bash "$E2E_SCRIPT"
+        setsid bash "$E2E_SCRIPT" &
+        script_pid="$!"
+
+        set +e
+        wait "$script_pid"
+        script_status="$?"
+        set -e
+
+        # The target-ref script may start background processes with access to
+        # job secrets. Reap its process group before trusted sanitization/upload.
+        if kill -0 -- "-$script_pid" 2>/dev/null; then
+          kill -TERM -- "-$script_pid" 2>/dev/null || true
+          for _ in 1 2 3 4 5; do
+            if ! kill -0 -- "-$script_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL -- "-$script_pid" 2>/dev/null || true
+        fi
+
+        exit "$script_status"
 
     - name: Upload E2E artifacts on failure
       if: failure()
@@ -62,3 +95,44 @@ runs:
         name: ${{ inputs.artifact-name }}
         path: ${{ inputs.artifact-path }}
         if-no-files-found: ignore
+
+    - name: Sanitize E2E trace artifacts
+      id: sanitize-trace-artifacts
+      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        E2E_TRACE_SOURCE_PATH: ${{ inputs.always-artifact-trace-source-path }}
+      run: |
+        set -euo pipefail
+        trusted_summary_dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/nemoclaw-trace-summary.XXXXXX")"
+        python3 "$GITHUB_ACTION_PATH/sanitize-trace-artifacts.py" \
+          "$E2E_TRACE_SOURCE_PATH" \
+          "$trusted_summary_dir"
+
+        summary_file="$trusted_summary_dir/cloud-onboard-trace-timing-summary.json"
+        if [ -e "$summary_file" ]; then
+          if [ -L "$summary_file" ] || [ ! -f "$summary_file" ]; then
+            echo "::error::Sanitized trace summary must be a regular file: $summary_file" >&2
+            exit 1
+          fi
+
+          unexpected="$(
+            find "$trusted_summary_dir" -mindepth 1 -maxdepth 1 \
+              ! -name cloud-onboard-trace-timing-summary.json -print -quit
+          )"
+          if [ -n "$unexpected" ]; then
+            echo "::error::Unexpected file in trusted trace summary directory: $unexpected" >&2
+            exit 1
+          fi
+        fi
+
+        printf 'summary-file=%s\n' "$summary_file" >> "$GITHUB_OUTPUT"
+
+    - name: Upload E2E artifacts
+      if: always() && inputs.always-artifact-name != '' && inputs.always-artifact-path != '' && inputs.always-artifact-trace-source-path != '' && steps.sanitize-trace-artifacts.outcome == 'success'
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: ${{ inputs.always-artifact-name }}
+        path: ${{ steps.sanitize-trace-artifacts.outputs.summary-file }}
+        if-no-files-found: warn

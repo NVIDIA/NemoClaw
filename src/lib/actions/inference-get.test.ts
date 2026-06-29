@@ -13,7 +13,10 @@ vi.mock("../inference/local", () => ({
 
 import { runInferenceGet, type InferenceGetDeps } from "./inference-get";
 
-function createDeps(output: string, status = 0): InferenceGetDeps & {
+function createDeps(
+  output: string,
+  status = 0,
+): InferenceGetDeps & {
   log: ReturnType<typeof vi.fn>;
   captureOpenshell: ReturnType<typeof vi.fn>;
 } {

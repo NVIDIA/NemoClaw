@@ -52,7 +52,12 @@ export interface WritePolicyContextResult {
    * regression). Callers use this to distinguish a legitimate
    * `sandbox unreachable` from a code regression that needs surfacing.
    */
-  failure?: "loader-vitest" | "no-runtime" | "unexpected-loader" | "sandbox-unreachable" | "exec-failed";
+  failure?:
+    | "loader-vitest"
+    | "no-runtime"
+    | "unexpected-loader"
+    | "sandbox-unreachable"
+    | "exec-failed";
   /** Error captured by the loader, if any. */
   errorMessage?: string;
 }
@@ -197,8 +202,7 @@ export function explainSandboxPolicy(
   const build = deps.build ?? buildPolicyContext;
   const render = deps.render ?? renderPolicyContextMarkdown;
   const log = deps.log ?? ((line: string) => console.log(line));
-  const logJson =
-    deps.logJson ?? ((value: unknown) => console.log(JSON.stringify(value, null, 2)));
+  const logJson = deps.logJson ?? ((value: unknown) => console.log(JSON.stringify(value, null, 2)));
   const warn = deps.warn ?? ((line: string) => console.error(line));
   const ctx = build(sandboxName);
   if (options.json) {

@@ -8,11 +8,11 @@ import { describe, expect, it } from "vitest";
 const modulePath = path.join(
   import.meta.dirname,
   "..",
-  "dist",
+  "src",
   "lib",
   "inference",
   "ollama",
-  "proxy.js",
+  "proxy.ts",
 );
 
 type SpawnCall = { command: string; args: readonly string[] };
@@ -65,9 +65,7 @@ describe("Ollama GPU cleanup", () => {
     withMockedSpawnSync(
       ({ args }) => {
         if (args.some((a) => a.endsWith("/api/ps"))) {
-          return ok(
-            JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }),
-          );
+          return ok(JSON.stringify({ models: [{ name: "llama3.1:8b" }, { name: "qwen:7b" }] }));
         }
         return ok();
       },

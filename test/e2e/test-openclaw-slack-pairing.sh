@@ -16,14 +16,14 @@
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1              - required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 - required
-#   NVIDIA_API_KEY                         - required for onboarding
+#   NVIDIA_INFERENCE_API_KEY                         - required for onboarding
 #   NEMOCLAW_SANDBOX_NAME                  - sandbox name (default: e2e-openclaw-slack-pairing)
 #   SLACK_BOT_TOKEN                        - defaults to a fake xoxb- token
 #   SLACK_APP_TOKEN                        - defaults to a fake xapp- token
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-openclaw-slack-pairing.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-openclaw-slack-pairing.sh
 
 # shellcheck disable=SC2016
 # SC2016: Single-quoted strings are intentional for commands evaluated inside
@@ -208,11 +208,11 @@ NODE
 
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"

@@ -41,9 +41,7 @@ describe("parseGatewayCallPayload", () => {
     // and must be rejected rather than passed through to downstream code.
     expect(parseGatewayCallPayload('{"foo":"bar"}')).toBeNull();
     expect(
-      parseGatewayCallPayload(
-        ['{"level":"info","msg":"starting"}', '{"foo":"bar"}'].join("\n"),
-      ),
+      parseGatewayCallPayload(['{"level":"info","msg":"starting"}', '{"foo":"bar"}'].join("\n")),
     ).toBeNull();
   });
 
@@ -68,13 +66,7 @@ describe("parseGatewayCallPayload", () => {
 
   it("parses a multi-line pretty-printed payload", () => {
     const payload = parseGatewayCallPayload<{ ok: true; key: string }>(
-      [
-        "{",
-        '  "ok": true,',
-        '  "key": "agent:main:main",',
-        '  "entry": null',
-        "}",
-      ].join("\n"),
+      ["{", '  "ok": true,', '  "key": "agent:main:main",', '  "entry": null', "}"].join("\n"),
     );
     expect(payload).toMatchObject({ ok: true, key: "agent:main:main" });
   });

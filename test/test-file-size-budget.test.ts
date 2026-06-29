@@ -55,10 +55,10 @@ describe("test file size budget", () => {
   });
 
   it("requires legacy budgets to ratchet down when oversized tests shrink", () => {
-    const violations = evaluateTestFileSizeBudget(
-      [{ file: "test/legacy.test.ts", lines: 200 }],
-      { defaultMaxLines: 150, legacyMaxLines: { "test/legacy.test.ts": 250 } },
-    );
+    const violations = evaluateTestFileSizeBudget([{ file: "test/legacy.test.ts", lines: 200 }], {
+      defaultMaxLines: 150,
+      legacyMaxLines: { "test/legacy.test.ts": 250 },
+    });
 
     expect(violations).toEqual([
       {

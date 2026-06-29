@@ -4,16 +4,13 @@
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
-// Build must run before these tests (imports from dist/)
+// The shared source hook preserves the writable CommonJS cache used by these mocks.
 const require = createRequire(import.meta.url);
 const requireCache: Record<string, unknown> = require.cache as any;
-const helperPath = require.resolve("../../../dist/lib/sandbox/privileged-exec");
-const dockerRunPath = require.resolve("../../../dist/lib/adapters/docker/run");
-const registryPath = require.resolve("../../../dist/lib/state/registry");
-const {
-  containerNameMatchesSandbox,
-  selectDirectSandboxContainer,
-} = require(helperPath);
+const helperPath = require.resolve("./privileged-exec");
+const dockerRunPath = require.resolve("../adapters/docker/run");
+const registryPath = require.resolve("../state/registry");
+const { containerNameMatchesSandbox, selectDirectSandboxContainer } = require(helperPath);
 
 function withPrivilegedExecMocks<T>(
   deps: {
@@ -24,7 +21,7 @@ function withPrivilegedExecMocks<T>(
       defaultSandbox?: string | null;
     };
   },
-  run: (helper: typeof import("../../../dist/lib/sandbox/privileged-exec")) => T,
+  run: (helper: typeof import("./privileged-exec")) => T,
 ): T {
   const priorHelper = require.cache[helperPath];
   const priorDockerRun = require.cache[dockerRunPath];
@@ -96,27 +93,20 @@ describe("privileged sandbox exec routing", () => {
       "openshell-alpha-abc123",
     ].join("\n");
 
+    expect(selectDirectSandboxContainer("alpha", containerNames, ["alpha", "alpha-child"])).toBe(
+      "openshell-alpha-abc123",
+    );
     expect(
-      selectDirectSandboxContainer("alpha", containerNames, [
-        "alpha",
-        "alpha-child",
-      ]),
-    ).toBe("openshell-alpha-abc123");
-    expect(
-      selectDirectSandboxContainer("alpha-child", containerNames, [
-        "alpha",
-        "alpha-child",
-      ]),
+      selectDirectSandboxContainer("alpha-child", containerNames, ["alpha", "alpha-child"]),
     ).toBe("openshell-alpha-child");
   });
 
   it("does not consider unrelated OpenShell containers direct sandbox matches", () => {
     expect(
-      selectDirectSandboxContainer(
+      selectDirectSandboxContainer("alpha", "openshell-gateway-nemoclaw\nopenshell-alpha-child\n", [
         "alpha",
-        "openshell-gateway-nemoclaw\nopenshell-alpha-child\n",
-        ["alpha", "alpha-child"],
-      ),
+        "alpha-child",
+      ]),
     ).toBeNull();
   });
 

@@ -85,9 +85,7 @@ export function parseDockerCdiSpecDirs(value: string | null | undefined): string
 }
 
 export function getDockerCdiSpecDirs(): string[] {
-  return parseDockerCdiSpecDirs(
-    dockerInfoFormat("{{json .CDISpecDirs}}", { ignoreError: true }),
-  );
+  return parseDockerCdiSpecDirs(dockerInfoFormat("{{json .CDISpecDirs}}", { ignoreError: true }));
 }
 
 function normalizeCdiSpecDir(specDir: string | undefined): string {

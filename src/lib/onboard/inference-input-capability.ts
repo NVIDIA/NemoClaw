@@ -8,17 +8,19 @@ type InferenceInputCapabilityDeps = {
 };
 
 const VALID_INFERENCE_INPUTS = new Set(["text", "image"]);
-const MULTIMODAL_MODEL_HINT_PATTERN = /(^|[\/:_\-.])(omni|vision|vl|image|multimodal)([\/:_\-.]|$)/i;
+const MULTIMODAL_MODEL_HINT_PATTERN =
+  /(^|[\/:_\-.])(omni|vision|vl|image|multimodal)([\/:_\-.]|$)/i;
 
 export function isValidInferenceInputsOverride(value: string | undefined): boolean {
   if (!value) return false;
   const tokens = value.split(",");
-  return tokens.every((token) => VALID_INFERENCE_INPUTS.has(token)) && new Set(tokens).size === tokens.length;
+  return (
+    tokens.every((token) => VALID_INFERENCE_INPUTS.has(token)) &&
+    new Set(tokens).size === tokens.length
+  );
 }
 
-export function shouldPromptForInferenceInputCapability(
-  model: string | null | undefined,
-): boolean {
+export function shouldPromptForInferenceInputCapability(model: string | null | undefined): boolean {
   return !!model && MULTIMODAL_MODEL_HINT_PATTERN.test(model);
 }
 

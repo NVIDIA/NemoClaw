@@ -13,7 +13,9 @@ describe("normalizeArgv", () => {
     expect(normalizeArgv([], { globalCommands, isSandboxConnectFlag: isConnectFlag })).toEqual({
       kind: "rootHelp",
     });
-    expect(normalizeArgv(["--help"], { globalCommands, isSandboxConnectFlag: isConnectFlag })).toEqual({
+    expect(
+      normalizeArgv(["--help"], { globalCommands, isSandboxConnectFlag: isConnectFlag }),
+    ).toEqual({
       kind: "rootHelp",
     });
   });

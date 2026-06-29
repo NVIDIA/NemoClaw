@@ -7,16 +7,13 @@ import {
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
 import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
+import type { OnboardFlags } from "../onboard/command-support";
 import { runDeployAction as executeDeployAction } from "./deploy";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
 } from "./maintenance";
-import {
-  runOnboardAction as executeOnboardAction,
-  runSetupAction as executeSetupAction,
-  runSetupSparkAction as executeSetupSparkAction,
-} from "./onboard";
+import { runOnboardAction as executeOnboardAction } from "./onboard";
 import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
@@ -29,22 +26,12 @@ type GlobalCliActionRuntimeHooks = {
 
 let runtimeHooks: GlobalCliActionRuntimeHooks = {};
 
-export function setGlobalCliActionRuntimeHooksForTest(
-  hooks: GlobalCliActionRuntimeHooks,
-): void {
+export function setGlobalCliActionRuntimeHooksForTest(hooks: GlobalCliActionRuntimeHooks): void {
   runtimeHooks = hooks;
 }
 
-export async function runOnboardAction(args: string[] = []): Promise<void> {
-  await executeOnboardAction(args);
-}
-
-export async function runSetupAction(args: string[] = []): Promise<void> {
-  await executeSetupAction(args);
-}
-
-export async function runSetupSparkAction(args: string[] = []): Promise<void> {
-  await executeSetupSparkAction(args);
+export async function runOnboardAction(flags: OnboardFlags): Promise<void> {
+  await executeOnboardAction(flags);
 }
 
 export async function runDeployAction(instanceName?: string): Promise<void> {

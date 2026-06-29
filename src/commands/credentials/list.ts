@@ -15,8 +15,7 @@ export default class CredentialsListCommand extends NemoClawCommand {
   static description = "List provider credentials registered with the OpenShell gateway.";
   static usage = ["credentials list"];
   static examples = ["<%= config.bin %> credentials list"];
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(CredentialsListCommand);
@@ -52,8 +51,12 @@ export default class CredentialsListCommand extends NemoClawCommand {
     }
     if (bridgeNames.length > 0) {
       this.log("");
-      this.log(`  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`);
-      this.log(`  Manage those with \`${CLI_NAME} <sandbox> channels list/remove/stop\` — not this command.`);
+      this.log(
+        `  ${String(bridgeNames.length)} per-sandbox messaging bridge(s) are also registered.`,
+      );
+      this.log(
+        `  Manage those with \`${CLI_NAME} <sandbox> channels list/remove/stop\` — not this command.`,
+      );
     }
   }
 }

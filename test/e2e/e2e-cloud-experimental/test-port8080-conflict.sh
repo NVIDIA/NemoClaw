@@ -4,8 +4,8 @@
 #
 # Port 8080 conflict during nemoclaw onboard (VDR3 #5)
 #
-# OPTIONAL / standalone — not invoked by test-e2e-cloud-experimental.sh. Run manually or from
-# a separate CI job when you want to validate preflight port checks.
+# OPTIONAL / standalone — not invoked by test-cloud-onboard-e2e.sh. Run manually
+# or from a separate CI job when you want to validate preflight port checks.
 #
 # Expects a working NemoClaw/OpenShell install from a prior onboard (gateway may
 # hold 8080). Destroys the nemoclaw gateway, binds a dummy listener on 8080, runs
@@ -21,10 +21,10 @@
 #   NEMOCLAW_SANDBOX_NAME                    — default: e2e-cloud-experimental
 #   NEMOCLAW_NON_INTERACTIVE                — should be 1 (onboard non-interactive)
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1  — required for non-interactive onboard/re-onboard
-#   NVIDIA_API_KEY                          — required if onboard reaches cloud inference (restore path)
+#   NVIDIA_INFERENCE_API_KEY                          — required if onboard reaches cloud inference (restore path)
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/e2e-cloud-experimental/test-port8080-conflict.sh
 
 set -uo pipefail
 

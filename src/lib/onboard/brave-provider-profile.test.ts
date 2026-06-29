@@ -10,10 +10,7 @@ import {
   shouldEnableBraveWebSearch,
 } from "./brave-provider-profile";
 
-function makeDeps(
-  runOpenshell: ReturnType<typeof vi.fn>,
-  overrides: Record<string, unknown> = {},
-) {
+function makeDeps(runOpenshell: ReturnType<typeof vi.fn>, overrides: Record<string, unknown> = {}) {
   return {
     root: "/repo",
     runOpenshell,
@@ -29,10 +26,7 @@ function makeDeps(
 describe("ensureBraveProviderProfile", () => {
   it("does nothing when no token def is brave-typed", () => {
     const runOpenshell = vi.fn();
-    ensureBraveProviderProfile(
-      [{ providerType: "generic", token: "tok" }],
-      makeDeps(runOpenshell),
-    );
+    ensureBraveProviderProfile([{ providerType: "generic", token: "tok" }], makeDeps(runOpenshell));
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 

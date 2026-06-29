@@ -33,6 +33,33 @@ afterEach(() => {
   }
 });
 
+function makeMessagingPlan(sandboxName: string, agent: string, channelIds: string[]) {
+  return {
+    schemaVersion: 1,
+    sandboxName,
+    agent,
+    workflow: "onboard",
+    channels: channelIds.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: true,
+      selected: true,
+      configured: true,
+      disabled: false,
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels: [],
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
 /**
  * Create a temp HOME with a sandbox registry, onboard session, and
  * optionally a saved credential in credentials.json.
@@ -49,27 +76,37 @@ function createFixture(opts: {
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
   agent?: string | null;
+  agents?: unknown[] | null;
   hermesAuthMethod?: string | null;
-  messagingChannels?: string[] | null;
+  messagingPlanChannels?: string[] | null;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
+  registeredProviders?: string[];
+  activeSessionCount?: number | null;
 }) {
   const {
     sandboxName = "my-assistant",
     provider = "nvidia-prod",
-    credentialEnv = "NVIDIA_API_KEY",
+    credentialEnv = "NVIDIA_INFERENCE_API_KEY",
     savedCredential,
     providerSelectionStatus = "complete",
     agent = null,
+    agents = null,
     hermesAuthMethod = null,
-    messagingChannels = null,
+    messagingPlanChannels = null,
     dockerBuildExitCode = 0,
     providerRegistered = true,
+    registeredProviders,
+    activeSessionCount = 0,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
   const nemoclawDir = path.join(tmpDir, ".nemoclaw");
   fs.mkdirSync(nemoclawDir, { recursive: true, mode: 0o700 });
+  const messagingPlan =
+    messagingPlanChannels && messagingPlanChannels.length > 0
+      ? makeMessagingPlan(sandboxName, agent ?? "openclaw", messagingPlanChannels)
+      : null;
 
   // ── Registry ──────────────────────────────────────────────────
   fs.writeFileSync(
@@ -84,7 +121,8 @@ function createFixture(opts: {
           gpuEnabled: false,
           policies: [],
           agent,
-          messagingChannels,
+          ...(agents ? { agents } : {}),
+          ...(messagingPlan ? { messaging: { schemaVersion: 1, plan: messagingPlan } } : {}),
         },
       },
     }),
@@ -116,7 +154,7 @@ function createFixture(opts: {
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
+      messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: {
@@ -197,10 +235,12 @@ function createFixture(opts: {
     "  UserKnownHostsFile /dev/null",
   ].join("\\n");
 
+  const registeredProvidersLiteral = JSON.stringify(registeredProviders ?? null);
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+const registeredProviders = ${registeredProvidersLiteral};
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
@@ -209,9 +249,27 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
+if (a[0]==="provider" && a[1]==="get")       {
+  if (Array.isArray(registeredProviders)) process.exit(registeredProviders.includes(a[2]) ? 0 : 1);
+  process.exit(${providerRegistered ? 0 : 1});
+}
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
+process.exit(0);
+`,
+    { mode: 0o755 },
+  );
+
+  // ── Fake ps for active SSH session detection ──────────────────
+  const activeSessionLines = Array.from(
+    { length: activeSessionCount ?? 0 },
+    (_, index) => `${9000 + index} ssh openshell-${sandboxName}`,
+  ).join("\n");
+  fs.writeFileSync(
+    path.join(tmpDir, "ps"),
+    `#!/usr/bin/env node
+if (${activeSessionCount === null ? "true" : "false"}) process.exit(1);
+process.stdout.write(${JSON.stringify(activeSessionLines)} + (${JSON.stringify(activeSessionLines)} ? "\\n" : ""));
 process.exit(0);
 `,
     { mode: 0o755 },
@@ -260,11 +318,9 @@ process.exit(0);
 
   // Patch the PLACEHOLDER in the fake ssh to point at the real fakeRoot
   const sshScript = fs.readFileSync(path.join(tmpDir, "ssh"), "utf-8");
-  fs.writeFileSync(
-    path.join(tmpDir, "ssh"),
-    sshScript.replace("PLACEHOLDER", fakeRoot),
-    { mode: 0o755 },
-  );
+  fs.writeFileSync(path.join(tmpDir, "ssh"), sshScript.replace("PLACEHOLDER", fakeRoot), {
+    mode: 0o755,
+  });
 
   return { tmpDir, nemoclawDir, sandboxName, fakeRoot };
 }
@@ -272,29 +328,24 @@ process.exit(0);
 function runRebuild(
   fixture: ReturnType<typeof createFixture>,
   extraEnv: Record<string, string> = {},
+  options: { yes?: boolean; input?: string } = {},
 ) {
-  return spawnSync(
-    process.execPath,
-    [
-      path.join(REPO_ROOT, "bin", "nemoclaw.js"),
-      fixture.sandboxName,
-      "rebuild",
-      "--yes",
-    ],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-      env: {
-        HOME: fixture.tmpDir,
-        PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
-        NEMOCLAW_NON_INTERACTIVE: "1",
-        NEMOCLAW_NO_CONNECT_HINT: "1",
-        NO_COLOR: "1",
-        ...extraEnv,
-      },
-      timeout: 30_000,
+  const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
+  if (options.yes !== false) argv.push("--yes");
+  return spawnSync(process.execPath, argv, {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+    input: options.input,
+    env: {
+      HOME: fixture.tmpDir,
+      PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+      NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_NO_CONNECT_HINT: "1",
+      NO_COLOR: "1",
+      ...extraEnv,
     },
-  );
+    timeout: 30_000,
+  });
 }
 
 function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean {
@@ -308,357 +359,543 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
   }
 }
 
-describe("Issue #2273: atomic rebuild", () => {
+describe("atomic rebuild (#2273)", () => {
   describe("Layer 2: preflight credential check", () => {
-    it(
-      "aborts rebuild BEFORE destroying sandbox when credential is missing",
-      { timeout: 60_000 },
-      () => {
-        // No credential in env or credentials.json AND no gateway-registered
-        // provider — preflight must still abort so the sandbox is preserved.
-        const f = createFixture({
-          credentialEnv: "NVIDIA_API_KEY",
-          providerRegistered: false,
-          // no savedCredential
-        });
+    it("cancels interactive rebuild before credential preflight or backup on non-affirmative input", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: false,
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        // Should mention preflight failure
-        expect(output).toContain("preflight failed");
-        expect(output).toContain("NVIDIA_API_KEY");
-        // Should say sandbox is untouched
-        expect(output).toContain("untouched");
-        // Sandbox should still be in the registry (not destroyed)
-        expect(registryHasSandbox(f)).toBe(true);
-      },
-    );
+      expect(result.status).toBe(0);
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("preflight failed");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
 
-    it(
-      "proceeds when credential is saved in credentials.json (not in env)",
-      { timeout: 60_000 },
-      () => {
-        // Credential saved in credentials.json but NOT in process.env
-        const f = createFixture({
-          credentialEnv: "NVIDIA_API_KEY",
-          savedCredential: {
-            key: "NVIDIA_API_KEY",
-            value: "nvapi-test-key-for-rebuild",
-          },
-        });
+    it("accepts trimmed case-insensitive yes input before continuing rebuild", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f, {}, { yes: false, input: " YES \n" });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        // Should NOT show preflight failure
-        expect(output).not.toContain("preflight failed");
-        // Should proceed to backup step
-        expect(output).toContain("Backing up sandbox state");
-      },
-    );
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).not.toContain("Cancelled.");
+      expect(output).not.toContain("preflight failed");
+      expect(output).toContain("Backing up sandbox state");
+    });
 
-    it(
-      "copies Hermes messaging channels from the registry into the rebuild resume session",
-      { timeout: 60_000 },
-      () => {
-        const f = createFixture({
-          agent: "hermes",
-          messagingChannels: ["discord"],
-          credentialEnv: "NVIDIA_API_KEY",
-          savedCredential: {
-            key: "NVIDIA_API_KEY",
-            value: "nvapi-test-key-for-rebuild",
-          },
-        });
+    it("aborts multi-agent rebuild before prompting, preflight, or backup", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agents: [{ name: "openclaw" }, { name: "hermes" }],
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
-        expect(output).toContain("Creating new sandbox with current image");
+      const result = runRebuild(f, {}, { yes: false, input: "YES\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const session = JSON.parse(
-          fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
-        );
-        expect(session.agent).toBe("hermes");
-        expect(session.messagingChannels).toEqual(["discord"]);
-      },
-    );
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("Multi-agent sandbox rebuild is not yet supported");
+      expect(output).not.toContain("Proceed? [y/N]:");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
 
-    it(
-      "aborts rebuild before backup when forced Hermes base image build fails",
-      { timeout: 60_000 },
-      () => {
-        const f = createFixture({
-          agent: "hermes",
-          credentialEnv: "NVIDIA_API_KEY",
-          savedCredential: {
-            key: "NVIDIA_API_KEY",
-            value: "nvapi-test-key-for-rebuild",
-          },
-          dockerBuildExitCode: 23,
-        });
+    it("prints active SSH session warning before interactive confirmation", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: 2,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        expect(result.status).not.toBe(0);
-        expect(output).toContain("Rebuild preflight failed");
-        expect(output).toContain("agent base image could not be built");
-        expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
-        expect(output).toContain("Sandbox is untouched");
-        expect(output).not.toContain("Backing up sandbox state");
-        expect(registryHasSandbox(f)).toBe(true);
-      },
-    );
+      expect(result.status).toBe(0);
+      expect(output).toContain("Active SSH sessions detected (2 connections)");
+      expect(output).toContain("terminate all active sessions with a Broken pipe error");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
+    });
 
-    it(
-      "skips credential preflight for local inference (no credentialEnv in session)",
-      { timeout: 60_000 },
-      () => {
-        // Ollama/vLLM — no credentialEnv in session
-        const f = createFixture({
-          provider: "ollama-local",
-          credentialEnv: undefined as unknown as string,
-        });
+    it("omits active SSH warning when detection is unavailable", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        activeSessionCount: null,
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-        // Patch the session to have null credentialEnv
-        const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
-        const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
-        session.credentialEnv = null;
-        session.provider = "ollama-local";
-        fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+      const result = runRebuild(f, {}, { yes: false, input: "n\n" });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      expect(result.status).toBe(0);
+      expect(output).not.toContain("Active SSH");
+      expect(output).toContain("Proceed? [y/N]:");
+      expect(output).toContain("Cancelled.");
+      expect(output).not.toContain("Backing up sandbox state");
+    });
 
-        // Should NOT show preflight failure
-        expect(output).not.toContain("preflight failed");
-        // Should proceed to backup step
-        expect(output).toContain("Backing up sandbox state");
-      },
-    );
+    it("aborts rebuild BEFORE destroying sandbox when credential is missing", {
+      timeout: 60_000,
+    }, () => {
+      // No credential in env or credentials.json AND no gateway-registered
+      // provider — preflight must still abort so the sandbox is preserved.
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: false,
+        // no savedCredential
+      });
 
-    it.each([["ollama-local"], ["vllm-local"]])(
-      "migrates legacy %s sandbox off OPENAI_API_KEY (GH #2519)",
-      (provider) => {
-        // Pre-fix sandboxes recorded credentialEnv="OPENAI_API_KEY" even
-        // though local inference never actually needed it. After the fix,
-        // the wizard records null. Rebuild must accept the legacy value,
-        // print a one-time migration notice, and proceed even when no
-        // OPENAI_API_KEY exists in env or credentials.json.
-        const f = createFixture({
-          provider,
-          credentialEnv: "OPENAI_API_KEY",
-          // no savedCredential — host has no OPENAI_API_KEY anywhere
-        });
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      // Should prefer the missing-provider abort over the generic missing-env fallback.
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+      expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).not.toContain("export NVIDIA_INFERENCE_API_KEY=<your-key>");
+      // Should say sandbox is untouched
+      expect(output).toContain("untouched");
+      // Sandbox should still be in the registry (not destroyed)
+      expect(registryHasSandbox(f)).toBe(true);
+    });
 
-        // Must NOT bail with the usual missing-credential failure
-        expect(output).not.toContain("preflight failed");
-        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
-        // Must surface the migration notice so testers know the legacy
-        // behaviour was intentionally bypassed
-        expect(output).toContain("GH #2519");
-        expect(output).toContain(provider);
-        // Must continue into the backup step
-        expect(output).toContain("Backing up sandbox state");
-      },
-      60_000,
-    );
+    it("proceeds when credential is saved in credentials.json (not in env)", {
+      timeout: 60_000,
+    }, () => {
+      // Credential saved in credentials.json but NOT in process.env
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-    it(
-      "preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)",
-      { timeout: 60_000 },
-      () => {
-        // OpenAI provider with no credential AND no gateway registration —
-        // should abort.
-        const f = createFixture({
-          provider: "openai-api",
-          credentialEnv: "OPENAI_API_KEY",
-          providerRegistered: false,
-          // no savedCredential
-        });
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      // Should NOT show preflight failure
+      expect(output).not.toContain("preflight failed");
+      // Should proceed to backup step
+      expect(output).toContain("Backing up sandbox state");
+    });
 
-        expect(output).toContain("preflight failed");
-        expect(output).toContain("OPENAI_API_KEY");
-        expect(output).toContain("untouched");
-        expect(registryHasSandbox(f)).toBe(true);
-      },
-    );
+    it("aborts before backup when the gateway provider is missing even with host credential", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        provider: "nvidia-prod",
+        providerRegistered: false,
+      });
 
-    it(
-      "uses the registered Hermes Provider in OpenShell instead of requiring OPENAI_API_KEY",
-      { timeout: 60_000 },
-      () => {
-        const f = createFixture({
-          agent: "hermes",
-          provider: "hermes-provider",
-          credentialEnv: "OPENAI_API_KEY",
-          hermesAuthMethod: "oauth",
-        });
+      const result = runRebuild(f, {
+        NVIDIA_INFERENCE_API_KEY: "nvapi-test-key-for-rebuild",
+      });
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+      expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(output).not.toContain("Creating new sandbox with current image");
+      expect(output).not.toContain("missing from gateway; recreating it");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
 
-        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
-        expect(output).not.toContain("provider credential not found");
-        expect(output).toContain("Backing up sandbox state");
-      },
-    );
+    it("copies Hermes messaging channels from the registry into the rebuild resume session", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "hermes",
+        messagingPlanChannels: ["discord"],
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+      });
 
-    it(
-      "registers an exported Hermes API key in OpenShell when the provider is missing",
-      { timeout: 60_000 },
-      () => {
-        const f = createFixture({
-          agent: "hermes",
-          provider: "hermes-provider",
-          credentialEnv: "NOUS_API_KEY",
-          hermesAuthMethod: "api_key",
-          providerRegistered: false,
-        });
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+      expect(output).toContain("Creating new sandbox with current image");
 
-        const result = runRebuild(f, { NOUS_API_KEY: "nous-key-from-env" });
-        const output = (result.stderr || "") + (result.stdout || "");
+      const session = JSON.parse(
+        fs.readFileSync(path.join(f.nemoclawDir, "onboard-session.json"), "utf-8"),
+      );
+      expect(session.agent).toBe("hermes");
+      expect(
+        session.messagingPlan?.channels.map((channel: { channelId: string }) => channel.channelId),
+      ).toEqual(["discord"]);
+    });
 
-        expect(output).not.toContain("Missing credential: NOUS_API_KEY");
-        expect(output).not.toContain("provider credential not found");
-        expect(output).toContain("Backing up sandbox state");
-      },
-    );
+    it("aborts rebuild before backup when forced Hermes base image build fails", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "hermes",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+        dockerBuildExitCode: 23,
+      });
 
-    it(
-      "uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_API_KEY",
-      { timeout: 60_000 },
-      () => {
-        // After `nemohermes channels add wechat` the rebuild preflight used to
-        // abort because NVIDIA_API_KEY was not set in the environment, even
-        // though `nvidia-prod` was already registered in the OpenShell
-        // gateway. Reuse the gateway-stored credential instead.
-        const f = createFixture({
-          provider: "nvidia-prod",
-          credentialEnv: "NVIDIA_API_KEY",
-          providerRegistered: true,
-          // no savedCredential — host env has no NVIDIA_API_KEY
-        });
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("Rebuild preflight failed");
+      expect(output).toContain("agent base image could not be built");
+      expect(output).toContain("Failed to build Hermes Agent base image (exit 23)");
+      expect(output).toContain("Sandbox is untouched");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
 
-        expect(output).not.toContain("Missing credential: NVIDIA_API_KEY");
-        expect(output).not.toContain("provider credential not found");
-        expect(output).toContain("Backing up sandbox state");
-      },
-    );
+    it("skips credential preflight for local inference (no credentialEnv in session)", {
+      timeout: 60_000,
+    }, () => {
+      // Ollama/vLLM — no credentialEnv in session
+      const f = createFixture({
+        provider: "ollama-local",
+        credentialEnv: undefined as unknown as string,
+      });
 
-    it(
-      "still aborts when nvidia-prod is missing from the gateway AND the env",
-      { timeout: 60_000 },
-      () => {
-        // Negative gate on gateway-credential reuse: if the gateway also lost
-        // the provider (cold install, gateway state lost) and the env is
-        // empty, the preflight must still bail so the sandbox is preserved.
-        const f = createFixture({
-          provider: "nvidia-prod",
-          credentialEnv: "NVIDIA_API_KEY",
-          providerRegistered: false,
-        });
+      // Patch the session to have null credentialEnv
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.credentialEnv = null;
+      session.provider = "ollama-local";
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        expect(result.status).not.toBe(0);
-        expect(output).toContain("preflight failed");
-        expect(output).toContain("NVIDIA_API_KEY");
-        expect(output).toContain("untouched");
-        expect(registryHasSandbox(f)).toBe(true);
-      },
-    );
+      // Should NOT show preflight failure
+      expect(output).not.toContain("preflight failed");
+      // Should proceed to backup step
+      expect(output).toContain("Backing up sandbox state");
+    });
 
-    it(
-      "aborts Hermes OAuth rebuild before backup when the OpenShell provider is missing",
-      { timeout: 60_000 },
-      () => {
-        const f = createFixture({
-          agent: "hermes",
-          provider: "hermes-provider",
-          credentialEnv: "OPENAI_API_KEY",
-          hermesAuthMethod: "oauth",
-          providerRegistered: false,
-        });
+    it.each([
+      ["ollama-local"],
+      ["vllm-local"],
+    ])("migrates a legacy %s sandbox off OPENAI_API_KEY (#2519)", (provider) => {
+      // Pre-fix sandboxes recorded credentialEnv="OPENAI_API_KEY" even
+      // though local inference never actually needed it. After the fix,
+      // the wizard records null. Rebuild must accept the legacy value,
+      // print a one-time migration notice, and proceed even when no
+      // OPENAI_API_KEY exists in env or credentials.json.
+      const f = createFixture({
+        provider,
+        credentialEnv: "OPENAI_API_KEY",
+        // no savedCredential — host has no OPENAI_API_KEY anywhere
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        expect(result.status).not.toBe(0);
-        expect(output).toContain("Hermes Provider is not registered in OpenShell");
-        expect(output).toContain("credentials must be stored in OpenShell");
-        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
-        expect(output).not.toContain("Backing up sandbox state");
-        expect(registryHasSandbox(f)).toBe(true);
-      },
-    );
+      // Must NOT bail with the usual missing-credential failure
+      expect(output).not.toContain("preflight failed");
+      expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+      // Must surface the migration notice so testers know the legacy
+      // behaviour was intentionally bypassed
+      expect(output).toContain("GH #2519");
+      expect(output).toContain(provider);
+      // Must continue into the backup step
+      expect(output).toContain("Backing up sandbox state");
+    }, 60_000);
+
+    it("fails closed when a matching session omits the remote target provider credential", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        providerRegistered: false,
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.credentialEnv = null;
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("uses the target registry provider when a matching session has a stale registered provider", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        registeredProviders: ["nvidia-prod"],
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.provider = "nvidia-prod";
+      session.credentialEnv = null;
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("does not let a mismatched stale local session bypass the target OPENAI_API_KEY preflight", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        providerRegistered: false,
+      });
+      const sessionPath = path.join(f.nemoclawDir, "onboard-session.json");
+      const session = JSON.parse(fs.readFileSync(sessionPath, "utf-8"));
+      session.sandboxName = "other-local-sandbox";
+      session.provider = "ollama-local";
+      session.credentialEnv = "OPENAI_API_KEY";
+      fs.writeFileSync(sessionPath, JSON.stringify(session), { mode: 0o600 });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'openai-api' is not registered in OpenShell");
+      expect(output).toContain("OPENAI_API_KEY");
+      expect(output).not.toContain("GH #2519");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(output).not.toContain("Old sandbox deleted");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)", {
+      timeout: 60_000,
+    }, () => {
+      // OpenAI provider with no credential AND no gateway registration —
+      // should abort.
+      const f = createFixture({
+        provider: "openai-api",
+        credentialEnv: "OPENAI_API_KEY",
+        providerRegistered: false,
+        // no savedCredential
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("OPENAI_API_KEY");
+      expect(output).toContain("untouched");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("uses the registered Hermes Provider in OpenShell instead of requiring OPENAI_API_KEY", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "hermes",
+        provider: "hermes-provider",
+        credentialEnv: "OPENAI_API_KEY",
+        hermesAuthMethod: "oauth",
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("registers an exported Hermes API key in OpenShell when the provider is missing", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "hermes",
+        provider: "hermes-provider",
+        credentialEnv: "NOUS_API_KEY",
+        hermesAuthMethod: "api_key",
+        providerRegistered: false,
+      });
+
+      const result = runRebuild(f, { NOUS_API_KEY: "nous-key-from-env" });
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(output).not.toContain("Missing credential: NOUS_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("uses the registered nvidia-prod provider in OpenShell instead of requiring NVIDIA_INFERENCE_API_KEY", {
+      timeout: 60_000,
+    }, () => {
+      // After `nemohermes channels add wechat` the rebuild preflight used to
+      // abort because NVIDIA_INFERENCE_API_KEY was not set in the environment, even
+      // though `nvidia-prod` was already registered in the OpenShell
+      // gateway. Reuse the gateway-stored credential instead.
+      const f = createFixture({
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: true,
+        // no savedCredential — host env has no NVIDIA_INFERENCE_API_KEY
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(output).not.toContain("Missing credential: NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).toContain("Backing up sandbox state");
+    });
+
+    it("still aborts when nvidia-prod is missing from the gateway AND the env", {
+      timeout: 60_000,
+    }, () => {
+      // Negative gate on gateway-credential reuse: if the gateway also lost
+      // the provider (cold install, gateway state lost) and the env is
+      // empty, the preflight must still bail so the sandbox is preserved.
+      const f = createFixture({
+        provider: "nvidia-prod",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: false,
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("preflight failed");
+      expect(output).toContain("provider 'nvidia-prod' is not registered in OpenShell");
+      expect(output).toContain("NVIDIA_INFERENCE_API_KEY");
+      expect(output).not.toContain("provider credential not found");
+      expect(output).toContain("untouched");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
+
+    it("aborts Hermes OAuth rebuild before backup when the OpenShell provider is missing", {
+      timeout: 60_000,
+    }, () => {
+      const f = createFixture({
+        agent: "hermes",
+        provider: "hermes-provider",
+        credentialEnv: "OPENAI_API_KEY",
+        hermesAuthMethod: "oauth",
+        providerRegistered: false,
+      });
+
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
+
+      expect(result.status).not.toBe(0);
+      expect(output).toContain("Hermes Provider is not registered in OpenShell");
+      expect(output).toContain("credentials must be stored in OpenShell");
+      expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+      expect(output).not.toContain("Backing up sandbox state");
+      expect(registryHasSandbox(f)).toBe(true);
+    });
   });
 
   describe("Layer 3: recovery on recreate failure", () => {
-    it(
-      "prints recovery instructions when recreate fails after destroy",
-      { timeout: 60_000 },
-      () => {
-        // Credential IS present so preflight passes, but onboard will
-        // fail because the fake openshell doesn't support full onboard.
-        // The key thing: rebuild should catch the failure and print
-        // recovery instructions instead of silently exiting.
-        const f = createFixture({
-          credentialEnv: "NVIDIA_API_KEY",
-          savedCredential: {
-            key: "NVIDIA_API_KEY",
-            value: "nvapi-test-key-for-rebuild",
-          },
-          // Force provider_selection to re-run (not resume) so onboard
-          // actually exercises the provider flow, which will fail in our
-          // fake environment.
-          providerSelectionStatus: "pending",
-        });
+    it("prints recovery instructions when recreate fails after destroy", {
+      timeout: 60_000,
+    }, () => {
+      // Credential IS present so preflight passes, but onboard will
+      // fail because the fake openshell doesn't support full onboard.
+      // The key thing: rebuild should catch the failure and print
+      // recovery instructions instead of silently exiting.
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        savedCredential: {
+          key: "NVIDIA_INFERENCE_API_KEY",
+          value: "nvapi-test-key-for-rebuild",
+        },
+        // Force provider_selection to re-run (not resume) so onboard
+        // actually exercises the provider flow, which will fail in our
+        // fake environment.
+        providerSelectionStatus: "pending",
+      });
 
-        const result = runRebuild(f);
-        const output = (result.stderr || "") + (result.stdout || "");
+      const result = runRebuild(f);
+      const output = (result.stderr || "") + (result.stdout || "");
 
-        // Should show the backup was created
-        expect(output).toContain("State backed up");
-        // Should show sandbox was deleted
-        expect(output).toContain("Old sandbox deleted");
-        // Should show recovery instructions (not just die silently)
-        expect(output).toContain("Recreate failed");
-        expect(output).toContain("recover manually");
-        expect(output).toContain("onboard --resume");
-        // Should mention where the backup is
-        expect(output).toContain("rebuild-backups");
-      },
-    );
+      // Should show the backup was created
+      expect(output).toContain("State backed up");
+      // Should show sandbox was deleted
+      expect(output).toContain("Old sandbox deleted");
+      // Should show recovery instructions (not just die silently)
+      expect(output).toContain("Recreate failed");
+      expect(output).toContain("recover manually");
+      expect(output).toContain("onboard --resume");
+      // Should mention where the backup is
+      expect(output).toContain("rebuild-backups");
+    });
 
-    it(
-      "preflight failure exits non-zero when credential is missing",
-      { timeout: 60_000 },
-      () => {
-        // Verifies that missing credentials cause rebuild to exit non-zero
-        // when no fallback exists in the gateway either. This is the
-        // observable CLI behavior — the preflight check fails and bail()
-        // calls process.exit with a non-zero code.
-        const f = createFixture({
-          credentialEnv: "NVIDIA_API_KEY",
-          providerRegistered: false,
-          // No credential — preflight will fail and exit non-zero
-        });
+    it("preflight failure exits non-zero when credential is missing", { timeout: 60_000 }, () => {
+      // Verifies that missing credentials cause rebuild to exit non-zero
+      // when no fallback exists in the gateway either. This is the
+      // observable CLI behavior — the preflight check fails and bail()
+      // calls process.exit with a non-zero code.
+      const f = createFixture({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        providerRegistered: false,
+        // No credential — preflight will fail and exit non-zero
+      });
 
-        const result = runRebuild(f);
-        expect(result.status).not.toBe(0);
-      },
-    );
+      const result = runRebuild(f);
+      expect(result.status).not.toBe(0);
+    });
   });
 });

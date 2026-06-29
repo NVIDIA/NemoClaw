@@ -4,6 +4,7 @@
 import { chmodSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { buildHermesUpstreamHeader } from "./upstream-header.ts";
 import { toYaml } from "./yaml.ts";
 
 export type WrittenHermesConfig = {
@@ -18,7 +19,7 @@ export function writeHermesConfigFiles(
   homeDir: string = homedir(),
 ): WrittenHermesConfig {
   const configPath = join(homeDir, ".hermes", "config.yaml");
-  writeFileSync(configPath, toYaml(config));
+  writeFileSync(configPath, `${buildHermesUpstreamHeader(config)}${toYaml(config)}`);
   chmodSync(configPath, 0o600);
 
   const envPath = join(homeDir, ".hermes", ".env");

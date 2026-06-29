@@ -24,9 +24,7 @@ export type OllamaVersionRunCapture = (
  */
 export const MIN_OLLAMA_VERSION = "0.7.0";
 
-export function getInstalledOllamaVersion(
-  runCaptureImpl?: OllamaVersionRunCapture,
-): string | null {
+export function getInstalledOllamaVersion(runCaptureImpl?: OllamaVersionRunCapture): string | null {
   const capture = runCaptureImpl ?? runCapture;
   const out = capture(["ollama", "--version"], { ignoreError: true });
   if (!out) return null;
@@ -75,10 +73,7 @@ export function getRunningOllamaDaemonVersion(
   return match ? match[0] : null;
 }
 
-export function isOllamaVersionAtLeast(
-  version: string | null,
-  minimum: string,
-): boolean {
+export function isOllamaVersionAtLeast(version: string | null, minimum: string): boolean {
   if (!version) return false;
   const parts = version.split(".").map((v) => Number.parseInt(v, 10));
   const min = minimum.split(".").map((v) => Number.parseInt(v, 10));

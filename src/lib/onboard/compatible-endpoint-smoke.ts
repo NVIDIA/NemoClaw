@@ -1,19 +1,30 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { StdioOptions } from "node:child_process";
 import { shellQuote } from "../core/shell-quote";
 import { compactText } from "../core/url-utils";
 import { INFERENCE_ROUTE_URL, MANAGED_PROVIDER_ID } from "../inference/config";
-import type { StdioOptions } from "node:child_process";
+import {
+  buildCompatibleEndpointSmokeRequestScript,
+  RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION,
+  SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION,
+  totalRetryBackoffSeconds,
+} from "./smoke-retry-classifier";
 
-type CompatibleEndpointSmokeAgent = {
-  name?: string | null;
-} | null | undefined;
+type CompatibleEndpointSmokeAgent =
+  | {
+      name?: string | null;
+    }
+  | null
+  | undefined;
 
 type CompatibleEndpointSandboxSmokeScriptOptions = {
+  attempts?: number;
   configPath?: string;
   inferenceUrl?: string;
   initialMaxTokens?: number;
+  retryDelaySeconds?: number;
   retryMaxTokens?: number;
 };
 
@@ -27,6 +38,19 @@ type CompatibleEndpointSmokeRun = (
   },
 ) => { status: number | null; stdout?: unknown; stderr?: unknown };
 
+const COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS = 3;
+const COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS = 60;
+const COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS = 5;
+const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS = 30;
+const COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS =
+  (COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS * COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS +
+    totalRetryBackoffSeconds(
+      COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS,
+      COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+    ) +
+    COMPATIBLE_ENDPOINT_SMOKE_COMMAND_OVERHEAD_SECONDS) *
+  1000;
+
 /**
  * Normalizes optional token-budget overrides while preserving safe defaults for
  * the generated sandbox smoke script.
@@ -35,6 +59,12 @@ function positiveInt(value: number | undefined, fallback: number): number {
   if (!Number.isFinite(value)) return fallback;
   const rounded = Math.floor(Number(value));
   return rounded > 0 ? rounded : fallback;
+}
+
+function nonNegativeInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  const rounded = Math.floor(Number(value));
+  return rounded >= 0 ? rounded : fallback;
 }
 
 /**
@@ -143,7 +173,7 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
       ignoreError: true,
       suppressOutput: true,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 90_000,
+      timeout: COMPATIBLE_ENDPOINT_SMOKE_COMMAND_TIMEOUT_MS,
     },
   );
   const smokeOutput = [
@@ -167,6 +197,8 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
  * Builds the shell script that runs inside the sandbox to confirm OpenClaw is
  * routed through NemoClaw's managed inference provider and can receive assistant
  * content from the compatible endpoint.
+ * Reasoning-only endpoints may fill 512 tokens in reasoning_content before final content;
+ * finish_reason=length retries at 1024 until providers offer non-reasoning output.
  */
 export function buildCompatibleEndpointSandboxSmokeScript(
   model: string,
@@ -174,8 +206,14 @@ export function buildCompatibleEndpointSandboxSmokeScript(
 ): string {
   const configPath = options.configPath || "/sandbox/.openclaw/openclaw.json";
   const inferenceUrl = options.inferenceUrl || `${INFERENCE_ROUTE_URL}/chat/completions`;
-  const initialMaxTokens = positiveInt(options.initialMaxTokens, 256);
+  const initialMaxTokens = positiveInt(options.initialMaxTokens, 512);
+  const attempts = positiveInt(options.attempts, COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS);
+  const retryDelaySeconds = nonNegativeInt(
+    options.retryDelaySeconds,
+    COMPATIBLE_ENDPOINT_SMOKE_RETRY_DELAY_SECONDS,
+  );
   const retryMaxTokens = positiveInt(options.retryMaxTokens, 1024);
+  const smokeRequestScript = buildCompatibleEndpointSmokeRequestScript();
 
   return `
 set -eu
@@ -184,6 +222,9 @@ CONFIG=${shellQuote(configPath)}
 INFERENCE_URL=${shellQuote(inferenceUrl)}
 INITIAL_MAX_TOKENS=${initialMaxTokens}
 RETRY_MAX_TOKENS=${retryMaxTokens}
+SMOKE_ATTEMPTS=${attempts}
+SMOKE_REQUEST_TIMEOUT_SECONDS=${COMPATIBLE_ENDPOINT_SMOKE_REQUEST_TIMEOUT_SECONDS}
+SMOKE_RETRY_DELAY_SECONDS=${retryDelaySeconds}
 
 python3 - "$CONFIG" "$MODEL" <<'PYCFG'
 import json
@@ -226,8 +267,8 @@ PYCFG
 
 payload_file="$(mktemp)"
 response_file="$(mktemp)"
-error_file="$(mktemp)"
-trap 'rm -f "$payload_file" "$response_file" "$error_file"' EXIT
+status_file="$(mktemp)"
+trap 'rm -f "$payload_file" "$response_file" "$status_file"' EXIT
 
 write_payload() {
   python3 - "$MODEL" "$1" >"$payload_file" <<'PYPAYLOAD'
@@ -246,38 +287,53 @@ print(json.dumps({
 PYPAYLOAD
 }
 
-run_smoke_request() {
-  curl -sS --connect-timeout 10 --max-time 60 \
-    "$INFERENCE_URL" \
-    -H "Content-Type: application/json" \
-    -d "@$payload_file" >"$response_file" 2>"$error_file" || {
-    rc=$?
-    printf 'curl exit %s: ' "$rc" >&2
-    cat "$error_file" >&2
-    exit "$rc"
-  }
-}
+${smokeRequestScript}
 
 check_response() {
-  python3 - "$response_file" "$1" "$2" "$3" <<'PYRESP'
+  python3 - "$response_file" "$status_file" "$1" "$2" "$3" <<'PYRESP'
 import json
+import os
 import sys
 
 path = sys.argv[1]
-attempt = sys.argv[2]
-max_tokens = sys.argv[3]
-can_retry = sys.argv[4] == "1"
+status_path = sys.argv[2]
+attempt = sys.argv[3]
+max_tokens = sys.argv[4]
+can_retry = sys.argv[5] == "1"
+with open(status_path, "r", encoding="utf-8") as f:
+    http_status = f.read().strip()
+if len(http_status) != 3 or not http_status.isdigit():
+    print("inference.local returned invalid curl HTTP status metadata", file=sys.stderr)
+    sys.exit(1)
+http_status_code = int(http_status)
+response_bytes = os.path.getsize(path)
 try:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 except Exception as exc:
-    body = ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            body = f.read(1000)
-    except Exception:
-        pass
-    print("inference.local returned non-JSON response: %s; body=%s" % (exc, body), file=sys.stderr)
+    print(
+        "inference.local returned non-JSON response: %s; response_bytes=%s; http_status=%s"
+        % (exc, response_bytes, http_status),
+        file=sys.stderr,
+    )
+    retryable_gateway_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
+    sys.exit(3 if can_retry and retryable_gateway_error else 1)
+
+retryable_http_error = ${RETRYABLE_HTTP_STATUS_PYTHON_EXPRESSION}
+if retryable_http_error:
+    print(
+        "inference.local returned transient HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
+    sys.exit(3 if can_retry else 1)
+
+if not (${SUCCESS_HTTP_STATUS_PYTHON_EXPRESSION}):
+    print(
+        "inference.local returned terminal HTTP %s; response_bytes=%s"
+        % (http_status, response_bytes),
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 choices = data.get("choices")
@@ -314,20 +370,48 @@ print("INFERENCE_SMOKE_OK " + content.strip()[:200])
 PYRESP
 }
 
-write_payload "$INITIAL_MAX_TOKENS"
-run_smoke_request
-status=0
-check_response initial "$INITIAL_MAX_TOKENS" 1 || status=$?
-if [ "$status" -eq 0 ]; then
-  exit 0
-fi
-if [ "$status" -ne 2 ]; then
-  exit "$status"
-fi
+# OpenShell provider refresh has no route-ready acknowledgement for a reused
+# sandbox, so this first authenticated request retries only explicit transport
+# and HTTP 5xx signals while keeping config/content failures strict.
+# Remove this retry when provider refresh exposes a route-ready acknowledgement.
+# Timeout escalation extends onboarding but not propagation readiness after exit 28.
+# Three attempts sleep twice: 5s after attempt 1, then 10s after attempt 2.
+attempt=1
+while [ "$attempt" -le "$SMOKE_ATTEMPTS" ]; do
+  max_tokens="$RETRY_MAX_TOKENS"
+  attempt_label=retry
+  if [ "$attempt" -eq 1 ]; then
+    max_tokens="$INITIAL_MAX_TOKENS"
+    attempt_label=initial
+  fi
 
-write_payload "$RETRY_MAX_TOKENS"
-run_smoke_request
-check_response retry "$RETRY_MAX_TOKENS" 0
+  write_payload "$max_tokens"
+  status=0
+  run_smoke_request || status=$?
+  if [ "$status" -eq 0 ]; then
+    can_retry=0
+    if [ "$attempt" -lt "$SMOKE_ATTEMPTS" ]; then
+      can_retry=1
+    fi
+    check_response "$attempt_label" "$max_tokens" "$can_retry" || status=$?
+  fi
+  if [ "$status" -eq 0 ]; then
+    exit 0
+  fi
+  if [ "$status" -ne 2 ] && [ "$status" -ne 3 ] && [ "$status" -ne 4 ]; then
+    exit "$status"
+  fi
+  if [ "$attempt" -ge "$SMOKE_ATTEMPTS" ]; then
+    exit "$status"
+  fi
+  retry_delay=$((SMOKE_RETRY_DELAY_SECONDS * attempt))
+  if [ "$status" -ne 2 ]; then
+    printf 'inference.local smoke attempt %s/%s failed; retrying in %ss\n' \
+      "$attempt" "$SMOKE_ATTEMPTS" "$retry_delay" >&2
+  fi
+  sleep "$retry_delay"
+  attempt=$((attempt + 1))
+done
   `.trim();
 }
 
@@ -341,7 +425,7 @@ export function buildCompatibleEndpointSandboxSmokeCommand(model: string): strin
   return [
     "set -eu",
     'tmp="$(mktemp)"',
-    'trap \'rm -f "$tmp"\' EXIT',
+    "trap 'rm -f \"$tmp\"' EXIT",
     `python3 -c 'import base64, pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(base64.b64decode(sys.argv[2]))' "$tmp" ${shellQuote(encoded)}`,
     'sh "$tmp"',
   ].join("; ");

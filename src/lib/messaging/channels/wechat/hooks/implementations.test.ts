@@ -10,7 +10,6 @@ import { createWechatIlinkLoginHook, WECHAT_ILINK_LOGIN_HOOK_ID } from "./ilink-
 import {
   buildWechatSeedOpenClawAccountOutputs,
   createWechatSeedOpenClawAccountHook,
-  WECHAT_PLUGIN_SPEC,
   WECHAT_SEED_OPENCLAW_ACCOUNT_HOOK_ID,
 } from "./seed-openclaw-account";
 
@@ -22,7 +21,7 @@ describe("WeChat hook implementations", () => {
         handler: createWechatIlinkLoginHook(),
       },
     ]);
-    const hook = wechatManifest.hooks[0];
+    const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-host-qr");
 
     if (!hook) throw new Error("missing WeChat host QR hook");
 
@@ -48,14 +47,14 @@ describe("WeChat hook implementations", () => {
             credentials: {
               token: "wechat-token",
               accountId: "wechat-account",
-              baseUrl: "https://ilinkai.wechat.example",
+              baseUrl: "https://ilinkai.wechat.com",
               userId: "wechat-user",
             },
           }),
         }),
       },
     ]);
-    const hook = wechatManifest.hooks[0];
+    const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-host-qr");
 
     if (!hook) throw new Error("missing WeChat host QR hook");
 
@@ -87,10 +86,55 @@ describe("WeChat hook implementations", () => {
     expect(env).toMatchObject({
       WECHAT_BOT_TOKEN: "wechat-token",
       WECHAT_ACCOUNT_ID: "wechat-account",
-      WECHAT_BASE_URL: "https://ilinkai.wechat.example",
+      WECHAT_BASE_URL: "https://ilinkai.wechat.com",
       WECHAT_USER_ID: "wechat-user",
       WECHAT_ALLOWED_IDS: "friend-one,wechat-user",
     });
+  });
+
+  it("rejects invalid iLink baseUrl values before writing QR credentials", async () => {
+    for (const baseUrl of [
+      "http://ilinkai.wechat.com",
+      "https://example.com",
+      "https://ilinkai.wechat.com/path",
+      "https://ilinkai.wechat.com\nEVIL=1",
+    ] as const) {
+      const env: NodeJS.ProcessEnv = {};
+      const saved: Array<{ readonly key: string; readonly value: string }> = [];
+      const registry = new MessagingHookRegistry([
+        {
+          id: WECHAT_ILINK_LOGIN_HOOK_ID,
+          handler: createWechatIlinkLoginHook({
+            env,
+            log: () => {},
+            saveCredential: (key, value) => saved.push({ key, value }),
+            runLogin: async () => ({
+              kind: "ok",
+              credentials: {
+                token: "wechat-token",
+                accountId: "wechat-account",
+                baseUrl,
+                userId: "wechat-user",
+              },
+            }),
+          }),
+        },
+      ]);
+      const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-host-qr");
+
+      if (!hook) throw new Error("missing WeChat host QR hook");
+
+      await expect(
+        runMessagingHook(hook, registry, {
+          channelId: "wechat",
+          inputs: {
+            allowedIds: "friend-one",
+          },
+        }),
+      ).rejects.toThrow(/WeChat baseUrl/);
+      expect(saved).toEqual([]);
+      expect(env).toEqual({});
+    }
   });
 
   it("turns QR failures into hook failures without writing credentials", async () => {
@@ -107,7 +151,7 @@ describe("WeChat hook implementations", () => {
         }),
       },
     ]);
-    const hook = wechatManifest.hooks[0];
+    const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-host-qr");
 
     if (!hook) throw new Error("missing WeChat host QR hook");
 
@@ -127,6 +171,23 @@ describe("WeChat hook implementations", () => {
           "wechatConfig.accountId": accountId,
         }),
       ).toThrow("unsafe filename characters");
+    }
+  });
+
+  it("rejects invalid iLink baseUrl values before writing OpenClaw seed files", () => {
+    for (const baseUrl of [
+      "http://ilinkai.wechat.com",
+      "https://example.com",
+      "https://ilinkai.wechat.com/path",
+      "https://ilinkai.wechat.com\nEVIL=1",
+    ] as const) {
+      expect(() =>
+        buildWechatSeedOpenClawAccountOutputs({
+          "wechatConfig.accountId": "wechat-account",
+          "wechatConfig.baseUrl": baseUrl,
+          "credential.wechatBotToken.placeholder": "openshell:resolve:env:WECHAT_BOT_TOKEN",
+        }),
+      ).toThrow(/WeChat baseUrl/);
     }
   });
 
@@ -168,9 +229,7 @@ describe("WeChat hook implementations", () => {
         }),
       },
     ]);
-    const hook = wechatManifest.hooks.find(
-      (entry) => entry.id === "wechat-seed-openclaw-account",
-    );
+    const hook = wechatManifest.hooks.find((entry) => entry.id === "wechat-seed-openclaw-account");
 
     if (!hook) throw new Error("missing WeChat seed hook");
 
@@ -179,7 +238,7 @@ describe("WeChat hook implementations", () => {
         channelId: "wechat",
         inputs: {
           "wechatConfig.accountId": "wechat-account",
-          "wechatConfig.baseUrl": "https://ilinkai.wechat.example",
+          "wechatConfig.baseUrl": "https://ilinkai.wechat.com",
           "wechatConfig.userId": "wechat-user",
           "credential.wechatBotToken.placeholder": "openshell:resolve:env:WECHAT_BOT_TOKEN",
         },
@@ -194,7 +253,7 @@ describe("WeChat hook implementations", () => {
             content: {
               token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
               savedAt: "2026-05-25T00:00:00.000Z",
-              baseUrl: "https://ilinkai.wechat.example",
+              baseUrl: "https://ilinkai.wechat.com",
               userId: "wechat-user",
             },
           },
@@ -206,7 +265,7 @@ describe("WeChat hook implementations", () => {
               plugins: {
                 installs: {
                   "openclaw-weixin": {
-                    spec: WECHAT_PLUGIN_SPEC,
+                    spec: "@tencent-weixin/openclaw-weixin@2.4.3",
                   },
                 },
               },

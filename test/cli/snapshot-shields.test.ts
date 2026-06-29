@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { runWithEnv, writeSandboxRegistry } from "./helpers";
+import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
 
 describe("CLI dispatch", () => {
-  it("shields help uses native oclif usage", () => {
+  it("shields help uses native oclif usage", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-shields-help-"));
     writeSandboxRegistry(home);
 
@@ -26,7 +26,7 @@ describe("CLI dispatch", () => {
     expect(status.out).toContain("$ nemoclaw sandbox shields status <name>");
   });
 
-  it("snapshot subcommand help uses native oclif usage", () => {
+  it("snapshot subcommand help uses native oclif usage", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-snapshot-help-"));
     writeSandboxRegistry(home);
 
@@ -46,7 +46,9 @@ describe("CLI dispatch", () => {
 
     const restore = runWithEnv("alpha snapshot restore --help", { HOME: home });
     expect(restore.code).toBe(0);
-    expect(restore.out).toContain("$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]");
+    expect(restore.out).toContain(
+      "$ nemoclaw sandbox snapshot restore <name> [selector] [--to <dst>]",
+    );
   });
 
   it("snapshot list dispatches through oclif", () => {

@@ -18,10 +18,7 @@ import { deleteSandboxSession } from "./delete";
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;
 
-function successResult(
-  key: string,
-  extra: { removedTranscript?: boolean; entry?: unknown } = {},
-) {
+function successResult(key: string, extra: { removedTranscript?: boolean; entry?: unknown } = {}) {
   const payload = { ok: true as const, key, ...extra };
   return { payload, rawOutput: JSON.stringify(payload) };
 }
@@ -101,9 +98,9 @@ describe("deleteSandboxSession", () => {
   it("surfaces a gateway failure payload and exits non-zero", async () => {
     gatewayMock.mockReturnValue(errorResult("E_LOCKED", "session locked"));
 
-    await expect(
-      deleteSandboxSession("sb-1", { key: "agent:main:slot-1" }),
-    ).rejects.toThrow(/process\.exit:1/);
+    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
 
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
       /Gateway refused sessions\.delete.*\[E_LOCKED\] session locked/,
@@ -116,9 +113,9 @@ describe("deleteSandboxSession", () => {
       rawOutput: '{"ok":true,"removedTranscript":true}',
     });
 
-    await expect(
-      deleteSandboxSession("sb-1", { key: "agent:main:slot-1" }),
-    ).rejects.toThrow(/process\.exit:1/);
+    await expect(deleteSandboxSession("sb-1", { key: "agent:main:slot-1" })).rejects.toThrow(
+      /process\.exit:1/,
+    );
 
     expect(consoleErrorSpy.mock.calls.flat().join("\n")).toMatch(
       /unexpected sessions\.delete payload/,

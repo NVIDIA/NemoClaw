@@ -52,7 +52,9 @@ function hookLifecycleEvent(
     state: source.state,
     step: source.step,
     context: source.context,
-    error: redactSensitiveText(options.error instanceof Error ? options.error.message : options.error),
+    error: redactSensitiveText(
+      options.error instanceof Error ? options.error.message : options.error,
+    ),
     metadata: sanitizeOnboardMachineEventMetadata({
       hook: hookName(hook, index),
       sourceType: source.type,
@@ -62,7 +64,9 @@ function hookLifecycleEvent(
 }
 
 function isHookLifecycleEvent(event: OnboardMachineEvent): boolean {
-  return event.type === "hook.started" || event.type === "hook.completed" || event.type === "hook.failed";
+  return (
+    event.type === "hook.started" || event.type === "hook.completed" || event.type === "hook.failed"
+  );
 }
 
 export class OnboardHookDispatcher {

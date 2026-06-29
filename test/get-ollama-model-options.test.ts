@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   getOllamaModelOptions,
-  setResolvedOllamaHost,
-  resetOllamaHostCache,
   OLLAMA_HOST_DOCKER_INTERNAL,
   OLLAMA_LOCALHOST,
-} from "../dist/lib/inference/local.js";
+  resetOllamaHostCache,
+  setResolvedOllamaHost,
+} from "../src/lib/inference/local.js";
 
 type CapturedCall = { argv: readonly string[] };
 
@@ -36,7 +36,9 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const models = getOllamaModelOptions(capture);
     expect(models).toEqual([]);
     expect(calls).toHaveLength(1);
-    expect(calls[0].argv.join(" ")).toContain(`http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`);
+    expect(calls[0].argv.join(" ")).toContain(
+      `http://${OLLAMA_HOST_DOCKER_INTERNAL}:11434/api/tags`,
+    );
     expect(calls.some((c) => c.argv.includes("ollama") && c.argv.includes("list"))).toBe(false);
   });
 
@@ -45,7 +47,8 @@ describe("getOllamaModelOptions host-pinned fallback", () => {
     const { capture, calls } = makeCapture([
       {
         match: /ollama list/,
-        output: "NAME           ID            SIZE    MODIFIED\nllama3.2:3b    abc123        2.0 GB  2 days ago\n",
+        output:
+          "NAME           ID            SIZE    MODIFIED\nllama3.2:3b    abc123        2.0 GB  2 days ago\n",
       },
     ]);
     const models = getOllamaModelOptions(capture);

@@ -8,7 +8,7 @@ import {
   printSandboxCreateRecoveryHints,
   reconstructImageRefCreateCommand,
   shouldIncludeBuildContextPath,
-} from "../../dist/lib/build-context";
+} from "./build-context";
 
 type ConsoleErrorSpy = ReturnType<typeof vi.spyOn>;
 
@@ -60,10 +60,7 @@ describe("printSandboxCreateRecoveryHints", () => {
 
   it("prints progress-specific resume guidance when upload reached the gateway", () => {
     printSandboxCreateRecoveryHints(
-      [
-        "[progress] Uploaded to gateway",
-        "failed to read image export stream",
-      ].join("\n"),
+      ["[progress] Uploaded to gateway", "failed to read image export stream"].join("\n"),
     );
 
     expect(stderr()).toContain("reuse existing gateway state");
@@ -101,7 +98,7 @@ describe("printSandboxCreateRecoveryHints", () => {
   // This recovery path runs ONLY after the OpenShell upload failure is
   // classified; ordinary x86_64 happy-path onboards never reach it. The tests
   // below assert that branch deterministically by injecting platform/arch.
-  it("prints the local-registry workaround with the preserved built image tag for the #3266 upload 404", () => {
+  it("prints the local-registry workaround with the preserved built image tag for an upload 404 (#3266)", () => {
     printSandboxCreateRecoveryHints(
       [
         "  Built image openshell/sandbox-from-nemoclaw:abcd1234",
@@ -131,7 +128,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("onboard --resume");
   });
 
-  it("adds the Linux ARM64 (aarch64) note for the #3266 upload 404 only on Linux arm64", () => {
+  it("adds the Linux ARM64 note for an upload 404 only on Linux arm64 (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "arm64",
@@ -139,7 +136,7 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(stderr()).toContain("known limitation on Linux ARM64 (aarch64)");
   });
 
-  it("omits the ARM64 note for the #3266 upload 404 on x86_64 hosts", () => {
+  it("omits the ARM64 note for an upload 404 on x86_64 hosts (#3266)", () => {
     printSandboxCreateRecoveryHints("failed to upload image tar into container", {
       platform: "linux",
       arch: "x64",
@@ -193,6 +190,19 @@ describe("printSandboxCreateRecoveryHints", () => {
     });
     expect(stderr()).toContain("<built-image>");
   });
+
+  it("prints GPU CDI injection guidance pointing at --no-gpu / NEMOCLAW_SANDBOX_GPU=0", () => {
+    printSandboxCreateRecoveryHints(
+      "Error response from daemon: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all",
+    );
+
+    const out = stderr();
+    expect(out).toContain("GPU CDI device injection failed");
+    expect(out).toContain("NEMOCLAW_DOCKER_GPU_PATCH=0 does not bypass");
+    expect(out).toContain("--no-gpu");
+    expect(out).toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(out).toContain("onboard --resume --no-gpu");
+  });
 });
 
 describe("reconstructImageRefCreateCommand", () => {
@@ -210,7 +220,9 @@ describe("reconstructImageRefCreateCommand", () => {
   it("handles a trailing --from with no following value without crashing", () => {
     // Defensive: a malformed args array must not throw or duplicate the ref.
     const cmd = reconstructImageRefCreateCommand(["--name", "asst", "--from"], "registry/ref:1");
-    expect(cmd).toBe("openshell sandbox create --name asst --from -- env <YOUR_RUNTIME_ENV> nemoclaw-start");
+    expect(cmd).toBe(
+      "openshell sandbox create --name asst --from -- env <YOUR_RUNTIME_ENV> nemoclaw-start",
+    );
   });
 });
 

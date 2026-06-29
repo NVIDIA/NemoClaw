@@ -5,10 +5,10 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RebuildSandbox = typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
+const rebuildModulePath = "./rebuild.js";
 
 describe("rebuild shields relock guard", () => {
   let rebuildSandbox: RebuildSandbox;
@@ -16,6 +16,7 @@ describe("rebuild shields relock guard", () => {
   let errorSpy: MockInstance;
   let logSpy: MockInstance;
   let relockSpy: MockInstance;
+  let sandboxListRecoverySpy: MockInstance;
   const rebuildWindow = { relocked: false, wasLocked: true };
 
   beforeEach(() => {
@@ -26,17 +27,17 @@ describe("rebuild shields relock guard", () => {
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const gatewayDrift = requireDist("../../../../dist/lib/adapters/openshell/gateway-drift.js");
-    const gatewayRuntime = requireDist("../../../../dist/lib/gateway-runtime-action.js");
-    const sandboxList = requireDist("../../../../dist/lib/openshell-sandbox-list.js");
-    const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-    const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
-    const sandboxState = requireDist("../../../../dist/lib/state/sandbox.js");
-    const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
-    const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-    const rebuildShields = requireDist("../../../../dist/lib/actions/sandbox/rebuild-shields.js");
+    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+    const sandboxList = requireDist("../../openshell-sandbox-list.js");
+    const resolve = requireDist("../../adapters/openshell/resolve.js");
+    const agentRuntime = requireDist("../../agent/runtime.js");
+    const onboardSession = requireDist("../../state/onboard-session.js");
+    const registry = requireDist("../../state/registry.js");
+    const sandboxState = requireDist("../../state/sandbox.js");
+    const sandboxSession = requireDist("../../state/sandbox-session.js");
+    const sandboxVersion = requireDist("../../sandbox/version.js");
+    const rebuildShields = requireDist("./rebuild-shields.js");
 
     relockSpy = vi
       .spyOn(rebuildShields, "relockRebuildShieldsWindow")
@@ -46,11 +47,15 @@ describe("rebuild shields relock guard", () => {
         return true;
       });
 
+    sandboxListRecoverySpy = vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery");
+
     spies.push(
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null),
       vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null),
-      vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({ recovered: false }),
-      vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
+      vi
+        .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
+        .mockResolvedValue({ recovered: false }),
+      sandboxListRecoverySpy.mockResolvedValue({
         result: { status: 0, output: "alpha Ready" },
       }),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
@@ -64,6 +69,8 @@ describe("rebuild shields relock guard", () => {
         policies: [],
         agent: null,
         nimContainer: null,
+        gatewayName: "nemoclaw-8090",
+        gatewayPort: 8090,
       } as never),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
@@ -95,12 +102,8 @@ describe("rebuild shields relock guard", () => {
       "unexpected backup exception",
     );
 
-    expect(relockSpy).toHaveBeenCalledWith(
-      "alpha",
-      rebuildWindow,
-      true,
-      expect.any(String),
-    );
+    expect(relockSpy).toHaveBeenCalledWith("alpha", rebuildWindow, true, expect.any(String));
+    expect(sandboxListRecoverySpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw-8090" });
     expect(rebuildWindow.relocked).toBe(true);
   });
 });

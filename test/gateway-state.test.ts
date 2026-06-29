@@ -5,19 +5,19 @@
 // Covers ARM64/non-TTY fallback paths where `openshell status` returns empty output.
 // See: https://github.com/NVIDIA/NemoClaw/issues/1711
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { mergeLivePolicyIntoSandboxOutput } from "../src/lib/actions/sandbox/gateway-state.js";
 import {
+  getGatewayReuseState,
+  getReportedGatewayName,
+  getSandboxStateFromOutputs,
+  hasActiveGatewayInfo,
+  hasStaleGateway,
   isGatewayConnected,
   isGatewayHealthy,
-  getGatewayReuseState,
-  getSandboxStateFromOutputs,
-  hasStaleGateway,
-  hasActiveGatewayInfo,
-  getReportedGatewayName,
-  shouldSelectNamedGatewayForReuse,
   parseSandboxPhase,
+  shouldSelectNamedGatewayForReuse,
 } from "../src/lib/state/gateway.js";
-import { mergeLivePolicyIntoSandboxOutput } from "../dist/lib/actions/sandbox/gateway-state.js";
 
 // Realistic CLI outputs
 const STATUS_CONNECTED = `
@@ -298,9 +298,7 @@ describe("getGatewayReuseState", () => {
   });
 
   it("returns 'foreign-active' when status is empty but active gateway info is foreign", () => {
-    expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(
-      "foreign-active",
-    );
+    expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe("foreign-active");
   });
 
   it("returns 'stale' when named gateway exists but no active endpoint", () => {
@@ -351,9 +349,7 @@ describe("shouldSelectNamedGatewayForReuse", () => {
   });
 
   it("returns true when status is empty but active gateway info is foreign", () => {
-    expect(shouldSelectNamedGatewayForReuse("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(
-      true,
-    );
+    expect(shouldSelectNamedGatewayForReuse("", GW_INFO_NAMED, GW_INFO_FOREIGN_ACTIVE)).toBe(true);
   });
 
   it("returns false when the named NemoClaw gateway is already active", () => {

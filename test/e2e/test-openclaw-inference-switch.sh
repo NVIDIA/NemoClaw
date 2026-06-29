@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
@@ -328,7 +328,7 @@ check_openclaw_agent_turn() {
 
   reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
-  if [ "$rc" -eq 0 ] && grep -qi "PONG" <<<"$reply"; then
+  if [ "$rc" -eq 0 ] && openclaw_agent_text_has_token "PONG" <<<"${reply^^}"; then
     pass "OpenClaw agent answered through the switched inference route"
   elif [ "$rc" -eq 124 ]; then
     skip "OpenClaw agent turn timed out after switch; route/config checks already passed"
@@ -353,9 +353,16 @@ E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${E2E_DIR}/lib/inference-switch-retry.sh"
 # shellcheck source=test/e2e/lib/anthropic-switch-provider.sh
 . "${E2E_DIR}/lib/anthropic-switch-provider.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-openclaw-inference-switch}"
-SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
-SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+if nemoclaw_e2e_using_compatible_inference; then
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+else
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+fi
 SWITCH_INFERENCE_API="${NEMOCLAW_SWITCH_INFERENCE_API:-openai-completions}"
 # shellcheck disable=SC2034  # consumed by anthropic-switch-provider.sh helpers
 SWITCH_ENDPOINT_URL="${NEMOCLAW_SWITCH_ENDPOINT_URL:-}"
@@ -371,6 +378,7 @@ trap 'stop_mock_anthropic_switch_provider; _nemoclaw_sandbox_teardown' EXIT
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 section "Phase 0: Pre-cleanup"
 if command -v nemoclaw >/dev/null 2>&1; then
@@ -390,10 +398,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
-else
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
@@ -458,7 +463,11 @@ ensure_compatible_anthropic_switch_provider || exit 1
 section "Phase 3: Switch inference"
 pid_before="$(openclaw_gateway_pid)"
 info "Switching ${SANDBOX_NAME} to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}..."
-switch_output=$(run_inference_set_with_retry nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME")
+switch_cmd=(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME")
+if [ "$SWITCH_PROVIDER" = "compatible-anthropic-endpoint" ] && [ "$SWITCH_INFERENCE_API" = "anthropic-messages" ]; then
+  switch_cmd+=(--endpoint-url "$SWITCH_ENDPOINT_URL" --credential-env COMPATIBLE_ANTHROPIC_API_KEY --inference-api "$SWITCH_INFERENCE_API")
+fi
+switch_output=$(run_inference_set_with_retry "${switch_cmd[@]}")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemoclaw inference set completed"

@@ -28,6 +28,11 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
+    - /dev/pts                      # devpts PTY access (TUI / dashboard chat /
+                                    # terminal.backend: local). Without it
+                                    # landlock denies /dev/ptmx with EACCES
+                                    # ("out of pty devices"). Mirrors the default
+                                    # Hermes policy and the OpenClaw grant (#4513).
     - /sandbox/.hermes
     - /sandbox/.nemoclaw
 
@@ -44,11 +49,6 @@ network_policies:
     name: nvidia
     endpoints:
       - host: integrate.api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        access: full
-      - host: inference-api.nvidia.com
         port: 443
         protocol: rest
         enforcement: enforce

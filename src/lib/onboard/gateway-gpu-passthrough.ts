@@ -111,7 +111,9 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   gatewayName: string,
 ): never {
   error("  Existing gateway was started without GPU passthrough.");
-  error("  Could not read the local sandbox registry, so automatic gateway cleanup would be unsafe.");
+  error(
+    "  Could not read the local sandbox registry, so automatic gateway cleanup would be unsafe.",
+  );
   error(
     "  Fix the registry read error and rerun, or manually verify no sandboxes depend on the gateway before running:",
   );
@@ -123,7 +125,9 @@ function reportUnreadableSandboxRegistryForGpuGatewayReuse(
   exit(1);
 }
 
-function inspectLegacyGatewayDeviceRequests(containerName: string): GatewayGpuDeviceRequestInspection {
+function inspectLegacyGatewayDeviceRequests(
+  containerName: string,
+): GatewayGpuDeviceRequestInspection {
   return docker.dockerInspect(
     ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", containerName],
     { ignoreError: true, suppressOutput: true },
@@ -141,11 +145,13 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   retireLegacyGatewayForDockerDriverUpgrade,
   destroyGatewayRuntimeForGpuReuse,
 }: GatewayGpuReuseReconcileOptions): GatewayReuseState {
-  if (!shouldInspectLegacyGatewayGpuPassthrough(
-    gatewayReuseState,
-    gpuPassthrough,
-    confirmedDockerDriverGateway,
-  )) {
+  if (
+    !shouldInspectLegacyGatewayGpuPassthrough(
+      gatewayReuseState,
+      gpuPassthrough,
+      confirmedDockerDriverGateway,
+    )
+  ) {
     return gatewayReuseState;
   }
 
@@ -166,9 +172,7 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   }
 
   const registeredSandboxNames =
-    legacyGatewayGpuInspection === "cpu-only"
-      ? readRegisteredSandboxNamesForGatewayGpuReuse()
-      : [];
+    legacyGatewayGpuInspection === "cpu-only" ? readRegisteredSandboxNamesForGatewayGpuReuse() : [];
   if (registeredSandboxNames === null) {
     reportUnreadableSandboxRegistryForGpuGatewayReuse(console.error, process.exit, gatewayName);
   }
@@ -186,7 +190,9 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   });
 
   if (gatewayGpuReuseDecision === "restart-gateway") {
-    console.log("  Existing gateway was started without GPU passthrough; recreating it for GPU onboarding...");
+    console.log(
+      "  Existing gateway was started without GPU passthrough; recreating it for GPU onboarding...",
+    );
     stopDashboardForwards();
     if (isLinuxDockerDriverGatewayEnabled()) {
       retireLegacyGatewayForDockerDriverUpgrade();

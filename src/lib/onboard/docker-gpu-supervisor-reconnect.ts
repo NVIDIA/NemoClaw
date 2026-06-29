@@ -29,11 +29,11 @@ import { envInt } from "./env";
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // Default consecutive Error-phase polls required before fast-fail. With a
-// 2-second poll interval this is ~30s of sustained Error, leaving headroom
-// for slower hosts (Docker Desktop on WSL2, DGX Spark cached re-onboard)
-// whose sandbox list cache divergence was observed at ~12s in the original
-// repro. Hosts that genuinely crashed on startup hit the rollback path in
-// applyDockerGpuPatch rather than waiting out the full window.
+// 2-second poll interval this is ~2 minutes of sustained Error, leaving
+// headroom for Docker-CDI GPU runners whose OpenShell sandbox-list row can
+// stay Error for longer than the original ~30s window while the recreated
+// container is still reconnecting (#4948). Hosts that genuinely crashed on
+// startup still hit the rollback path well before the full reconnect timeout.
 //
 // Alternative considered: branching on Docker State.Status + Health.Status
 // to keep retrying when the patched container reports Status=running plus
@@ -44,10 +44,10 @@ const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
 // the user keeps the pre-patch CPU sandbox on reconnect failure, which a
 // Health-aware retry alone would not provide. If a future repro shows
 // Status=running + Health=starting genuinely failing reconnect after this
-// 30s window, switch to a Health-aware retry, but extract Docker health
+// default window, switch to a Health-aware retry, but extract Docker health
 // probing into a separate observation channel first rather than overloading
 // this one.
-const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 15;
+const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 60;
 
 export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
   "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
@@ -62,14 +62,8 @@ type DockerRunResult = {
   stderr?: string | Buffer | null;
 };
 
-type RunOpenshellFn = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => DockerRunResult;
-type RunCaptureOpenshellFn = (
-  args: string[],
-  opts?: Record<string, unknown>,
-) => string;
+type RunOpenshellFn = (args: string[], opts?: Record<string, unknown>) => DockerRunResult;
+type RunCaptureOpenshellFn = (args: string[], opts?: Record<string, unknown>) => string;
 
 export type DockerGpuSupervisorReconnectDeps = {
   runOpenshell?: RunOpenshellFn;
@@ -129,10 +123,11 @@ export function waitForOpenShellSupervisorReconnect(
       : Math.max(1, Math.trunc(deps.errorPhaseDebouncePolls));
   let consecutiveErrorPolls = 0;
   while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-    );
+    const result = deps.runOpenshell(["sandbox", "exec", "-n", sandboxName, "--", "true"], {
+      ignoreError: true,
+      suppressOutput: true,
+      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
+    });
     if (isZeroStatus(result)) return true;
     if (
       deps.runCaptureOpenshell &&

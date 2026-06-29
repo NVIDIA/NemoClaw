@@ -34,8 +34,8 @@ type ScorecardData = {
   perfect: boolean;
   /** Sorted failed jobs with optional html_url. */
   failedJobs: { name: string; url: string | null }[];
-  /** Pre-rendered trend line, prefixed with "Trend: ". */
-  trendLine: string;
+  /** Pre-rendered trace timing line, prefixed with "Trace: ". */
+  traceTimingLine?: string;
   /** Direct link to the current run. */
   runUrl: string;
 };
@@ -129,15 +129,15 @@ function buildBlocks(data: ScorecardData): SlackBlock[] {
     });
   }
 
-  blocks.push({
-    type: "context",
-    elements: [
-      {
+  if (data.traceTimingLine) {
+    blocks.push({
+      type: "section",
+      text: {
         type: "mrkdwn",
-        text: data.trendLine.replace(/^Trend:\s*/, "*Trend:* "),
+        text: data.traceTimingLine.replace(/^Trace:\s*/, "*Trace:* "),
       },
-    ],
-  });
+    });
+  }
 
   const workflowUrl = data.runUrl.replace(/\/runs\/\d+$/, "/workflows/nightly-e2e.yaml");
   blocks.push({

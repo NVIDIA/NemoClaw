@@ -2,31 +2,17 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const DIST_AUTH = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "dist",
-  "lib",
-  "hermes-provider-auth.js",
-);
-const DIST_BROKER = path.join(
-  import.meta.dirname,
-  "..",
-  "..",
-  "dist",
-  "lib",
-  "hermes-tool-gateway-broker.js",
-);
+const SOURCE_AUTH = path.join(import.meta.dirname, "hermes-provider-auth.ts");
+const SOURCE_BROKER = path.join(import.meta.dirname, "hermes-tool-gateway-broker.ts");
 
-function clearDistModule(modulePath: string): void {
+function clearSourceModule(modulePath: string): void {
   try {
     delete require.cache[require.resolve(modulePath)];
   } catch {
@@ -35,21 +21,21 @@ function clearDistModule(modulePath: string): void {
 }
 
 function loadAuth(): Record<string, any> {
-  clearDistModule(DIST_AUTH);
-  return require(DIST_AUTH);
+  clearSourceModule(SOURCE_AUTH);
+  return require(SOURCE_AUTH);
 }
 
 function loadAuthWithBrokerStub(brokerStub: Record<string, any>): Record<string, any> {
-  clearDistModule(DIST_AUTH);
-  clearDistModule(DIST_BROKER);
-  const broker = require(DIST_BROKER);
+  clearSourceModule(SOURCE_AUTH);
+  clearSourceModule(SOURCE_BROKER);
+  const broker = require(SOURCE_BROKER);
   Object.assign(broker, brokerStub);
-  return require(DIST_AUTH);
+  return require(SOURCE_AUTH);
 }
 
 afterEach(() => {
-  clearDistModule(DIST_AUTH);
-  clearDistModule(DIST_BROKER);
+  clearSourceModule(SOURCE_AUTH);
+  clearSourceModule(SOURCE_BROKER);
 });
 
 describe("Hermes provider OpenShell credential handoff", () => {
@@ -149,9 +135,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       expect(state.credential_env).toBe("OPENAI_API_KEY");
       expect(state.inference_base_url).toBe("https://staging.nous.example/v1");
       expect(fetchCalls.some((call) => call.auth === "Bearer access-2")).toBe(true);
-      expect(
-        providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1"),
-      ).toBe(true);
+      expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-1")).toBe(true);
       expect(
         providerCalls.some((call) =>
           call.args.includes("OPENAI_BASE_URL=https://staging.nous.example/v1"),
@@ -172,10 +156,7 @@ describe("Hermes provider OpenShell credential handoff", () => {
       process.env.HOME = tmp;
       const brokerCalls: Array<{ sandboxName?: string; refreshToken?: string }> = [];
       const auth = loadAuthWithBrokerStub({
-        registerHermesToolGatewayRefreshProvider: (
-          sandboxName: string,
-          refreshToken: string,
-        ) => {
+        registerHermesToolGatewayRefreshProvider: (sandboxName: string, refreshToken: string) => {
           brokerCalls.push({ sandboxName, refreshToken });
           return { providerName: `${sandboxName}-hermes-tool-gateway`, brokerToken: "broker-3" };
         },

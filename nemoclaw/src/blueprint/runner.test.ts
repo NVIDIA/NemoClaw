@@ -141,7 +141,7 @@ function routedBlueprint(): Record<string, unknown> {
             provider_name: "nvidia-router",
             endpoint: "http://localhost:4000/v1",
             model: "routed",
-            credential_env: "NVIDIA_API_KEY",
+            credential_env: "NVIDIA_INFERENCE_API_KEY",
             credential_default: "router-local",
             timeout_secs: 180,
           },
@@ -1005,13 +1005,13 @@ describe("runner", () => {
       const prevMyApiKey = process.env.MY_API_KEY;
       const prevGithubToken = process.env.GITHUB_TOKEN;
       const prevAwsKey = process.env.AWS_ACCESS_KEY_ID;
-      const prevNvidiaKey = process.env.NVIDIA_API_KEY;
+      const prevNvidiaKey = process.env.NVIDIA_INFERENCE_API_KEY;
       const prevProxy = process.env.HTTPS_PROXY;
       const prevOsDebug = process.env.OPENSHELL_DEBUG;
       process.env.MY_API_KEY = "secret-key-123";
       process.env.GITHUB_TOKEN = "ghp_leaked";
       process.env.AWS_ACCESS_KEY_ID = "AKIA_leaked";
-      process.env.NVIDIA_API_KEY = "nvapi-leaked";
+      process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-leaked";
       process.env.HTTPS_PROXY = "http://proxy.corp:8080";
       process.env.OPENSHELL_DEBUG = "1";
       try {
@@ -1029,7 +1029,7 @@ describe("runner", () => {
         // Secrets from the parent process must NOT be present
         expect(subEnv).not.toHaveProperty("GITHUB_TOKEN");
         expect(subEnv).not.toHaveProperty("AWS_ACCESS_KEY_ID");
-        expect(subEnv).not.toHaveProperty("NVIDIA_API_KEY");
+        expect(subEnv).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
         expect(subEnv).not.toHaveProperty("MY_API_KEY");
 
         // Allowed system vars should still be present
@@ -1046,8 +1046,8 @@ describe("runner", () => {
         else process.env.GITHUB_TOKEN = prevGithubToken;
         if (prevAwsKey === undefined) delete process.env.AWS_ACCESS_KEY_ID;
         else process.env.AWS_ACCESS_KEY_ID = prevAwsKey;
-        if (prevNvidiaKey === undefined) delete process.env.NVIDIA_API_KEY;
-        else process.env.NVIDIA_API_KEY = prevNvidiaKey;
+        if (prevNvidiaKey === undefined) delete process.env.NVIDIA_INFERENCE_API_KEY;
+        else process.env.NVIDIA_INFERENCE_API_KEY = prevNvidiaKey;
         if (prevProxy === undefined) delete process.env.HTTPS_PROXY;
         else process.env.HTTPS_PROXY = prevProxy;
         if (prevOsDebug === undefined) delete process.env.OPENSHELL_DEBUG;
@@ -1131,7 +1131,7 @@ describe("runner", () => {
     });
 
     it("passes endpoint as-is from blueprint (no rewriting)", async () => {
-      process.env.NVIDIA_API_KEY = "test-key";
+      process.env.NVIDIA_INFERENCE_API_KEY = "test-key";
       try {
         await actionApply("routed", routedBlueprint());
 
@@ -1144,7 +1144,7 @@ describe("runner", () => {
         );
         expect(configArg).toBe("OPENAI_BASE_URL=http://localhost:4000/v1");
       } finally {
-        delete process.env.NVIDIA_API_KEY;
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
       }
     });
   });

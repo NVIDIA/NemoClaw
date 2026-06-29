@@ -26,7 +26,10 @@ function validationSubject(label: string): string {
 export function suggestNameSlug(value: string): string | null {
   if (typeof value !== "string") return null;
   if (value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)) return null;
-  let slug = value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-");
+  let slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-");
   slug = slug.replace(/^-+|-+$/g, "");
   if (!slug) return null;
   if (!/^[a-z]/.test(slug)) {

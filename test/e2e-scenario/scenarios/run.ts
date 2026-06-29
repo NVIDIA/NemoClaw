@@ -4,42 +4,37 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
-import { ScenarioRunner } from "./orchestrators/runner.ts";
-import { listScenarios } from "./registry.ts";
+import { listScenarios, requireScenarios } from "./registry.ts";
 import { resolveRunnerForScenario } from "./runner-routing.ts";
+import { type LiveScenarioSupport, liveScenarioSupport } from "./runtime-support.ts";
 import type { ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
-  planOnly: boolean;
-  dryRun: boolean;
-  validateOnly: boolean;
-  emitMatrix: boolean;
+  emitLiveMatrix: boolean;
   scenarios: string[];
 }
 
-/**
- * Shape of a single GitHub Actions matrix `include` entry emitted by
- * `--emit-matrix`. The fields are kept short and JSON-stable so the consuming
- * workflow can reference them as `${{ matrix.id }}`, `${{ matrix.runner }}`,
- * etc. without further parsing.
- */
-export interface ScenarioMatrixEntry {
+export interface LiveScenarioMatrixEntry {
   id: string;
   runner: string;
   label: string;
   platform: string;
+  install: string;
+  runtime: string;
+  onboarding: string;
+  expectedStateId: string;
   suites: string[];
+  requiredSecrets: string[];
+  supported: boolean;
+  supportReasons: string[];
+  pendingRuntimeSuites: string[];
 }
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
     list: false,
-    planOnly: false,
-    dryRun: false,
-    validateOnly: false,
-    emitMatrix: false,
+    emitLiveMatrix: false,
     scenarios: [],
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -48,20 +43,8 @@ function parseArgs(argv: string[]): Args {
       args.list = true;
       continue;
     }
-    if (arg === "--emit-matrix") {
-      args.emitMatrix = true;
-      continue;
-    }
-    if (arg === "--plan-only") {
-      args.planOnly = true;
-      continue;
-    }
-    if (arg === "--dry-run") {
-      args.dryRun = true;
-      continue;
-    }
-    if (arg === "--validate-only") {
-      args.validateOnly = true;
+    if (arg === "--emit-live-matrix") {
+      args.emitLiveMatrix = true;
       continue;
     }
     if (arg === "--scenarios") {
@@ -69,7 +52,10 @@ function parseArgs(argv: string[]): Args {
       if (!value) {
         throw new Error("--scenarios requires a comma-separated value");
       }
-      args.scenarios = value.split(",").map((id) => id.trim()).filter(Boolean);
+      args.scenarios = value
+        .split(",")
+        .map((id) => id.trim())
+        .filter(Boolean);
       i += 1;
       continue;
     }
@@ -79,7 +65,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 function printList() {
-  console.log("hybrid scenario registry");
+  console.log("live Vitest scenario registry");
   for (const scenario of listScenarios()) {
     console.log(`- ${scenario.id}${scenario.description ? `: ${scenario.description}` : ""}`);
   }
@@ -90,39 +76,56 @@ function buildLabel(scenario: ScenarioDefinition): string {
   const suites = scenario.suiteIds ?? [];
   if (scenario.expectedFailure) {
     const cls = scenario.expectedFailure.errorClass ?? "expected-failure";
-    return `${platform} \u00b7 ${scenario.id} \u00b7 expect-fail:${cls}`;
+    return `${platform} · ${scenario.id} · expect-fail:${cls}`;
   }
   if (suites.length === 0) {
-    return `${platform} \u00b7 ${scenario.id}`;
+    return `${platform} · ${scenario.id}`;
   }
   if (suites.length <= 3) {
-    return `${platform} \u00b7 ${scenario.id} \u00b7 ${suites.join("+")}`;
+    return `${platform} · ${scenario.id} · ${suites.join("+")}`;
   }
-  return `${platform} \u00b7 ${scenario.id} \u00b7 ${suites.length} suites`;
+  return `${platform} · ${scenario.id} · ${suites.length} suites`;
 }
 
-/**
- * Build the GitHub Actions matrix for every scenario in the typed registry.
- * Sorted by id so workflow runs are deterministic and diffable.
- */
-export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
-  return listScenarios().map((scenario): ScenarioMatrixEntry => {
-    const { runner } = resolveRunnerForScenario(scenario);
-    return {
-      id: scenario.id,
-      runner,
-      label: buildLabel(scenario),
-      platform: scenario.environment?.platform ?? "unknown",
-      suites: scenario.suiteIds ?? [],
-    };
-  });
+function liveMatrixEntry(
+  scenario: ScenarioDefinition,
+  support: LiveScenarioSupport,
+): LiveScenarioMatrixEntry {
+  const { runner } = resolveRunnerForScenario(scenario);
+  return {
+    id: scenario.id,
+    runner,
+    label: buildLabel(scenario),
+    platform: scenario.environment?.platform ?? "unknown",
+    install: scenario.environment?.install ?? "unknown",
+    runtime: scenario.environment?.runtime ?? "unknown",
+    onboarding: scenario.environment?.onboarding ?? "unknown",
+    expectedStateId: scenario.expectedStateId ?? "",
+    suites: scenario.suiteIds ?? [],
+    requiredSecrets: scenario.requiredSecrets ?? [],
+    supported: support.supported,
+    supportReasons: support.reasons,
+    pendingRuntimeSuites: support.pendingRuntimeSuites,
+  };
 }
 
-function emitMatrix() {
+export function buildLiveScenarioMatrix(ids: string[] = []): LiveScenarioMatrixEntry[] {
+  const scenarioSupport = (ids.length > 0 ? requireScenarios(ids) : listScenarios()).map(
+    (scenario) => ({
+      scenario,
+      support: liveScenarioSupport(scenario),
+    }),
+  );
+  const liveEntries =
+    ids.length > 0 ? scenarioSupport : scenarioSupport.filter(({ support }) => support.supported);
+  return liveEntries.map(({ scenario, support }) => liveMatrixEntry(scenario, support));
+}
+
+function emitLiveMatrix(ids: string[]) {
   // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
-  //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
+  //   echo "matrix=$(npx tsx ... --emit-live-matrix)" >> "$GITHUB_OUTPUT"
   // without needing heredoc multi-line output handling.
-  process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
+  process.stdout.write(`${JSON.stringify(buildLiveScenarioMatrix(ids))}\n`);
 }
 
 async function main() {
@@ -131,40 +134,16 @@ async function main() {
     printList();
     return;
   }
-  if (args.emitMatrix) {
-    emitMatrix();
+  if (args.emitLiveMatrix) {
+    emitLiveMatrix(args.scenarios);
     return;
   }
-
-  const modeCount = [args.planOnly, args.dryRun, args.validateOnly].filter(Boolean).length;
-  if (modeCount !== 1) {
-    throw new Error("Use exactly one of --plan-only, --dry-run, or --validate-only with --scenarios <id[,id...]>");
-  }
-  if (args.scenarios.length === 0) {
-    throw new Error("scenario execution requires --scenarios <id[,id...]>");
-  }
-
-  if (process.env.E2E_SUITE_FILTER) {
-    throw new Error("E2E_SUITE_FILTER is not supported; define assertion selection in scenario builders.");
-  }
-
-  const plans = compileRunPlans(args.scenarios);
-  const contextDir = process.env.E2E_CONTEXT_DIR ?? process.cwd();
-  writePlanArtifacts(plans, contextDir);
-  console.log(renderPlanText(plans));
-
-  if (args.dryRun) {
-    const runner = new ScenarioRunner();
-    for (const plan of plans) {
-      await runner.run({ contextDir, dryRun: true }, plan);
-    }
-  }
+  throw new Error("scenario execution is retired; use --emit-live-matrix for Vitest fan-out");
 }
 
 // Only execute when invoked directly as a script. Importing this module from
-// tests (e.g. `buildScenarioMatrix`) must not trigger the CLI side-effects.
-// Compare via realpath so symlinked paths (e.g. `/tmp` -> `/private/tmp` on
-// macOS) still resolve as equal.
+// tests must not trigger CLI side effects. Compare via realpath so symlinked
+// paths (e.g. `/tmp` -> `/private/tmp` on macOS) still resolve as equal.
 function isInvokedDirectly(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;

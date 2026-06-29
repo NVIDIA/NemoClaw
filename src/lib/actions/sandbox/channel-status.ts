@@ -11,20 +11,24 @@
  * registry list. The diagnostic below has to fail loud for paired-but-idle.
  */
 
-import { loadAgent, type AgentDefinition } from "../../agent/defs";
+import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
+import {
+  collectBuiltInMessagingChannelDiagnostics,
+  type MessagingChannelDiagnosticSpec,
+} from "../../messaging/diagnostics";
+import {
+  createBuiltInChannelManifestRegistry,
+  getMessagingManifestAvailabilityContext,
+} from "../../messaging";
 import * as policies from "../../policy";
 import {
-  KNOWN_CHANNELS,
-  knownChannelNames,
-} from "../../sandbox/channels";
-import {
+  type DiagnosticSeverity,
+  type DiagnosticSignal,
   evaluateWhatsappDiagnostics,
   parseWhatsappHeartbeat,
   summarizeWhatsappLogLines,
-  type DiagnosticSeverity,
-  type DiagnosticSignal,
   type WhatsappDiagnosticReport,
   type WhatsappHeartbeat,
   type WhatsappProbeInput,
@@ -49,7 +53,11 @@ function quotePath(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-type ExecRunner = (sandboxName: string, command: string, timeoutMs?: number) => {
+type ExecRunner = (
+  sandboxName: string,
+  command: string,
+  timeoutMs?: number,
+) => {
   status: number;
   stdout: string;
   stderr: string;
@@ -76,7 +84,7 @@ export type ChannelStatusOptions = {
 };
 
 export type ChannelStatusReport =
-  | { schemaVersion: 1; sandbox: string; channel: "whatsapp"; report: WhatsappDiagnosticReport }
+  | { schemaVersion: 1; sandbox: string; channel: string; report: WhatsappDiagnosticReport }
   | {
       schemaVersion: 1;
       sandbox: string;
@@ -90,6 +98,8 @@ export type ChannelStatusReport =
 // unresponsive when the Noise WebSocket is stuck; a fast hard cap keeps
 // channels status from inheriting that hang.
 const WHATSAPP_PROBE_TIMEOUT_MS = 8_000;
+const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
+const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
 const SHELL_OK = "NEMOCLAW_WA_DIAG_OK";
 const HEARTBEAT_BEGIN = "NEMOCLAW_WA_HEARTBEAT_BEGIN";
@@ -132,6 +142,29 @@ function defaultDeps(deps: StatusDeps | undefined): Required<StatusDeps> {
   };
 }
 
+function getChannelStatusDiagnostic(channelName: string): MessagingChannelDiagnosticSpec | null {
+  return (
+    CHANNEL_STATUS_DIAGNOSTICS.find((diagnostic) => diagnostic.channelId === channelName) ?? null
+  );
+}
+
+function diagnosticChannelNames(): string[] {
+  return CHANNEL_STATUS_DIAGNOSTICS.map((diagnostic) => diagnostic.channelId);
+}
+
+function selectDefaultChannel(configuredChannels: readonly string[]): string {
+  const preferredConfigured = configuredChannels.find(
+    (channel) => getChannelStatusDiagnostic(channel)?.preferredDefault === true,
+  );
+  if (preferredConfigured) return preferredConfigured;
+  if (configuredChannels.length > 0) return configuredChannels[0];
+  return (
+    CHANNEL_STATUS_DIAGNOSTICS.find((diagnostic) => diagnostic.preferredDefault)?.channelId ??
+    CHANNEL_STATUS_DIAGNOSTICS[0]?.channelId ??
+    ""
+  );
+}
+
 function resolveStateDirs(agent: AgentDefinition): string[] {
   const configDir = agent.configPaths?.dir;
   if (!configDir) return [];
@@ -152,10 +185,7 @@ function resolveStateDirs(agent: AgentDefinition): string[] {
     // Fallback: probe both shapes even when the manifest does not declare
     // the dir — best-effort but safe because non-existent paths just yield
     // "missing" probe output.
-    candidates.push(
-      `${configDir}/whatsapp`,
-      `${configDir}/platforms/whatsapp/session`,
-    );
+    candidates.push(`${configDir}/whatsapp`, `${configDir}/platforms/whatsapp/session`);
   }
   return Array.from(new Set(candidates));
 }
@@ -333,7 +363,15 @@ function buildWhatsappProbeInput(
   const script = buildProbeScript(stateDirs);
   const probedAt = deps.now().toISOString();
   const exec = deps.execSandbox(sandboxName, script, WHATSAPP_PROBE_TIMEOUT_MS);
-  const parsed = exec ? parseProbeOutput(exec.stdout) : { reachable: false, stateDirPopulated: null, heartbeatRaw: null, logLines: [], bridgeProcessAlive: null };
+  const parsed = exec
+    ? parseProbeOutput(exec.stdout)
+    : {
+        reachable: false,
+        stateDirPopulated: null,
+        heartbeatRaw: null,
+        logLines: [],
+        bridgeProcessAlive: null,
+      };
 
   let heartbeat: WhatsappHeartbeat | null = null;
   let heartbeatParseError: string | null = null;
@@ -347,7 +385,9 @@ function buildWhatsappProbeInput(
   }
 
   const entry = deps.getSandbox(sandboxName);
-  const channelEnabledInRegistry = (entry?.messagingChannels ?? []).includes("whatsapp");
+  const channelEnabledInRegistry = registry
+    .getConfiguredMessagingChannelsFromEntry(entry)
+    .includes("whatsapp");
 
   const appliedPresets = deps.getAppliedPresets(sandboxName);
   const presetInRegistry = appliedPresets.includes("whatsapp");
@@ -375,7 +415,11 @@ function buildWhatsappProbeInput(
   };
 }
 
-function renderReport(report: ChannelStatusReport, asJson: boolean, deps: Required<StatusDeps>): void {
+function renderReport(
+  report: ChannelStatusReport,
+  asJson: boolean,
+  deps: Required<StatusDeps>,
+): void {
   if (asJson) {
     deps.out(JSON.stringify(report, null, 2));
     return;
@@ -428,12 +472,16 @@ function buildBasicChannelReport(
   channelName: string,
   agent: AgentDefinition,
   deps: Required<StatusDeps>,
+  diagnostic: MessagingChannelDiagnosticSpec,
 ): ChannelStatusReport {
   const entry = deps.getSandbox(sandboxName);
-  const enabled = (entry?.messagingChannels ?? []).includes(channelName);
-  const disabled = (entry?.disabledChannels ?? []).includes(channelName);
+  const enabled = registry.getConfiguredMessagingChannelsFromEntry(entry).includes(channelName);
+  const disabled = registry.getDisabledMessagingChannelsFromEntry(entry).includes(channelName);
   const appliedPresets = deps.getAppliedPresets(sandboxName);
-  const presetInRegistry = appliedPresets.includes(channelName);
+  const policyPresets =
+    diagnostic.policyPresets.length > 0 ? diagnostic.policyPresets : [channelName];
+  const presetInRegistry = policyPresets.some((preset) => appliedPresets.includes(preset));
+  const policyLabel = policyPresets.join(", ");
   const signals: DiagnosticSignal[] = [];
   signals.push({
     label: "Channel registration",
@@ -451,11 +499,11 @@ function buildBasicChannelReport(
     label: "Policy coverage",
     severity: presetInRegistry ? "ok" : enabled ? "warn" : "info",
     detail: presetInRegistry
-      ? `${channelName} preset applied`
-      : `${channelName} preset not applied`,
+      ? `${policyLabel} preset applied`
+      : `${policyLabel} preset not applied`,
     hint: presetInRegistry
       ? undefined
-      : `run \`${CLI_NAME} ${sandboxName} policy-add ${channelName}\``,
+      : `run \`${CLI_NAME} ${sandboxName} policy-add ${policyPresets[0]}\``,
   });
   signals.push({
     label: "Deep diagnostics",
@@ -464,11 +512,11 @@ function buildBasicChannelReport(
   });
   // Reference the agent in a hint so the deep-diagnostic section is
   // discoverable per agent without needing extra plumbing.
-  if (!agent.messagingPlatforms.includes(channelName)) {
+  if (!channelSupportedByAgent(channelName, agent)) {
     signals.unshift({
       label: "Agent support",
       severity: "warn",
-      detail: `agent '${agent.name}' does not declare support for ${channelName}`,
+      detail: `channel '${channelName}' does not support agent '${agent.name}'`,
     });
   }
   return {
@@ -478,6 +526,12 @@ function buildBasicChannelReport(
     verdict: "info",
     signals,
   };
+}
+
+function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
+  return channelManifestRegistry
+    .listAvailable(getMessagingManifestAvailabilityContext(agent, channelManifestRegistry.list()))
+    .some((manifest) => manifest.id === channelName);
 }
 
 /**
@@ -513,20 +567,13 @@ export async function showSandboxChannelStatus(
 
   let channelName = channelArg;
   if (!channelName) {
-    const enabled = (entry.messagingChannels ?? []).filter(
-      (name: string) => name === "whatsapp",
-    );
-    if (enabled.length > 0) {
-      channelName = "whatsapp";
-    } else if ((entry.messagingChannels ?? []).length > 0) {
-      channelName = entry.messagingChannels?.[0];
-    } else {
-      channelName = "whatsapp";
-    }
+    const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(entry);
+    channelName = selectDefaultChannel(configuredChannels);
   }
 
-  if (!channelName || !knownChannelNames().includes(channelName)) {
-    const known = knownChannelNames().join(", ");
+  const diagnostic = channelName ? getChannelStatusDiagnostic(channelName) : null;
+  if (!channelName || !diagnostic) {
+    const known = diagnosticChannelNames().join(", ");
     if (asJson) {
       deps.out(
         JSON.stringify(
@@ -543,33 +590,21 @@ export async function showSandboxChannelStatus(
 
   const agent = deps.loadAgent(entry.agent || "openclaw");
 
-  const disabledChannels = new Set(entry.disabledChannels ?? []);
+  const disabledChannels = new Set(registry.getDisabledMessagingChannelsFromEntry(entry));
   const channelIsPaused = disabledChannels.has(channelName);
 
   let report: ChannelStatusReport;
-  if (channelName === "whatsapp" && channelIsPaused) {
-    // The operator stopped this channel with `channels stop whatsapp`; the
-    // bridge and policy are intentionally absent after the rebuild. Skip
-    // the deep probe so the diagnostic does not flag the deliberate gap as
-    // an unhealthy bridge. The non-WhatsApp path already covers paused
-    // channels via buildBasicChannelReport, so route through it.
-    report = buildBasicChannelReport(sandboxName, channelName, agent, deps);
-  } else if (channelName === "whatsapp") {
+  if (diagnostic.deepProbe === "in-sandbox-qr" && !channelIsPaused) {
     const input = buildWhatsappProbeInput(sandboxName, agent, deps);
     const whatsappReport = evaluateWhatsappDiagnostics(input);
     report = {
       schemaVersion: 1,
       sandbox: sandboxName,
-      channel: "whatsapp",
+      channel: channelName,
       report: whatsappReport,
     };
   } else {
-    if (!KNOWN_CHANNELS[channelName]) {
-      // Defensive — already validated above, but keeps type narrowing happy.
-      report = buildBasicChannelReport(sandboxName, channelName, agent, deps);
-    } else {
-      report = buildBasicChannelReport(sandboxName, channelName, agent, deps);
-    }
+    report = buildBasicChannelReport(sandboxName, channelName, agent, deps, diagnostic);
   }
 
   if (!(asJson && quietJson)) {

@@ -3,22 +3,24 @@
 //
 // Security regression test: credential values must never appear in --credential
 // CLI arguments. OpenShell reads credential values from the environment when
-// only the env-var name is passed (e.g. --credential "NVIDIA_API_KEY"), so
+// only the env-var name is passed (e.g. --credential "NVIDIA_INFERENCE_API_KEY"), so
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
-import { buildSubprocessEnv as buildCliSubprocessEnv } from "../src/lib/subprocess-env";
+import { describe, expect, it } from "vitest";
 import {
   buildSubprocessEnv as buildPluginSubprocessEnv,
   withLocalNoProxy as withPluginLocalNoProxy,
 } from "../nemoclaw/src/lib/subprocess-env";
-import { withLocalNoProxy as withCliLocalNoProxy } from "../src/lib/subprocess-env";
 import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
+import {
+  buildSubprocessEnv as buildCliSubprocessEnv,
+  withLocalNoProxy as withCliLocalNoProxy,
+} from "../src/lib/subprocess-env";
 
 const require = createRequire(import.meta.url);
-const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {
+const { buildProviderArgs } = require("../src/lib/onboard/providers.js") as {
   buildProviderArgs: (
     action: "create" | "update",
     name: string,
@@ -34,13 +36,13 @@ describe("credential exposure in process arguments", () => {
       "create",
       "inference",
       "openai",
-      "NVIDIA_API_KEY",
+      "NVIDIA_INFERENCE_API_KEY",
       "https://api.example.test/v1",
     );
 
     expect(args).toContain("--credential");
-    expect(args).toContain("NVIDIA_API_KEY");
-    expect(args.join(" ")).not.toContain("NVIDIA_API_KEY=");
+    expect(args).toContain("NVIDIA_INFERENCE_API_KEY");
+    expect(args.join(" ")).not.toContain("NVIDIA_INFERENCE_API_KEY=");
     expect(args.join(" ")).not.toContain("nvapi-");
   });
 
@@ -123,20 +125,20 @@ describe("credential exposure in process arguments", () => {
 
   it("subprocess env builder does not spread full process.env into subprocesses", () => {
     const previous = {
-      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY,
       PATH: process.env.PATH,
     };
     try {
-      process.env.NVIDIA_API_KEY = "nvapi-secret-should-not-leak";
+      process.env.NVIDIA_INFERENCE_API_KEY = "nvapi-secret-should-not-leak";
       process.env.PATH = `/tmp/nemoclaw-fake-bin:${process.env.PATH || ""}`;
       const env = buildCliSubprocessEnv();
-      expect(env.NVIDIA_API_KEY).toBeUndefined();
+      expect(env.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
       expect(env.PATH).toContain("/tmp/nemoclaw-fake-bin");
     } finally {
-      if (previous.NVIDIA_API_KEY === undefined) {
-        delete process.env.NVIDIA_API_KEY;
+      if (previous.NVIDIA_INFERENCE_API_KEY === undefined) {
+        delete process.env.NVIDIA_INFERENCE_API_KEY;
       } else {
-        process.env.NVIDIA_API_KEY = previous.NVIDIA_API_KEY;
+        process.env.NVIDIA_INFERENCE_API_KEY = previous.NVIDIA_INFERENCE_API_KEY;
       }
       if (previous.PATH === undefined) {
         delete process.env.PATH;
@@ -149,5 +151,4 @@ describe("credential exposure in process arguments", () => {
   it("onboard curl probes use explicit timeouts", () => {
     expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
   });
-
 });

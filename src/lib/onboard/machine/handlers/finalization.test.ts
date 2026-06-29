@@ -4,20 +4,38 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type SessionUpdates } from "../../../state/onboard-session";
-import { handleFinalizationState, type FinalizationStateOptions } from "./finalization";
+import { type FinalizationStateOptions, handleFinalizationState } from "./finalization";
 
-type Agent = { name: string } | null;
+type Agent = {
+  name: string;
+  displayName?: string;
+  forwardPort?: number | null;
+  forward_ports?: number[] | null;
+  runtime?: {
+    kind?: string;
+    interactive_command?: string;
+    headless_command?: string;
+  };
+} | null;
 type VerifyChain = { port: number };
 type VerificationResult = { ok: boolean };
 
-function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {}) {
+function createDeps(
+  overrides: Partial<FinalizationStateOptions<Agent, VerifyChain, VerificationResult>["deps"]> = {},
+) {
   const calls = {
     setDefaultSandbox: vi.fn(),
     ensureAgentDashboard: vi.fn(() => 18789),
-    postVerify: vi.fn(async () => createSession({ machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 } })),
+    postVerify: vi.fn(async () =>
+      createSession({
+        machine: { version: 1, state: "post_verify", stateEnteredAt: null, revision: 1 },
+      }),
+    ),
     removeLegacy: vi.fn(),
     cleanupHost: vi.fn(),
     recoverProcesses: vi.fn(),
+    warmupScopeUpgrade: vi.fn(),
+    autoPairScopeApproval: vi.fn(),
     getChatUiUrl: vi.fn(() => "http://127.0.0.1:18789"),
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
@@ -37,6 +55,8 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
       removeLegacyCredentialsFile: calls.removeLegacy,
       cleanupStaleHostFiles: calls.cleanupHost,
       checkAndRecoverSandboxProcesses: calls.recoverProcesses,
+      warmupScopeUpgrade: calls.warmupScopeUpgrade,
+      autoPairScopeApproval: calls.autoPairScopeApproval,
       getChatUiUrl: calls.getChatUiUrl,
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
@@ -113,6 +133,45 @@ describe("handleFinalizationState", () => {
     expect(calls.dashboard).toHaveBeenCalledWith("my-assistant", "model", "provider", null, agent);
   });
 
+  it("skips dashboard and gateway verification for terminal agents without forwards", async () => {
+    const { deps, calls } = createDeps();
+    const agent = {
+      name: "langchain-deepagents-code",
+      displayName: "LangChain Deep Agents Code",
+      runtime: {
+        kind: "terminal",
+        interactive_command: "dcode",
+        headless_command: "dcode -n",
+      },
+    };
+
+    const result = await handleFinalizationState({
+      ...baseOptions(deps),
+      agent,
+      webSearchEnabled: true,
+    });
+
+    expect(calls.ensureAgentDashboard).not.toHaveBeenCalled();
+    expect(calls.recoverProcesses).not.toHaveBeenCalled();
+    expect(calls.autoPairScopeApproval).not.toHaveBeenCalled();
+    expect(calls.getChatUiUrl).not.toHaveBeenCalled();
+    expect(calls.buildChain).not.toHaveBeenCalled();
+    expect(calls.verify).not.toHaveBeenCalled();
+    expect(calls.diagnostics).not.toHaveBeenCalled();
+    expect(calls.verifyWebSearch).not.toHaveBeenCalled();
+    expect(calls.dashboard).not.toHaveBeenCalled();
+    expect(calls.log).toHaveBeenCalledWith(
+      "  ✓ LangChain Deep Agents Code terminal runtime is ready",
+    );
+    expect(calls.log).toHaveBeenCalledWith("  Connect: nemoclaw my-assistant connect");
+    expect(calls.log).toHaveBeenCalledWith("  Interactive: dcode");
+    expect(calls.log).toHaveBeenCalledWith('  Headless: dcode -n "<task>"');
+    expect(calls.log.mock.calls.map(([line]) => line).join("\n")).not.toContain("Port 0");
+    expect(calls.postVerify).toHaveBeenCalledOnce();
+    expect(result.verificationDiagnostics).toEqual([]);
+    expect(result.stateResult.type).toBe("complete");
+  });
+
   it("does not complete the session when deployment verification fails", async () => {
     const { deps, calls } = createDeps({
       verifyDeployment: vi.fn(async () => {
@@ -134,8 +193,8 @@ describe("handleFinalizationState", () => {
 
     await handleFinalizationState({
       ...baseOptions(deps),
-      stagedLegacyKeys: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
-      migratedLegacyKeys: new Set(["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"]),
+      stagedLegacyKeys: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN"],
+      migratedLegacyKeys: new Set(["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN"]),
     });
 
     expect(calls.removeLegacy).toHaveBeenCalledOnce();
@@ -147,8 +206,8 @@ describe("handleFinalizationState", () => {
 
     const result = await handleFinalizationState({
       ...baseOptions(deps),
-      stagedLegacyKeys: ["NVIDIA_API_KEY", "SLACK_BOT_TOKEN"],
-      migratedLegacyKeys: new Set(["NVIDIA_API_KEY"]),
+      stagedLegacyKeys: ["NVIDIA_INFERENCE_API_KEY", "SLACK_BOT_TOKEN"],
+      migratedLegacyKeys: new Set(["NVIDIA_INFERENCE_API_KEY"]),
     });
 
     expect(calls.removeLegacy).not.toHaveBeenCalled();
@@ -176,5 +235,116 @@ describe("handleFinalizationState", () => {
     expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
       callsOn.verify.mock.invocationCallOrder[0],
     );
+  });
+
+  // Scenario A (#4504): the auto-pair scope-approval sweep runs against the
+  // freshly-recovered gateway — strictly after process recovery (which can
+  // restart the gateway, #3573) and strictly before deployment verification
+  // (so the gateway state is settled before we probe it).
+  it("runs the auto-pair scope-approval sweep after process recovery and before verify (#4504)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledWith("my-assistant");
+    // Ordering: recover → autoPairScopeApproval → verify.
+    expect(calls.autoPairScopeApproval.mock.invocationCallOrder[0]).toBeGreaterThan(
+      calls.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(calls.autoPairScopeApproval.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.verify.mock.invocationCallOrder[0],
+    );
+  });
+
+  // Scenario B (#4504): the sweep is agent-agnostic — the stuck CLI/webchat
+  // scope upgrade can occur regardless of which agent the sandbox runs.
+  it("runs the scope-approval sweep regardless of agent type (#4504)", async () => {
+    const { deps, calls } = createDeps();
+    const agent = { name: "hermes" };
+
+    await handleFinalizationState({ ...baseOptions(deps), agent });
+
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledWith("my-assistant");
+  });
+
+  // Scenario C (#4504): the dep is documented as best-effort / never-throws and
+  // the handler wraps no try/catch around it. Per the contract we assert the
+  // implemented behavior: the sweep is invoked and, because it returns cleanly,
+  // finalization proceeds to completion (recordSessionComplete still runs). A
+  // dep that threw would abort finalization here — the regression this guards.
+  it("treats the scope-approval sweep as best-effort and still completes the session (#4504)", async () => {
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    // The non-throwing sweep does not abort finalization: it proceeds through
+    // verification and the dashboard print to a completed result. (#4472 moved
+    // session completion to the imported completeOnboardMachine, so completion
+    // is asserted via the downstream dashboard + diagnostics rather than a dep.)
+    expect(calls.dashboard).toHaveBeenCalledOnce();
+    expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  // Scenario 1 (#4504-v2, HEADLINE): the warm-up provokes the operator.write
+  // scope upgrade so the approval pass below has something pending to approve.
+  // The order is load-bearing: process recovery (gateway live) → warmup
+  // (provoke / create pending) → autoPairScopeApproval (approve / clear
+  // pending). Reversing warmup and approval makes the approval pass a no-op and
+  // the user's first real run falls back — exactly the bug v2 fixes.
+  it("provokes the scope upgrade after recovery and before the approval pass in v2 (#4504)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
+    // recover → warmup (provoke) → autoPairScopeApproval (approve).
+    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeGreaterThan(
+      calls.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(calls.warmupScopeUpgrade.mock.invocationCallOrder[0]).toBeLessThan(
+      calls.autoPairScopeApproval.mock.invocationCallOrder[0],
+    );
+  });
+
+  // Scenario 2 (#4504-v2): the warm-up is best-effort / non-blocking. The
+  // handler wraps no try/catch around the dep and relies on the dep itself
+  // never throwing (the production leaf swallows every failure — covered in
+  // auto-pair-warmup.test.ts). Per the contract we assert the implemented
+  // behavior here: the warm-up is invoked and, because the (non-throwing) dep
+  // returns cleanly, finalization is NOT ordered to depend on its success — it
+  // proceeds straight to the approval pass, verification, and the dashboard.
+  // The dep returning nothing useful (no pending provoked, gateway slow) does
+  // not change the downstream flow: behavior degrades to v1, never blocks.
+  it("completes v2 finalization without depending on the warm-up succeeding (#4504)", async () => {
+    // The default warm-up mock returns undefined (e.g. gateway not up → the
+    // production leaf swallowed and provoked nothing). Finalization must be
+    // unaffected.
+    const { deps, calls } = createDeps();
+
+    const result = await handleFinalizationState(baseOptions(deps));
+
+    expect(calls.warmupScopeUpgrade).toHaveBeenCalledOnce();
+    expect(calls.warmupScopeUpgrade.mock.results[0]).toEqual({ type: "return", value: undefined });
+    // The approval pass still runs after it (degrades to v1, not skipped).
+    expect(calls.autoPairScopeApproval).toHaveBeenCalledOnce();
+    expect(calls.dashboard).toHaveBeenCalledOnce();
+    expect(result.verificationDiagnostics).toEqual(["  ✓ verified"]);
+  });
+
+  // Scenario 3 (#4504-v2): the warm-up is agent-agnostic — the first-run scope
+  // upgrade is provoked regardless of which agent the sandbox runs (the
+  // contract says run it unconditionally; idempotent once operator.write is
+  // paired).
+  it("provokes the v2 scope upgrade regardless of agent type (#4504)", async () => {
+    const { deps: depsHermes, calls: callsHermes } = createDeps();
+    await handleFinalizationState({ ...baseOptions(depsHermes), agent: { name: "hermes" } });
+    expect(callsHermes.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
+
+    const { deps: depsOpenclaw, calls: callsOpenclaw } = createDeps();
+    await handleFinalizationState({ ...baseOptions(depsOpenclaw), agent: { name: "openclaw" } });
+    expect(callsOpenclaw.warmupScopeUpgrade).toHaveBeenCalledWith("my-assistant");
   });
 });

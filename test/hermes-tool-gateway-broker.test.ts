@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /* global fetch */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -23,12 +23,12 @@ const SCRIPT = path.join(
   "tool-gateway-broker.ts",
 );
 const require = createRequire(import.meta.url);
-const DIST_WRAPPER = path.join(
+const BROKER_WRAPPER = path.join(
   import.meta.dirname,
   "..",
-  "dist",
+  "src",
   "lib",
-  "hermes-tool-gateway-broker.js",
+  "hermes-tool-gateway-broker.ts",
 );
 
 let children: ChildProcess[] = [];
@@ -94,8 +94,8 @@ afterEach(() => {
 
 describe("Hermes managed-tool gateway broker", () => {
   it("only auto-recovers for Hermes sandboxes with selected managed tools", () => {
-    delete require.cache[require.resolve(DIST_WRAPPER)];
-    const broker = require(DIST_WRAPPER);
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
 
     expect(
       broker.isHermesManagedToolGatewayEntry({
@@ -281,17 +281,14 @@ describe("Hermes managed-tool gateway broker", () => {
       });
       expect(denied.status).toBe(401);
 
-      const firecrawl = await fetch(
-        `http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape?debug=1`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": "refresh-2",
-          },
-          body: JSON.stringify({ url: "https://example.com" }),
+      const firecrawl = await fetch(`http://127.0.0.1:${brokerPort}/firecrawl/v1/scrape?debug=1`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": "refresh-2",
         },
-      );
+        body: JSON.stringify({ url: "https://example.com" }),
+      });
       const firecrawlBody = await firecrawl.text();
       expect(firecrawl.status, `${firecrawlBody}\n${output}`).toBe(200);
       expect(firecrawl.headers.get("content-encoding")).toBeNull();

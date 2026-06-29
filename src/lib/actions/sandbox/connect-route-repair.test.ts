@@ -55,7 +55,9 @@ const broken = (detail = "BROKEN 503"): SandboxInferenceRouteProbe => ({
   detail,
 });
 
-const inconclusive = (detail = "openshell sandbox exec exited with status 7"): SandboxInferenceRouteProbe => ({
+const inconclusive = (
+  detail = "openshell sandbox exec exited with status 7",
+): SandboxInferenceRouteProbe => ({
   healthy: false,
   broken: false,
   detail,
@@ -296,7 +298,7 @@ function makeResetDeps(
       calls.probeOptions.push(options);
       return queue.shift() ?? broken("missing mocked reset probe");
     }),
-    printUnrecoverableInferenceRoute: vi.fn((sandboxName, _sb, detail) => {
+    printUnrecoverableInferenceRoute: vi.fn((sandboxName, _route, detail) => {
       calls.unrecoverable.push({ sandboxName, detail });
     }),
     log: (message) => calls.logs.push(message),
@@ -384,8 +386,6 @@ describe("managed inference route reset unit flow", () => {
 
     expect(result).toBe(false);
     expect(calls.errors).toContain("  Error: failed to reset the OpenShell inference route.");
-    expect(calls.unrecoverable).toEqual([
-      { sandboxName: "demo", detail: "BROKEN 503 still down" },
-    ]);
+    expect(calls.unrecoverable).toEqual([{ sandboxName: "demo", detail: "BROKEN 503 still down" }]);
   });
 });

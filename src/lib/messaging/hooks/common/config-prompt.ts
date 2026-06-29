@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveMessagingChannelConfigEnvValue } from "../../../messaging-channel-config";
 import { createBuiltInChannelManifestRegistry } from "../../channels";
 import type {
   ChannelConfigInputSpec,
@@ -8,7 +9,6 @@ import type {
   ChannelManifest,
   MessagingSerializableValue,
 } from "../../manifest";
-import { resolveMessagingChannelConfigEnvValue } from "../../../messaging-channel-config";
 import type {
   MessagingHookHandler,
   MessagingHookInputMap,
@@ -22,9 +22,12 @@ export interface ConfigPromptField {
   readonly id: string;
   readonly envKey: string;
   readonly label: string;
+  readonly defaultValue?: string;
   readonly help?: string;
   readonly emptyValueMessage?: string;
   readonly validValues?: readonly string[];
+  readonly format?: RegExp;
+  readonly formatHint?: string;
   readonly promptWhenInput?: string;
   readonly statePath?: string;
 }
@@ -52,9 +55,7 @@ export function createConfigPromptHook(
       if (output.kind !== "config") continue;
       const field = resolveConfigPromptField(context.channelId, output, options);
       if (!field) {
-        throw new Error(
-          `No config-prompt field registered for ${context.channelId}.${output.id}`,
-        );
+        throw new Error(`No config-prompt field registered for ${context.channelId}.${output.id}`);
       }
       if (field.promptWhenInput && !hasInputValue(availableInputs, field.promptWhenInput)) {
         continue;
@@ -68,6 +69,11 @@ export function createConfigPromptHook(
       }
 
       if (context.isInteractive === false) {
+        const defaultValue = readDefaultConfigValue(field);
+        if (defaultValue) {
+          recordConfigValue(field, defaultValue, outputs, availableInputs, options);
+          logDefaultConfigInput(context.channelId, field, defaultValue, options);
+        }
         continue;
       }
 
@@ -112,17 +118,19 @@ export function resolveManifestConfigPromptField(
   output: ChannelHookOutputSpec,
 ): ConfigPromptField | null {
   const input = manifest.inputs.find(
-    (entry): entry is ChannelConfigInputSpec =>
-      entry.kind === "config" && entry.id === output.id,
+    (entry): entry is ChannelConfigInputSpec => entry.kind === "config" && entry.id === output.id,
   );
   if (!input?.envKey || !input.prompt) return null;
   return {
     id: input.id,
     envKey: input.envKey,
     label: input.prompt.label,
+    defaultValue: input.defaultValue,
     help: input.prompt.help,
     emptyValueMessage: input.prompt.emptyValueMessage,
     validValues: input.validValues,
+    format: input.formatPattern ? new RegExp(input.formatPattern) : undefined,
+    formatHint: input.formatHint,
     promptWhenInput: input.promptWhenInput,
     statePath: input.statePath,
   };
@@ -166,16 +174,20 @@ async function promptConfigInputValue(
 ): Promise<string | null> {
   const prompt = options.prompt ?? missingConfigPrompt;
   if (isMentionModeInput(field)) {
-    const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
+    const defaultValue = readDefaultConfigValue(field) ?? "1";
+    const suffix = defaultValue === "0" ? "[y/N]" : "[Y/n]";
+    const answer = (await prompt(`  Reply only when @mentioned? ${suffix}: `)).trim().toLowerCase();
+    if (!answer) return defaultValue;
     return answer === "n" || answer === "no" ? "0" : "1";
   }
-  return normalizeConfigValue(field, await prompt(`  ${field.label}: `));
+  const answer = await prompt(formatConfigPromptQuestion(field));
+  return isBlankConfigValue(answer)
+    ? readDefaultConfigValue(field)
+    : normalizeConfigValue(field, answer);
 }
 
 async function missingConfigPrompt(): Promise<string> {
-  throw new Error(
-    "Config-prompt hook requires an injected prompt implementation in phase 1.",
-  );
+  throw new Error("Config-prompt hook requires an injected prompt implementation in phase 1.");
 }
 
 function normalizeConfigValue(field: ConfigPromptField, value: unknown): string | null {
@@ -183,7 +195,26 @@ function normalizeConfigValue(field: ConfigPromptField, value: unknown): string 
   const normalized = value.replace(/\r/g, "").trim();
   if (!normalized) return null;
   if (field.validValues && !field.validValues.includes(normalized)) return null;
+  if (field.format && !field.format.test(normalized)) return null;
   return normalized;
+}
+
+function readDefaultConfigValue(field: ConfigPromptField): string | null {
+  return normalizeConfigValue(field, field.defaultValue);
+}
+
+function formatConfigPromptQuestion(field: ConfigPromptField): string {
+  const hints: string[] = [];
+  if (field.validValues && field.validValues.length > 0) {
+    hints.push(field.validValues.join("/"));
+  }
+  const defaultValue = readDefaultConfigValue(field);
+  if (defaultValue) hints.push(`default: ${defaultValue}`);
+  return `  ${field.label}${hints.length > 0 ? ` [${hints.join("; ")}]` : ""}: `;
+}
+
+function isBlankConfigValue(value: unknown): boolean {
+  return typeof value === "string" && value.replace(/\r/g, "").trim().length === 0;
 }
 
 function hasInputValue(
@@ -220,6 +251,19 @@ function logSavedConfigInput(
   log(options, `  ✓ ${channelId} ${configInputNoun(field)} saved`);
 }
 
+function logDefaultConfigInput(
+  channelId: string,
+  field: ConfigPromptField,
+  value: string,
+  options: ConfigPromptHookOptions,
+): void {
+  if (isMentionModeInput(field)) {
+    log(options, `  ✓ ${channelId} reply mode defaulted: ${formatMentionMode(value)}`);
+    return;
+  }
+  log(options, `  ✓ ${channelId} ${configInputNoun(field)} defaulted: ${value}`);
+}
+
 function logSkippedConfigInput(
   channelId: string,
   field: ConfigPromptField,
@@ -238,6 +282,7 @@ function configInputNoun(field: ConfigPromptField): string {
 
 function isMentionModeInput(field: ConfigPromptField): boolean {
   return (
+    /mention/i.test(`${field.id} ${field.label}`) &&
     field.validValues?.length === 2 &&
     field.validValues.includes("0") &&
     field.validValues.includes("1")

@@ -39,6 +39,30 @@ export type SandboxBaseImageResolution = {
 
 const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml"];
 
+function normalizeBaseImageInputPaths(rootDir: string, paths: string[] = []): string[] {
+  const absoluteRootDir = path.resolve(rootDir);
+  const normalizedPaths = paths
+    .map((inputPath) => {
+      const trimmed = String(inputPath || "").trim();
+      if (!trimmed) return null;
+      const absolutePath = path.isAbsolute(trimmed)
+        ? path.resolve(trimmed)
+        : path.resolve(absoluteRootDir, trimmed);
+      const relativePath = path.relative(absoluteRootDir, absolutePath);
+      if (
+        !relativePath ||
+        relativePath === ".." ||
+        relativePath.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relativePath)
+      ) {
+        return null;
+      }
+      return relativePath.split(path.sep).join("/");
+    })
+    .filter((inputPath): inputPath is string => !!inputPath);
+  return Array.from(new Set([...BASE_IMAGE_INPUT_PATHS, ...normalizedPaths]));
+}
+
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
  * through the runner's redaction so secrets in build output never reach the
@@ -46,9 +70,10 @@ const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint
  * backend and progress mode, so taking only stderr can hide the actual reason
  * a build failed.
  */
-export function formatBuildFailureDiagnostics(
-  buildResult: { stderr?: unknown; stdout?: unknown },
-): string {
+export function formatBuildFailureDiagnostics(buildResult: {
+  stderr?: unknown;
+  stdout?: unknown;
+}): string {
   const streams = [buildResult.stderr, buildResult.stdout]
     .map((stream) => {
       if (stream == null) return "";
@@ -62,7 +87,8 @@ export function formatBuildFailureDiagnostics(
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
-  const match = text.match(/GLIBC\s+([0-9]+(?:\.[0-9]+)+)/i) || text.match(/\s([0-9]+\.[0-9]+)\s*$/);
+  const match =
+    text.match(/GLIBC\s+([0-9]+(?:\.[0-9]+)+)/i) || text.match(/\s([0-9]+\.[0-9]+)\s*$/);
   return match ? match[1] : null;
 }
 
@@ -91,7 +117,10 @@ export function getImageGlibcVersion(imageRef: string): string | null {
   return parseGlibcVersion(output);
 }
 
-export function imageMeetsMinimumGlibc(imageRef: string, minVersion = OPENSHELL_SANDBOX_MIN_GLIBC): {
+export function imageMeetsMinimumGlibc(
+  imageRef: string,
+  minVersion = OPENSHELL_SANDBOX_MIN_GLIBC,
+): {
   ok: boolean;
   version: string | null;
 } {
@@ -99,10 +128,15 @@ export function imageMeetsMinimumGlibc(imageRef: string, minVersion = OPENSHELL_
   return { ok: !!version && versionGte(version, minVersion), version };
 }
 
-export function getSourceShortShaTags(rootDir = ROOT, env: NodeJS.ProcessEnv = process.env): string[] {
+export function getSourceShortShaTags(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
   const values: string[] = [];
   const push = (value: string | null | undefined) => {
-    const normalized = String(value || "").trim().toLowerCase();
+    const normalized = String(value || "")
+      .trim()
+      .toLowerCase();
     if (!/^[0-9a-f]{7,40}$/.test(normalized)) return;
     values.push(normalized.slice(0, 8), normalized.slice(0, 7));
   };
@@ -130,12 +164,16 @@ function normalizeVersionTag(value: string | null | undefined): string | null {
 }
 
 function gitExactVersionTag(rootDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
-  const git = spawnSync("git", ["-C", rootDir, "describe", "--tags", "--exact-match", "--match", "v*"], {
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "ignore"],
-    timeout: 5_000,
-    env,
-  });
+  const git = spawnSync(
+    "git",
+    ["-C", rootDir, "describe", "--tags", "--exact-match", "--match", "v*"],
+    {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5_000,
+      env,
+    },
+  );
   return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
 }
 
@@ -159,10 +197,16 @@ export function getVersionedBaseImageTags(
     gitExactVersionTag(rootDir, env),
     versionFileTag(rootDir),
   ];
-  return Array.from(new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean))) as string[];
+  return Array.from(
+    new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean)),
+  ) as string[];
 }
 
-function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv = process.env): number | null {
+function gitStatus(
+  rootDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): number | null {
   const git = spawnSync("git", ["-C", rootDir, ...args], {
     encoding: "utf-8",
     stdio: "ignore",
@@ -210,8 +254,9 @@ function gitHasPathDiff(
   rootDir: string,
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
+  inputPaths = BASE_IMAGE_INPUT_PATHS,
 ): boolean | null {
-  const status = gitStatus(rootDir, [...args, "--", ...BASE_IMAGE_INPUT_PATHS], env);
+  const status = gitStatus(rootDir, [...args, "--", ...inputPaths], env);
   if (status === 0) return false;
   if (status === 1) return true;
   return null;
@@ -220,11 +265,13 @@ function gitHasPathDiff(
 export function baseImageInputsChangedSinceMain(
   rootDir = ROOT,
   env: NodeJS.ProcessEnv = process.env,
+  paths: string[] = [],
 ): boolean {
-  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env);
+  const inputPaths = normalizeBaseImageInputPaths(rootDir, paths);
+  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env, inputPaths);
   if (worktreeDiff === true) return true;
 
-  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env);
+  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env, inputPaths);
   if (stagedDiff === true) return true;
 
   const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
@@ -233,16 +280,13 @@ export function baseImageInputsChangedSinceMain(
     gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
   }
 
-  const candidates = [
-    baseRemoteRef,
-    "origin/main",
-    "upstream/main",
-    "main",
-  ].filter((ref): ref is string => !!ref);
+  const candidates = [baseRemoteRef, "origin/main", "upstream/main", "main"].filter(
+    (ref): ref is string => !!ref,
+  );
 
   for (const ref of Array.from(new Set(candidates))) {
     if (!gitRefExists(rootDir, ref, env)) continue;
-    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env);
+    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env, inputPaths);
     if (diff != null) return diff;
   }
 
@@ -258,7 +302,10 @@ function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV !== "test" && env.VITEST !== "true";
 }
 
-function getRepoDigest(imageName: string, imageRef: string): { digest: string; ref: string } | null {
+function getRepoDigest(
+  imageName: string,
+  imageRef: string,
+): { digest: string; ref: string } | null {
   const atIndex = imageRef.indexOf("@sha256:");
   if (atIndex !== -1) {
     const digest = imageRef.slice(atIndex + 1);
@@ -342,9 +389,7 @@ function resolveLocalCandidate(
   if (!localBuildAllowed(options.env)) return null;
 
   const label = options.label || "sandbox base image";
-  console.warn(
-    `  Building ${label} locally because no compatible published base image was found.`,
-  );
+  console.warn(`  Building ${label} locally because no compatible published base image was found.`);
   console.warn("  This is a one-time step and can take several minutes.");
   // Suppress the full BuildKit log (apt-get output, layer hashes, debconf
   // warnings) on success — same approach as #3311 for the [2/8] gateway
@@ -405,7 +450,7 @@ export function resolveSandboxBaseImage(
       if (resolved) return resolved;
     }
 
-    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env)) {
+    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env, [options.dockerfilePath])) {
       const local = resolveLocalCandidate(options);
       if (local) return local;
       // The base Dockerfile changed, so fail closed instead of silently using stale :latest.

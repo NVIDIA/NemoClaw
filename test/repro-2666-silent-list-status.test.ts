@@ -24,13 +24,13 @@ import os from "node:os";
 import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
 import {
-  type ListSandboxesCommandDeps,
   getSandboxInventory,
+  type ListSandboxesCommandDeps,
   renderSandboxInventoryText,
-} from "../dist/lib/inventory/index.js";
-import { recoverRegistryEntriesWithFallback } from "../dist/lib/list-command-deps.js";
+} from "../src/lib/inventory/index.js";
+import { recoverRegistryEntriesWithFallback } from "../src/lib/list-command-deps.js";
+import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 
@@ -67,7 +67,7 @@ function buildDepsWithThrowingRecovery(): ListSandboxesCommandDeps {
   };
 }
 
-describe("#2666 — silent empty output regression", () => {
+describe("silent empty output regression (#2666)", () => {
   it("nemoclaw list renders the registry-only listing when recovery fails", async () => {
     const deps = buildDepsWithThrowingRecovery();
     const inventory = await getSandboxInventory(deps);
@@ -90,7 +90,7 @@ describe("#2666 — silent empty output regression", () => {
   });
 });
 
-describe("#2666 — list-command-deps resilience wrapper", () => {
+describe("list-command-deps resilience wrapper (#2666)", () => {
   // Exercises the actual exported `recoverRegistryEntriesWithFallback` from
   // src/lib/list-command-deps.ts, not a parallel re-implementation. If the
   // production wrapper regresses, these tests fail.
@@ -121,7 +121,13 @@ describe("#2666 — list-command-deps resilience wrapper", () => {
     });
     const fallback = vi.fn(() => ({
       sandboxes: [
-        { name: "my-assist", model: "test-model", provider: "test-provider", gpuEnabled: false, policies: [] },
+        {
+          name: "my-assist",
+          model: "test-model",
+          provider: "test-provider",
+          gpuEnabled: false,
+          policies: [],
+        },
       ],
       defaultSandbox: "my-assist",
     }));
@@ -139,7 +145,7 @@ describe("#2666 — list-command-deps resilience wrapper", () => {
   });
 });
 
-describe("#2666 — subprocess regression: simulated (container-stopped + foreign-port-holder)", () => {
+describe("simulated container-stopped and foreign-port-holder subprocess regression (#2666)", () => {
   // End-to-end test that runs the real `nemoclaw` binary against a fake
   // `openshell` shell script simulating the bug repro: the openshell sandbox
   // container is stopped AND a foreign listener holds port 8080. In that
@@ -167,7 +173,7 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
       path.join(binDir, "openshell"),
       [
         "#!/usr/bin/env bash",
-        "case \"$*\" in",
+        'case "$*" in',
         "  status)",
         "    cat <<'EOF'",
         "Status: Disconnected",
@@ -274,16 +280,20 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     expect(code).toBe(0);
   });
 
-  it("nemoclaw <name> status never produces silent empty output when openshell is broken", () => {
-    const { code, stdout, stderr } = runCli(["my-assist", "status"]);
-    const combined = `${stdout}\n${stderr}`;
-    // Must include the sandbox header AND an actionable hint.
-    expect(combined.trim().length).toBeGreaterThan(0);
-    expect(combined).toContain("my-assist");
-    // `status` must exit non-zero when the live gateway can't be verified
-    // — that's the contract a watchdog wrapping the command relies on.
-    expect(code).not.toBe(0);
-  });
+  it(
+    "nemoclaw <name> status never produces silent empty output when openshell is broken",
+    testTimeoutOptions(30_000),
+    () => {
+      const { code, stdout, stderr } = runCli(["my-assist", "status"]);
+      const combined = `${stdout}\n${stderr}`;
+      // Must include the sandbox header AND an actionable hint.
+      expect(combined.trim().length).toBeGreaterThan(0);
+      expect(combined).toContain("my-assist");
+      // `status` must exit non-zero when the live gateway can't be verified
+      // — that's the contract a watchdog wrapping the command relies on.
+      expect(code).not.toBe(0);
+    },
+  );
 
   it("nemoclaw <name> status prints the classifier header before gateway_unreachable_after_restart guidance", () => {
     writeFakeDocker([
@@ -294,7 +304,7 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     ]);
     writeFakeOpenshell([
       "#!/usr/bin/env bash",
-      "case \"$*\" in",
+      'case "$*" in',
       '  "sandbox get my-assist")',
       "    echo 'Error: sandbox not found' >&2",
       "    exit 1",
@@ -327,12 +337,12 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
     writeFakeDocker([
       "#!/usr/bin/env bash",
       "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
-      "if [ \"$1\" = ps ]; then exit 0; fi",
+      'if [ "$1" = ps ]; then exit 0; fi',
       "exit 0",
     ]);
     writeFakeOpenshell([
       "#!/usr/bin/env bash",
-      "case \"$*\" in",
+      'case "$*" in',
       '  "sandbox get my-assist")',
       "    echo 'Error: sandbox not found' >&2",
       "    exit 1",
@@ -376,8 +386,8 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
       writeFakeDocker([
         "#!/usr/bin/env bash",
         "if [ \"$1\" = info ]; then echo 'Server Version: 24.0.0'; exit 0; fi",
-        "if [ \"$1\" = ps ] && [ \"$2\" = -a ]; then echo 'openshell-cluster-nemoclaw'; exit 0; fi",
-        "if [ \"$1\" = ps ]; then exit 0; fi",
+        'if [ "$1" = ps ] && [ "$2" = -a ]; then echo \'openshell-cluster-nemoclaw\'; exit 0; fi',
+        'if [ "$1" = ps ]; then exit 0; fi',
         "exit 0",
       ]);
 
@@ -386,7 +396,7 @@ describe("#2666 — subprocess regression: simulated (container-stopped + foreig
       // branch where the classifier runs (rather than a recovery-hint branch).
       writeFakeOpenshell([
         "#!/usr/bin/env bash",
-        "case \"$*\" in",
+        'case "$*" in',
         '  "sandbox get my-assist")',
         "    echo 'transport error: unexpected EOF' >&2",
         "    exit 1",

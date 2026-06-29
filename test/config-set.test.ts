@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// Build must run before these tests (imports from dist/)
+// The shared source hook preserves the writable CommonJS cache used by these tests.
 const require = createRequire(import.meta.url);
 const {
   extractDotpath,
@@ -18,10 +18,8 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
-} = require("../dist/lib/sandbox/config");
-const {
-  selectDirectSandboxContainer,
-} = require("../dist/lib/sandbox/privileged-exec");
+} = require("../src/lib/sandbox/config");
+const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
@@ -74,17 +72,13 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
       sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
     });
 
-    expect(script).toContain(
-      "strict_hash='/etc/nemoclaw/hermes.config-hash'",
-    );
+    expect(script).toContain("strict_hash='/etc/nemoclaw/hermes.config-hash'");
     expect(script).toContain('strict_tmp="${strict_hash}.tmp.$$"');
-    expect(script).toContain(
-      "compat_hash='/sandbox/.hermes/.config-hash'",
-    );
+    expect(script).toContain("compat_hash='/sandbox/.hermes/.config-hash'");
     expect(script).toContain('compat_tmp="${compat_hash}.tmp.$$"');
     expect(script).toContain('trap \'rm -f "$strict_tmp" "$compat_tmp"\' EXIT HUP INT TERM');
     expect(script).toContain(
-      'sha256sum \'/sandbox/.hermes/config.yaml\' \'/sandbox/.hermes/.env\' > "$strict_tmp"',
+      "sha256sum '/sandbox/.hermes/config.yaml' '/sandbox/.hermes/.env' > \"$strict_tmp\"",
     );
     expect(script).toContain('chown root:root "$strict_tmp"');
     expect(script).toContain('chmod 444 "$strict_tmp"');
@@ -119,11 +113,7 @@ describe("selectDirectSandboxContainer", () => {
 
   it("does not select a prefix-collision container owned by a longer sandbox name", () => {
     expect(
-      selectDirectSandboxContainer(
-        "demo",
-        "openshell-demo-child\n",
-        ["demo", "demo-child"],
-      ),
+      selectDirectSandboxContainer("demo", "openshell-demo-child\n", ["demo", "demo-child"]),
     ).toBeNull();
   });
 });
@@ -325,9 +315,9 @@ describe("config set helpers", () => {
       expect(
         classifyNewKeyGate({ acceptNewPath: true, isTTY: true, nonInteractiveEnv: "1" }),
       ).toEqual({ mode: "accept" });
-      expect(
-        classifyNewKeyGate({ acceptEnv: "1", isTTY: false, nonInteractiveEnv: "1" }),
-      ).toEqual({ mode: "accept" });
+      expect(classifyNewKeyGate({ acceptEnv: "1", isTTY: false, nonInteractiveEnv: "1" })).toEqual({
+        mode: "accept",
+      });
     });
   });
 

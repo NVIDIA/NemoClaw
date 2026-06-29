@@ -1,9 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL: Record<string, readonly string[]> = {
-  slack: ["slack"],
-};
+import {
+  listMessagingPolicyPresetsByChannel,
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel,
+} from "../messaging/channels";
+
+const REQUIRED_POLICY_PRESETS_BY_MESSAGING_CHANNEL =
+  listRequiredCreateTimeMessagingPolicyPresetsByChannel();
+
+const ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL = listMessagingPolicyPresetsByChannel();
 
 function normalizedNames(values: string[] | null | undefined): string[] {
   if (!Array.isArray(values)) return [];
@@ -65,16 +71,24 @@ export function mergeRequiredMessagingChannelPolicyPresets(
   return merged;
 }
 
+export function allMessagingChannelPolicyPresets(channels: string[] | null | undefined): string[] {
+  const all: string[] = [];
+  for (const channel of normalizedNames(channels)) {
+    for (const preset of ALL_POLICY_PRESETS_BY_MESSAGING_CHANNEL[channel] || []) {
+      if (!all.includes(preset)) all.push(preset);
+    }
+  }
+  return all;
+}
+
 export function pruneDisabledMessagingPolicyPresets(
   selectedPresets: string[],
   disabledChannels: string[] | null | undefined,
 ): string[] {
-  const disabledRequiredPresets = new Set(
-    requiredMessagingChannelPolicyPresets(disabledChannels),
-  );
-  if (disabledRequiredPresets.size === 0) return selectedPresets;
+  const disabledChannelPresets = new Set(allMessagingChannelPolicyPresets(disabledChannels));
+  if (disabledChannelPresets.size === 0) return selectedPresets;
   return selectedPresets.filter(
-    (preset) => !disabledRequiredPresets.has(preset.trim().toLowerCase()),
+    (preset) => !disabledChannelPresets.has(preset.trim().toLowerCase()),
   );
 }
 

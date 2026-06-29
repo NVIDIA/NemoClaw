@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+// Import source directly so tests cannot pass against a stale build.
 import {
   classifyApplyFailure,
   classifySandboxCreateFailure,
@@ -14,7 +14,7 @@ import {
   shouldForceCompletionsApi,
   shouldSkipResponsesProbe,
   validateNvidiaApiKeyValue,
-} from "../../dist/lib/validation";
+} from "./validation";
 
 describe("classifyValidationFailure", () => {
   it("classifies curl failures as transport", () => {
@@ -59,7 +59,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + expired key message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with an expired-key message as a credential error (#1942)", () => {
     // Gemini returns HTTP 400 with this exact message when the API key has expired.
     // Must classify as "credential" so the onboard wizard prompts to re-enter the
     // key instead of looping back to provider selection.
@@ -74,7 +74,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies 400 + API_KEY_INVALID message as credential (#1942 — Gemini)", () => {
+  it("classifies a Gemini 400 with API_KEY_INVALID as a credential error (#1942)", () => {
     // Gemini also uses "API_KEY_INVALID" as the status string for revoked keys.
     expect(
       classifyValidationFailure({
@@ -87,7 +87,7 @@ describe("classifyValidationFailure", () => {
     });
   });
 
-  it("classifies bare 'API key not valid' message as credential (#1942 — Gemini .message only)", () => {
+  it("classifies a bare Gemini 'API key not valid' .message as a credential error (#1942)", () => {
     // When the message field is extracted without the API_KEY_INVALID status
     // prefix, the bare wording must still classify as credential. Flagged by
     // CodeRabbit on #2132.
@@ -105,9 +105,7 @@ describe("classifyValidationFailure", () => {
   it("classifies 400 without credential message as model (regression guard)", () => {
     // HTTP 400 without a credential-bearing message still routes to "model"
     // so existing gemini model-selection retry behavior stays intact.
-    expect(
-      classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" }),
-    ).toEqual({
+    expect(classifyValidationFailure({ httpStatus: 400, message: "model xyz not found" })).toEqual({
       kind: "model",
       retry: "model",
     });
@@ -233,7 +231,9 @@ describe("classifySandboxCreateFailure", () => {
   });
 
   it("detects TLS cert error from 'SSL certificate problem'", () => {
-    const result = classifySandboxCreateFailure("SSL certificate problem: unable to get local issuer certificate");
+    const result = classifySandboxCreateFailure(
+      "SSL certificate problem: unable to get local issuer certificate",
+    );
     expect(result.kind).toBe("tls_cert_mismatch");
   });
 
@@ -248,8 +248,12 @@ describe("classifySandboxCreateFailure", () => {
   });
 
   it("does NOT classify generic TLS transport errors as tls_cert_mismatch", () => {
-    expect(classifySandboxCreateFailure("TLS error: connection refused by proxy").kind).toBe("unknown");
-    expect(classifySandboxCreateFailure("SSL error: unsupported protocol version").kind).toBe("unknown");
+    expect(classifySandboxCreateFailure("TLS error: connection refused by proxy").kind).toBe(
+      "unknown",
+    );
+    expect(classifySandboxCreateFailure("SSL error: unsupported protocol version").kind).toBe(
+      "unknown",
+    );
     expect(classifySandboxCreateFailure("TLS error later during notify").kind).toBe("unknown");
     expect(classifySandboxCreateFailure("ssl error: peer closed connection").kind).toBe("unknown");
   });
@@ -275,15 +279,15 @@ describe("classifySandboxCreateFailure", () => {
     expect(result.kind).toBe("image_upload_container_missing");
   });
 
-  it("does NOT classify an unrelated 404 as image_upload_container_missing (#3266 regression guard)", () => {
+  it("does not classify an unrelated 404 as image_upload_container_missing (#3266)", () => {
     // A generic 404 with no upload-tar phrase and no gateway container name
     // must not be mistaken for the ARM64 upload failure.
     expect(
-      classifySandboxCreateFailure("Docker responded with status code 404: the container does not exist").kind,
+      classifySandboxCreateFailure(
+        "Docker responded with status code 404: the container does not exist",
+      ).kind,
     ).toBe("unknown");
-    expect(
-      classifySandboxCreateFailure("HTTP 404: model not found").kind,
-    ).toBe("unknown");
+    expect(classifySandboxCreateFailure("HTTP 404: model not found").kind).toBe("unknown");
   });
 });
 
@@ -306,9 +310,11 @@ describe("planSandboxCreateRecovery", () => {
   });
 
   it("does not offer the ARM64 workaround on macOS ARM64 (Linux-only signature)", () => {
-    expect(planSandboxCreateRecovery(uploadFailure, { platform: "darwin", arch: "arm64" })).toEqual({
-      arm64ImageRefWorkaround: false,
-    });
+    expect(planSandboxCreateRecovery(uploadFailure, { platform: "darwin", arch: "arm64" })).toEqual(
+      {
+        arm64ImageRefWorkaround: false,
+      },
+    );
   });
 
   it("does not offer the workaround for unrelated failure kinds even on Linux ARM64", () => {
@@ -334,7 +340,7 @@ describe("validateNvidiaApiKeyValue", () => {
     expect(validateNvidiaApiKeyValue("sk-abc123")).toBeTruthy();
   });
 
-  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_API_KEY", () => {
+  it("accepts non-nvapi keys when credentialEnv is not NVIDIA_INFERENCE_API_KEY", () => {
     expect(validateNvidiaApiKeyValue("sk-ant-abc123", "ANTHROPIC_API_KEY")).toBeNull();
     expect(validateNvidiaApiKeyValue("sk-openai-xyz", "OPENAI_API_KEY")).toBeNull();
     expect(validateNvidiaApiKeyValue("AIza-gemini", "GEMINI_API_KEY")).toBeNull();

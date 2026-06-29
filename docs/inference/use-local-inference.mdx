@@ -23,10 +23,10 @@ OpenShell intercepts inference traffic and forwards it to the local endpoint you
 ## Prerequisites
 
 <AgentOnly variant="openclaw">
-- NemoClaw installed. Refer to the [Quickstart](../get-started/quickstart) if you have not installed yet.
+- NemoClaw installed. Refer to the [Quickstart](../get-started/quickstart) if you have not installed NemoClaw yet.
 </AgentOnly>
 <AgentOnly variant="hermes">
-- NemoClaw installed. Refer to [Quickstart with Hermes](../get-started/quickstart) if you have not installed yet.
+- NemoClaw installed. Refer to [Quickstart with Hermes](../get-started/quickstart) if you have not installed NemoClaw yet.
 </AgentOnly>
 - A local model server running, or a supported Ollama, vLLM, or NIM setup that the NemoClaw onboard wizard can use, start, or install.
 
@@ -37,8 +37,10 @@ The onboard wizard detects Ollama automatically when you have installed it or st
 
 If you installed Ollama but have not started it, NemoClaw starts it for you.
 On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
-When the host Ollama is below the minimum version NemoClaw expects for its starter models (currently `0.7.0`), the wizard surfaces an explicit **Upgrade Ollama** entry in the provider menu instead of silently reusing the older daemon, and the express setup path resolves to that entry.
-The wizard inspects both the CLI binary (`ollama --version`) and the locally running daemon (`/api/version` on `:11434`) so the upgrade entry still appears when only one side is stale, for example a fresh user-local binary paired with the original system daemon.
+When the host Ollama is below the minimum version NemoClaw expects for its starter models, currently `0.7.0`, the wizard surfaces an explicit **Upgrade Ollama** entry in the provider menu instead of silently reusing the older daemon.
+The express setup path resolves to that entry.
+The wizard inspects both the CLI binary (`ollama --version`) and the locally running daemon (`/api/version` on `:11434`).
+The upgrade entry still appears when only one side is stale, for example a fresh user-local binary paired with the original system daemon.
 The gate skips Windows-host Ollama reached from WSL through `host.docker.internal`.
 The separate **Use / Start / Install Ollama on Windows host** entries handle that case and run their own actions on the Windows side.
 On macOS, the wizard runs the platform install or upgrade path with `brew upgrade ollama`.
@@ -64,9 +66,11 @@ Override the detection with `NEMOCLAW_OLLAMA_INSTALL_MODE=system` or `NEMOCLAW_O
 The user-local install replicates only the binary extraction step of the official installer.
 It downloads the release tarball, extracts it to `${HOME}/.local`, and launches `${HOME}/.local/bin/ollama serve` one time.
 It does not configure a systemd service, does not create the `ollama` system user, and does not install CUDA drivers, so you must relaunch the daemon manually after a reboot.
-NemoClaw also prints a one-line `PATH` hint if `${HOME}/.local/bin` is not already on your `PATH`; you can add `export PATH="${HOME}/.local/bin:$PATH"` to your shell profile to invoke `ollama` directly.
+NemoClaw also prints a one-line `PATH` hint if `${HOME}/.local/bin` is not already on your `PATH`.
+Add `export PATH="${HOME}/.local/bin:$PATH"` to your shell profile to invoke `ollama` directly.
 
-Both modes rely on `zstd` for archive extraction. On Debian and Ubuntu, the system path uses `sudo apt-get` to install `zstd` automatically and explains the prompt before continuing.
+Both modes rely on `zstd` for archive extraction.
+On Debian and Ubuntu, the system path uses `sudo apt-get` to install `zstd` automatically and explains the prompt before continuing.
 The user-local path cannot bootstrap system packages without elevation.
 If `zstd` is missing, it prints per-distro install hints and exits.
 Install `zstd` manually, then rerun onboarding.
@@ -111,11 +115,9 @@ Selecting one of those actions in the unsupported native Docker topology exits e
 
 <AgentOnly variant="openclaw">
 <Warning>
-Ollama is convenient for local chat, but some model/template combinations can
-return tool calls as plain text under realistic agent load. If the TUI shows raw
-JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a
-tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
-`--tool-call-parser`. See [Tool-Calling Reliability](tool-calling-reliability).
+Ollama is convenient for local chat, but some model/template combinations can return tool calls as plain text under realistic agent load.
+If the TUI shows raw JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a tool, switch to vLLM with `--enable-auto-tool-choice` and the correct `--tool-call-parser`.
+Refer to [Tool-Calling Reliability](tool-calling-reliability).
 </Warning>
 </AgentOnly>
 
@@ -131,14 +133,12 @@ Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
 
 For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
 
-- Generates a random 24-byte token on first run and stores it in
-  `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
+- Generates a random 24-byte token on first run and stores it in `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
 - Probes the sandbox Docker network path to the proxy before committing the inference route.
 - Stops matching proxy processes during uninstall before deleting NemoClaw state.
-- Reuses the persisted token after a host reboot so you do not need to re-run
-  onboard.
+- Reuses the persisted token after a host reboot so you do not need to re-run onboard.
 
 On native Linux hosts, a firewall can allow the host proxy health check while still blocking sandbox containers on the OpenShell Docker bridge.
 When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
@@ -154,12 +154,11 @@ NemoClaw configures the sandbox provider to use proxy port `11435` with the gene
 OpenShell's L7 proxy injects the token at egress, so the agent inside the sandbox never sees the token directly.
 
 All proxy endpoints require the Bearer token, including `GET /api/tags`.
-Internal health and reachability checks run through the proxy treat any HTTP response, including `401`, as proof the proxy is alive.
+Internal health and reachability checks that run through the proxy treat any HTTP response, including `401`, as proof the proxy is alive.
 They fail only when nothing answers at all.
 
-If Ollama is already running on a non-loopback address when you start onboard,
-the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
-path to the model server.
+If Ollama is already running on a non-loopback address when you start onboard, the wizard restarts it on `127.0.0.1:11434`.
+The proxy becomes the only network path to the model server.
 
 ### GPU Memory Cleanup
 
@@ -177,7 +176,8 @@ NEMOCLAW_PROVIDER=ollama \
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
 If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
-Unknown or custom tags (any value the bootstrap registry has not seen) are still passed through; the Ollama runner validates the choice itself.
+Unknown or custom tags, meaning any value the bootstrap registry has not seen, still pass through.
+The Ollama runner validates the choice itself.
 In interactive onboarding, registry-known installed tags that do not fit current GPU memory are filtered out of the installed-model menu.
 If none of the installed registry-known tags fit, NemoClaw shows the starter-model choices and warns when even the smallest bootstrap tag may not fit.
 After a selected model fails validation, NemoClaw excludes that tag from the next installed-model menu so pressing Enter cannot select the same failing model repeatedly.
@@ -208,7 +208,15 @@ For the full compatible-endpoint prompt flow, non-interactive variables, API-pat
 
 NemoClaw can use an already-running vLLM server on `localhost:8000`, start managed vLLM on supported NVIDIA GPU hosts, or manage a local NIM container when `NEMOCLAW_EXPERIMENTAL=1` is set.
 Managed vLLM records the model returned by `/v1/models` and uses runtime metadata such as `max_model_len` when available.
+In interactive managed vLLM setup, the wizard lists validated model choices for your host profile before it pulls weights.
+Press **Enter** to accept the profile default, or choose a numbered model from the list.
+For scripted runs, set `NEMOCLAW_VLLM_MODEL=<slug>` to choose a registry model without prompting.
+If the host reboots and the `nemoclaw-vllm` container is stopped, NemoClaw restarts the managed vLLM container during recovery instead of requiring a fresh onboarding run.
 NIM uses the same chat-completions API path restriction as vLLM.
+
+On Linux Docker-driver GPU sandboxes, NemoClaw keeps local inference on the OpenShell bridge route and verifies `https://inference.local/v1/models` from inside the sandbox runtime after the sandbox reaches ready.
+It treats only a 2xx response as success because that path includes the proxy authentication rewrite the agent uses.
+If the runtime route fails, onboarding reports the endpoint and recovery steps before the first agent prompt.
 
 For registry slugs, Hugging Face token requirements, NGC login behavior, and non-interactive examples, refer to [Inference Options](inference-options#setup-details-for-local-and-compatible-providers).
 
@@ -226,7 +234,7 @@ If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding 
 
 ## Switch Models at Runtime
 
-You can change the model without re-running onboard.
+Change the model without re-running onboard.
 Refer to [Switch Inference Models](switch-inference-providers) for the full procedure.
 
 For compatible endpoints, the command is:

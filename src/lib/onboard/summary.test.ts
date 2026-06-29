@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "../../../dist/lib/onboard/summary";
+import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./summary";
 
 describe("onboard summary helpers", () => {
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
@@ -37,7 +37,7 @@ describe("onboard summary helpers", () => {
     const bareSummary = formatOnboardConfigSummary({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       webSearchConfig: null,
       enabledChannels: [],
       sandboxName: "test",

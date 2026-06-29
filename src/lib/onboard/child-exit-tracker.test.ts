@@ -10,10 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { trackChildExit } from "./child-exit-tracker";
 
-async function waitFor<T>(
-  predicate: () => T | null | undefined,
-  timeoutMs = 2000,
-): Promise<T> {
+async function waitFor<T>(predicate: () => T | null | undefined, timeoutMs = 2000): Promise<T> {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const v = predicate();

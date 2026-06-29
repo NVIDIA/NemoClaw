@@ -11,9 +11,7 @@ export function applyPolicyAtOpenShell(
 ): MessagingPolicyApplyResult {
   const activeEntries = filterEnabledPlanEntries(plan, plan.networkPolicy.entries);
   const activePresets = uniqueStrings(activeEntries.map((entry) => entry.presetName));
-  const activePolicyKeys = uniqueStrings(
-    activeEntries.flatMap((entry) => entry.policyKeys),
-  );
+  const activePolicyKeys = uniqueStrings(activeEntries.flatMap((entry) => entry.policyKeys));
   if (
     activePresets.length > 0 &&
     !options.applyPresets(plan.sandboxName, activePresets, {

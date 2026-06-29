@@ -2,10 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { redact } from "../../security/redact";
-import type {
-  SandboxMessagingCredentialBindingPlan,
-  SandboxMessagingPlan,
-} from "../manifest";
+import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
 import type {
   MessagingCredentialApplyOptions,
   MessagingCredentialApplyResult,
@@ -131,9 +128,7 @@ function toReuseEntry(binding: MessagingCredentialBindingLike): MessagingCredent
   };
 }
 
-function toMissingEntry(
-  binding: MessagingCredentialBindingLike,
-): MessagingMissingCredentialEntry {
+function toMissingEntry(binding: MessagingCredentialBindingLike): MessagingMissingCredentialEntry {
   return {
     channelId: binding.channelId,
     credentialId: binding.credentialId,

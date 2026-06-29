@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import { runOpenshellProviderCommand } from "../../lib/actions/global";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
 import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-
-import { runOpenshellProviderCommand } from "../../lib/actions/global";
-import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
 import { prompt as askPrompt } from "../../lib/credentials/store";
 
@@ -25,6 +24,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     provider: Args.string({
       name: "PROVIDER",
       description: "OpenShell provider name",
+      ignoreStdin: true,
       required: true,
     }),
   };
@@ -39,7 +39,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     if (isBridgeProviderName(key)) {
       this.failWithLines([
         `  '${key}' is a per-sandbox messaging bridge, not a credential.`,
-        `  Use \`${CLI_NAME} <sandbox> channels remove <telegram|discord|slack>\` to retire`,
+        `  Use \`${CLI_NAME} <sandbox> channels remove <channel>\` to retire`,
         "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
         `  or \`${CLI_NAME} <sandbox> channels stop <…>\` to pause it without clearing tokens.`,
       ]);
@@ -47,7 +47,9 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     }
 
     if (!flags.yes) {
-      const answer = (await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `))
+      const answer = (
+        await askPrompt(`  Remove provider '${key}' from the OpenShell gateway? [y/N]: `)
+      )
         .trim()
         .toLowerCase();
       if (answer !== "y" && answer !== "yes") {

@@ -20,8 +20,7 @@ export default class DeployCliCommand extends NemoClawCommand {
       required: false,
     }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(DeployCliCommand);

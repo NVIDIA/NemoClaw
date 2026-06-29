@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
+// Import source directly so tests cannot pass against a stale build.
 import {
   buildDmesgRerunCommand,
   createTarball,
@@ -14,11 +14,11 @@ import {
   isDmesgPermissionDeniedOutput,
   isDmesgRestrictedForCurrentUser,
   redact,
-} from "../../../dist/lib/diagnostics/debug";
+} from "./debug";
 
 describe("redact", () => {
-  it("redacts NVIDIA_API_KEY=value patterns", () => {
-    const key = ["NVIDIA", "API", "KEY"].join("_");
+  it("redacts NVIDIA_INFERENCE_API_KEY=value patterns", () => {
+    const key = ["NVIDIA", "INFERENCE", "API", "KEY"].join("_");
     expect(redact(`${key}=some-value`)).toBe(`${key}=<REDACTED>`);
   });
 
@@ -162,9 +162,7 @@ describe("getDebugCompletionMessages", () => {
 describe("isDmesgPermissionDeniedOutput", () => {
   it("recognizes restricted dmesg stderr", () => {
     expect(
-      isDmesgPermissionDeniedOutput(
-        "dmesg: read kernel buffer failed: Operation not permitted",
-      ),
+      isDmesgPermissionDeniedOutput("dmesg: read kernel buffer failed: Operation not permitted"),
     ).toBe(true);
   });
 

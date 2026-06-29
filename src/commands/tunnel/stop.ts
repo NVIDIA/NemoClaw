@@ -14,8 +14,7 @@ export default class TunnelStopCommand extends NemoClawCommand {
   static description = "Stop the cloudflared public-URL tunnel for the default sandbox dashboard.";
   static usage = ["tunnel stop"];
   static examples = ["<%= config.bin %> tunnel stop"];
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(TunnelStopCommand);

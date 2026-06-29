@@ -13,7 +13,7 @@ skill:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health, trace agent behavior, and diagnose problems.
+Use NemoClaw status commands, log streams, and OpenShell TUI views to inspect sandbox health, trace agent behavior, and diagnose problems.
 
 ## Prerequisites
 
@@ -22,20 +22,20 @@ Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health,
 
 ## Check Sandbox Health
 
-Run the status command to view the sandbox state, gateway health, and active inference configuration:
+Run the status command to view sandbox state, gateway health, and the active inference configuration.
 
 ```bash
 $$nemoclaw <name> status
 ```
 
-For local Ollama and local vLLM routes, `$$nemoclaw <name> status` also probes the host-side health endpoint directly.
-This check catches a stopped local backend before you retry `inference.local` from inside the sandbox.
+For local Ollama and local vLLM routes, `$$nemoclaw <name> status` also probes the host-side health endpoint.
+The check catches a stopped local backend before you retry `inference.local` from inside the sandbox.
 
-Key output fields include:
+Review these output fields.
 
 - Sandbox details show the configured model, provider, GPU mode, and applied policy presets.
-- Gateway and process health show whether NemoClaw can still reach the OpenShell gateway and whether the in-sandbox agent process is running.
-- Inference health for local Ollama and local vLLM shows `healthy` or `unreachable` together with the probed local URL.
+- Gateway and process health show whether NemoClaw can reach the OpenShell gateway and whether the in-sandbox agent process is running.
+- Inference health for local Ollama and local vLLM shows `healthy` or `unreachable` with the probed local URL.
 - NIM status shows whether a NIM container is running and healthy when that path is in use.
 
 Run `$$nemoclaw <name> status` on the host to check sandbox state.
@@ -43,13 +43,13 @@ Use `openshell sandbox list` for the underlying sandbox details.
 
 ## View Blueprint and Sandbox Logs
 
-Stream the most recent log output from the blueprint runner and sandbox:
+Stream recent log output from the blueprint runner and sandbox.
 
 ```bash
 $$nemoclaw <name> logs
 ```
 
-To follow the log output in real time:
+Follow log output in real time.
 
 ```bash
 $$nemoclaw <name> logs --follow
@@ -61,32 +61,32 @@ It does not export the structured per-session agent state that OpenClaw stores u
 ## Inspect Agent Session State
 
 OpenClaw stores structured session state inside the sandbox.
-Use these files when you need an audit trail, a compliance review surface, or replay tooling that includes assistant messages and tool activity.
+Use these files for audit trails, compliance review, or replay tooling that includes assistant messages and tool activity.
 
 | File | Purpose |
 |---|---|
-| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Per-session event log. Use this file for audit trails and compliance dashboards. Records can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
-| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Lower-level trajectory data for fine-grained replay. This file can be large, so avoid using it for routine audit summaries. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl` | Per-session event log for audit trails and compliance dashboards that can include assistant messages, `thinking` blocks, tool calls, tool results, token usage, and cost metadata. |
+| `/sandbox/.openclaw/agents/main/sessions/<session-id>.trajectory.jsonl` | Lower-level trajectory data for fine-grained replay that can be large, so avoid it for routine audit summaries. |
 | `/sandbox/.openclaw/agents/main/sessions/sessions.json` | Session index that maps known session keys to their persisted state. |
 
-To inspect the session directory from the host, run a sandbox command:
+Inspect the session directory from the host by running a sandbox command.
 
-```console
-$ $$nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
+```bash
+$$nemoclaw sandbox exec <name> -- ls -lh /sandbox/.openclaw/agents/main/sessions
 ```
 
-To copy a session log for offline review, use the OpenShell sandbox download command:
+Copy a session log for offline review with the OpenShell sandbox download command.
 
-```console
-$ openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
+```bash
+openshell sandbox download <name> /sandbox/.openclaw/agents/main/sessions/<session-id>.jsonl .
 ```
 
-Treat exported session logs as sensitive data.
+Handle exported session logs as sensitive data.
 They can contain prompts, tool inputs, tool outputs, file paths, and cost metadata from the agent run.
 
 ## Monitor Network Activity in the TUI
 
-Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:
+Open the OpenShell terminal UI to view sandbox network activity and egress requests live.
 
 ```bash
 openshell term
@@ -94,17 +94,17 @@ openshell term
 
 For a remote sandbox, SSH to the instance and run `openshell term` there.
 
-The TUI shows the following information:
+The TUI shows these signals.
 
 - Active network connections from the sandbox.
 - Blocked egress requests awaiting operator approval.
 - Inference routing status.
 
-Refer to [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests) for details on handling blocked requests.
+Refer to [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests) for details about handling blocked requests.
 
 ## Test Inference
 
-Run a test inference request to verify that the provider is responding:
+Send a test inference request to verify that the provider responds.
 
 <AgentOnly variant="openclaw">
 ```bash
@@ -119,13 +119,13 @@ hermes
 ```
 </AgentOnly>
 
-If the request fails, check the following:
+If the request fails, check these items.
 
 1. Run `$$nemoclaw <name> status` to confirm the active provider and endpoint.
    For local Ollama and local vLLM, check the `Inference` line first.
    If it shows `unreachable`, restart the local backend before retrying from inside the sandbox.
 2. Run `$$nemoclaw <name> logs --follow` to view error messages from the blueprint runner.
-3. Verify that the inference endpoint is reachable from the host.
+3. Verify that the host can reach the inference endpoint.
 
 ## Related Topics
 

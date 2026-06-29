@@ -21,13 +21,13 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-health-auth)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 600)
 #   NEMOCLAW_DASHBOARD_PORT                — dashboard port (default: 18789)
@@ -35,7 +35,7 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     bash test/e2e/test-device-auth-health.sh
 # =============================================================================
 
@@ -123,8 +123,8 @@ sandbox_exec() {
 # ══════════════════════════════════════════════════════════════════════════════
 section "Phase 0: Preflight"
 
-if [[ -z "${NVIDIA_API_KEY:-}" ]]; then
-  echo "ERROR: NVIDIA_API_KEY not set" >&2
+if [[ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]]; then
+  echo "ERROR: NVIDIA_INFERENCE_API_KEY not set" >&2
   exit 1
 fi
 

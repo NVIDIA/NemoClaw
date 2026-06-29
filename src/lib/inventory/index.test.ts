@@ -7,8 +7,46 @@ import {
   getSandboxInventory,
   getStatusReport,
   listSandboxesCommand,
+  renderSandboxInventoryText,
+  type SandboxEntry,
   showStatusCommand,
 } from "./index";
+
+type MessagingState = NonNullable<SandboxEntry["messaging"]>;
+type MessagingChannelId = MessagingState["plan"]["channels"][number]["channelId"];
+
+function messagingState(
+  sandboxName: string,
+  channels: readonly MessagingChannelId[],
+): MessagingState {
+  return {
+    schemaVersion: 1,
+    plan: {
+      schemaVersion: 1,
+      sandboxName,
+      agent: "openclaw",
+      workflow: "onboard",
+      channels: channels.map((channelId) => ({
+        channelId,
+        displayName: channelId,
+        authMode: "token-paste",
+        active: true,
+        selected: true,
+        configured: true,
+        disabled: false,
+        inputs: [],
+        hooks: [],
+      })),
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    },
+  };
+}
 
 describe("inventory commands", () => {
   it("returns structured empty inventory for JSON consumers", async () => {
@@ -97,6 +135,123 @@ describe("inventory commands", () => {
     expect(getLiveInference).not.toHaveBeenCalled();
   });
 
+  it("shows agent as 'unknown' instead of the OpenClaw default for a gateway-recovered sandbox (#5714)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "dcode-station", model: null, provider: null, recoveredFromGateway: true },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      name: "dcode-station",
+      agent: "unknown",
+      recoveredFromGateway: true,
+    });
+  });
+
+  it("renders a gateway-recovered row with the trusted live phase but unknown agent/GPU (#5714)", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          {
+            name: "dcode-station",
+            model: null,
+            provider: null,
+            recoveredFromGateway: true,
+            livePhase: "Ready",
+          },
+        ],
+        defaultSandbox: null,
+        recoveredFromSession: false,
+        recoveredFromGateway: 1,
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes[0]).toMatchObject({
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const lines: string[] = [];
+    renderSandboxInventoryText(inventory, (m = "") => lines.push(m), null);
+    const body = lines.join("\n");
+    expect(body).toContain("Recovered 1 sandbox");
+    expect(body).toContain("agent: unknown");
+    expect(body).toContain("GPU: unknown");
+    // Trusted PHASE from `openshell sandbox list` is surfaced so list agrees
+    // with `nemoclaw <name> status` (the reporter's Ready expectation).
+    expect(body).toContain("phase: Ready");
+    expect(body).not.toContain("CPU sandbox");
+    expect(body).not.toContain("agent: openclaw");
+  });
+
+  it("normalizes invalid configured inference fields out of inventory rows", async () => {
+    const inventory = await getSandboxInventory({
+      recoverRegistryEntries: async () => ({
+        sandboxes: [
+          { name: "blank-provider", provider: "", model: "nvidia/test" },
+          { name: "blank-model", provider: "nvidia-prod", model: "   " },
+          { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+        ],
+        defaultSandbox: "blank-provider",
+      }),
+      getLiveInference: () => null,
+      loadLastSession: () => null,
+    });
+
+    expect(inventory.sandboxes).toMatchObject([
+      { name: "blank-provider", provider: null, model: "nvidia/test" },
+      { name: "blank-model", provider: "nvidia-prod", model: null },
+      { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+    ]);
+  });
+
+  it("normalizes invalid configured inference fields out of status rows", () => {
+    const report = getStatusReport({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "blank-provider", provider: "", model: "nvidia/test" },
+          { name: "blank-model", provider: "nvidia-prod", model: "   " },
+          { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+        ],
+        defaultSandbox: "blank-provider",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+    });
+
+    expect(report.sandboxes).toMatchObject([
+      { name: "blank-provider", provider: null, model: "nvidia/test" },
+      { name: "blank-model", provider: "nvidia-prod", model: null },
+      { name: "configured", provider: "nvidia-prod", model: "nvidia/test" },
+    ]);
+  });
+
+  it("omits invalid configured inference fields from status text", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", provider: "", model: "   " }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("    alpha *");
+    expect(lines.some((line) => line.includes("Inference:"))).toBe(false);
+  });
+
   it("prints the empty-state onboarding hint when no sandboxes exist", async () => {
     const lines: string[] = [];
     await listSandboxesCommand({
@@ -114,7 +269,7 @@ describe("inventory commands", () => {
     );
   });
 
-  it("#2753: suppresses last-onboarded hint when sandbox step never completed", async () => {
+  it("suppresses the last-onboarded hint when the sandbox step never completed (#2753)", async () => {
     // The session retains a sandbox name from an interrupted onboard
     // (pre-fix sessions on disk, or any in-progress write between steps).
     // Surfacing it as the "last onboarded sandbox" would resurrect the
@@ -356,7 +511,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
           },
         ],
         defaultSandbox: "alpha",
@@ -367,7 +522,7 @@ describe("inventory commands", () => {
       log: (message = "") => lines.push(message),
     });
 
-    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"]);
+    expect(checkMessagingBridgeHealth).toHaveBeenCalledWith("alpha", ["telegram"], undefined);
     expect(lines).toContain(
       "  ⚠ telegram bridge: degraded (7 conflict errors in /tmp/gateway.log)",
     );
@@ -391,9 +546,9 @@ describe("inventory commands", () => {
     expect(lines.some((l) => l.includes("degraded"))).toBe(false);
   });
 
-  it("prints a cross-sandbox overlap warning when backfillAndFindOverlaps reports overlaps", () => {
+  it("prints a cross-sandbox overlap warning when findMessagingOverlaps reports overlaps", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([
         { channel: "telegram", sandboxes: ["alice", "bob"], reason: "matching-token" },
@@ -401,41 +556,39 @@ describe("inventory commands", () => {
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["telegram"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["telegram"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
-    expect(backfillAndFindOverlaps).toHaveBeenCalled();
+    expect(findMessagingOverlaps).toHaveBeenCalled();
     expect(
-      lines.some((l) =>
-        l.includes("'alice' and 'bob' share the same telegram credential"),
-      ),
+      lines.some((l) => l.includes("'alice' and 'bob' share the same telegram credential")),
     ).toBe(true);
   });
 
   it("defaults missing overlap reason to the conservative warning", () => {
     const lines: string[] = [];
-    const backfillAndFindOverlaps = vi
+    const findMessagingOverlaps = vi
       .fn()
       .mockReturnValue([{ channel: "telegram", sandboxes: ["alice", "bob"] }]);
     showStatusCommand({
       listSandboxes: () => ({
         sandboxes: [
-          { name: "alice", model: "m", messagingChannels: ["telegram"] },
-          { name: "bob", model: "m", messagingChannels: ["telegram"] },
+          { name: "alice", model: "m", messaging: messagingState("alice", ["telegram"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["telegram"]) },
         ],
         defaultSandbox: "alice",
       }),
       getLiveInference: () => null,
       showServiceStatus: vi.fn(),
-      backfillAndFindOverlaps,
+      findMessagingOverlaps,
       log: (message = "") => lines.push(message),
     });
 
@@ -443,6 +596,73 @@ describe("inventory commands", () => {
       lines.some((l) =>
         l.includes(
           "'alice' and 'bob' may share a telegram credential; stored credential hashes are incomplete",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("marks a shared-gateway Slack Socket Mode overlap as conflicted (#4953)", () => {
+    const lines: string[] = [];
+    const findMessagingOverlaps = vi.fn().mockReturnValue([
+      {
+        channel: "slack",
+        sandboxes: ["alice", "bob"],
+        reason: "socket-mode-gateway",
+        message:
+          "'{first}' and '{second}' both have Slack Socket Mode enabled on the same gateway; only one sandbox can receive Slack Socket Mode events unless the gateway supports multiplexing.",
+      },
+    ]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messaging: messagingState("alice", ["slack"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["slack"]) },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((l) =>
+        l.includes("'alice' and 'bob' both have Slack Socket Mode enabled on the same gateway"),
+      ),
+    ).toBe(true);
+  });
+
+  it("prints a Teams webhook port overlap warning with the port", () => {
+    const lines: string[] = [];
+    const findMessagingOverlaps = vi.fn().mockReturnValue([
+      {
+        channel: "teams",
+        sandboxes: ["alice", "bob"],
+        reason: "host-forward-port",
+        port: 3978,
+        message:
+          "'{first}' and '{second}' both use Microsoft Teams webhook port {port}; no two active Teams sandboxes can share that local forward.",
+      },
+    ]);
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alice", model: "m", messaging: messagingState("alice", ["teams"]) },
+          { name: "bob", model: "m", messaging: messagingState("bob", ["teams"]) },
+        ],
+        defaultSandbox: "alice",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      findMessagingOverlaps,
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(
+      lines.some((line) =>
+        line.includes(
+          "'alice' and 'bob' both use Microsoft Teams webhook port 3978; no two active Teams sandboxes can share that local forward.",
         ),
       ),
     ).toBe(true);
@@ -465,7 +685,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
             agent: "hermes",
           },
         ],
@@ -495,7 +715,7 @@ describe("inventory commands", () => {
           {
             name: "alpha",
             model: "m",
-            messagingChannels: ["telegram"],
+            messaging: messagingState("alpha", ["telegram"]),
           },
         ],
         defaultSandbox: "alpha",
@@ -543,7 +763,7 @@ describe("inventory commands", () => {
     expect(showServiceStatus).toHaveBeenCalledWith({ sandboxName: "alpha" });
   });
 
-  describe("#1077 — env-resolved default sandbox", () => {
+  describe("env-resolved default sandbox (#1077)", () => {
     const savedSandboxName = process.env.SANDBOX_NAME;
     const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
     const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
@@ -756,9 +976,7 @@ describe("inventory commands", () => {
     const lines: string[] = [];
     showStatusCommand({
       listSandboxes: () => ({
-        sandboxes: [
-          { name: "alpha", model: "stored-model", provider: "stored-provider" },
-        ],
+        sandboxes: [{ name: "alpha", model: "stored-model", provider: "stored-provider" }],
         defaultSandbox: "alpha",
       }),
       getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),

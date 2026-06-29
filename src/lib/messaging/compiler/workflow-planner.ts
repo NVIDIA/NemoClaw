@@ -9,12 +9,15 @@ import type {
   MessagingCompilerWorkflow,
   SandboxMessagingChannelPlan,
   SandboxMessagingPlan,
+  SandboxMessagingRuntimeSetupPlan,
 } from "../manifest";
+import { hydrateDerivedSandboxMessagingPlanFields } from "../persistence";
+import { parseSandboxMessagingPlan } from "../plan-validation";
+import { planHostForward } from "./engines/host-forward-engine";
+import { planRuntimeSetup } from "./engines/runtime-setup-engine";
+import type { RenderTemplateReferenceResolver } from "./engines/template";
 import { ManifestCompiler } from "./manifest-compiler";
-import type {
-  ManifestCompilerContext,
-  MessagingCompilerCredentialAvailability,
-} from "./types";
+import type { ManifestCompilerContext, MessagingCompilerCredentialAvailability } from "./types";
 
 export interface MessagingWorkflowPlannerBuildContext {
   readonly sandboxName: string;
@@ -23,7 +26,7 @@ export interface MessagingWorkflowPlannerBuildContext {
   readonly isInteractive: boolean;
   readonly configuredChannels?: readonly MessagingChannelId[];
   readonly disabledChannels?: readonly MessagingChannelId[];
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
@@ -33,13 +36,12 @@ export class MessagingWorkflowPlanner {
   constructor(
     private readonly registry: ChannelManifestRegistry,
     hooks = new MessagingHookRegistry(),
+    private readonly renderTemplateResolver?: RenderTemplateReferenceResolver,
   ) {
-    this.compiler = new ManifestCompiler(registry, hooks);
+    this.compiler = new ManifestCompiler(registry, hooks, renderTemplateResolver);
   }
 
-  async buildPlan(
-    context: MessagingWorkflowPlannerBuildContext,
-  ): Promise<SandboxMessagingPlan> {
+  async buildPlan(context: MessagingWorkflowPlannerBuildContext): Promise<SandboxMessagingPlan> {
     const configuredChannels = uniqueChannels(context.configuredChannels);
     const disabledChannels = onlyConfiguredChannels(context.disabledChannels, configuredChannels);
     this.assertSupportedChannels(configuredChannels, context);
@@ -71,30 +73,37 @@ export class MessagingWorkflowPlanner {
       supportedChannelIds: context.supportedChannelIds,
       credentialAvailability: mergeAvailability(
         credentialAvailabilityFromPlan(existingPlan),
-        this.credentialAvailabilityFromSandboxEntry(
-          context.sandboxEntry,
-          [context.channelId],
-        ),
+        this.credentialAvailabilityFromSandboxEntry(context, [context.channelId]),
         context.credentialAvailability,
       ),
     });
-    return existingPlan
-      ? mergeSandboxMessagingPlans(existingPlan, compiledPlan)
-      : compiledPlan;
+    return existingPlan ? mergeSandboxMessagingPlans(existingPlan, compiledPlan) : compiledPlan;
   }
 
   async buildChannelStopPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerChannelMutationContext,
   ): Promise<SandboxMessagingPlan | null> {
     const plan = await this.planForSandboxEntryMutation(context, "stop-channel");
-    return plan ? setPlanChannelDisabled(plan, context.channelId, true, "stop-channel") : null;
+    return plan
+      ? refreshDerivedPlanFields(
+          setPlanChannelDisabled(plan, context.channelId, true, "stop-channel"),
+          this.registry,
+          this.renderTemplateResolver,
+        )
+      : null;
   }
 
   async buildChannelStartPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerChannelMutationContext,
   ): Promise<SandboxMessagingPlan | null> {
     const plan = await this.planForSandboxEntryMutation(context, "start-channel");
-    return plan ? setPlanChannelDisabled(plan, context.channelId, false, "start-channel") : null;
+    return plan
+      ? refreshDerivedPlanFields(
+          setPlanChannelDisabled(plan, context.channelId, false, "start-channel"),
+          this.registry,
+          this.renderTemplateResolver,
+        )
+      : null;
   }
 
   async buildChannelRemovePlanFromSandboxEntry(
@@ -107,21 +116,41 @@ export class MessagingWorkflowPlanner {
   async buildRebuildPlanFromSandboxEntry(
     context: MessagingWorkflowPlannerSandboxRebuildContext,
   ): Promise<SandboxMessagingPlan | null> {
-    const existingPlan = readSandboxEntryPlan(context);
+    const existingPlan = readSandboxEntryPlan({ ...context, supportedChannelIds: null });
     if (!existingPlan) return null;
-    return setPlanDisabledChannels(
-      existingPlan,
-      disabledChannelsFromSandboxEntry(context.sandboxEntry, existingPlan),
-      "rebuild",
+
+    const filteredPlan = this.filterPlanChannelsToSupportedAllowlist(existingPlan, context);
+    if (existingPlan.channels.length > 0 && filteredPlan.channels.length === 0) return null;
+
+    return refreshDerivedPlanFields(
+      setPlanDisabledChannels(
+        filteredPlan,
+        disabledChannelsFromSandboxEntry(context.sandboxEntry, filteredPlan),
+        "rebuild",
+      ),
+      this.registry,
+      this.renderTemplateResolver,
     );
+  }
+
+  private filterPlanChannelsToSupportedAllowlist(
+    plan: SandboxMessagingPlan,
+    context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
+  ): SandboxMessagingPlan {
+    if (!Array.isArray(context.supportedChannelIds)) return plan;
+    const allowlist = new Set(context.supportedChannelIds);
+    let filtered = plan;
+    for (const channel of plan.channels) {
+      if (!allowlist.has(channel.channelId)) {
+        filtered = removePlanChannel(filtered, channel.channelId, "rebuild");
+      }
+    }
+    return filtered;
   }
 
   private assertSupportedChannels(
     channelIds: readonly MessagingChannelId[],
-    context: Pick<
-      MessagingWorkflowPlannerBuildContext,
-      "agent" | "supportedChannelIds"
-    >,
+    context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
   ): void {
     const supportedIds = new Set(this.supportedChannelIds(context));
     const unsupportedIds = uniqueChannels(channelIds)
@@ -136,15 +165,11 @@ export class MessagingWorkflowPlanner {
   }
 
   private supportedChannelIds(
-    context: Pick<
-      MessagingWorkflowPlannerBuildContext,
-      "agent" | "supportedChannelIds"
-    >,
+    context: Pick<MessagingWorkflowPlannerBuildContext, "agent" | "supportedChannelIds">,
   ): MessagingChannelId[] {
-    const supportedFilter =
-      context.supportedChannelIds && context.supportedChannelIds.length > 0
-        ? new Set(context.supportedChannelIds)
-        : null;
+    const supportedFilter = Array.isArray(context.supportedChannelIds)
+      ? new Set(context.supportedChannelIds)
+      : null;
 
     return this.registry
       .list()
@@ -163,10 +188,13 @@ export class MessagingWorkflowPlanner {
   }
 
   private credentialAvailabilityFromSandboxEntry(
-    sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+    context: Pick<
+      MessagingWorkflowPlannerSandboxContext,
+      "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
+    >,
     channelIds: readonly MessagingChannelId[],
   ): MessagingCompilerCredentialAvailability | undefined {
-    const plan = sandboxEntry?.messaging?.plan;
+    const plan = readSandboxEntryPlan(context);
     if (!plan) return undefined;
 
     const availability: Record<string, boolean> = {};
@@ -179,9 +207,9 @@ export class MessagingWorkflowPlanner {
         );
         if (!binding?.credentialAvailable) continue;
         availability[credential.sourceInput] = true;
-        availability[`${manifest.id}.${credential.sourceInput}`] = true;
+        availability[manifest.id + "." + credential.sourceInput] = true;
         availability[credential.id] = true;
-        availability[`${manifest.id}.${credential.id}`] = true;
+        availability[manifest.id + "." + credential.id] = true;
         availability[credential.providerEnvKey] = true;
       }
     }
@@ -192,8 +220,6 @@ export class MessagingWorkflowPlanner {
 export interface MessagingWorkflowPlannerSandboxEntry {
   readonly name: string;
   readonly agent?: string | null;
-  readonly messagingChannels?: readonly MessagingChannelId[] | null;
-  readonly disabledChannels?: readonly MessagingChannelId[] | null;
   readonly messaging?: {
     readonly schemaVersion: 1;
     readonly plan: SandboxMessagingPlan;
@@ -204,7 +230,7 @@ export interface MessagingWorkflowPlannerSandboxContext {
   readonly sandboxName: string;
   readonly agent: MessagingAgentId;
   readonly sandboxEntry?: MessagingWorkflowPlannerSandboxEntry | null;
-  readonly supportedChannelIds?: readonly MessagingChannelId[];
+  readonly supportedChannelIds?: readonly MessagingChannelId[] | null;
   readonly credentialAvailability?: MessagingCompilerCredentialAvailability;
 }
 
@@ -219,11 +245,10 @@ export interface MessagingWorkflowPlannerChannelMutationContext
   readonly channelId: MessagingChannelId;
 }
 
-export type MessagingWorkflowPlannerSandboxRebuildContext =
-  MessagingWorkflowPlannerSandboxContext;
+export type MessagingWorkflowPlannerSandboxRebuildContext = MessagingWorkflowPlannerSandboxContext;
 
 function uniqueChannels(
-  channelIds: readonly MessagingChannelId[] | undefined,
+  channelIds: readonly MessagingChannelId[] | null | undefined,
 ): MessagingChannelId[] {
   return [...new Set(channelIds ?? [])];
 }
@@ -239,30 +264,22 @@ function onlyConfiguredChannels(
 function readSandboxEntryPlan(
   context: Pick<
     MessagingWorkflowPlannerSandboxContext,
-    "agent" | "sandboxEntry" | "sandboxName"
+    "agent" | "sandboxEntry" | "sandboxName" | "supportedChannelIds"
   >,
 ): SandboxMessagingPlan | null {
-  const plan = context.sandboxEntry?.messaging?.plan;
-  if (
-    !plan ||
-    plan.schemaVersion !== 1 ||
-    plan.sandboxName !== context.sandboxName ||
-    plan.agent !== context.agent
-  ) {
-    return null;
-  }
-  return clonePlan(plan);
+  const plan = parseSandboxMessagingPlan(context.sandboxEntry?.messaging?.plan, {
+    sandboxName: context.sandboxName,
+    agent: context.agent,
+    supportedChannelIds: context.supportedChannelIds,
+  });
+  return plan ? hydrateDerivedSandboxMessagingPlanFields(plan) : null;
 }
 
 function disabledChannelsFromSandboxEntry(
-  sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
+  _sandboxEntry: MessagingWorkflowPlannerSandboxEntry | null | undefined,
   fallbackPlan: SandboxMessagingPlan | null,
 ): MessagingChannelId[] {
-  return uniqueChannels(
-    Array.isArray(sandboxEntry?.disabledChannels)
-      ? sandboxEntry.disabledChannels
-      : fallbackPlan?.disabledChannels ?? [],
-  );
+  return uniqueChannels(fallbackPlan?.disabledChannels ?? []);
 }
 
 function clonePlan(plan: SandboxMessagingPlan): SandboxMessagingPlan {
@@ -314,6 +331,7 @@ function mergeSandboxMessagingPlans(
     },
     agentRender: mergePlanEntriesByChannel(existing.agentRender, incoming.agentRender),
     buildSteps: mergePlanEntriesByChannel(existing.buildSteps, incoming.buildSteps),
+    runtimeSetup: mergeRuntimeSetup(existing.runtimeSetup, incoming.runtimeSetup),
     stateUpdates: mergePlanEntriesByChannel(existing.stateUpdates, incoming.stateUpdates),
     healthChecks: mergePlanEntriesByChannel(existing.healthChecks, incoming.healthChecks),
   });
@@ -402,8 +420,67 @@ function removePlanChannel(
     },
     agentRender: plan.agentRender.filter(keepEntry),
     buildSteps: plan.buildSteps.filter(keepEntry),
+    runtimeSetup: filterRuntimeSetup(plan.runtimeSetup, keepEntry),
     stateUpdates: plan.stateUpdates.filter(keepEntry),
     healthChecks: plan.healthChecks.filter(keepEntry),
+  });
+}
+
+function mergeRuntimeSetup(
+  existing: SandboxMessagingRuntimeSetupPlan | undefined,
+  incoming: SandboxMessagingRuntimeSetupPlan | undefined,
+): SandboxMessagingRuntimeSetupPlan {
+  return {
+    nodePreloads: mergePlanEntriesByChannel(
+      existing?.nodePreloads ?? [],
+      incoming?.nodePreloads ?? [],
+    ),
+    envAliases: mergePlanEntriesByChannel(existing?.envAliases ?? [], incoming?.envAliases ?? []),
+    secretScans: mergePlanEntriesByChannel(
+      existing?.secretScans ?? [],
+      incoming?.secretScans ?? [],
+    ),
+  };
+}
+
+function filterRuntimeSetup(
+  setup: SandboxMessagingRuntimeSetupPlan | undefined,
+  keepEntry: <T extends { readonly channelId: MessagingChannelId }>(entry: T) => boolean,
+): SandboxMessagingRuntimeSetupPlan {
+  return {
+    nodePreloads: (setup?.nodePreloads ?? []).filter(keepEntry),
+    envAliases: (setup?.envAliases ?? []).filter(keepEntry),
+    secretScans: (setup?.secretScans ?? []).filter(keepEntry),
+  };
+}
+
+function refreshDerivedPlanFields(
+  plan: SandboxMessagingPlan,
+  registry: ChannelManifestRegistry,
+  referenceResolver?: RenderTemplateReferenceResolver,
+): SandboxMessagingPlan {
+  const manifests = plan.channels.flatMap((channel) => {
+    const manifest = registry.get(channel.channelId);
+    return manifest ? [manifest] : [];
+  });
+  const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]));
+  const channels = plan.channels.map((channel) => {
+    const { hostForward: _oldHostForward, ...channelWithoutHostForward } = channel;
+    const manifest = manifestById.get(channel.channelId);
+    const active =
+      channel.active && !channel.disabled && !plan.disabledChannels.includes(channel.channelId);
+    const hostForward = manifest
+      ? planHostForward(manifest, channel.inputs, active, referenceResolver)
+      : undefined;
+    return {
+      ...channelWithoutHostForward,
+      ...(hostForward ? { hostForward } : {}),
+    };
+  });
+  return clonePlan({
+    ...plan,
+    channels,
+    runtimeSetup: planRuntimeSetup(manifests, plan.agent, channels),
   });
 }
 
@@ -422,10 +499,7 @@ function mergePlanEntriesByChannel<T extends { readonly channelId: MessagingChan
   incoming: readonly T[],
 ): T[] {
   const incomingChannelIds = new Set(incoming.map((entry) => entry.channelId));
-  return [
-    ...existing.filter((entry) => !incomingChannelIds.has(entry.channelId)),
-    ...incoming,
-  ];
+  return [...existing.filter((entry) => !incomingChannelIds.has(entry.channelId)), ...incoming];
 }
 
 function credentialAvailabilityFromPlan(

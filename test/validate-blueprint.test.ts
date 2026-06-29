@@ -29,10 +29,7 @@ const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
-const HERMES_POLICY_PATH = new URL(
-  "../agents/hermes/policy-additions.yaml",
-  import.meta.url,
-);
+const HERMES_POLICY_PATH = new URL("../agents/hermes/policy-additions.yaml", import.meta.url);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -136,7 +133,7 @@ describe("blueprint.yaml", () => {
     expect(Object.keys(defined ?? {}).length).toBeGreaterThan(0);
   });
 
-  it("regression #1438: sandbox image is pinned by digest, not by mutable tag", () => {
+  it("pins the sandbox image by digest instead of a mutable tag (#1438)", () => {
     // The blueprint MUST NOT pull a sandbox image by a mutable tag like
     // ":latest" — a registry compromise or accidental force-push could
     // silently swap the image. Pin via @sha256:... so the image cannot
@@ -154,7 +151,7 @@ describe("blueprint.yaml", () => {
     expect(digestMatch).not.toBeNull();
   });
 
-  it("regression #1438: top-level digest field is populated and matches the image digest", () => {
+  it("populates the top-level digest field with the image digest (#1438)", () => {
     // The top-level `digest:` field at the top of blueprint.yaml is
     // documented as "Computed at release time" and was empty on main,
     // which left blueprint-level integrity unverifiable. Mirror the
@@ -208,21 +205,19 @@ describe("blueprint.yaml", () => {
 describe("Model Router pool config", () => {
   const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
 
-  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+  it("routes NVIDIA API keys to the public NVIDIA inference endpoint (#3255)", () => {
     const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
     expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
   });
 
-  it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
+  it("uses valid LiteLLM NVIDIA model identifiers (#3255)", () => {
     const modelsByName = new Map(
       (pool.models ?? []).map((model) => [model.name, model.litellm_model]),
     );
     expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
       "openai/nvidia/nemotron-3-nano-30b-a3b",
     );
-    expect(modelsByName.get("nemotron-3-super")).toBe(
-      "openai/nvidia/nemotron-3-super-120b-a12b",
-    );
+    expect(modelsByName.get("nemotron-3-super")).toBe("openai/nvidia/nemotron-3-super-120b-a12b");
     for (const litellmModel of modelsByName.values()) {
       expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
       expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
@@ -285,18 +280,17 @@ describe("base sandbox policy", () => {
     expect(violations).toEqual([]);
   });
 
-  it("allows NVIDIA embeddings on both NVIDIA inference hosts", () => {
+  it("allows NVIDIA embeddings on the NVIDIA inference host", () => {
     const np = policy.network_policies ?? {};
     const endpoints = np.nvidia?.endpoints;
     const missingHosts: string[] = [];
-    for (const host of ["integrate.api.nvidia.com", "inference-api.nvidia.com"]) {
-      const endpoint = endpoints?.find((entry) => entry.host === host);
-      const hasEmbeddingsRule = endpoint?.rules?.some(
-        (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
-      );
-      if (!hasEmbeddingsRule) {
-        missingHosts.push(host);
-      }
+    const host = "integrate.api.nvidia.com";
+    const endpoint = endpoints?.find((entry) => entry.host === host);
+    const hasEmbeddingsRule = endpoint?.rules?.some(
+      (rule) => rule.allow?.method === "POST" && rule.allow?.path === "/v1/embeddings",
+    );
+    if (!hasEmbeddingsRule) {
+      missingHosts.push(host);
     }
     expect(missingHosts).toEqual([]);
   });
@@ -319,12 +313,12 @@ describe("base sandbox policy", () => {
     return out;
   }
 
-  it("regression #1437: base policy does not expose sentry.io by default", () => {
+  it("does not expose sentry.io in the base policy by default (#1437)", () => {
     const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
     expect(sentryEndpoints).toEqual([]);
   });
 
-  it("regression #1583: base policy does not silently grant GitHub access", () => {
+  it("does not silently grant GitHub access in the base policy (#1583)", () => {
     // Until #1583, github.com / api.github.com plus the git/gh
     // binaries lived in network_policies and were therefore included
     // in every sandbox regardless of user opt-in. The fix moves the
@@ -342,7 +336,7 @@ describe("base sandbox policy", () => {
     expect(githubHosts).toEqual([]);
   });
 
-  it("regression #2663: managed_inference policy allows inference.local:443 GET and POST", () => {
+  it("allows inference.local:443 GET and POST in the managed_inference policy (#2663)", () => {
     // inference.local is the OpenShell gateway's managed inference virtual
     // hostname — the gateway proxies it to the configured provider (OpenAI,
     // NVIDIA, etc.). Every sandbox uses this route regardless of provider.
@@ -366,7 +360,7 @@ describe("base sandbox policy", () => {
     expect(hasPost).toBe(true);
   });
 
-  it("regression #2663: managed_inference allows openclaw and tool binaries", () => {
+  it("allows openclaw and tool binaries in the managed_inference policy (#2663)", () => {
     const np = policy.network_policies ?? {};
     const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path).sort();
     expect(binaries).toEqual([
@@ -383,7 +377,7 @@ describe("base sandbox policy", () => {
     expect(serialized).not.toContain("/usr/local/bin/claude");
   });
 
-  it("regression #2180: base policy does not silently grant Telegram access", () => {
+  it("does not silently grant Telegram access in the base policy (#2180)", () => {
     // Until #1705 (later regressed by #1700 and re-surfaced in #2180),
     // `api.telegram.org` plus a /usr/local/bin/node binary lived in the
     // base network_policies, so every sandbox could call the Telegram
@@ -399,7 +393,7 @@ describe("base sandbox policy", () => {
     expect(telegramHosts).toEqual([]);
   });
 
-  it("regression #2180: base policy does not silently grant Discord access", () => {
+  it("does not silently grant Discord access in the base policy (#2180)", () => {
     // Parallel to the Telegram regression above. Discord (discord.com,
     // gateway.discord.gg, cdn.discordapp.com, media.discordapp.net) is
     // the opt-in preset path, not baseline. Re-adding these endpoints
@@ -419,7 +413,7 @@ describe("base sandbox policy", () => {
     expect(discordHosts).toEqual([]);
   });
 
-  it("regression #2180: base policy does not silently grant Slack access", () => {
+  it("does not silently grant Slack access in the base policy (#2180)", () => {
     // Slack was never in the baseline, but guard against it being added
     // in the same merge-conflict-resolution pattern that re-added
     // Telegram and Discord after #1705. Slack access is in
@@ -437,7 +431,7 @@ describe("base sandbox policy", () => {
     expect(slackHosts).toEqual([]);
   });
 
-  it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
+  it("omits npm and node binaries from the baseline npm_registry policy (#1458)", () => {
     const np = policy.network_policies ?? {};
     const npmRegistry = np.npm_registry;
     expect(npmRegistry).toBeDefined();
@@ -491,7 +485,7 @@ describe("permissive sandbox policy", () => {
     expect(policy.network_policies).toBeDefined();
   });
 
-  it("regression #2513: managed_inference block allows inference.local:443", () => {
+  it("allows inference.local:443 in the managed_inference block (#2513)", () => {
     const np = policy.network_policies ?? {};
     expect(np.managed_inference).toBeDefined();
     const endpoints = np.managed_inference?.endpoints ?? [];
@@ -505,7 +499,7 @@ describe("permissive sandbox policy", () => {
     expect(inferenceEp?.enforcement).toBe("enforce");
   });
 
-  it("regression #2513: managed_inference uses permissive '/**' binary allowlist", () => {
+  it("uses a permissive '/**' binary allowlist for managed_inference (#2513)", () => {
     const np = policy.network_policies ?? {};
     const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path);
     // Matches the permissive-file convention used by every other block
@@ -547,8 +541,20 @@ describe("Hermes sandbox policy", () => {
     ]);
   }
 
-  it("regression #4230: managed_inference keeps a narrow inference API allowlist", () => {
+  it("keeps a narrow inference API allowlist for managed_inference (#4230)", () => {
     expectManagedInferenceSecurityShape();
+  });
+
+  function expectGithubBaselineAbsent(): void {
+    const np = policy.network_policies ?? {};
+    expect("github" in np).toBe(false);
+    const hosts = Object.values(np).flatMap((entry) => (entry.endpoints ?? []).map((e) => e.host));
+    expect(hosts).not.toContain("github.com");
+    expect(hosts).not.toContain("api.github.com");
+  }
+
+  it("base policy does not silently grant GitHub access; only the opt-in preset does", () => {
+    expectGithubBaselineAbsent();
   });
 });
 
@@ -561,7 +567,7 @@ describe("github preset", () => {
     import.meta.url,
   );
 
-  it("regression #1583: github preset file exists and parses", () => {
+  it("parses the existing github preset file (#1583)", () => {
     const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
     expect(parsed).toEqual(expect.objectContaining({}));
     const meta = parsed.preset;
@@ -570,7 +576,7 @@ describe("github preset", () => {
     expect(np && "github" in np).toBe(true);
   });
 
-  it("regression #2179: github preset only advertises the installed git binary", () => {
+  it("only advertises the installed git binary in the github preset (#2179)", () => {
     const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
     const meta = parsed.preset;
     expect(meta?.description).toBe("GitHub.com and GitHub API access (git)");
@@ -606,7 +612,7 @@ describe("huggingface preset", () => {
     return Array.isArray(hf?.endpoints) ? hf.endpoints : [];
   }
 
-  it("regression #1432: huggingface.co has no POST allow rule", () => {
+  it("omits POST allow rules for huggingface.co (#1432)", () => {
     const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
     expect(endpoints.length).toBeGreaterThan(0);
     for (const ep of endpoints) {
@@ -622,7 +628,7 @@ describe("huggingface preset", () => {
     }
   });
 
-  it("regression #1432: huggingface.co retains GET so downloads still work", () => {
+  it("retains GET for huggingface.co so downloads still work (#1432)", () => {
     const endpoints = presetEndpoints().filter((ep) => ep.host === "huggingface.co");
     for (const ep of endpoints) {
       const rules = Array.isArray(ep.rules) ? ep.rules : [];
@@ -645,7 +651,7 @@ describe("jira preset", () => {
   );
   const jiraPreset = loadYaml<PolicyPreset>(JIRA_PRESET_PATH);
 
-  it("regression #3758: Jira allows Node but not curl", () => {
+  it("allows Node but not curl for Jira (#3758)", () => {
     const binaries = (jiraPreset.network_policies?.atlassian?.binaries ?? [])
       .map((binary) => binary.path)
       .sort();
@@ -760,7 +766,7 @@ describe("npm preset", () => {
   const REGISTRY_HOSTS = ["registry.npmjs.org", "registry.yarnpkg.com"];
 
   for (const host of REGISTRY_HOSTS) {
-    it(`regression #2767: ${host} uses L4 tunnel (access: full, tls: skip) for CONNECT compatibility`, () => {
+    it(`uses an L4 tunnel for CONNECT compatibility on ${host} (access: full, tls: skip) (#2767)`, () => {
       const endpoints = npmEndpoints().filter((ep) => ep.host === host);
       expect(endpoints.length).toBeGreaterThan(0);
       for (const ep of endpoints) {

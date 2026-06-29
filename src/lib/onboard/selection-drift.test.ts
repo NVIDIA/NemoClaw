@@ -43,13 +43,7 @@ describe("selection drift helpers", () => {
 
     expect(readSandboxSelectionConfig("alpha", { runOpenshell })).toBeNull();
     expect(runOpenshell).toHaveBeenCalledWith(
-      [
-        "sandbox",
-        "download",
-        "alpha",
-        "/sandbox/.nemoclaw/config.json",
-        expect.any(String),
-      ],
+      ["sandbox", "download", "alpha", "/sandbox/.nemoclaw/config.json", expect.any(String)],
       { ignoreError: true, stdio: ["ignore", "ignore", "ignore"] },
     );
     const downloadDir = String(runOpenshell.mock.calls[0]?.[0]?.[4] ?? "");
@@ -62,9 +56,7 @@ describe("selection drift helpers", () => {
     fs.writeFileSync(notDirectory, "", "utf-8");
     const runOpenshell = vi.fn(() => ({ status: 0 }));
 
-    expect(
-      readSandboxSelectionConfig("alpha", { runOpenshell, tmpDir: notDirectory }),
-    ).toBeNull();
+    expect(readSandboxSelectionConfig("alpha", { runOpenshell, tmpDir: notDirectory })).toBeNull();
     expect(runOpenshell).not.toHaveBeenCalled();
   });
 

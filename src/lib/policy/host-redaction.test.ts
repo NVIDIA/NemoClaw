@@ -3,11 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  canonicaliseHost,
-  hostStemsFromEndpoints,
-  isInternalHost,
-} from "./host-redaction";
+import { canonicaliseHost, hostStemsFromEndpoints, isInternalHost } from "./host-redaction";
 
 describe("canonicaliseHost", () => {
   it("returns null for empty / undefined / whitespace input", () => {

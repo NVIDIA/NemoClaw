@@ -19,7 +19,7 @@ You do not need to restart the sandbox.
 ## Prerequisites
 
 - A running NemoClaw sandbox.
-- The OpenShell CLI on your `PATH`, which NemoClaw uses under the hood.
+- The OpenShell CLI on your `PATH`, which NemoClaw uses internally.
 
 ## Switch to a Different Model
 
@@ -32,8 +32,7 @@ For OpenClaw, it updates `agents.defaults.model.primary` and the matching provid
 Use `$$nemoclaw inference set` with the provider and model that match the upstream you want to use.
 The command updates the OpenShell inference route and synchronizes the running agent config.
 For Hermes, it updates `/sandbox/.hermes/config.yaml` (`model.default`, `model.base_url`, `model.provider: custom`, API-family mode when needed, and the OpenShell proxy API-key placeholder) without rebuilding or restarting Hermes.
-Pass `--sandbox <name>` when you do not want to use the default registered sandbox.
-Under `$$nemoclaw`, pass `--sandbox <name>` when you have registered more than one Hermes sandbox.
+Pass `--sandbox <name>` when you do not want to use the default registered sandbox or when you have registered more than one Hermes sandbox.
 </AgentOnly>
 
 <AgentOnly variant="openclaw">
@@ -120,8 +119,7 @@ NEMOCLAW_PREFERRED_API=openai-responses $$nemoclaw onboard
 <Note>
 `NEMOCLAW_INFERENCE_API_OVERRIDE` patches the config at container startup but does not update the Dockerfile ARG baked into the image.
 If you recreate the sandbox without the override environment variable, the image reverts to the original API path.
-A fresh `$$nemoclaw onboard` is the reliable fix because it updates both the
-session and the baked image.
+A fresh `$$nemoclaw onboard` is the reliable fix because it updates both the session and the baked image.
 </Note>
 
 ## Cross-Provider Switching
@@ -232,16 +230,26 @@ $$nemoclaw onboard --resume --recreate-sandbox
 Use `$$nemoclaw inference get` to print the provider and model the gateway is currently routing to.
 Run it before `$$nemoclaw inference set` to confirm the starting state, or after a switch to verify the new route.
 
-```console
-$ $$nemoclaw inference get
+```bash
+$$nemoclaw inference get
+```
+
+Expected output:
+
+```text
 Provider: nvidia-prod
 Model:    nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass `--json` for machine-readable output.
 
-```console
-$ $$nemoclaw inference get --json
+```bash
+$$nemoclaw inference get --json
+```
+
+Expected output:
+
+```json
 {
   "provider": "nvidia-prod",
   "model": "nvidia/nemotron-3-super-120b-a12b"
@@ -265,7 +273,7 @@ The status output includes the active provider, model, and endpoint with the res
 
 - The host keeps provider credentials.
 - The sandbox continues to use `inference.local`.
-- `$$nemoclaw inference set` patches the selected running OpenClaw or Hermes sandbox config and recomputes its config hash.
+- `$$nemoclaw inference set` patches the selected running OpenClaw sandbox config and recomputes its config hash.
 - Use `$$nemoclaw onboard --resume --recreate-sandbox` for build-time settings such as context window, max tokens, reasoning mode, heartbeat cadence, or image contents.
 - Local Ollama and local vLLM routes use local provider tokens rather than `OPENAI_API_KEY`. Rebuilds of older local-inference sandboxes clear the stale OpenAI credential requirement automatically.
 

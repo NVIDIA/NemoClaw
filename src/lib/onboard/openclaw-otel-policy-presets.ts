@@ -10,7 +10,9 @@ export const OPENCLAW_OTEL_LOCAL_POLICY_PRESET = "openclaw-diagnostics-otel-loca
 
 export function isOpenclawOtelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.NEMOCLAW_OPENCLAW_OTEL;
-  return typeof raw === "string" && raw.trim() !== "" && !FALSE_VALUES.has(raw.trim().toLowerCase());
+  return (
+    typeof raw === "string" && raw.trim() !== "" && !FALSE_VALUES.has(raw.trim().toLowerCase())
+  );
 }
 
 export function isOpenclawAgent(agent: string | null | undefined): boolean {
@@ -20,10 +22,16 @@ export function isOpenclawAgent(agent: string | null | undefined): boolean {
 
 export function isOpenclawOtelEndpointLocal(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
-  const endpoint = typeof raw === "string" && raw.trim() ? raw.trim() : DEFAULT_OPENCLAW_OTEL_ENDPOINT;
+  const endpoint =
+    typeof raw === "string" && raw.trim() ? raw.trim() : DEFAULT_OPENCLAW_OTEL_ENDPOINT;
   try {
-    const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(endpoint) ? endpoint : `http://${endpoint}`);
-    return parsed.hostname === LOCAL_OPENCLAW_OTEL_HOST && (parsed.port || "80") === LOCAL_OPENCLAW_OTEL_PORT;
+    const parsed = new URL(
+      /^[a-z][a-z0-9+.-]*:\/\//i.test(endpoint) ? endpoint : `http://${endpoint}`,
+    );
+    return (
+      parsed.hostname === LOCAL_OPENCLAW_OTEL_HOST &&
+      (parsed.port || "80") === LOCAL_OPENCLAW_OTEL_PORT
+    );
   } catch {
     return false;
   }

@@ -21,7 +21,9 @@ export interface GatewayCallPayload {
 
 function looksLikeGatewayPayload(value: unknown): value is GatewayCallPayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return "ok" in (value as Record<string, unknown>) || "error" in (value as Record<string, unknown>);
+  return (
+    "ok" in (value as Record<string, unknown>) || "error" in (value as Record<string, unknown>)
+  );
 }
 
 export function parseGatewayCallPayload<T extends GatewayCallPayload = GatewayCallPayload>(

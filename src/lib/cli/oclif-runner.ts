@@ -86,6 +86,9 @@ export async function runOclifCommandById(
   applyBrandedBin(config);
   const errorLine = opts.error ?? console.error;
   const exit = opts.exit ?? ((code: number) => process.exit(code));
+  const originalArgv = process.argv;
+  const nativeArgv = [...commandId.split(":"), ...args];
+  process.argv = [originalArgv[0] ?? process.execPath, originalArgv[1] ?? CLI_NAME, ...nativeArgv];
 
   try {
     await config.runCommand(commandId, args);
@@ -122,6 +125,8 @@ export async function runOclifCommandById(
     }
 
     throw error;
+  } finally {
+    process.argv = originalArgv;
   }
 }
 

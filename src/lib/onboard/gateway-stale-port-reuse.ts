@@ -32,9 +32,7 @@ export interface GatewayPortReuseInput {
 //                package-managed and Docker is not the source of truth).
 //   - "skip"   — recorded state is not "healthy"; this defensive path does not
 //                apply and the caller should fall through to other handling.
-export function classifyGatewayPortReuse(
-  input: GatewayPortReuseInput,
-): GatewayPortReuseDecision {
+export function classifyGatewayPortReuse(input: GatewayPortReuseInput): GatewayPortReuseDecision {
   if (input.gatewayReuseState !== "healthy") return "skip";
   if (!input.supportsLifecycleCommands) return "reuse";
   if (input.containerState === "missing") return "stale";

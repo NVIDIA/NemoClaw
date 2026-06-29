@@ -3,16 +3,16 @@
 
 import fs from "node:fs";
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
+// Import source directly so tests cannot pass against a stale build.
 import {
   getRemoteProviderHealthEndpoint,
-  probeRemoteProviderHealth,
   probeProviderHealth,
-} from "../../../dist/lib/inference/health";
+  probeRemoteProviderHealth,
+} from "./health";
 
-import { BUILD_ENDPOINT_URL } from "../../../dist/lib/inference/provider-models";
+import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 describe("inference health", () => {
   describe("getRemoteProviderHealthEndpoint", () => {
@@ -206,7 +206,8 @@ describe("inference health", () => {
       let authConfigContent = "";
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "moonshotai/kimi-k2.6",
-        getCredentialImpl: (envName) => (envName === "NVIDIA_API_KEY" ? "nvapi-test" : null),
+        getCredentialImpl: (envName) =>
+          envName === "NVIDIA_INFERENCE_API_KEY" ? "nvapi-test" : null,
         runCurlProbeImpl: (argv) => {
           capturedArgv = argv;
           const configIndex = argv.indexOf("--config");
@@ -268,7 +269,7 @@ describe("inference health", () => {
       expect(result?.ok).toBe(true);
       expect(result?.probed).toBe(false);
       expect(result?.endpoint).toBe(`${BUILD_ENDPOINT_URL}/chat/completions`);
-      expect(result?.detail).toContain("NVIDIA_API_KEY");
+      expect(result?.detail).toContain("NVIDIA_INFERENCE_API_KEY");
       expect(result?.detail).toContain("provider-level /models");
     });
 

@@ -1,15 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-const {
-  isHijackedDockerInternalUrl,
-} = require("../../../dist/lib/inference/onboard-host-docker-internal");
-const { isSandboxInternalUrl, probeOpenAiLikeEndpoint } = require("../../../dist/lib/inference/onboard-probes");
+const { isHijackedDockerInternalUrl } = require("./onboard-host-docker-internal");
+const { isSandboxInternalUrl, probeOpenAiLikeEndpoint } = require("./onboard-probes");
 
 describe("host.docker.internal onboarding inference policy", () => {
   it("does not treat host.docker.internal as a usable sandbox URL", () => {

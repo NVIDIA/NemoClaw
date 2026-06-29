@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  formatSlackValidationFailure,
-  validateSlackCredentials,
-} from "./credential-validation";
+import { formatSlackValidationFailure, validateSlackCredentials } from "./credential-validation";
 import type { MessagingHookHandler, MessagingHookRegistration } from "../../../hooks/types";
 
 export const SLACK_VALIDATE_CREDENTIALS_HOOK_HANDLER_ID = "slack.validateCredentials";

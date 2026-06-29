@@ -27,9 +27,7 @@ export function warnIfHostProxyMissesLoopback(
   const hasLoopback = /(^|,)\s*127\.0\.0\.1\s*(,|$)/.test(noProxyEnv);
   const hasInference = /(^|,)\s*inference\.local\s*(,|$)/.test(noProxyEnv);
   if (hasLocalhost && hasLoopback && hasInference) return false;
-  warn(
-    "  ⚠ HTTP_PROXY/http_proxy is set without NO_PROXY=localhost,127.0.0.1,inference.local.",
-  );
+  warn("  ⚠ HTTP_PROXY/http_proxy is set without NO_PROXY=localhost,127.0.0.1,inference.local.");
   warn(`    Detected proxy: ${redactProxyCredentials(proxyEnv)}`);
   warn("    NemoClaw injects NO_PROXY for its own subprocess spawns (loopback hosts,");
   warn("    container-host aliases, and the managed inference hostname inference.local),");

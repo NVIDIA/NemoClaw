@@ -12,8 +12,7 @@ export interface OnboardProgressStep {
   title: string;
 }
 
-export type OnboardMachineProgressStepName =
-  OnboardMachineStateWithProgressDefinition["stepName"];
+export type OnboardMachineProgressStepName = OnboardMachineStateWithProgressDefinition["stepName"];
 
 export type OnboardProgressStepName = OnboardMachineProgressStepName | "messaging";
 

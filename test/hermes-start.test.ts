@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+
+import { shellQuote } from "../src/lib/core/shell-quote";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
@@ -15,10 +17,9 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "hermes",
   "validate-env-secret-boundary.py",
 );
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, "'\\''")}'`;
-}
+const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
+  (index % 16).toString(16),
+).join("");
 
 function bashPrintfQ(value: string): string {
   const result = spawnSync("bash", ["-c", "printf '%q' \"$1\"", "bash-printf-q", value], {
@@ -170,10 +171,7 @@ function runHermesPortValidation(opts: {
   }
 }
 
-function runHermesEnvSecretBoundary(opts: {
-  envFile?: string;
-  symlinkEnvFile?: boolean;
-}) {
+function runHermesEnvSecretBoundary(opts: { envFile?: string; symlinkEnvFile?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-env-boundary-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const envFile = path.join(hermesHome, ".env");
@@ -245,10 +243,7 @@ function runHermesRuntimeEnvSecretBoundary(envOverrides: Record<string, string>)
   }
 }
 
-function runTirithMarkerBootstrap(opts: {
-  markerReason?: string;
-  symlinkMarker?: boolean;
-}) {
+function runTirithMarkerBootstrap(opts: { markerReason?: string; symlinkMarker?: boolean }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tirith-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const marker = path.join(hermesHome, ".tirith-install-failed");
@@ -324,16 +319,20 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
         : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000\\n"; else command id "$@"; fi; }',
       "verify_config_integrity_if_locked() { :; }",
       "verify_config_integrity() { :; }",
+      "verify_hermes_config_integrity() { :; }",
+      "ensure_hermes_config_root_mode() { :; }",
       "apply_shields_up_runtime_env() { :; }",
       "validate_hermes_env_secret_boundary() { :; }",
       "validate_hermes_runtime_env_secret_boundary() { :; }",
+      "ensure_hermes_runtime_api_server_key() { :; }",
+      "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
       "STEP_DOWN_PREFIX_SANDBOX=(env)",
-      "NEMOCLAW_CMD=(bash -c 'test ! -e \"$1/.tirith-install-failed\"' bash \"$HERMES_DIR\")",
+      'NEMOCLAW_CMD=(bash -c \'test ! -e "$1/.tirith-install-failed"\' bash "$HERMES_DIR")',
       extractTirithDispatchBlock(src, mode),
     ].join("\n"),
     { mode: 0o700 },
@@ -348,6 +347,125 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
     return {
       result,
       markerExists: fs.existsSync(marker),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesRootStartupMutableRootPreflight() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-root-preflight-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const chmodLog = path.join(tmpDir, "chmod.log");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(hermesHome, { recursive: true });
+  fs.chmodSync(hermesHome, 0o750);
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "hermes_config_path_is_locked"),
+      extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
+      extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
+      'id() { [ "${1:-}" = "-u" ] && printf "1000\\n" || command id "$@"; }',
+      `CHMOD_LOG=${shellQuote(chmodLog)}`,
+      "HERMES_DIR_MODE=750",
+      'chmod() { if [ "${1:-}" = "3770" ] && [ "${2:-}" = "$HERMES_DIR" ]; then printf "%s\\n" "$1" > "$CHMOD_LOG"; HERMES_DIR_MODE=770; command chmod 770 "$2"; return 0; fi; command chmod "$@"; }',
+      'dir_mode() { printf "%s\\n" "$HERMES_DIR_MODE"; }',
+      'verify_hermes_config_integrity() { printf "verify mode=%s\\n" "$(dir_mode)"; }',
+      'ensure_hermes_runtime_api_server_key() { printf "api-key mode=%s\\n" "$(dir_mode)"; }',
+      "apply_shields_up_runtime_env() { :; }",
+      "validate_hermes_env_secret_boundary() { :; }",
+      "validate_hermes_runtime_env_secret_boundary() { :; }",
+      "refresh_hermes_provider_placeholders() { :; }",
+      "refresh_hermes_runtime_config_hashes() { :; }",
+      "configure_messaging_channels() { :; }",
+      "retry_tirith_marker_if_needed() { :; }",
+      'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,
+      "STEP_DOWN_PREFIX_SANDBOX=(env)",
+      "NEMOCLAW_CMD=(bash -c 'exit 0')",
+      extractTirithDispatchBlock(src, "root"),
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      hermesDirMode: fs.existsSync(chmodLog)
+        ? fs.readFileSync(chmodLog, "utf-8").trim()
+        : (fs.statSync(hermesHome).mode & 0o7777).toString(8),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
+function runHermesSandboxInitPreludeWithFakePath() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-init-path-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const fakeInit = path.join(tmpDir, "sandbox-init.sh");
+  const marker = path.join(tmpDir, "dirname-called");
+  const sourcePathLog = path.join(tmpDir, "source-path.log");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  fs.writeFileSync(
+    path.join(fakeBin, "dirname"),
+    ["#!/usr/bin/env bash", `printf called > ${shellQuote(marker)}`, "exit 99"].join("\n"),
+    { mode: 0o700 },
+  );
+  fs.writeFileSync(
+    fakeInit,
+    [
+      `printf "%s\\n" "$PATH" > ${shellQuote(sourcePathLog)}`,
+      "harden_resource_limits() { :; }",
+    ].join("\n"),
+  );
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const start = src.indexOf(
+    "# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.",
+  );
+  const end = src.indexOf("\nif [ -d /opt/hermes/hermes_cli/web_dist ];", start);
+  const prelude = src
+    .slice(start, end)
+    .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", fakeInit);
+
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `export PATH=${shellQuote(`${fakeBin}:${process.env.PATH ?? ""}`)}`,
+      prelude,
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      dirnameCalled: fs.existsSync(marker),
+      sourcePath: fs.existsSync(sourcePathLog)
+        ? fs.readFileSync(sourcePathLog, "utf-8").trim()
+        : "",
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -388,12 +506,14 @@ function lstatIfPresent(entry: string): fs.Stats | null {
 
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
+  liveGatewayArgv?: string[];
   orphanSocat?: boolean;
   orphanDashboardSocat?: boolean;
   staleLock?: boolean;
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
   rootOwnedConfigRoot?: boolean;
+  preExistingLogFile?: boolean | "hardlink-to-config" | "hardlink-to-env";
   preExistingHistory?: "regular" | "symlink" | "directory" | "hardlink-to-config";
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-cleanup-"));
@@ -405,14 +525,31 @@ function runHermesGatewayRuntimeCleanup(opts: {
   const legacyPid = path.join(hermesHome, "gateway.pid");
   const runtimePid = path.join(runtimeDir, "gateway.pid");
   const runtimeLock = path.join(runtimeDir, "gateway.lock");
+  const agentLogPath = path.join(hermesHome, "logs", "agent.log");
+  const configYamlPath = path.join(hermesHome, "config.yaml");
+  const envFilePath = path.join(hermesHome, ".env");
 
   fs.mkdirSync(runtimeDir, { recursive: true });
   fs.mkdirSync(procRoot, { recursive: true });
+  void (opts.lockedConfigRoot || opts.preExistingLogFile === "hardlink-to-config"
+    ? fs.writeFileSync(configYamlPath, "model: test\n", { mode: 0o600 })
+    : undefined);
+  void (opts.lockedConfigRoot || opts.preExistingLogFile === "hardlink-to-env"
+    ? fs.writeFileSync(envFilePath, "HERMES_TEST=1\n", { mode: 0o600 })
+    : undefined);
+  void (opts.preExistingLogFile === true
+    ? (fs.mkdirSync(path.dirname(agentLogPath), { recursive: true }),
+      fs.writeFileSync(agentLogPath, "pre-existing log\n", { mode: 0o644 }))
+    : opts.preExistingLogFile === "hardlink-to-config"
+      ? (fs.mkdirSync(path.dirname(agentLogPath), { recursive: true }),
+        fs.linkSync(configYamlPath, agentLogPath))
+      : opts.preExistingLogFile === "hardlink-to-env"
+        ? (fs.mkdirSync(path.dirname(agentLogPath), { recursive: true }),
+          fs.linkSync(envFilePath, agentLogPath))
+        : undefined);
   if (opts.lockedConfigRoot || opts.rootOwnedConfigRoot) {
     fs.chmodSync(hermesHome, 0o755);
   }
-  const configYamlPath = path.join(hermesHome, "config.yaml");
-  const envFilePath = path.join(hermesHome, ".env");
   if (opts.lockedConfigRoot) {
     fs.writeFileSync(configYamlPath, "model: test\n", { mode: 0o600 });
     fs.writeFileSync(envFilePath, "HERMES_TEST=1\n", { mode: 0o600 });
@@ -436,7 +573,11 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
   if (opts.staleLock !== false) fs.writeFileSync(runtimeLock, "stale lock");
   if (opts.liveGateway) {
-    writeFakeProcCmdline(procRoot, 123, ["/usr/local/bin/hermes", "gateway", "run"]);
+    writeFakeProcCmdline(
+      procRoot,
+      123,
+      opts.liveGatewayArgv ?? ["/usr/local/bin/hermes", "gateway", "run"],
+    );
   }
   if (opts.orphanSocat) {
     writeFakeProcCmdline(procRoot, 456, [
@@ -479,6 +620,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
       extractShellFunctionFromSource(src, "hermes_config_root_is_locked"),
       extractShellFunctionFromSource(src, "ensure_hermes_config_root_mode"),
       extractShellFunctionFromSource(src, "ensure_hermes_state_dir"),
+      extractShellFunctionFromSource(src, "repair_hermes_log_permissions"),
       extractShellFunctionFromSource(src, "ensure_hermes_history_file"),
       extractShellFunctionFromSource(src, "repair_hermes_startup_layout"),
       extractShellFunctionFromSource(src, "cleanup_stale_hermes_gateway_runtime"),
@@ -509,9 +651,16 @@ function runHermesGatewayRuntimeCleanup(opts: {
         const entryPath = path.join(hermesHome, entry);
         return [
           entry,
-          fs.existsSync(entryPath)
-            ? (fs.statSync(entryPath).mode & 0o777).toString(8)
-            : "missing",
+          fs.existsSync(entryPath) ? (fs.statSync(entryPath).mode & 0o777).toString(8) : "missing",
+        ];
+      }),
+    );
+    const requiredDirFullModes = Object.fromEntries(
+      ["logs", "logs/curator"].map((entry) => {
+        const entryPath = path.join(hermesHome, entry);
+        return [
+          entry,
+          fs.existsSync(entryPath) ? (fs.statSync(entryPath).mode & 0o7777).toString(8) : "missing",
         ];
       }),
     );
@@ -538,11 +687,19 @@ function runHermesGatewayRuntimeCleanup(opts: {
     const configYamlContent = fs.existsSync(configYamlPath)
       ? fs.readFileSync(configYamlPath, "utf-8")
       : "";
+    const envFileMode = fs.existsSync(envFilePath)
+      ? (fs.statSync(envFilePath).mode & 0o777).toString(8)
+      : "missing";
+    const envFileContent = fs.existsSync(envFilePath) ? fs.readFileSync(envFilePath, "utf-8") : "";
     return {
       result,
       killLog: fs.existsSync(killLog) ? fs.readFileSync(killLog, "utf-8") : "",
       hermesDirMode: (fs.statSync(hermesHome).mode & 0o7777).toString(8),
       requiredDirs,
+      requiredDirFullModes,
+      agentLogMode: fs.existsSync(agentLogPath)
+        ? (fs.statSync(agentLogPath).mode & 0o777).toString(8)
+        : "missing",
       runtimePidExists: fs.existsSync(runtimePid),
       runtimeLockExists: fs.existsSync(runtimeLock),
       legacyPidExists: legacyPidStat !== null,
@@ -553,6 +710,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       symlinkTargetContent,
       configYamlMode,
       configYamlContent,
+      envFileMode,
+      envFileContent,
     };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -620,6 +779,16 @@ function runRuntimeShellEnvBootstrap() {
   }
 }
 
+describe("agents/hermes/start.sh sandbox init bootstrap", () => {
+  it("locks the trusted PATH before sourcing shared sandbox init", () => {
+    const { result, dirnameCalled, sourcePath } = runHermesSandboxInitPreludeWithFakePath();
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(dirnameCalled).toBe(false);
+    expect(sourcePath).toBe("/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+  });
+});
+
 describe("agents/hermes/start.sh runtime shell env", () => {
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
@@ -642,7 +811,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
   });
-
 });
 
 describe("agents/hermes/start.sh port validation", () => {
@@ -763,7 +931,9 @@ describe("agents/hermes/start.sh validator-path bootstrap", () => {
   });
 
   it("falls back to the script-relative validator when the install path is absent", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"),
+    );
     const scriptDir = path.join(tmpDir, "agents", "hermes");
     const fallbackValidator = path.join(scriptDir, "validate-env-secret-boundary.py");
     fs.mkdirSync(scriptDir, { recursive: true });
@@ -818,6 +988,20 @@ describe("agents/hermes/start.sh env secret boundary", () => {
         "API_SERVER_HOST=127.0.0.1",
         "EMPTY_TOKEN=",
         "LEGACY_SECRET=[STRIPPED_BY_MIGRATION]",
+        "",
+      ].join("\n"),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
+
+  it("allows a raw API_SERVER_KEY (Hermes loopback api_server token)", () => {
+    const result = runHermesEnvSecretBoundary({
+      envFile: [
+        "API_SERVER_PORT=18642",
+        "API_SERVER_HOST=127.0.0.1",
+        `API_SERVER_KEY=${GENERATED_API_SERVER_KEY}`,
         "",
       ].join("\n"),
     });
@@ -887,6 +1071,20 @@ describe("agents/hermes/start.sh env secret boundary", () => {
     expect(result.stderr).toBe("");
   });
 
+  it("rejects inherited API_SERVER_KEY process env values", () => {
+    const inheritedKey = GENERATED_API_SERVER_KEY;
+    const result = runHermesRuntimeEnvSecretBoundary({
+      API_SERVER_HOST: "127.0.0.1",
+      API_SERVER_PORT: "18642",
+      API_SERVER_KEY: inheritedKey,
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("process environment");
+    expect(result.stderr).toContain("API_SERVER_KEY");
+    expect(result.stderr).not.toContain(inheritedKey);
+  });
+
   it("rejects raw secret-shaped process env values without printing the value", () => {
     const rawToken = "SENTINEL_RAW_SECRET_VALUE";
     const result = runHermesRuntimeEnvSecretBoundary({
@@ -922,6 +1120,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       staleLock: false,
       stalePid: false,
       rootOwnedConfigRoot: true,
+      preExistingLogFile: true,
     });
 
     expect(run.result.status).toBe(0);
@@ -933,6 +1132,11 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
       image_cache: "770",
       audio_cache: "770",
     });
+    expect(run.requiredDirFullModes).toMatchObject({
+      logs: "2770",
+      "logs/curator": "2770",
+    });
+    expect(run.agentLogMode).toBe("660");
     expect(run.historyKind).toBe("regular");
     expect(run.historyMode).toBe("660");
     expect(run.historyContent).toBe("");
@@ -962,9 +1166,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -977,9 +1179,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     });
 
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
@@ -1015,9 +1215,7 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("symlink");
     expect(run.symlinkTargetContent).toBe("attacker\n");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is a symlink");
   });
 
@@ -1029,12 +1227,34 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("regular");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain("has hard-link count");
     expect(run.configYamlMode).toBe("600");
     expect(run.configYamlContent).toBe("model: test\n");
+  });
+
+  it("repair_hermes_log_permissions rejects log files hard-linked to config.yaml or .env and preserves config/env owner, mode, and content", () => {
+    const configRun = runHermesGatewayRuntimeCleanup({
+      staleLock: false,
+      stalePid: false,
+      preExistingLogFile: "hardlink-to-config",
+    });
+    const envRun = runHermesGatewayRuntimeCleanup({
+      staleLock: false,
+      stalePid: false,
+      preExistingLogFile: "hardlink-to-env",
+    });
+
+    expect(configRun.result.status).not.toBe(0);
+    expect(configRun.result.stderr).toContain("Refusing Hermes log repair because");
+    expect(configRun.result.stderr).toContain("has hard-link count");
+    expect(configRun.configYamlMode).toBe("600");
+    expect(configRun.configYamlContent).toBe("model: test\n");
+    expect(envRun.result.status).not.toBe(0);
+    expect(envRun.result.stderr).toContain("Refusing Hermes log repair because");
+    expect(envRun.result.stderr).toContain("has hard-link count");
+    expect(envRun.envFileMode).toBe("600");
+    expect(envRun.envFileContent).toBe("HERMES_TEST=1\n");
   });
 
   it("fails Hermes startup when the locked-root history path is a directory", () => {
@@ -1045,14 +1265,16 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
 
     expect(run.result.status).not.toBe(0);
     expect(run.historyKind).toBe("directory");
-    expect(run.result.stderr).toContain(
-      "Refusing Hermes layout repair because",
-    );
+    expect(run.result.stderr).toContain("Refusing Hermes layout repair because");
     expect(run.result.stderr).toContain(".hermes_history is not a regular file");
   });
 
   it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
-    const run = runHermesGatewayRuntimeCleanup({ orphanSocat: true, staleLock: false, stalePid: false });
+    const run = runHermesGatewayRuntimeCleanup({
+      orphanSocat: true,
+      staleLock: false,
+      stalePid: false,
+    });
 
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe("456");
@@ -1081,12 +1303,24 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.killLog).toBe("");
     expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
   });
+
+  it("preserves Hermes runtime state when the wrapped gateway execs hermes.real", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      liveGateway: true,
+      liveGatewayArgv: ["/usr/local/bin/hermes.real", "gateway", "run"],
+      orphanSocat: true,
+    });
+
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(true);
+    expect(run.runtimeLockExists).toBe(true);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.killLog).toBe("");
+    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+  });
 });
 
-function runShieldsUpRuntimeEnv(opts: {
-  locked: boolean;
-  presetValue?: string;
-}) {
+function runShieldsUpRuntimeEnv(opts: { locked: boolean; presetValue?: string }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-shields-env-"));
   const hermesHome = path.join(tmpDir, ".hermes");
   const scriptPath = path.join(tmpDir, "run.sh");
@@ -1144,9 +1378,7 @@ describe("agents/hermes/start.sh shields-up kanban dispatcher override", () => {
 
     expect(run.result.status).toBe(0);
     expect(run.kanbanValue).toBe("0");
-    expect(run.result.stderr).toContain(
-      "Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0",
-    );
+    expect(run.result.stderr).toContain("Shields-up: HERMES_KANBAN_DISPATCH_IN_GATEWAY=0");
     expect(run.result.stderr).toContain("embedded kanban dispatcher suspended");
   });
 
@@ -1178,6 +1410,15 @@ describe("agents/hermes/start.sh Tirith marker bootstrap", () => {
         "download_failed marker present; letting Hermes runtime fallback retry Tirith",
       );
     }
+  });
+
+  it("repairs the Hermes config root before strict runtime config updates", () => {
+    const run = runHermesRootStartupMutableRootPreflight();
+
+    expect(run.result.status).toBe(0);
+    expect(run.result.stdout).toContain("verify mode=750");
+    expect(run.result.stdout).toContain("api-key mode=770");
+    expect(run.hermesDirMode).toBe("3770");
   });
 
   it("removes a retryable download_failed marker so Hermes runtime fallback can retry", () => {

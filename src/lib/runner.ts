@@ -313,7 +313,10 @@ export interface CaptureResult {
  * distinguish a real timeout (curl exit 28 / spawn ETIMEDOUT) from other
  * failures such as connection-refused.
  */
-function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignoreError"> = {}): CaptureResult {
+function runCaptureEx(
+  cmd: readonly string[],
+  opts: Omit<CaptureOptions, "ignoreError"> = {},
+): CaptureResult {
   if (!Array.isArray(cmd) || cmd.length === 0) {
     throw new Error("runCaptureEx: cmd must be a non-empty argv array");
   }
@@ -366,9 +369,7 @@ function validateName(name: string, label = "name"): string {
     );
   }
   if (!NAME_VALID_PATTERN.test(name)) {
-    throw new Error(
-      `Invalid ${label}: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
-    );
+    throw new Error(`Invalid ${label}: '${name}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
   }
   return name;
 }

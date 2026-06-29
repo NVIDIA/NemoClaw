@@ -1,15 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import * as skillInstall from "../../skill-install";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 
@@ -124,14 +123,10 @@ export async function removeSandboxSkill(
     process.exit(1);
   }
 
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
 
   try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
+    const ctx = { configFile: tmpSshConfig.file, sandboxName };
 
     const existsCheck = skillInstall.checkExisting(ctx, paths);
     if (existsCheck === null) {
@@ -166,11 +161,7 @@ export async function removeSandboxSkill(
       return;
     }
   } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
+    tmpSshConfig.cleanup();
   }
 }
 
@@ -292,14 +283,10 @@ export async function installSandboxSkill(
     process.exit(1);
   }
 
-  const tmpSshConfig = path.join(
-    os.tmpdir(),
-    `nemoclaw-ssh-skill-${process.pid}-${Date.now()}.conf`,
-  );
-  fs.writeFileSync(tmpSshConfig, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ssh-skill-");
 
   try {
-    const ctx = { configFile: tmpSshConfig, sandboxName };
+    const ctx = { configFile: tmpSshConfig.file, sandboxName };
 
     // 5. Check if skill already exists (update vs fresh install). This probe is
     //    advisory for install only: stale SSH config files and transient remote
@@ -350,10 +337,6 @@ export async function installSandboxSkill(
       process.exit(1);
     }
   } finally {
-    try {
-      fs.unlinkSync(tmpSshConfig);
-    } catch {
-      /* ignore */
-    }
+    tmpSshConfig.cleanup();
   }
 }

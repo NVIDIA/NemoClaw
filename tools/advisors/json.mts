@@ -1,11 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export function extractJson(text: string, rawPath: string, tag: string, label = "advisor output"): unknown {
+export function extractJson(
+  text: string,
+  rawPath: string,
+  tag: string,
+  label = "advisor output",
+): unknown {
   const trimmed = text.trim();
-  const candidates = [trimmed, fenced(trimmed), tagged(trimmed, tag), balancedObject(trimmed)].filter(
-    (candidate): candidate is string => Boolean(candidate),
-  );
+  const candidates = [
+    trimmed,
+    fenced(trimmed),
+    tagged(trimmed, tag),
+    balancedObject(trimmed),
+  ].filter((candidate): candidate is string => Boolean(candidate));
 
   for (const candidate of candidates) {
     try {
@@ -17,7 +25,11 @@ export function extractJson(text: string, rawPath: string, tag: string, label = 
   throw new Error(`Could not parse JSON from ${label}; see ${rawPath}`);
 }
 
-export function enumValue<T extends readonly string[]>(value: unknown, allowed: T, fallback: T[number]): T[number] {
+export function enumValue<T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  fallback: T[number],
+): T[number] {
   return typeof value === "string" && allowed.includes(value) ? value : fallback;
 }
 
@@ -30,7 +42,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function stringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim()) : [];
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .map((item) => item.trim())
+    : [];
 }
 
 export function stringOrUndefined(value: unknown): string | undefined {

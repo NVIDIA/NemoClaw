@@ -88,9 +88,8 @@ describe("warnIfHostProxyMissesLoopback", () => {
 
   it("warns when HTTP_PROXY is set without NO_PROXY", () => {
     const lines: string[] = [];
-    const fired = warnIfHostProxyMissesLoopback(
-      { http_proxy: "http://127.0.0.1:8118" },
-      (line) => lines.push(line),
+    const fired = warnIfHostProxyMissesLoopback({ http_proxy: "http://127.0.0.1:8118" }, (line) =>
+      lines.push(line),
     );
     expect(fired).toBe(true);
     expect(lines.join("\n")).toContain("HTTP_PROXY/http_proxy is set");
@@ -113,9 +112,8 @@ describe("warnIfHostProxyMissesLoopback", () => {
 
   it("respects uppercase HTTP_PROXY too", () => {
     const lines: string[] = [];
-    const fired = warnIfHostProxyMissesLoopback(
-      { HTTP_PROXY: "http://corp-proxy:3128" },
-      (line) => lines.push(line),
+    const fired = warnIfHostProxyMissesLoopback({ HTTP_PROXY: "http://corp-proxy:3128" }, (line) =>
+      lines.push(line),
     );
     expect(fired).toBe(true);
     expect(lines.join("\n")).toContain("corp-proxy:3128");

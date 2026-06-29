@@ -20,7 +20,7 @@
 // handling.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -28,7 +28,10 @@ import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 
-function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  extraEnv: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-sync-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
@@ -65,7 +68,8 @@ function buildPreamble({
   sessionPolicyPresets?: string[] | null;
   sessionMissing?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+  const j = (p: string) =>
+    JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
   return String.raw`
 const onboard = require(${j("onboard.js")});
 onboard.isNonInteractive = () => true;

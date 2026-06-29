@@ -32,12 +32,16 @@ export function providerNameToOptionKey(
 }
 
 export interface ProviderRecoveryDeps {
-  parseGatewayInference(output: string | null): { provider: string | null; model: string | null } | null;
+  parseGatewayInference(
+    output: string | null,
+  ): { provider: string | null; model: string | null } | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
 }
 
 export interface ProviderRecoveryHelpers {
-  readLiveInference(sandboxName: string | null | undefined): { provider: string | null; model: string | null } | null;
+  readLiveInference(
+    sandboxName: string | null | undefined,
+  ): { provider: string | null; model: string | null } | null;
   readRecordedProvider(sandboxName: string | null | undefined): string | null;
   readRecordedNimContainer(sandboxName: string | null | undefined): string | null;
   readRecordedModel(sandboxName: string | null | undefined): string | null;

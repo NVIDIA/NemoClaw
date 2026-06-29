@@ -19,12 +19,12 @@ Use this guide after you finish the [OpenClaw quickstart](../get-started/quickst
 <AgentOnly variant="hermes">
 Use this guide after you finish [Quickstart with Hermes](../get-started/quickstart).
 </AgentOnly>
-It covers day-two sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
+It covers ongoing sandbox operations such as listing sandboxes, checking health, managing ports, rebuilding safely, upgrading, and uninstalling.
 <AgentOnly variant="openclaw">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw` and `openshell`.
 </AgentOnly>
 <AgentOnly variant="hermes">
-When a workflow uses the lower-level OpenShell CLI, see [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
+When a workflow uses the lower-level OpenShell CLI, refer to [CLI Selection Guide](../reference/cli-selection-guide) for the boundary between `$$nemoclaw`, `nemoclaw`, and `openshell`.
 </AgentOnly>
 
 ## List Sandboxes
@@ -95,7 +95,7 @@ The debug command gathers system information, Docker state, gateway logs, and sa
 
 ## Manage Dashboard Ports
 
-If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart it manually with the port from the install summary.
+If the forward stopped, or the installer reported that no active forward was found and the URL does not load, restart the forward manually with the port from the install summary.
 
 ```bash
 openshell forward start --background <dashboard-port> my-gpt-claw
@@ -109,7 +109,7 @@ openshell forward list
 
 ## Run Multiple Sandboxes
 
-Each sandbox needs its own dashboard port, since `openshell forward` refuses to bind a port that another sandbox is already using.
+Each sandbox needs its own dashboard port because `openshell forward` refuses to bind a port that another sandbox already uses.
 <AgentOnly variant="openclaw">
 When the default port is already held by another sandbox, `$$nemoclaw onboard` scans ports `18789` through `18799` and uses the next free port.
 </AgentOnly>
@@ -182,7 +182,7 @@ $$nemoclaw credentials reset <PROVIDER>    # clear a single provider, for exampl
 $$nemoclaw onboard                         # re-run to re-enter the cleared provider
 ```
 
-The command reference documents [`$$nemoclaw credentials reset <PROVIDER>`](../reference/commands#$$nemoclaw-credentials-reset-provider) in full.
+Refer to [`$$nemoclaw credentials reset <PROVIDER>`](../reference/commands#$$nemoclaw-credentials-reset-provider) for full command details.
 
 ### Rebuild a Sandbox While Preserving Workspace State
 
@@ -197,13 +197,13 @@ If you changed the underlying Dockerfile, upgraded Hermes, or want to pick up a 
 $$nemoclaw <sandbox-name> rebuild
 ```
 
-Rebuild preserves the mounted workspace and registered policies while recreating the container.
+The rebuild command preserves the mounted workspace and registered policies while recreating the container.
 If NemoClaw cannot archive any requested state path, it reports the backup failure and stops before deleting the original sandbox.
 Refer to [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for flag details.
 
 ### Add a Network Preset After Onboarding
 
-Apply an additional preset, such as Telegram or GitHub, to a running sandbox without re-onboarding:
+Apply an additional preset, such as Telegram or GitHub, to a running sandbox without running onboarding again:
 
 ```bash
 $$nemoclaw <sandbox-name> policy-add
@@ -213,7 +213,7 @@ Refer to [`$$nemoclaw <name> policy-add`](../reference/commands#$$nemoclaw-name-
 
 Non-interactive re-onboards in the default `suggested` policy mode preserve presets added this way.
 To make a re-onboard authoritative, set `NEMOCLAW_POLICY_MODE=custom` and provide `NEMOCLAW_POLICY_PRESETS` with the exact list to apply; onboarding removes anything else.
-See [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for the full table.
+Refer to [`NEMOCLAW_POLICY_MODE`](../reference/commands#$$nemoclaw-onboard) for the full table.
 
 ## Update to the Maintained Version
 
@@ -222,7 +222,7 @@ The standard installer follows the admin-promoted `lkg` release tag by default.
 If you need a specific release, set `NEMOCLAW_INSTALL_TAG` on the `bash` side of the install pipeline.
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.56 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=v0.0.63 bash
 $$nemoclaw upgrade-sandboxes --check
 ```
 
@@ -236,9 +236,11 @@ $$nemoclaw upgrade-sandboxes --check
 ```
 
 Each rebuild destroys the old container and creates a new one, while preserving the manifest-defined workspace or agent state that NemoClaw knows how to snapshot.
+`upgrade-sandboxes --check` can report a sandbox as stale because the running agent version is behind, because the managed NemoClaw image fingerprint differs from the current CLI, or both.
+Custom-image sandboxes created with `--from <Dockerfile>` are not marked stale solely by image fingerprint, so an upgrade check does not accidentally replace them with the default image.
 Runtime changes outside those state paths, such as packages installed manually in the running container, are not preserved.
-For the full state-preservation contract, snapshot restore behavior, and manual backup workflow, refer to [Backup and Restore](backup-restore).
-For command flags, refer to [`$$nemoclaw update`](../reference/commands#$$nemoclaw-update), [`$$nemoclaw upgrade-sandboxes`](../reference/commands#$$nemoclaw-upgrade-sandboxes), and [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild).
+Refer to [Backup and Restore](backup-restore) for the full state-preservation contract, snapshot restore behavior, and manual backup workflow.
+Refer to [`$$nemoclaw update`](../reference/commands#$$nemoclaw-update), [`$$nemoclaw upgrade-sandboxes`](../reference/commands#$$nemoclaw-upgrade-sandboxes), and [`$$nemoclaw <name> rebuild`](../reference/commands#$$nemoclaw-name-rebuild) for command flags.
 
 ## Uninstall
 
@@ -255,11 +257,11 @@ $$nemoclaw uninstall
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 <Note>
-The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that snapshot and `backup-all` commands write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots written by snapshot and `backup-all` commands), `~/.nemoclaw/backups/` (workspace backups written by `scripts/backup-workspace.sh`), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
 For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
-See the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
+Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
 
 The CLI uninstall command runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
@@ -276,7 +278,7 @@ The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above a
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
 ```
 
-For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, refer to [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#$$nemoclaw-uninstall-vs-the-hosted-uninstallsh).
+Refer to [`$$nemoclaw uninstall` vs. the hosted `uninstall.sh`](../reference/commands#$$nemoclaw-uninstall-vs-the-hosted-uninstallsh) for a full comparison of what the two forms fetch, what they trust, and when to prefer each.
 
 ## Related Topics
 

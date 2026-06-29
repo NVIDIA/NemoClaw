@@ -12,7 +12,7 @@
 # Covers:
 #   TC-INF-02: OpenAI provider end-to-end inference (requires OPENAI_API_KEY)
 #   TC-INF-03: Anthropic provider end-to-end inference (requires ANTHROPIC_API_KEY)
-#   TC-INF-05: Credential isolation inside sandbox (requires NVIDIA_API_KEY)
+#   TC-INF-05: Credential isolation inside sandbox (requires NVIDIA_INFERENCE_API_KEY)
 #   TC-INF-06: Invalid API key → classified "credential" error (PR-safe)
 #   TC-INF-07: Unreachable endpoint → classified "transport" error (PR-safe)
 #   TC-INF-09: Custom OpenAI-compatible endpoint (requires NEMOCLAW_ENDPOINT_URL + COMPATIBLE_API_KEY)
@@ -103,7 +103,7 @@ install_nemoclaw() {
   # Use a dummy key so install.sh doesn't prompt — the key will fail
   # validation, but install.sh only needs it for the onboard step which
   # we control separately in each test case.
-  NVIDIA_API_KEY="nvapi-DUMMY-FOR-INSTALL" \
+  NVIDIA_INFERENCE_API_KEY="nvapi-DUMMY-FOR-INSTALL" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
@@ -187,9 +187,9 @@ test_inf_05_credential_isolation() {
   log "=== TC-INF-05: Credential Isolation ==="
 
   # Determine the real API key to search for
-  local real_key="${NVIDIA_API_KEY:-}"
+  local real_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$real_key" ]]; then
-    skip "TC-INF-05" "NVIDIA_API_KEY not set — cannot test credential isolation"
+    skip "TC-INF-05" "NVIDIA_INFERENCE_API_KEY not set — cannot test credential isolation"
     return
   fi
 
@@ -279,13 +279,13 @@ try {
 
   # TC-INF-05d: Placeholder token IS present in environment
   local placeholder
-  placeholder=$(sandbox_exec "printenv NVIDIA_API_KEY 2>/dev/null || true") || true
+  placeholder=$(sandbox_exec "printenv NVIDIA_INFERENCE_API_KEY 2>/dev/null || true") || true
   if [[ -n "$placeholder" && "$placeholder" != "$real_key" ]]; then
     pass "TC-INF-05d: Placeholder token present in sandbox (not the real key)"
   elif [[ "$placeholder" == "$real_key" ]]; then
     fail "TC-INF-05d: Placeholder" "Sandbox has the REAL key, not a placeholder"
   else
-    skip "TC-INF-05d: Placeholder" "NVIDIA_API_KEY not set in sandbox (placeholder injection may not be active)"
+    skip "TC-INF-05d: Placeholder" "NVIDIA_INFERENCE_API_KEY not set in sandbox (placeholder injection may not be active)"
   fi
 }
 
@@ -297,8 +297,9 @@ test_inf_06_invalid_api_key() {
 
   rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
 
+  local invalid_api_key="nvapi-INTENTIONALLY-INVALID-KEY-FOR-E2E-TEST" # gitleaks:allow
   local output exit_code=0
-  output=$(NVIDIA_API_KEY="nvapi-INTENTIONALLY-INVALID-KEY-FOR-E2E-TEST" \
+  output=$(NVIDIA_INFERENCE_API_KEY="$invalid_api_key" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="e2e-invalid-key" \
@@ -362,7 +363,7 @@ test_inf_07_unreachable_endpoint() {
 
   # Use an RFC 2606 invalid domain — deterministic DNS failure across runners
   local output exit_code=0
-  output=$(NVIDIA_API_KEY="nvapi-valid-format-but-fake-key-1234567890" \
+  output=$(NVIDIA_INFERENCE_API_KEY="nvapi-valid-format-but-fake-key-1234567890" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="e2e-unreachable" \

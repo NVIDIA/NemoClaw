@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSandboxContainerOwner } from "../dist/lib/actions/sandbox/sandbox-container-owner.js";
+import { resolveSandboxContainerOwner } from "../src/lib/actions/sandbox/sandbox-container-owner.js";
 
 describe("resolveSandboxContainerOwner", () => {
   it("returns null when no candidate matches the sandbox prefix", () => {
@@ -58,11 +58,7 @@ describe("resolveSandboxContainerOwner", () => {
 
   it("includes the queried sandbox in the known-owner set even when listSandboxNames omits it", () => {
     expect(
-      resolveSandboxContainerOwner(
-        "openshell-my-assistant-7616dcb1",
-        "my-assistant",
-        [],
-      ),
+      resolveSandboxContainerOwner("openshell-my-assistant-7616dcb1", "my-assistant", []),
     ).toBe("openshell-my-assistant-7616dcb1");
   });
 
@@ -77,12 +73,8 @@ describe("resolveSandboxContainerOwner", () => {
   });
 
   it("matches an exact-name container even when listSandboxNames is empty", () => {
-    expect(
-      resolveSandboxContainerOwner(
-        "openshell-my-assistant",
-        "my-assistant",
-        [],
-      ),
-    ).toBe("openshell-my-assistant");
+    expect(resolveSandboxContainerOwner("openshell-my-assistant", "my-assistant", [])).toBe(
+      "openshell-my-assistant",
+    );
   });
 });

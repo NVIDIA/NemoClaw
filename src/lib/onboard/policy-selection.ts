@@ -111,10 +111,7 @@ export function mergeRequiredSetupPolicyPresets(
     env?: NodeJS.ProcessEnv;
   } = {},
 ): string[] {
-  const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(
-    policyPresets,
-    options.agent,
-  );
+  const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(policyPresets, options.agent);
   const mergedPresets = mergeRequiredOpenclawOtelPolicyPresets(
     mergeRequiredMessagingChannelPolicyPresets(
       mergeRequiredHermesToolGatewayPolicyPresets(
@@ -141,11 +138,7 @@ export function isStaleBuiltinBravePolicyPreset(
     customPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): boolean {
-  return (
-    name === "brave" &&
-    !options.webSearchConfig &&
-    !options.customPresetNames?.has(name)
-  );
+  return name === "brave" && !options.webSearchConfig && !options.customPresetNames?.has(name);
 }
 
 export function computeSetupPresetSuggestions(
@@ -458,7 +451,9 @@ async function setupPoliciesWithSelectionInner(
         preserved.push(name);
       }
       if (preserved.length > 0) {
-        deps.note(`  [non-interactive] Preserving previously-applied presets: ${preserved.join(", ")}`);
+        deps.note(
+          `  [non-interactive] Preserving previously-applied presets: ${preserved.join(", ")}`,
+        );
       }
     }
 
@@ -477,7 +472,11 @@ async function setupPoliciesWithSelectionInner(
     ...appliedForPreservation.filter((name) => knownNames.has(name)),
     ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
   ];
-  const resolvedPresets = await deps.selectTierPresetsAndAccess(tierName, allPresets, extraSelected);
+  const resolvedPresets = await deps.selectTierPresetsAndAccess(
+    tierName,
+    allPresets,
+    extraSelected,
+  );
   const interactiveChoice = pruneDisabledPresets(
     mergeRequiredSetupPolicyPresets(
       resolvedPresets.map((preset) => preset.name),

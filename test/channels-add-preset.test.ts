@@ -7,15 +7,20 @@
 // the bridge has egress to its upstream API after the new sandbox boots.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const j = (p: string) =>
+  JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
 
-function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): SpawnSyncReturns<string> {
+function runScript(
+  scriptBody: string,
+  extraEnv: Record<string, string> = {},
+): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-3437-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
@@ -38,6 +43,16 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
   });
   fs.rmSync(tmpDir, { recursive: true, force: true });
   return result;
+}
+
+function parseResultPayload<T extends Record<string, any> = Record<string, any>>(
+  result: SpawnSyncReturns<string>,
+): T {
+  const marker = result.stdout.lastIndexOf("__RESULT__");
+  assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+  const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim()) as T;
+  assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+  return payload;
 }
 
 // Build a preamble that:
@@ -74,7 +89,6 @@ function buildPreamble({
   presetMissingNetworkPolicies?: boolean;
   presetMalformedYaml?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -138,12 +152,20 @@ workflowPlanner.MessagingWorkflowPlanner.prototype.buildPlan = async function(co
 
 const registry = require(${j("state/registry.js")});
 const registryUpdates = [];
-registry.getSandbox = () => ({
-  name: "test-sb",
-  agent: ${JSON.stringify(sandboxAgent)},
-  messagingChannels: [],
-  disabledChannels: [],
-});
+function makeMessagingPlan(sandboxName, channelIds = [], disabledChannels = []) {
+  const disabled = new Set(disabledChannels);
+  return { schemaVersion: 1, sandboxName, agent: ${JSON.stringify(sandboxAgent)}, workflow: "onboard", channels: channelIds.map((channelId) => ({ channelId, displayName: channelId, authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste", active: !disabled.has(channelId), selected: true, configured: true, disabled: disabled.has(channelId), inputs: [], hooks: [] })), disabledChannels, credentialBindings: [], networkPolicy: { presets: [], entries: [] }, agentRender: [], buildSteps: [], stateUpdates: [], healthChecks: [] };
+}
+function makeRegistryEntry(channelIds = [], disabledChannels = []) {
+  return {
+    name: "test-sb",
+    agent: ${JSON.stringify(sandboxAgent)},
+    ...(channelIds.length > 0
+      ? { messaging: { schemaVersion: 1, plan: makeMessagingPlan("test-sb", channelIds, disabledChannels) } }
+      : {}),
+  };
+}
+registry.getSandbox = () => makeRegistryEntry();
 registry.updateSandbox = (name, updates) => {
   registryUpdates.push({ name, updates });
   return true;
@@ -199,11 +221,11 @@ httpProbe.runCurlProbe = (argv) => {
 const onboardSession = require(${j("state/onboard-session.js")});
 const sessionUpdates = [];
 const sessionLoadConfig = ${JSON.stringify({
-      sessionSandboxName,
-      sessionPolicyPresets,
-      sessionLoadThrows,
-      sessionMissing,
-    })};
+    sessionSandboxName,
+    sessionPolicyPresets,
+    sessionLoadThrows,
+    sessionMissing,
+  })};
 const sessionUpdateThrows = ${JSON.stringify(sessionUpdateThrows)};
 let sessionState = sessionLoadConfig.sessionMissing
   ? null
@@ -259,7 +281,7 @@ module.exports = {
 `;
 }
 
-describe("channels add applies matching policy preset (issue #3437)", () => {
+describe("channels add applies a matching policy preset (#3437)", () => {
   it("plans channel enrollment through the messaging manifest workflow", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
@@ -276,10 +298,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.buildPlanCalls, [
       {
@@ -289,7 +308,7 @@ const ctx = module.exports;
         isInteractive: false,
         configuredChannels: ["slack"],
         disabledChannels: [],
-        supportedChannelIds: ["telegram", "discord", "wechat", "slack", "whatsapp"],
+        supportedChannelIds: ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"],
       },
     ]);
   });
@@ -312,10 +331,7 @@ const ctx = module.exports;
 `;
       const result = runScript(script);
       assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-      const marker = result.stdout.lastIndexOf("__RESULT__");
-      assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-      const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-      assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+      const payload = parseResultPayload(result);
 
       // Contract 1: applyPreset is called exactly once with the channel's name.
       assert.deepEqual(
@@ -329,8 +345,14 @@ const ctx = module.exports;
       // Step 5.5 of rebuild.ts has nothing to restore.
       const applyIdx = payload.callOrder.indexOf(`applyPreset:${channel}`);
       const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
-      assert.ok(applyIdx >= 0, `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`);
-      assert.ok(rebuildIdx >= 0, `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`);
+      assert.ok(
+        applyIdx >= 0,
+        `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`,
+      );
+      assert.ok(
+        rebuildIdx >= 0,
+        `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`,
+      );
       assert.ok(
         applyIdx < rebuildIdx,
         `applyPreset must run before promptAndRebuild; got order: ${JSON.stringify(payload.callOrder)}`,
@@ -364,19 +386,13 @@ const ctx = module.exports;
       WHATSAPP_SESSION_SECRET: "must-not-be-used",
     });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
-    assert.deepEqual(payload.registryUpdates[0], {
-      name: "test-sb",
-      updates: { messagingChannels: ["whatsapp"], disabledChannels: [] },
-    });
     const messagingStateUpdate = payload.registryUpdates.find(
-      (entry: { updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } } }) =>
-        entry.updates?.messaging?.plan,
+      (entry: {
+        updates?: { messaging?: { plan?: { channels?: Array<{ channelId?: string }> } } };
+      }) => entry.updates?.messaging?.plan,
     );
     assert.ok(
       messagingStateUpdate,
@@ -390,9 +406,11 @@ const ctx = module.exports;
     );
     assert.equal(messagingStateUpdate.updates.messaging.plan.agent, "hermes");
     assert.deepEqual(messagingStateUpdate.updates.messaging.plan.credentialBindings, []);
+    assert.equal(messagingStateUpdate.updates.messagingChannels, undefined);
+    assert.equal(messagingStateUpdate.updates.disabledChannels, undefined);
     assert.deepEqual(
       payload.registryUpdates.map((entry: { name: string }) => entry.name),
-      ["test-sb", "test-sb"],
+      ["test-sb"],
     );
     assert.deepEqual(
       payload.appliedCalls,
@@ -401,8 +419,14 @@ const ctx = module.exports;
     );
     const applyIdx = payload.callOrder.indexOf("applyPreset:whatsapp");
     const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
-    assert.ok(applyIdx >= 0, `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`);
-    assert.ok(rebuildIdx >= 0, `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`);
+    assert.ok(
+      applyIdx >= 0,
+      `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`,
+    );
+    assert.ok(
+      rebuildIdx >= 0,
+      `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`,
+    );
     assert.ok(
       applyIdx < rebuildIdx,
       `applyPreset must run before promptAndRebuild; got order: ${JSON.stringify(payload.callOrder)}`,
@@ -444,10 +468,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
@@ -498,10 +519,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
@@ -517,14 +535,16 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing preset YAML must not register telegram in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing preset YAML must not register telegram in the messaging plan; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `missing preset YAML must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes(`Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram`),
+      result.stderr.includes(
+        `Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram`,
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -562,9 +582,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -581,7 +599,9 @@ process.exit = (code) => {
       `expected diagnostic about unparseable network_policies section; got:\n${result.stderr}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -618,9 +638,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -636,7 +654,9 @@ process.exit = (code) => {
       `expected parse-failure diagnostic; got:\n${result.stderr}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -661,9 +681,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.appliedCalls, []);
     assert.deepEqual(payload.providerCalls, []);
@@ -711,9 +729,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -725,7 +741,9 @@ process.exit = (code) => {
       `dry-run preset failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -761,9 +779,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, []);
@@ -771,19 +787,21 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing whatsapp.yaml must not flip messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing whatsapp.yaml must not write messaging plan state; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `missing whatsapp preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add whatsapp"),
+      result.stderr.includes(
+        "Restore the preset YAML and re-run: nemoclaw test-sb channels add whatsapp",
+      ),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
 
-  it("rolls back providers, registry, and credentials when applyPreset fails after a successful loadPreset", () => {
+  it("rolls back providers and credentials without writing plan state when applyPreset fails", () => {
     const script = `${buildPreamble({ applyPresetResult: false })}
 const ctx = module.exports;
 const exitCodes = [];
@@ -817,10 +835,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
@@ -828,12 +843,11 @@ process.exit = (code) => {
       [{ sandboxName: "test-sb", presetName: "telegram" }],
       `expected one failed applyPreset call; got ${JSON.stringify(payload.appliedCalls)}`,
     );
-    assert.ok(
-      payload.registryUpdates.length === 2,
-      `expected one add update and one rollback update; got ${JSON.stringify(payload.registryUpdates)}`,
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `failed preset apply must not write messaging plan state; got ${JSON.stringify(payload.registryUpdates)}`,
     );
-    assert.deepEqual(payload.registryUpdates[0].updates.messagingChannels, ["telegram"]);
-    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
     assert.deepEqual(
       payload.deletedCredentialKeys,
       ["TELEGRAM_BOT_TOKEN"],
@@ -850,7 +864,7 @@ process.exit = (code) => {
     );
   });
 
-  it("completes rollback registry update and reports residual gateway state when openshell detach fails", () => {
+  it("leaves plan state untouched and reports residual gateway state when detach fails", () => {
     const script = `${buildPreamble({ applyPresetResult: false })}
 openshellRuntime.runOpenshell = (args) => {
   if (Array.isArray(args) && args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
@@ -896,17 +910,15 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
-    assert.ok(
-      payload.registryUpdates.length === 2,
-      `expected registry add + rollback even when openshell detach fails; got ${JSON.stringify(payload.registryUpdates)}`,
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `failed preset apply must leave plan-backed registry state untouched; got ${JSON.stringify(payload.registryUpdates)}`,
     );
-    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
     assert.deepEqual(
       payload.deletedCredentialKeys,
       ["TELEGRAM_BOT_TOKEN"],
@@ -926,13 +938,12 @@ process.exit = (code) => {
     );
   });
 
-  it("restores prior channel config when re-add applyPreset fails on an already-enabled channel", () => {
+  it("restores prior channel credentials when re-add applyPreset fails on an already-enabled channel", () => {
     const script = `${buildPreamble({ applyPresetResult: false })}
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
-  messagingChannels: ["telegram"],
-  disabledChannels: [],
+  messaging: { schemaVersion: 1, plan: makeMessagingPlan("test-sb", ["telegram"]) },
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 const ctx = module.exports;
@@ -966,17 +977,14 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
-    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
     assert.deepEqual(
-      lastRegistry.updates.messagingChannels,
-      ["telegram"],
-      `re-add failure must keep prior 'telegram' in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      payload.registryUpdates,
+      [],
+      `re-add failure must leave prior plan-backed registry state untouched; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
@@ -997,13 +1005,12 @@ process.exit = (code) => {
     );
   });
 
-  it("restores prior registry state even when re-upsert during re-add rollback throws", () => {
+  it("leaves prior plan state untouched even when re-upsert during re-add rollback throws", () => {
     const script = `${buildPreamble({ applyPresetResult: false })}
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: "openclaw",
-  messagingChannels: ["telegram"],
-  disabledChannels: [],
+  messaging: { schemaVersion: 1, plan: makeMessagingPlan("test-sb", ["telegram"]) },
 });
 credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
 let upsertCalls = 0;
@@ -1041,16 +1048,13 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
-    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
     assert.deepEqual(
-      lastRegistry.updates.messagingChannels,
-      ["telegram"],
-      `registry restoration must precede gateway re-upsert so an upsert failure cannot orphan the channel; got ${JSON.stringify(payload.registryUpdates)}`,
+      payload.registryUpdates,
+      [],
+      `re-add gateway restore failure must leave prior plan-backed registry state untouched; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
@@ -1085,10 +1089,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.equal(payload.slackProbeCalls.length, 2, "expected bot and app Slack probes");
     assert.ok(
@@ -1151,10 +1152,7 @@ global.__slackBotProbe = {
 `;
     const result = runScript(script, { NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.slackProbeCalls, []);
     assert.deepEqual(
@@ -1216,10 +1214,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.credentialSaveCalls, []);
@@ -1276,10 +1271,7 @@ process.exit = (code) => {
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(payload.credentialSaveCalls, []);
@@ -1332,9 +1324,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Exactly one update — the helper short-circuits when the desired
     // membership already holds, so duplicate writes would be a bug.
@@ -1380,9 +1370,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // applyPreset still runs against the registry — the preset is the
     // channel's egress contract and lives in registry, not session.
@@ -1415,9 +1403,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Registry mutation still happens; only the session-sync side-effect
     // is skipped (there is no intent record to keep aligned).
@@ -1447,9 +1433,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     // Even though session.updateSession threw, the channel add flow
     // still completed: preset applied to registry, rebuild prompted.
@@ -1481,9 +1465,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.equal(
@@ -1518,9 +1500,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.deepEqual(
@@ -1552,9 +1532,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.deepEqual(payload.sessionUpdates, []);
@@ -1583,9 +1561,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script);
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+    const payload = parseResultPayload(result);
 
     assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
     assert.ok(payload.callOrder.includes("promptAndRebuild"));
@@ -1600,9 +1576,8 @@ const ctx = module.exports;
 // startup breadcrumb confirmation or an actionable warning. These tests
 // drive the verifier through stubbed sandbox-exec output so the contract
 // is pinned regardless of OpenClaw/OpenShell runtime availability.
-describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
+describe("channels add verifies bridge startup after rebuild (#4314, #4390)", () => {
   function buildInteractivePreamble(): string {
-    const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
     return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -1614,10 +1589,14 @@ const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
 const execCalls = [];
 processRecovery.executeSandboxExecCommand = (name, command) => {
   execCalls.push({ name, command });
-  if (typeof command === "string" && command.startsWith("cat /sandbox/.openclaw/openclaw.json")) {
+  if (typeof command === "string" && command.includes("/sandbox/.openclaw/openclaw.json")) {
     return { status: 0, stdout: JSON.stringify(global.__testConfig || {}), stderr: "" };
   }
-  if (typeof command === "string" && command.indexOf("tail -n 400 /tmp/gateway.log") !== -1) {
+  if (
+    typeof command === "string" &&
+    command.includes("tail -n 400") &&
+    command.includes("/tmp/gateway.log")
+  ) {
     return { status: 0, stdout: global.__testLog || "", stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -1651,8 +1630,6 @@ const registry = require(${j("state/registry.js")});
 registry.getSandbox = () => ({
   name: "test-sb",
   agent: global.__testAgent || "openclaw",
-  messagingChannels: [],
-  disabledChannels: [],
 });
 registry.updateSandbox = () => true;
 
@@ -1702,10 +1679,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    assert.ok(marker >= 0);
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.rebuildCount, 1);
     assert.ok(
       payload.logs.some((line: string) => line.includes("'telegram' bridge startup detected")),
@@ -1726,11 +1700,9 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
-      payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `expected enabled-flag warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1748,9 +1720,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       payload.logs.some((line: string) => line.includes("did not log a startup breadcrumb")),
       `expected missing-breadcrumb warning; got:\n${payload.logs.join("\n")}`,
@@ -1775,16 +1745,16 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       !payload.logs.some((line: string) => line.includes("bridge startup detected")),
       `must not claim startup detected; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
-      payload.logs.some((line: string) =>
-        line.includes("logged credential/startup warnings") || line.includes("did not start within"),
+      payload.logs.some(
+        (line: string) =>
+          line.includes("logged credential/startup warnings") ||
+          line.includes("did not start within"),
       ),
       `expected the no-start breadcrumb to be surfaced; got:\n${payload.logs.join("\n")}`,
     );
@@ -1803,9 +1773,7 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.ok(
       payload.logs.some((line: string) => line.includes("logged credential/startup warnings")),
       `expected credential warning summary; got:\n${payload.logs.join("\n")}`,
@@ -1829,12 +1797,10 @@ const ctx = module.exports;
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
     assert.ok(
-      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `Hermes sandbox should not see OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
@@ -1860,12 +1826,12 @@ global.__testLog = "";
 `;
     const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
-    const marker = result.stdout.lastIndexOf("__RESULT__");
-    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
-    assert.ok(!payload.error, payload.error);
+    const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not probe sandbox exec for QR-only WhatsApp");
     assert.ok(
-      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      !payload.logs.some((line: string) =>
+        line.includes("was not marked enabled in baked openclaw.json"),
+      ),
       `WhatsApp should not trigger OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1873,10 +1839,14 @@ global.__testLog = "";
 
 describe("channel preset source-of-truth", () => {
   it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
-    const { knownChannelNames } = require(path.join(repoRoot, "dist", "lib", "sandbox", "channels.js")) as {
+    const { knownChannelNames } = require(
+      path.join(repoRoot, "src", "lib", "sandbox", "channels.ts"),
+    ) as {
       knownChannelNames: () => string[];
     };
-    const { loadPreset, parsePresetPolicyKeys } = require(path.join(repoRoot, "dist", "lib", "policy", "index.js")) as {
+    const { loadPreset, parsePresetPolicyKeys } = require(
+      path.join(repoRoot, "src", "lib", "policy", "index.ts"),
+    ) as {
       loadPreset: (name: string) => string | null;
       parsePresetPolicyKeys: (content: string | null | undefined) => string[];
     };

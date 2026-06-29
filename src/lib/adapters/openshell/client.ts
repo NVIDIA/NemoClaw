@@ -30,10 +30,13 @@ interface OpenshellSpawnOptions {
 
 export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
+  input?: string;
 }
 
 export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
   includeStderr?: boolean;
+  includeStreams?: boolean;
+  maxBuffer?: number;
 }
 
 export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
@@ -44,6 +47,8 @@ export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
 export interface CaptureOpenshellResult {
   status: number | null;
   output: string;
+  stdout?: string;
+  stderr?: string;
   error?: Error;
   signal?: NodeJS.Signals | null;
 }
@@ -90,12 +95,25 @@ function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
 }
 
+function isIgnoredCaptureError(error: Error, opts: CaptureOpenshellOptions): boolean {
+  if (isIgnoredTimeout(error, opts)) return true;
+  return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ENOBUFS";
+}
+
 function shouldIncludeStderr(opts: CaptureOpenshellOptions): boolean {
   return opts.includeStderr === true || opts.ignoreError !== true;
 }
 
 function captureOutput(result: SpawnSyncReturns<string>, opts: CaptureOpenshellOptions): string {
   return `${result.stdout || ""}${shouldIncludeStderr(opts) ? result.stderr || "" : ""}`.trim();
+}
+
+function maybeCapturedStreams(
+  stdout: string,
+  stderr: string,
+  opts: CaptureOpenshellOptions,
+): Pick<CaptureOpenshellResult, "stdout" | "stderr"> {
+  return opts.includeStreams === true ? { stdout, stderr } : {};
 }
 
 function timeoutError(binary: string, args: string[], timeout: number): NodeJS.ErrnoException {
@@ -134,6 +152,7 @@ export function runOpenshellCommand(
     env: { ...process.env, ...opts.env },
     encoding: "utf-8",
     stdio: opts.stdio ?? "inherit",
+    input: opts.input,
     timeout: opts.timeout,
   });
   if (result.error) {
@@ -143,9 +162,7 @@ export function runOpenshellCommand(
     return handleSpawnError(binary, args, result.error, opts);
   }
   if (result.status !== 0 && !opts.ignoreError) {
-    (opts.errorLine ?? console.error)(
-      `  OpenShell command failed (exit ${result.status})`,
-    );
+    (opts.errorLine ?? console.error)(`  OpenShell command failed (exit ${result.status})`);
     return (opts.exit ?? ((code) => process.exit(code)))(result.status || 1);
   }
   return result;
@@ -163,12 +180,14 @@ export function captureOpenshellCommand(
     encoding: "utf-8",
     stdio: ["ignore", "pipe", "pipe"],
     timeout: opts.timeout,
+    maxBuffer: opts.maxBuffer,
   });
   if (result.error) {
-    if (isIgnoredTimeout(result.error, opts)) {
+    if (isIgnoredCaptureError(result.error, opts)) {
       return {
         status: result.status,
         output: captureOutput(result, opts),
+        ...maybeCapturedStreams(result.stdout || "", result.stderr || "", opts),
         error: result.error,
         signal: result.signal,
       };
@@ -178,6 +197,7 @@ export function captureOpenshellCommand(
   return {
     status: result.status ?? 1,
     output: captureOutput(result, opts),
+    ...maybeCapturedStreams(result.stdout || "", result.stderr || "", opts),
   };
 }
 
@@ -233,17 +253,14 @@ export function captureOpenshellCommandAsync(
 
     const buildOutput = () => `${stdout}${shouldIncludeStderr(opts) ? stderr : ""}`.trim();
 
-    const settle = (
-      status: number | null,
-      signal: NodeJS.Signals | null,
-      error?: Error,
-    ) => {
+    const settle = (status: number | null, signal: NodeJS.Signals | null, error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimers();
       resolve({
         status: status ?? (timedOut ? null : 1),
         output: buildOutput(),
+        ...maybeCapturedStreams(stdout, stderr, opts),
         ...(error ? { error } : {}),
         signal,
       });

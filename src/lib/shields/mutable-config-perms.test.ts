@@ -173,13 +173,9 @@ describe("inspectMutableConfigPerms (#4538)", () => {
   });
 
   it("does not apply when the config cannot be stat'd (container down)", () => {
-    const result = inspectMutableConfigPerms(
-      OPENCLAW_TARGET,
-      "mutable_default",
-      () => {
-        throw new Error("container is not running");
-      },
-    );
+    const result = inspectMutableConfigPerms(OPENCLAW_TARGET, "mutable_default", () => {
+      throw new Error("container is not running");
+    });
     expect(result.applies).toBe(false);
     if (!result.applies) expect(result.reason).toContain("could not stat");
   });
@@ -233,23 +229,15 @@ describe("inspectMutableConfigPerms (#4538)", () => {
 describe("repairMutableConfigPerms (#4538)", () => {
   it("applies the mutable contract for OpenClaw and reports verified", () => {
     const apply = vi.fn();
-    const result = repairMutableConfigPerms(
-      OPENCLAW_TARGET,
-      "temporarily_unlocked",
-      apply,
-    );
+    const result = repairMutableConfigPerms(OPENCLAW_TARGET, "temporarily_unlocked", apply);
     expect(apply).toHaveBeenCalledOnce();
     expect(result).toEqual({ applied: true, verified: true, errors: [] });
   });
 
   it("reports unverified (with the error) when the apply step throws", () => {
-    const result = repairMutableConfigPerms(
-      OPENCLAW_TARGET,
-      "mutable_default",
-      () => {
-        throw new Error("Config not unlocked: openclaw.json mode=600");
-      },
-    );
+    const result = repairMutableConfigPerms(OPENCLAW_TARGET, "mutable_default", () => {
+      throw new Error("Config not unlocked: openclaw.json mode=600");
+    });
     expect(result.applied).toBe(true);
     if (result.applied) {
       expect(result.verified).toBe(false);
@@ -281,11 +269,7 @@ describe("repairMutableConfigPerms (#4538)", () => {
 
   it("does not apply to non-OpenClaw agents", () => {
     const apply = vi.fn();
-    const result = repairMutableConfigPerms(
-      HERMES_TARGET,
-      "mutable_default",
-      apply,
-    );
+    const result = repairMutableConfigPerms(HERMES_TARGET, "mutable_default", apply);
     expect(apply).not.toHaveBeenCalled();
     expect(result.applied).toBe(false);
     if (!result.applied) expect(result.skipReason).toBe("agent");

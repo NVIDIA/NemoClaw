@@ -7,14 +7,14 @@
 // tests that actually execute the synthesised script live in
 // runtime-hermes-secret-boundary-behavioural.test.ts.
 
-import { describe, it, expect } from "vitest";
-import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "../../../dist/lib/agent/hermes-recovery-boundary";
+import { describe, expect, it } from "vitest";
+import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "./hermes-recovery-boundary";
+import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
 import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildRecoveryScript,
-} from "../../../dist/lib/agent/runtime";
-import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
+} from "./runtime";
 
 const VALIDATOR_PATH = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
 
@@ -26,10 +26,10 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
   });
 
-  it("invokes the runtime-env validator after sourcing /tmp/nemoclaw-proxy-env.sh", () => {
+  it("invokes the runtime-env validator after sourcing the generated recovery env", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
-    const proxyEnvIdx = script!.indexOf(". /tmp/nemoclaw-proxy-env.sh");
+    const proxyEnvIdx = script!.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     const runtimeGuardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script!.indexOf("nohup");
     expect(proxyEnvIdx).toBeGreaterThanOrEqual(0);
@@ -48,9 +48,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
   it("env-file guard runs before the ALREADY_RUNNING health probe so a poisoned gateway gets stopped", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
-    const guardIdx = script!.indexOf(
-      `python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`,
-    );
+    const guardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const probeIdx = script!.indexOf("ALREADY_RUNNING");
     expect(guardIdx).toBeGreaterThanOrEqual(0);
     expect(probeIdx).toBeGreaterThanOrEqual(0);
@@ -79,25 +77,31 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).not.toContain("SECRET_BOUNDARY_REFUSED");
   });
 
-  it("guards the dashboard-only recovery path with env-file before sourcing and runtime-env after", () => {
+  it("guards the dashboard-only recovery path with env-file before generated sourcing and runtime-env after", () => {
     const script = buildHermesDashboardProcessRecoveryScript({
       publicPort: 9119,
       internalPort: 19119,
       tuiEnabled: false,
     });
-    const envFileIdx = script.indexOf(
-      `python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`,
-    );
-    const proxyEnvIdx = script.indexOf(". /tmp/nemoclaw-proxy-env.sh");
+    const envFileIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
+    const guardRecoveryIdx = script.indexOf("_nemoclaw_validate_recovery_proxy_env");
+    const proxyEnvIdx = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
+    const bashrcIdx = script.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
     const runtimeIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script.indexOf('"$AGENT_BIN" dashboard');
     expect(envFileIdx).toBeGreaterThanOrEqual(0);
+    expect(guardRecoveryIdx).toBeGreaterThanOrEqual(0);
     expect(proxyEnvIdx).toBeGreaterThanOrEqual(0);
+    expect(bashrcIdx).toBeGreaterThanOrEqual(0);
     expect(runtimeIdx).toBeGreaterThanOrEqual(0);
     expect(launchIdx).toBeGreaterThanOrEqual(0);
     expect(envFileIdx).toBeLessThan(proxyEnvIdx);
+    expect(guardRecoveryIdx).toBeLessThan(proxyEnvIdx);
     expect(proxyEnvIdx).toBeLessThan(runtimeIdx);
+    expect(proxyEnvIdx).toBeLessThan(bashrcIdx);
+    expect(bashrcIdx).toBeLessThan(runtimeIdx);
     expect(runtimeIdx).toBeLessThan(launchIdx);
+    expect(script).not.toContain("if [ -r /tmp/nemoclaw-proxy-env.sh ]; then .");
     expect(script).toContain("SECRET_BOUNDARY_REFUSED");
   });
 

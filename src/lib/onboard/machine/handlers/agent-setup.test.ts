@@ -73,7 +73,11 @@ describe("handleAgentSetupState", () => {
     const agent = { name: "hermes", displayName: "Hermes" };
     const session = createSession();
 
-    const result = await handleAgentSetupState({ ...baseOptions(deps, agent), session, resume: true });
+    const result = await handleAgentSetupState({
+      ...baseOptions(deps, agent),
+      session,
+      resume: true,
+    });
 
     expect(calls.handleAgentSetup).toHaveBeenCalledWith(
       "my-assistant",
@@ -112,7 +116,11 @@ describe("handleAgentSetupState", () => {
     expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
-      expect.objectContaining({ sandboxName: "my-assistant", provider: "provider", model: "model" }),
+      expect.objectContaining({
+        sandboxName: "my-assistant",
+        provider: "provider",
+        model: "model",
+      }),
     );
     expect(calls.skipped).toHaveBeenCalledWith("agent_setup");
     expect(result.stateResult).toEqual({

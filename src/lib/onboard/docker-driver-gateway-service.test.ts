@@ -98,13 +98,7 @@ describe("docker-driver-gateway-service", () => {
       ["systemctl", ["--user", "daemon-reload"]],
       [
         "systemctl",
-        [
-          "--user",
-          "show",
-          "openshell-gateway",
-          "--property=FragmentPath",
-          "--property=ExecStart",
-        ],
+        ["--user", "show", "openshell-gateway", "--property=FragmentPath", "--property=ExecStart"],
       ],
       ["systemctl", ["--user", "enable", "openshell-gateway"]],
       ["systemctl", ["--user", "restart", "openshell-gateway"]],
@@ -118,9 +112,7 @@ describe("docker-driver-gateway-service", () => {
       existsSync: () => true,
       platform: "linux",
       spawnSyncImpl: vi.fn((_command: string, args: string[]) =>
-        args.includes("daemon-reload")
-          ? spawnResult(1, "Failed to connect to bus")
-          : spawnResult(),
+        args.includes("daemon-reload") ? spawnResult(1, "Failed to connect to bus") : spawnResult(),
       ),
     });
 
@@ -232,7 +224,10 @@ describe("docker-driver-gateway-service", () => {
         return spawnResult(
           0,
           "",
-          trustedShowOutput("/lib/systemd/user/openshell-gateway.service", "/tmp/openshell-gateway"),
+          trustedShowOutput(
+            "/lib/systemd/user/openshell-gateway.service",
+            "/tmp/openshell-gateway",
+          ),
         );
       }
       return spawnResult();

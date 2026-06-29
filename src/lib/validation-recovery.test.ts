@@ -10,18 +10,18 @@ describe("validation-recovery helpers", () => {
     expect(getTransportRecoveryMessage({ curlStatus: 2, message: "curl --manual" })).toContain(
       "local curl invocation error",
     );
-    expect(getTransportRecoveryMessage({ curlStatus: 28, message: "operation timed out" })).toContain(
-      "timed out",
-    );
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 28, message: "operation timed out" }),
+    ).toContain("timed out");
   });
 
   it("returns targeted transport guidance for DNS and TLS failures", () => {
-    expect(getTransportRecoveryMessage({ curlStatus: 6, message: "Could not resolve host" })).toContain(
-      "could not resolve",
-    );
-    expect(getTransportRecoveryMessage({ curlStatus: 60, message: "SSL certificate problem" })).toContain(
-      "TLS/certificate",
-    );
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 6, message: "Could not resolve host" }),
+    ).toContain("could not resolve");
+    expect(
+      getTransportRecoveryMessage({ curlStatus: 60, message: "SSL certificate problem" }),
+    ).toContain("TLS/certificate");
   });
 
   it("prefers credential failures over endpoint and model issues", () => {

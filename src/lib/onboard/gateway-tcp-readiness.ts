@@ -87,10 +87,8 @@ export function isGatewayTcpReady(
   timeoutMs: number = ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS,
   host = getGatewayConnectHost(),
 ): Promise<boolean> {
-  return withTraceSpan(
-    "nemoclaw.gateway.tcp_probe",
-    { host, port, timeout_ms: timeoutMs },
-    () => isGatewayTcpReadyImpl(port, timeoutMs, host),
+  return withTraceSpan("nemoclaw.gateway.tcp_probe", { host, port, timeout_ms: timeoutMs }, () =>
+    isGatewayTcpReadyImpl(port, timeoutMs, host),
   );
 }
 

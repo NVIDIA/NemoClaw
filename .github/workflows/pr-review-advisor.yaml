@@ -50,10 +50,30 @@ concurrency:
 
 jobs:
   review:
-    name: PR review advisor
+    name: PR review advisor (${{ matrix.advisor.label }})
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        advisor:
+          - id: gpt-5.5
+            label: GPT-5.5
+            model: openai/openai/gpt-5.5
+            artifact_dir: pr-review-advisor
+            artifact_name: pr-review-advisor
+            comment_marker: "<!-- nemoclaw-pr-review-advisor -->"
+            comment_title: PR Review Advisor
+            comment_label: PR review advisor
+          - id: nemotron-ultra
+            label: Nemotron 3 Ultra
+            model: nvidia/nvidia/nemotron-3-ultra
+            artifact_dir: pr-review-advisor-nemotron-ultra
+            artifact_name: pr-review-advisor-nemotron-ultra
+            comment_marker: "<!-- nemoclaw-pr-review-advisor-nemotron-ultra -->"
+            comment_title: PR Review Advisor (Nemotron Ultra)
+            comment_label: PR review advisor (Nemotron Ultra)
     env:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # normal dependency review so a compromised upstream release cannot run
@@ -69,6 +89,12 @@ jobs:
       PR_REVIEW_ADVISOR_WAIT_POLL_MS: "30000"
       PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS: "E2E recommendation"
       PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS: "checks,commit-lint,dco-check,check-hash,changes"
+      PR_REVIEW_ADVISOR_MODEL: ${{ matrix.advisor.model }}
+      PR_REVIEW_ADVISOR_ARTIFACT_DIR: ${{ matrix.advisor.artifact_dir }}
+      PR_REVIEW_ADVISOR_COMMENT_MARKER: ${{ matrix.advisor.comment_marker }}
+      PR_REVIEW_ADVISOR_COMMENT_TITLE: ${{ matrix.advisor.comment_title }}
+      PR_REVIEW_ADVISOR_COMMENT_LABEL: ${{ matrix.advisor.comment_label }}
+      PR_REVIEW_ADVISOR_WORKFLOW_NAME: "PR Review / Advisor"
       # Trusted implementation code is always checked out here. PR content is
       # only read as inert analysis data under ADVISOR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
@@ -140,21 +166,22 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
           PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
           GH_TOKEN: ${{ github.token }}
-          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PR_REVIEW_ADVISOR_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
+          OUT_DIR="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR"
+          export OUT_DIR
           if [ ! -f "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ]; then
             echo "Skipping PR review advisor: trusted main checkout does not yet contain analyze.mts"
-            mkdir -p "$GITHUB_WORKSPACE/artifacts/pr-review-advisor"
+            mkdir -p "$OUT_DIR"
             HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse HEAD)"
             export BASE_REF HEAD_REF HEAD_SHA
             node <<'NODE'
           const fs = require("node:fs");
           const path = require("node:path");
-          const outDir = path.join(process.env.GITHUB_WORKSPACE, "artifacts/pr-review-advisor");
+          const outDir = process.env.OUT_DIR;
+          const title = process.env.PR_REVIEW_ADVISOR_COMMENT_TITLE || "PR Review Advisor";
           const reason = "Trusted main checkout does not yet contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on main.";
-          const gate = { status: "unknown", evidence: reason };
           const result = {
             version: 1,
             baseRef: process.env.BASE_REF || "origin/main",
@@ -171,23 +198,40 @@ jobs:
           };
           fs.writeFileSync(path.join(outDir, "pr-review-advisor-result.json"), `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`);
           fs.writeFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), `${JSON.stringify(result, null, 2)}\n`);
-          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# PR Review Advisor\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`);
+          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# ${title}\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n`);
           NODE
             exit 0
           fi
+          if [ "$PR_REVIEW_ADVISOR_MODEL" != "openai/openai/gpt-5.5" ] && {
+            ! grep -Fq "$PR_REVIEW_ADVISOR_MODEL" "$ADVISOR_DIR/tools/advisors/session.mts" ||
+              ! grep -Fq "PR_REVIEW_ADVISOR_MODEL" "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ||
+              ! grep -Fq "PR_REVIEW_ADVISOR_COMMENT_MARKER" "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts"
+          }; then
+            echo "PR_REVIEW_ADVISOR_SUPPORTED=0" >> "$GITHUB_ENV"
+            echo "Skipping PR review advisor: trusted main checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
+            export PR_REVIEW_ADVISOR_UNAVAILABLE_REASON="Trusted main checkout does not yet support advisor model $PR_REVIEW_ADVISOR_MODEL; this parallel advisor will run after the implementation lands on main."
+            PR_REVIEW_ADVISOR_RUN_ANALYSIS=0 node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
+              --base "$BASE_REF" \
+              --head "$HEAD_REF" \
+              --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
+              --out-dir "$OUT_DIR"
+            exit 0
+          fi
+          echo "PR_REVIEW_ADVISOR_SUPPORTED=1" >> "$GITHUB_ENV"
           node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
             --base "$BASE_REF" \
             --head "$HEAD_REF" \
             --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
-            --out-dir "$GITHUB_WORKSPACE/artifacts/pr-review-advisor"
+            --out-dir "$OUT_DIR"
 
       - name: Publish job summary
         if: always()
         run: |
-          if [ -f "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" ]; then
-            cat "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          SUMMARY_PATH="$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-summary.md"
+          if [ -f "$SUMMARY_PATH" ]; then
+            cat "$SUMMARY_PATH" >> "$GITHUB_STEP_SUMMARY"
           else
-            printf '# PR Review Advisor\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
+            printf '# %s\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' "$PR_REVIEW_ADVISOR_COMMENT_TITLE" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Post PR review advisor comment
@@ -197,12 +241,19 @@ jobs:
           GH_TOKEN: ${{ secrets.PR_REVIEW_ADVISOR_GITHUB_TOKEN || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          if [ "${PR_REVIEW_ADVISOR_SUPPORTED:-1}" = "0" ]; then
+            echo "Skipping PR review advisor comment: trusted main checkout does not yet support $PR_REVIEW_ADVISOR_MODEL"
+            exit 0
+          fi
           if [ -f "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" ]; then
             node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
               --repo "$GITHUB_REPOSITORY" \
               --pr "$PR_NUMBER" \
-              --summary "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" \
-              --result "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-final-result.json"
+              --summary "$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-summary.md" \
+              --result "$GITHUB_WORKSPACE/artifacts/$PR_REVIEW_ADVISOR_ARTIFACT_DIR/pr-review-advisor-final-result.json" \
+              --marker "$PR_REVIEW_ADVISOR_COMMENT_MARKER" \
+              --title "$PR_REVIEW_ADVISOR_COMMENT_TITLE" \
+              --label "$PR_REVIEW_ADVISOR_COMMENT_LABEL"
           else
             echo "Skipping PR review advisor comment: trusted main checkout does not yet contain comment.mts"
           fi
@@ -211,6 +262,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pr-review-advisor
-          path: artifacts/pr-review-advisor/
+          name: ${{ matrix.advisor.artifact_name }}
+          path: artifacts/${{ matrix.advisor.artifact_dir }}/
           if-no-files-found: warn

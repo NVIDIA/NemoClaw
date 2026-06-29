@@ -120,7 +120,12 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
-| `npm test` | Run root-level tests (`test/*.test.js`) |
+| `npm test` | Build package artifacts and run every non-live Vitest project |
+| `npm run test:spec` | Run every non-live test with hierarchical behavior-oriented output |
+| `npm run test:fast` | Clean `dist/` and run source CLI, plugin, and E2E-support tests |
+| `npm run test:integration` | Clean-build the CLI and run root integration and installer tests |
+| `npm run test:package` | Clean-build CLI/plugin artifacts and run compiled-package contracts |
+| `npm run test:live-e2e` | Opt into live E2E scenarios (mutates real external state) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
 | `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
 | `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
@@ -128,37 +133,54 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
+### Test Titles as Behavioral Documentation
+
+Write `describe` and `it` titles so the Vitest tree reads as behavioral documentation. Start test
+titles with behavior or context rather than issue numbers, flags, or scenario labels, and put local
+issue references in a final suffix such as `(#1234)`. Prefer
+`it("reticulates splines correctly (#1234)")` over
+`it("#1234 fixes spline reticulation")`.
+
+Run `npm run test:spec` to render the suite with Vitest's hierarchical tree reporter. Run
+`npm run test:titles:check` to enforce the objective title-shape conventions without attempting to
+lint subjective English grammar.
+
 ### Git hooks (prek)
 
 All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-binary pre-commit hook runner installed as a devDependency (`@j178/prek`). The `npm install` step runs `prek install` automatically via the `prepare` script, which wires up the following hooks from [`.pre-commit-config.yaml`](.pre-commit-config.yaml):
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, docs-to-skills dry-run validation, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, skill frontmatter validation, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
-For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
+For PR preparation, normal commit and push hooks are valid verification when they ran without `--no-verify`.
+If hooks were skipped, missing, failed, or uncertain, use a scoped fallback: `npx prek run --from-ref <base> --to-ref HEAD`.
+Reserve `npx prek run --all-files` for whole-repository baselines, such as hook, formatter, generated-check, or repo-wide validation changes.
 
 For TypeScript changes under `src/`, `test/`, `scripts/`, `bin/`, or
-`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), also run
-`npm run typecheck:cli` before opening a PR. CI runs this unconditionally, and the
-pre-push hook runs it with `tsconfig.cli.json` before pushes.
+`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), the pre-push
+hook runs `npm run typecheck:cli` before the branch is pushed.
+CI runs this unconditionally.
+If the pre-push hook was skipped or unavailable, run `npm run typecheck:cli`
+manually before opening a PR.
 
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
 `make check` remains the primary documented linter entry point.
 
 For doc-only changes, you do not need to run the full test suite by default.
-Run the docs and hook checks instead:
+Commit and push normally so the hooks run, then run the docs build:
 
 ```bash
-npx prek run --all-files
 npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
-Run `npm test` when the change touches code, generated behavior, or anything that affects runtime behavior.
+If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD` before opening the PR.
+For code changes, run targeted tests for the changed behavior.
+Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.
 
 ## Project Structure
 
@@ -187,7 +209,7 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
-During release prep, run that skill first, make any doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run that skill first, make any doc version bumps, then open the docs refresh PR.
 
 To build and preview docs locally:
 
@@ -201,9 +223,9 @@ Use these npm scripts when validating docs for a PR.
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
-### Doc-to-Skills Pipeline
+### Markdown Docs for AI Agents
 
-For user-skill definitions, docs-to-skills validation, release-prep regeneration, and script flags, see [Doc-to-Skills Pipeline](docs/CONTRIBUTING.md#doc-to-skills-pipeline).
+For Markdown docs routing, user-skill guidance, and release-prep documentation workflow, see [Markdown Docs for AI Agents](docs/CONTRIBUTING.md#markdown-docs-for-ai-agents).
 
 ## Pull Requests
 
@@ -214,13 +236,29 @@ For substantial features or behavior changes, start with a GitHub Discussion bef
 
 ### DCO Sign-Off
 
-This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off on every commit. Add the following trailer to each commit message:
+This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off declaration in every pull request description.
+Add the following trailer at the bottom of the PR description:
 
 ```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-Use `git commit -s` to add the sign-off automatically. CI will reject commits that are missing it.
+CI will reject PRs whose descriptions are missing this declaration.
+
+### Verified Commit Signatures
+
+This project also requires every PR commit to appear as `Verified` in GitHub.
+Configure your local Git client or GitHub web editor to create verified signed commits before you open a pull request.
+Maintainers do not repair contributor signature failures.
+
+Use GitHub's official documentation to set this up:
+
+- [About commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+- [Signing commits](https://docs.github.com/en/authentication/managing-commit-signature-verification/signing-commits)
+
+If the PR description is missing the DCO declaration, update the PR description before requesting review.
+If any commit is missing GitHub verification, fix the branch before opening a PR.
+If force-push is not allowed after an unverified commit is published, open a fresh branch and fresh PR with a clean compliant history.
 
 > [!WARNING]
 > Accounts that repeatedly exceed this limit or submit automated bulk PRs may have their PRs closed or their access restricted.
@@ -241,8 +279,11 @@ Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
-3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `npm run docs`.
-4. Open a PR.
+3. Run the relevant checks.
+   Let normal commit and push hooks provide hook verification, run targeted tests for changed behavior, and run `npm run docs` for doc changes.
+   If hooks were skipped or unavailable, run `npx prek run --from-ref main --to-ref HEAD`.
+4. Confirm the PR description includes the DCO declaration and every commit appears as `Verified` in GitHub.
+5. Open a PR.
 
 ### Commit Messages
 

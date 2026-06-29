@@ -38,7 +38,9 @@ describe("Brev nightly workflow contract", () => {
     expect(callerJobs.length).toBeGreaterThan(0);
     for (const [jobName, job] of callerJobs) {
       const unknownInputs = Object.keys(job.with ?? {}).filter((name) => !declaredInputs.has(name));
-      const unknownSecrets = Object.keys(job.secrets ?? {}).filter((name) => !declaredSecrets.has(name));
+      const unknownSecrets = Object.keys(job.secrets ?? {}).filter(
+        (name) => !declaredSecrets.has(name),
+      );
 
       expect(unknownInputs, `${jobName} passes unsupported reusable workflow inputs`).toEqual([]);
       expect(unknownSecrets, `${jobName} passes unsupported reusable workflow secrets`).toEqual([]);
@@ -47,7 +49,9 @@ describe("Brev nightly workflow contract", () => {
 
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
-    const callerInputs = Object.values(nightly.jobs ?? {}).flatMap((job) => Object.keys(job.with ?? {}));
+    const callerInputs = Object.values(nightly.jobs ?? {}).flatMap((job) =>
+      Object.keys(job.with ?? {}),
+    );
 
     expect(dispatchInputs).not.toContain("launchable_id");
     expect(callerInputs).not.toContain("launchable_id");

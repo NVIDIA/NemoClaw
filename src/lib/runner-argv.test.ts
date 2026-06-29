@@ -5,7 +5,7 @@ import { createRequire } from "module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const runner = require("../../dist/lib/runner");
+const runner = require("./runner");
 
 describe("run with argv array", () => {
   it("executes a simple command and returns result", () => {
@@ -36,9 +36,7 @@ describe("run with argv array", () => {
   });
 
   it("rejects NUL bytes before spawning", () => {
-    expect(() => runner.run(["echo", "bad\0arg"], { suppressOutput: true })).toThrow(
-      /NUL bytes/,
-    );
+    expect(() => runner.run(["echo", "bad\0arg"], { suppressOutput: true })).toThrow(/NUL bytes/);
     expect(() => runner.run(["\0echo"], { suppressOutput: true })).toThrow(/NUL bytes/);
   });
 
@@ -54,9 +52,7 @@ describe("run with argv array", () => {
   });
 
   it("rejects string commands", () => {
-    expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(
-      /argv array instead/,
-    );
+    expect(() => runner.run("echo hello", { suppressOutput: true })).toThrow(/argv array instead/);
   });
 
   it("surfaces ENOENT error for missing executables", () => {

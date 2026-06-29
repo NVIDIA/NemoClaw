@@ -1,22 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
-  mkdtempSync,
-  writeFileSync,
-  readFileSync,
-  mkdirSync,
-  symlinkSync,
-  lstatSync,
   chmodSync,
   existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
   renameSync,
   rmSync,
+  symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SANDBOX_INIT = join(import.meta.dirname, "../scripts/lib/sandbox-init.sh");
 
@@ -350,10 +350,13 @@ EOF
         { mode: 0o700 },
       );
 
-      const { stderr } = runWithLib(`verify_config_integrity_if_locked ${JSON.stringify(workDir)}`, {
-        env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        expectFail: true,
-      });
+      const { stderr } = runWithLib(
+        `verify_config_integrity_if_locked ${JSON.stringify(workDir)}`,
+        {
+          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+          expectFail: true,
+        },
+      );
       expect(stderr).toContain("Locked config is missing hash file");
     });
   });
@@ -456,7 +459,7 @@ EOF
     // Stub capsh so it is found on PATH (command -v succeeds) but reports
     // CAP_SETPCAP absent, forcing the fall-through that skips the real drop.
     const capshNoSetpcapStub = [
-      'cat >"$TMP/capsh" <<\'STUB\'',
+      "cat >\"$TMP/capsh\" <<'STUB'",
       "#!/bin/sh",
       '[ "$1" = "--has-p=cap_setpcap" ] && exit 1',
       "exit 0",
@@ -472,7 +475,7 @@ EOF
     // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
     // dangerous caps remain — preserving the zero-regression posture for
     // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns but does NOT refuse to start when CAP_SETPCAP is unavailable (issue #3280)", () => {
+    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
@@ -484,7 +487,9 @@ EOF
         ].join("\n"),
         { env: { NEMOCLAW_CAPS_DROPPED: "", NEMOCLAW_REQUIRE_CAP_DROP: "" } },
       );
-      expect(stdout).toContain("CAP_SETPCAP not available — cannot drop bounding-set caps via capsh");
+      expect(stdout).toContain(
+        "CAP_SETPCAP not available — cannot drop bounding-set caps via capsh",
+      );
       expect(stdout).toContain(`Dangerous caps remain in bounding set: ${QA_DANGEROUS}`);
       expect(stdout).toContain("SANDBOX_CONTINUED_DESPITE_RESIDUAL_CAPS");
       expect(stdout).not.toContain("Refusing to start sandbox");
@@ -522,7 +527,9 @@ EOF
       );
       const combined = `${stdout}\n${stderr}`;
       expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain(`dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`);
+      expect(combined).toContain(
+        `dangerous caps remain in bounding set (CapBnd=${QA_CAPBND}): ${QA_DANGEROUS}`,
+      );
       expect(combined).not.toContain("SHOULD_NOT_REACH");
     });
 
@@ -668,32 +675,59 @@ EOF
   });
 
   describe("harden_resource_limits", () => {
-    // Shim `ulimit` (a bash builtin) by overriding it with a function inside the
-    // sourced body. The function records each invocation so we can assert both
-    // the nproc (#809) and nofile (#4527) caps are applied, soft-before-hard.
-    it("applies nproc and nofile soft+hard limits in order", () => {
+    it("sources the shared init without resolving a PATH-controlled dirname", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "sandbox-init-path-"));
+      const fakeBin = join(workDir, "bin");
+      const marker = join(workDir, "dirname-called");
+      mkdirSync(fakeBin, { recursive: true });
+      writeFileSync(
+        join(fakeBin, "dirname"),
+        ["#!/usr/bin/env bash", `printf called > ${JSON.stringify(marker)}`, "exit 99"].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const { stdout } = runWithLib('printf "INIT_OK\\n"', {
+          env: { PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+        });
+        expect(stdout).toBe("INIT_OK");
+        expect(existsSync(marker)).toBe(false);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+
+    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
+      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
       const { stdout } = runWithLib(
         [
-          // Override the ulimit builtin to record args and succeed.
-          "ulimit() { printf 'ulimit %s\\n' \"$*\"; return 0; }",
-          "harden_resource_limits",
+          `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,
+          "ulimit() {",
+          '  case "$1:$#" in',
+          "    -Su:2 | -Hu:2 | -Sn:2 | -Hn:2) return 0 ;;",
+          "    -Su:1 | -Hu:1 | -Sn:1 | -Hn:1) printf '%s\\n' 999999; return 0 ;;",
+          "  esac",
+          "  return 0",
+          "}",
+          "harden_resource_limits --quiet",
+          "verify_resource_limits",
+          'printf "shadow=%s\\n" "$(type -t ulimit)"',
+          'printf "nproc=%s\\n" "$(builtin ulimit -u)"',
+          'printf "nofile=%s\\n" "$(builtin ulimit -n)"',
         ].join("\n"),
       );
-      const calls = stdout.split("\n").filter((line) => line.startsWith("ulimit "));
-      expect(calls).toEqual([
-        "ulimit -Su 512",
-        "ulimit -Hu 512",
-        "ulimit -Sn 65536",
-        "ulimit -Hn 65536",
-      ]);
+      expect(stdout).toContain("shadow=function");
+      expect(stdout).toContain(`nproc=${nprocLimit}`);
+      const nofile = Number(stdout.match(/nofile=(\d+)/)?.[1] ?? "NaN");
+      expect(nofile).toBeGreaterThan(0);
+      expect(nofile).toBeLessThanOrEqual(65536);
     });
 
     it("is best-effort: exits 0 and warns when ulimit fails", () => {
-      // Shim ulimit to always fail. The function must not abort (best-effort)
-      // and must emit a [SECURITY] warning for each of the four limits.
       const { stdout } = runWithLib(
         [
-          "ulimit() { return 1; }",
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=not-a-limit",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=not-a-limit",
           "harden_resource_limits 2>&1",
           'echo "HARDEN_OK"',
         ].join("\n"),
@@ -703,6 +737,22 @@ EOF
       expect(stdout).toContain("Could not set hard nproc limit");
       expect(stdout).toContain("Could not set soft nofile limit");
       expect(stdout).toContain("Could not set hard nofile limit");
+    });
+
+    it("verifies effective limits and emits diagnostics when a runtime leaves them unbounded", () => {
+      const { stdout } = runWithLib(
+        [
+          "NEMOCLAW_SANDBOX_NPROC_LIMIT=1",
+          "NEMOCLAW_SANDBOX_NOFILE_LIMIT=1",
+          "verify_resource_limits 2>&1 || echo VERIFY_FAILED",
+        ].join("\n"),
+      );
+      expect(stdout).not.toContain("Could not set");
+      expect(stdout).toContain("Effective soft nproc limit is");
+      expect(stdout).toContain("Effective hard nproc limit is");
+      expect(stdout).toContain("Effective soft nofile limit is");
+      expect(stdout).toContain("Effective hard nofile limit is");
+      expect(stdout).toContain("VERIFY_FAILED");
     });
   });
 
@@ -761,11 +811,11 @@ EOF
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
-          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "cat >\"$TMP/setpriv\" <<'STUB'",
           "#!/bin/sh",
           "exit 0",
           "STUB",
-          'cat >"$TMP/capsh" <<\'STUB\'',
+          "cat >\"$TMP/capsh\" <<'STUB'",
           "#!/bin/sh",
           '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
           "exit 1",
@@ -847,29 +897,59 @@ EOF
   });
 
   describe("configure_messaging_channels", () => {
-    it("returns silently when no tokens are set", () => {
+    function messagingPlanEnv(channels: string[]): string {
+      return Buffer.from(
+        JSON.stringify({
+          schemaVersion: 1,
+          channels: channels.map((channelId) => ({
+            channelId,
+            active: true,
+            disabled: false,
+          })),
+        }),
+      ).toString("base64");
+    }
+
+    it("returns silently when no messaging plan is set", () => {
       const { stderr } = runWithLib("configure_messaging_channels", {
-        env: {
-          TELEGRAM_BOT_TOKEN: "",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "",
-        },
+        env: { NEMOCLAW_MESSAGING_PLAN_B64: "" },
       });
       expect(stderr).not.toContain("[channels]");
     });
 
-    it("logs active channels when tokens are present", () => {
+    it("logs active channels from the messaging plan", () => {
       // configure_messaging_channels writes to stderr; redirect to stdout to capture it
       const { stdout } = runWithLib("configure_messaging_channels 2>&1", {
         env: {
-          TELEGRAM_BOT_TOKEN: "fake-token",
-          DISCORD_BOT_TOKEN: "",
-          SLACK_BOT_TOKEN: "fake-slack",
+          NEMOCLAW_MESSAGING_PLAN_B64: messagingPlanEnv(["telegram", "slack"]),
         },
       });
       expect(stdout).toContain("telegram");
       expect(stdout).toContain("slack");
       expect(stdout).not.toContain("discord");
+    });
+
+    it("logs active channels from the baked runtime artifact when env plan is absent", () => {
+      const workDir = mkdtempSync(join(tmpdir(), "nemoclaw-messaging-artifact-log-"));
+      const artifactPath = join(workDir, "messaging-runtime-plan.json");
+      writeFileSync(
+        artifactPath,
+        Buffer.from(messagingPlanEnv(["telegram", "whatsapp"]), "base64").toString("utf-8"),
+      );
+
+      try {
+        const { stdout } = runWithLib("configure_messaging_channels 2>&1", {
+          env: {
+            NEMOCLAW_MESSAGING_PLAN_B64: "",
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+          },
+        });
+        expect(stdout).toContain("telegram");
+        expect(stdout).toContain("whatsapp");
+        expect(stdout).not.toContain("discord");
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -938,6 +1018,5 @@ EOF
         rmSync(workDir, { recursive: true, force: true });
       }
     });
-
   });
 });

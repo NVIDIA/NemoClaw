@@ -86,7 +86,8 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
   const h = hints || {};
   const chatUiUrl = String(h.chatUiUrl || "").trim();
   const rawPort = h.port ?? resolvePort(chatUiUrl, DASHBOARD_PORT);
-  const port = Number.isFinite(rawPort) && rawPort >= 1 && rawPort <= 65535 ? rawPort : DASHBOARD_PORT;
+  const port =
+    Number.isFinite(rawPort) && rawPort >= 1 && rawPort <= 65535 ? rawPort : DASHBOARD_PORT;
   const hasNonLoopbackUrl = chatUiUrl !== "" && !isLoopbackUrl(chatUiUrl);
 
   let accessUrl: string;
@@ -106,9 +107,17 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     h.isWsl || hasNonLoopbackUrl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
   const bindAddress = forwardTarget.includes(":") ? "0.0.0.0" : "127.0.0.1";
   const loopbackOrigin = `http://127.0.0.1:${port}`;
-  const accessOrigin = (() => { try { return new URL(accessUrl).origin; } catch { return null; } })();
-  const corsOrigins = accessOrigin && accessOrigin !== loopbackOrigin
-    ? [loopbackOrigin, accessOrigin] : [loopbackOrigin];
+  const accessOrigin = (() => {
+    try {
+      return new URL(accessUrl).origin;
+    } catch {
+      return null;
+    }
+  })();
+  const corsOrigins =
+    accessOrigin && accessOrigin !== loopbackOrigin
+      ? [loopbackOrigin, accessOrigin]
+      : [loopbackOrigin];
 
   const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false) || remoteBindOptIn;
   const dashboardHealthEndpoint = normalizeEndpointPath(h.dashboardHealthEndpoint, "/health");
@@ -116,7 +125,10 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     Number.isFinite(h.gatewayPort) && h.gatewayPort! >= 1 && h.gatewayPort! <= 65535
       ? Number(h.gatewayPort)
       : port;
-  const gatewayHealthEndpoint = normalizeEndpointPath(h.gatewayHealthEndpoint, dashboardHealthEndpoint);
+  const gatewayHealthEndpoint = normalizeEndpointPath(
+    h.gatewayHealthEndpoint,
+    dashboardHealthEndpoint,
+  );
 
   return {
     accessUrl,

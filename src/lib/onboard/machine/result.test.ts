@@ -57,9 +57,9 @@ describe("onboard state result helpers", () => {
   });
 
   it("type-checks helper options without accepting transition kind overrides", () => {
-    expectTypeOf(advanceTo).parameter(1).toEqualTypeOf<
-      OnboardStateTransitionHelperOptions | undefined
-    >();
+    expectTypeOf(advanceTo)
+      .parameter(1)
+      .toEqualTypeOf<OnboardStateTransitionHelperOptions | undefined>();
 
     advanceTo("preflight", {
       updates: { sandboxName: "my-assistant" },

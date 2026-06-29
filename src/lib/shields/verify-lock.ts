@@ -64,8 +64,7 @@ export function verifyShieldsLockState(
       const [mode, owner] = perms.split(" ");
       if (mode !== EXPECTED_FILE_MODE)
         issues.push(`${f} mode=${mode} (expected ${EXPECTED_FILE_MODE})`);
-      if (owner !== EXPECTED_OWNER)
-        issues.push(`${f} owner=${owner} (expected ${EXPECTED_OWNER})`);
+      if (owner !== EXPECTED_OWNER) issues.push(`${f} owner=${owner} (expected ${EXPECTED_OWNER})`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       issues.push(`${f} stat failed: ${msg}`);
@@ -109,9 +108,7 @@ export function verifyShieldsLockState(
         // Prefix with "content drifted" so callers that filter on that
         // substring (`shieldsUp` re-seal refusal) treat every hash-trust
         // failure as non-launderable.
-        issues.push(
-          `${f} content drifted (no seal recorded; expected SHA-256)`,
-        );
+        issues.push(`${f} content drifted (no seal recorded; expected SHA-256)`);
         continue;
       }
       let raw: string;
@@ -124,15 +121,11 @@ export function verifyShieldsLockState(
       }
       const got = parseSha256Output(raw);
       if (!got) {
-        issues.push(
-          `${f} content drifted (sha256sum output unparsable: ${raw.trim()})`,
-        );
+        issues.push(`${f} content drifted (sha256sum output unparsable: ${raw.trim()})`);
         continue;
       }
       if (got !== want.toLowerCase()) {
-        issues.push(
-          `${f} content drifted (sha256 ${got} != sealed ${want.toLowerCase()})`,
-        );
+        issues.push(`${f} content drifted (sha256 ${got} != sealed ${want.toLowerCase()})`);
       }
     }
   }

@@ -3,38 +3,33 @@
 
 import { describe, expect, it } from "vitest";
 
-const {
-  computeSetupPresetSuggestions,
-  filterSetupPolicyPresets,
-  getSuggestedPolicyPresets,
-} = require("../dist/lib/onboard") as {
-  computeSetupPresetSuggestions: (
-    tierName: string,
-    options: {
+const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPolicyPresets } =
+  require("../src/lib/onboard") as {
+    computeSetupPresetSuggestions: (
+      tierName: string,
+      options: {
+        enabledChannels?: string[] | null;
+        knownPresetNames: string[];
+        provider?: string | null;
+        agent?: string | null;
+        webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
+        webSearchSupported?: boolean | null;
+        hermesToolGateways?: string[] | null;
+        env?: NodeJS.ProcessEnv;
+      },
+    ) => string[];
+    filterSetupPolicyPresets: <T extends { name: string }>(
+      presets: T[],
+      options?: { webSearchSupported?: boolean | null },
+    ) => T[];
+    getSuggestedPolicyPresets: (options?: {
       enabledChannels?: string[] | null;
-      knownPresetNames: string[];
       provider?: string | null;
       agent?: string | null;
-      webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
-      webSearchSupported?: boolean | null;
-      hermesToolGateways?: string[] | null;
       env?: NodeJS.ProcessEnv;
-    },
-  ) => string[];
-  filterSetupPolicyPresets: <T extends { name: string }>(
-    presets: T[],
-    options?: { webSearchSupported?: boolean | null },
-  ) => T[];
-  getSuggestedPolicyPresets: (options?: {
-    enabledChannels?: string[] | null;
-    provider?: string | null;
-    agent?: string | null;
-    env?: NodeJS.ProcessEnv;
-  }) => string[];
-};
-const {
-  filterSetupPolicyPresetsForAgent,
-} = require("../dist/lib/onboard/agent-policy-presets") as {
+    }) => string[];
+  };
+const { filterSetupPolicyPresetsForAgent } = require("../src/lib/onboard/agent-policy-presets") as {
   filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
     presets: T[],
     agent?: string | null,
@@ -86,8 +81,8 @@ describe("onboard policy preset suggestions", () => {
         "pypi",
         "npm",
         "openclaw-pricing",
-        "slack",
         "discord",
+        "slack",
       ]);
       expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
         "pypi",
@@ -114,6 +109,22 @@ describe("onboard policy preset suggestions", () => {
     } finally {
       if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
       else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
+    }
+  });
+
+  it("auto-detects messaging policy presets from secondary channel credentials", () => {
+    const originalSlackBotToken = process.env.SLACK_BOT_TOKEN;
+    const originalSlackAppToken = process.env.SLACK_APP_TOKEN;
+    try {
+      delete process.env.SLACK_BOT_TOKEN;
+      process.env.SLACK_APP_TOKEN = "xapp-secondary";
+
+      expect(getSuggestedPolicyPresets()).toContain("slack");
+    } finally {
+      if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
+      else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+      if (originalSlackAppToken === undefined) delete process.env.SLACK_APP_TOKEN;
+      else process.env.SLACK_APP_TOKEN = originalSlackAppToken;
     }
   });
 

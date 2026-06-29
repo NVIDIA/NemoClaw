@@ -2,32 +2,84 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import type { AgentDefinition } from "../../../lib/agent/defs";
 import { quietFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { GatewayTokenCommandError, runGatewayTokenCommand } from "../../../lib/gateway-token-command";
+import {
+  GatewayTokenCommandError,
+  runGatewayTokenCommand,
+} from "../../../lib/gateway-token-command";
 
 type GatewayTokenRuntimeBridge = {
-  fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
+  /** Agent-appropriate token fetcher, resolved per sandbox. */
+  fetchToken: (sandboxName: string) => string | null;
   getSandboxAgent: (sandboxName: string) => string | null;
+  /** Whether the resolved agent exposes a retrievable auth token. */
+  agentExposesToken: (agentName: string | null) => boolean;
 };
 
 let runtimeBridgeFactory = (): GatewayTokenRuntimeBridge => {
-  const onboard = require("../../../lib/onboard") as Pick<
-    GatewayTokenRuntimeBridge,
-    "fetchGatewayAuthTokenFromSandbox"
+  const onboard = require("../../../lib/onboard") as {
+    fetchGatewayAuthTokenFromSandbox: (sandboxName: string) => string | null;
+  };
+  const agentWebAuth =
+    require("../../../lib/onboard/agent-web-auth-token") as typeof import("../../../lib/onboard/agent-web-auth-token");
+  const openshellResolver =
+    require("../../../lib/adapters/openshell/resolve") as typeof import("../../../lib/adapters/openshell/resolve");
+  const runner = require("../../../lib/runner") as Pick<
+    typeof import("../../../lib/runner"),
+    "runCapture"
   >;
   const registry = require("../../../lib/state/registry") as {
     getSandbox: (name: string) => { agent?: string | null } | null;
   };
+  const { loadAgent } = require("../../../lib/agent/defs") as {
+    loadAgent: (name: string) => AgentDefinition;
+  };
+
+  const getSandboxAgent = (sandboxName: string): string | null => {
+    try {
+      return registry.getSandbox(sandboxName)?.agent ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const runCaptureOpenshell = (args: string[], opts?: Record<string, unknown>): string | null => {
+    const openshell = openshellResolver.resolveOpenshell();
+    if (!openshell) return null;
+    return runner.runCapture([openshell, ...args], opts);
+  };
+
+  // null / "openclaw" → OpenClaw gateway token. Otherwise the agent must
+  // declare web_auth_method: bearer_token (e.g. Hermes' API_SERVER_KEY).
+  const resolveBearerAgent = (agentName: string | null): AgentDefinition | null => {
+    if (!agentName || agentName === "openclaw") return null;
+    try {
+      const agent = loadAgent(agentName);
+      return agent.webAuth.method === "bearer_token" && agent.webAuth.env ? agent : null;
+    } catch {
+      return null;
+    }
+  };
+
   return {
-    fetchGatewayAuthTokenFromSandbox: onboard.fetchGatewayAuthTokenFromSandbox,
-    getSandboxAgent: (sandboxName: string) => {
-      try {
-        return registry.getSandbox(sandboxName)?.agent ?? null;
-      } catch {
-        return null;
+    getSandboxAgent,
+    agentExposesToken: (agentName: string | null): boolean => {
+      if (!agentName || agentName === "openclaw") return true;
+      return resolveBearerAgent(agentName) !== null;
+    },
+    fetchToken: (sandboxName: string): string | null => {
+      const agentName = getSandboxAgent(sandboxName);
+      const bearerAgent = resolveBearerAgent(agentName);
+      if (bearerAgent) {
+        return agentWebAuth.fetchAgentWebAuthTokenFromSandbox(
+          runCaptureOpenshell,
+          sandboxName,
+          bearerAgent,
+        );
       }
+      return onboard.fetchGatewayAuthTokenFromSandbox(sandboxName);
     },
   };
 };
@@ -45,8 +97,10 @@ function getRuntimeBridge(): GatewayTokenRuntimeBridge {
 export default class GatewayTokenCliCommand extends NemoClawCommand {
   static id = "sandbox:gateway:token";
   static strict = true;
-  static summary = "Print the OpenClaw gateway auth token to stdout";
-  static description = "Print the OpenClaw gateway auth token for a running sandbox to stdout.";
+  static summary = "Print the sandbox agent's auth token to stdout";
+  static description =
+    "Print the running sandbox agent's auth token to stdout: the OpenClaw gateway token, " +
+    "or a bearer_token agent's web-auth key (e.g. Hermes' API_SERVER_KEY for the OpenAI-compatible API).";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
     "<%= config.bin %> sandbox gateway token alpha",
@@ -81,8 +135,9 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
         args.sandboxName,
         { quiet: flags.quiet === true },
         {
-          fetchToken: runtime.fetchGatewayAuthTokenFromSandbox,
+          fetchToken: runtime.fetchToken,
           getSandboxAgent: runtime.getSandboxAgent,
+          agentExposesToken: runtime.agentExposesToken,
         },
       );
       // CodeRabbit #3182: if a prior run() left process.exitCode = 1, a later

@@ -373,7 +373,9 @@ function agentKeyExpiresAt() {
 }
 
 function trustedInferenceBaseUrl(value) {
-  const normalized = String(value || "").trim().replace(/\/+$/, "");
+  const normalized = String(value || "")
+    .trim()
+    .replace(/\/+$/, "");
   for (const candidate of TRUSTED_INFERENCE_BASE_URLS) {
     if (normalized === candidate) return candidate;
   }

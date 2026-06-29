@@ -14,12 +14,9 @@ import path from "node:path";
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
 import type { WebSearchConfig } from "../inference/web-search";
-import {
-  type MessagingChannelConfig,
-  sanitizeMessagingChannelConfig,
-} from "../messaging-channel-config";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
-import { parseSandboxMessagingPlan } from "../onboard/messaging-plan-session";
+import { compactSandboxMessagingPlanForPersistence } from "../messaging/persistence";
+import { parseSandboxMessagingPlan } from "../messaging/plan-validation";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -28,7 +25,12 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
-import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import {
+  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+  shouldUpdateMachine,
+} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
@@ -98,23 +100,14 @@ export interface Session {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
-  messagingChannels: string[] | null;
-  messagingChannelConfig: MessagingChannelConfig | null;
   messagingPlan: SandboxMessagingPlan | null;
-  // Channels the operator paused via `nemoclaw <sb> channels stop <ch>`.
-  // Mirrors `SandboxEntry.disabledChannels` so that `rebuild` — which
-  // destroys the registry entry before calling `onboard --resume` —
-  // can carry the paused set across the destroy/recreate window.
-  // Without this mirror, the disabledChannels filter inside createSandbox
-  // reads back `[]` from the freshly-empty registry and the channel
-  // comes back live after rebuild. See #(channels-stop-rebuild bug).
-  disabledChannels: string[] | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -177,16 +170,14 @@ export interface SessionUpdates {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
   hermesToolGateways?: string[] | null;
   policyPresets?: string[] | null;
-  messagingChannels?: string[] | null;
-  messagingChannelConfig?: MessagingChannelConfig | null;
   messagingPlan?: SandboxMessagingPlan | null;
-  disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
@@ -209,6 +200,7 @@ export interface DebugSessionSummary {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
@@ -268,9 +260,7 @@ function readStringArray(value: SessionJsonValue | undefined): string[] | null {
   return value.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readStringRecord(
-  value: SessionJsonValue | undefined,
-): Record<string, string> | null {
+function readStringRecord(value: SessionJsonValue | undefined): Record<string, string> | null {
   if (!isObject(value)) return null;
   const result: Record<string, string> = {};
   for (const [k, v] of Object.entries(value)) {
@@ -404,7 +394,9 @@ function inferMachineStateEnteredAt(session: Session, state: OnboardMachineState
   }
 
   if (nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) === state) {
-    const completedStep = session.lastCompletedStep ? session.steps[session.lastCompletedStep] : null;
+    const completedStep = session.lastCompletedStep
+      ? session.steps[session.lastCompletedStep]
+      : null;
     return completedStep?.completedAt ?? session.updatedAt;
   }
 
@@ -416,7 +408,11 @@ function inferMachineSnapshot(session: Session): OnboardMachineSnapshot {
   return createMachineSnapshot(state, inferMachineStateEnteredAt(session, state));
 }
 
-function transitionMachineSnapshot(session: Session, state: OnboardMachineState, now: string): void {
+function transitionMachineSnapshot(
+  session: Session,
+  state: OnboardMachineState,
+  now: string,
+): void {
   const current = session.machine ?? createMachineSnapshot("init", session.startedAt);
   if (current.state === state) {
     session.machine = {
@@ -454,6 +450,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
+    compatibleEndpointReasoning: overrides.compatibleEndpointReasoning ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
@@ -461,10 +458,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
-    messagingChannels: readStringArray(overrides.messagingChannels),
-    messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
     messagingPlan: parseSandboxMessagingPlan(overrides.messagingPlan),
-    disabledChannels: readStringArray(overrides.disabledChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
@@ -475,7 +469,8 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
-    machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+    machine:
+      parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
       createMachineSnapshot("init", startedAt),
     steps,
   };
@@ -498,16 +493,14 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
+    compatibleEndpointReasoning: readString(data.compatibleEndpointReasoning),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
     hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
-    messagingChannels: readStringArray(data.messagingChannels),
-    messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
     messagingPlan: parseSandboxMessagingPlan(data.messagingPlan),
-    disabledChannels: readStringArray(data.disabledChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
@@ -546,6 +539,15 @@ export function loadSession(): Session | null {
   }
 }
 
+function serializeSessionForDisk(session: Session): Record<string, unknown> {
+  return {
+    ...session,
+    messagingPlan: session.messagingPlan
+      ? compactSandboxMessagingPlanForPersistence(session.messagingPlan)
+      : session.messagingPlan,
+  };
+}
+
 export function saveSession(session: Session): Session {
   const normalized = normalizeSession(session) || createSession();
   normalized.updatedAt = new Date().toISOString();
@@ -554,7 +556,9 @@ export function saveSession(session: Session): Session {
     SESSION_DIR,
     `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
-  fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
+  fs.writeFileSync(tmpFile, JSON.stringify(serializeSessionForDisk(normalized), null, 2), {
+    mode: 0o600,
+  });
   fs.renameSync(tmpFile, SESSION_FILE);
   return normalized;
 }
@@ -869,6 +873,64 @@ export function releaseOnboardLock(): void {
 
 // ── Step management ──────────────────────────────────────────────
 
+export type NullableSessionUpdateIntent<T> =
+  | { kind: "unchanged" }
+  | { kind: "clear" }
+  | { kind: "set"; value: T };
+
+export type NullableSessionUpdateKey = {
+  [K in keyof Session]-?: null extends Session[K] ? K : never;
+}[keyof Session];
+
+type NullableStringSessionUpdateKey = {
+  [K in NullableSessionUpdateKey]-?: NonNullable<Session[K]> extends string ? K : never;
+}[NullableSessionUpdateKey];
+
+function sessionUpdateUnchanged<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "unchanged" };
+}
+
+function sessionUpdateClear<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "clear" };
+}
+
+function sessionUpdateSet<T>(value: T): NullableSessionUpdateIntent<T> {
+  return { kind: "set", value };
+}
+
+export function getNullableStringUpdateIntent(
+  value: unknown,
+  normalize?: (v: string) => string | null,
+): NullableSessionUpdateIntent<string> {
+  if (value === undefined) return sessionUpdateUnchanged();
+  if (value === null) return sessionUpdateClear();
+  if (typeof value !== "string") return sessionUpdateUnchanged();
+
+  const normalized = normalize ? normalize(value) : value;
+  return normalized === null ? sessionUpdateClear() : sessionUpdateSet(normalized);
+}
+
+export function hasSessionUpdateValue<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind !== "unchanged";
+}
+
+export function isSessionUpdateClear<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind === "clear";
+}
+
+export function applyNullableSessionUpdate<K extends NullableSessionUpdateKey>(
+  safe: Partial<Session>,
+  key: K,
+  intent: NullableSessionUpdateIntent<NonNullable<Session[K]>>,
+): void {
+  if (intent.kind === "unchanged") return;
+  if (intent.kind === "clear") {
+    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
+    return;
+  }
+  (safe as Record<K, Session[K]>)[key] = intent.value as Session[K];
+}
+
 // Apply an explicit-clear-aware update for a nullable session field.
 //
 //   value === "string"  → assign (after optional normalizer)
@@ -880,27 +942,19 @@ export function releaseOnboardLock(): void {
 // (credentialEnv=null) silently dropped the clear and left the stale value
 // on disk. The rebuild preflight then demanded a credential the current
 // sandbox does not actually need.
-function assignNullableString<K extends keyof Session>(
+function assignNullableString<K extends NullableStringSessionUpdateKey>(
   safe: Partial<Session>,
   key: K,
   value: unknown,
   normalize?: (v: string) => string | null,
 ): void {
-  if (value === undefined) return;
-  if (value === null) {
-    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = normalize ? normalize(value) : value;
-    if (normalized === null) {
-      // A normalizer that returned null means the input was unredactable;
-      // treat the same as an explicit clear rather than dropping silently.
-      (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-      return;
-    }
-    (safe as Record<K, Session[K]>)[key] = normalized as Session[K];
-  }
+  applyNullableSessionUpdate(
+    safe,
+    key,
+    getNullableStringUpdateIntent(value, normalize) as NullableSessionUpdateIntent<
+      NonNullable<Session[K]>
+    >,
+  );
   // Non-string, non-null, non-undefined values are silently dropped —
   // matches the pre-#2625 behavior for malformed input (e.g. numbers via
   // JSON re-entry).
@@ -920,8 +974,13 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.hermesAuthMethod = null;
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
+  assignNullableString(safe, "compatibleEndpointReasoning", updates.compatibleEndpointReasoning);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
-  if (typeof updates.routerPid === "number" && Number.isInteger(updates.routerPid) && updates.routerPid > 0) {
+  if (
+    typeof updates.routerPid === "number" &&
+    Number.isInteger(updates.routerPid) &&
+    updates.routerPid > 0
+  ) {
     safe.routerPid = updates.routerPid;
   }
   if (typeof updates.routerCredentialHash === "string") {
@@ -944,29 +1003,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
-  if (updates.messagingChannels === null) {
-    safe.messagingChannels = null;
-  } else if (Array.isArray(updates.messagingChannels)) {
-    safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
-  }
-  if (updates.messagingChannelConfig === null) {
-    safe.messagingChannelConfig = null;
-  } else {
-    const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
-    if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
-  }
   if (updates.messagingPlan === null) {
     safe.messagingPlan = null;
   } else {
     const messagingPlan = parseSandboxMessagingPlan(updates.messagingPlan);
     if (messagingPlan) safe.messagingPlan = messagingPlan;
-  }
-  if (updates.disabledChannels === null) {
-    safe.disabledChannels = null;
-  } else if (Array.isArray(updates.disabledChannels)) {
-    safe.disabledChannels = updates.disabledChannels.filter(
-      (value) => typeof value === "string",
-    );
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};
@@ -978,7 +1019,10 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   if (updates.gpuPassthrough === true || updates.gpuPassthrough === false) {
     safe.gpuPassthrough = updates.gpuPassthrough;
   }
-  if (isObject(updates.telegramConfig) && typeof updates.telegramConfig.requireMention === "boolean") {
+  if (
+    isObject(updates.telegramConfig) &&
+    typeof updates.telegramConfig.requireMention === "boolean"
+  ) {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
     safe.telegramConfig = null;
@@ -1007,7 +1051,10 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
+function markStepStartedWithOptions(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1033,7 +1080,11 @@ function markStepStartedWithOptions(stepName: string, options: StepMutationOptio
   return updatedSession;
 }
 
-function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates = {}, options: StepMutationOptions = {}): Session {
+function markStepCompleteWithOptions(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
   let shouldEmit = false;
@@ -1064,30 +1115,40 @@ function markStepCompleteWithOptions(stepName: string, updates: SessionUpdates =
   }
   if (shouldEmit) {
     emitOnboardMachineEvent(
-      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+      createOnboardMachineEvent({
+        type: "state.completed",
+        session: updatedSession,
+        step: stepName,
+      }),
     );
   }
   return updatedSession;
 }
 
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+export function markStepStarted(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   return markStepStartedWithOptions(stepName, options);
 }
 
 export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, { updateMachine: false });
+  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepComplete(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepCompleteWithOptions(stepName, updates, options);
 }
 
-export function markStepCompleteRecordOnly(stepName: string, updates: SessionUpdates = {}): Session {
-  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
+export function markStepCompleteRecordOnly(
+  stepName: string,
+  updates: SessionUpdates = {},
+): Session {
+  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1095,7 +1156,8 @@ export function markStepSkipped(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped")
+      return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
@@ -1111,7 +1173,11 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-function markStepFailedWithOptions(stepName: string, message: string | null = null, options: StepMutationOptions = {}): Session {
+function markStepFailedWithOptions(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1153,13 +1219,13 @@ function markStepFailedWithOptions(stepName: string, message: string | null = nu
 export function markStepFailed(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepFailedWithOptions(stepName, message, options);
 }
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
+  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
@@ -1216,6 +1282,7 @@ export function summarizeForDebug(
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
+    compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,

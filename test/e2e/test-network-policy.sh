@@ -23,7 +23,7 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed (or install.sh available)
-#   - NVIDIA_API_KEY for sandbox onboard
+#   - NVIDIA_INFERENCE_API_KEY for sandbox onboard
 # =============================================================================
 
 set -euo pipefail
@@ -92,7 +92,7 @@ install_nemoclaw() {
   fi
   log "=== Installing NemoClaw via install.sh ==="
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
+    NVIDIA_INFERENCE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_POLICY_TIER="restricted" \
@@ -114,14 +114,18 @@ preflight() {
   fi
   log "Docker is running"
   install_nemoclaw
+  # Source boundary: CI installs expect through the trusted workflow action
+  # before this script starts; local developer base images/runners must provide
+  # it up front too. This coverage is intentionally fail-closed so a missing
+  # host tool cannot become a silent skip. Regression coverage lives in
+  # test/e2e-script-workflow.test.ts (CI installs expect before this script) and
+  # test/e2e-expect-fail-closed.test.ts (missing expect fails). TODO: remove this
+  # guard only after interactive policy-add no longer depends on expect, or
+  # after a repo-owned local development image is added with CI coverage that
+  # runs `command -v expect` against that image.
   if ! command -v expect >/dev/null 2>&1; then
-    log "Installing expect..."
-    if ! (sudo apt-get update -qq && sudo apt-get install -y -qq expect >/dev/null 2>&1); then
-      log "WARNING: failed to install expect — interactive tests will skip"
-    fi
-    if ! command -v expect >/dev/null 2>&1; then
-      log "WARNING: expect not available — interactive tests will skip"
-    fi
+    log "ERROR: expect is required for interactive network policy coverage"
+    exit 1
   fi
   if ! command -v python3 >/dev/null 2>&1; then
     log "ERROR: python3 is required for JSON parsing"
@@ -146,8 +150,8 @@ apply_preset() {
 apply_preset_interactive() {
   local preset_name="$1"
   if ! command -v expect >/dev/null 2>&1; then
-    log "  expect not available — cannot test interactive mode"
-    return 2
+    log "  expect is required for interactive policy-add"
+    return 1
   fi
   local preset_list preset_num
   preset_list=$(NEMOCLAW_NON_INTERACTIVE='' nemoclaw "$SANDBOX_NAME" policy-add </dev/null 2>&1) || true
@@ -242,9 +246,9 @@ wait_for_e2e_http_port() {
 
 # ── Onboard sandbox ─────────────────────────────────────────────────────────
 setup_sandbox() {
-  local api_key="${NVIDIA_API_KEY:-}"
+  local api_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
-    log "ERROR: NVIDIA_API_KEY not set"
+    log "ERROR: NVIDIA_INFERENCE_API_KEY not set"
     exit 1
   fi
 
@@ -321,14 +325,17 @@ test_net_02_whitelist_access() {
     fail "TC-NET-02: Whitelist" "curl GET to pypi.org did not return 200: ${pypi_code:0:200}"
   fi
 
+  # Use a real PyPI artifact instead of a placeholder path. The placeholder
+  # can legitimately return 404, which proves egress but is easy to misread as
+  # a failed GET probe when QA verifies the case manually.
   local files_code
-  files_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/rg/ 2>&1" 2>&1) || true
+  files_code=$(sandbox_exec "curl -LsS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/packages/source/r/requests/requests-2.32.5.tar.gz 2>&1" 2>&1) || true
   log "  files.pythonhosted.org GET status: $files_code"
 
-  if echo "$files_code" | grep -qE "^([23][0-9][0-9]|404)$"; then
-    pass "TC-NET-02: files.pythonhosted.org returns a real HTTP status via curl GET"
+  if echo "$files_code" | grep -qE "^[23][0-9][0-9]$"; then
+    pass "TC-NET-02: files.pythonhosted.org artifact reachable via curl GET"
   else
-    fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org did not return a real HTTP status: ${files_code:0:200}"
+    fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org artifact did not return 2xx/3xx: ${files_code:0:200}"
   fi
 
   local post_code
@@ -460,7 +467,9 @@ bash /tmp/nemoclaw-brew-e2e.sh" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1)
 test_net_03_live_policy_add() {
   log "=== TC-NET-03: Live Policy-Add Without Restart ==="
 
-  local target_url="https://slack.com/"
+  # Probe Slack's non-redirecting API path. The marketing root can redirect
+  # outside the slack.com allowlist and does not isolate preset behavior.
+  local target_url="https://slack.com/api/api.test"
 
   log "  Step 1: Verify slack.com is blocked before policy-add..."
   local before
@@ -479,13 +488,7 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
   log "  Step 2: Adding slack preset (interactive mode)..."
   local interactive_rc=0
   apply_preset_interactive "slack" || interactive_rc=$?
-  if [[ $interactive_rc -eq 2 ]]; then
-    log "  Interactive mode unavailable (expect missing) — falling back to non-interactive..."
-    if ! apply_preset "slack"; then
-      fail "TC-NET-03: Setup" "Could not apply slack preset"
-      return
-    fi
-  elif [[ $interactive_rc -ne 0 ]]; then
+  if [[ $interactive_rc -ne 0 ]]; then
     fail "TC-NET-03: Interactive policy-add" "interactive flow failed (exit $interactive_rc)"
     return
   fi
@@ -678,7 +681,7 @@ test_net_07_inference_exemption() {
   log "  Step 2: Attempt direct connection to provider (should be blocked)..."
   local direct_response
   direct_response=$(sandbox_exec "node -e \"
-fetch('https://integrate.api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
+fetch('https://inference-api.nvidia.com/v1/models', {signal: AbortSignal.timeout(15000)})
   .then(r => console.log('STATUS_' + r.status))
   .catch(e => console.log('ERROR_' + (e.cause?.code || e.code || e.message)))
 \"" 2>&1) || true

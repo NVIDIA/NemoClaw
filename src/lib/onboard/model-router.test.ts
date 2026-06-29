@@ -8,7 +8,7 @@ import {
   isModelRouterCommandLineForPort,
   readModelRouterProcessCommandLine,
   stopTrackedModelRouterForAgentChange,
-} from "../../../dist/lib/onboard/model-router-process";
+} from "./model-router-process";
 
 describe("model-router process ownership checks", () => {
   it("recognizes model-router proxy command lines for the expected port", () => {
@@ -22,6 +22,21 @@ describe("model-router process ownership checks", () => {
       isModelRouterCommandLineForPort(
         ["/tmp/router/bin/model-router", "proxy", "--host", "0.0.0.0", "--port=44123"],
         44123,
+      ),
+    ).toBe(true);
+  });
+
+  it("recognizes Python-interpreted model-router venv command lines (#5169)", () => {
+    expect(
+      isModelRouterCommandLineForPort(
+        [
+          "/home/user/.nemoclaw/model-router-venv/bin/python",
+          "/home/user/.nemoclaw/model-router-venv/bin/model-router",
+          "proxy",
+          "--port",
+          "4000",
+        ],
+        4000,
       ),
     ).toBe(true);
   });

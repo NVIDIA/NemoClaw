@@ -4,10 +4,7 @@
 // vLLM local inference provider setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
-import type {
-  SetupInferenceResult,
-  VllmDeps,
-} from "./types";
+import type { SetupInferenceResult, VllmDeps } from "./types";
 
 export async function setupVllmLocalInference(
   args: { model: string; provider: string },

@@ -47,6 +47,9 @@ navigation:
               - page: "Quickstart with OpenClaw"
                 path: get-started/quickstart.mdx
                 slug: quickstart
+              - page: "Quickstart with LangChain Deep Agents Code"
+                path: get-started/quickstart-langchain-deepagents-code.mdx
+                slug: quickstart-langchain-deepagents-code
           - section: "Inference"
             slug: inference
             collapsed: open-by-default
@@ -66,6 +69,9 @@ navigation:
               - page: "Set Up Task-Specific Sub-Agents"
                 path: inference/set-up-sub-agent.mdx
                 slug: set-up-sub-agent
+              - page: "Declarative Multi-Agent Manifest"
+                path: inference/declarative-agents-manifest.mdx
+                slug: declarative-agents-manifest
           - section: "Manage Sandboxes"
             slug: manage-sandboxes
             collapsed: open-by-default
@@ -138,6 +144,12 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.openclaw.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.openclaw.generated.mdx
                 slug: architecture
@@ -157,16 +169,18 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.openclaw.generated.mdx
                 slug: agent-skills
+              - link: "Community Examples"
+                href: https://github.com/NVIDIA/nemoclaw-community
+              - link: "Discord"
+                href: https://discord.gg/XFpfPv9Uvx
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"
                 path: _build/agent-variants/resources/license.openclaw.generated.mdx
                 slug: license
-              - link: "Discord"
-                href: https://discord.gg/XFpfPv9Uvx
       - title: NemoClaw for Hermes
         subtitle: Guide for Hermes agents
         slug: hermes
@@ -273,6 +287,12 @@ navigation:
             slug: reference
             collapsed: open-by-default
             contents:
+              - page: "Platform Support"
+                path: reference/platform-support.mdx
+                slug: platform-support
+              - page: "Enterprise Readiness"
+                path: _build/agent-variants/reference/enterprise-readiness.hermes.generated.mdx
+                slug: enterprise-readiness
               - page: "Architecture Details"
                 path: _build/agent-variants/reference/architecture.hermes.generated.mdx
                 slug: architecture
@@ -292,9 +312,11 @@ navigation:
             slug: resources
             collapsed: open-by-default
             contents:
-              - page: "Agent Skills"
+              - page: "AI Agent Docs"
                 path: _build/agent-variants/resources/agent-skills.hermes.generated.mdx
                 slug: agent-skills
+              - link: "Community Examples"
+                href: https://github.com/NVIDIA/nemoclaw-community
               - link: "Report Vulnerabilities"
                 href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
               - page: "License"

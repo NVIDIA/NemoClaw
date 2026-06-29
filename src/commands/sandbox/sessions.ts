@@ -13,7 +13,7 @@ export default class SandboxSessionsCommand extends NemoClawCommand {
   static strict = false;
   static summary = "List OpenClaw conversation sessions in a sandbox";
   static description =
-    "Pass through to `openclaw sessions` in the sandbox. With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent. Additional OpenClaw flags are forwarded verbatim after the sandbox name.";
+    "Pass through to `openclaw sessions` in the sandbox. With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent, hiding internal NemoClaw onboard warm-up sessions from default user-facing output. Additional OpenClaw flags are forwarded verbatim after the sandbox name.";
   static usage = ["<name> [openclaw-sessions-flags...]"];
   static examples = [
     "<%= config.bin %> sandbox sessions alpha",
@@ -24,7 +24,12 @@ export default class SandboxSessionsCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     this.parsed = true;
     const [sandboxName, ...extraArgs] = this.argv;
-    if (!sandboxName || sandboxName.trim() === "" || sandboxName === "--help" || sandboxName === "-h") {
+    if (
+      !sandboxName ||
+      sandboxName.trim() === "" ||
+      sandboxName === "--help" ||
+      sandboxName === "-h"
+    ) {
       printSessionsPassthroughHelp();
       return;
     }

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Forwards `/nvskills-ci` PR comments and signature push events to the central
-# NVSkills CI service in NVIDIA/nvskills-ci. Mirrors
+# NVSkills CI service in NVIDIA/nvskills-ci. Adapted from
 # templates/team-request-workflow.yml from NVIDIA/nvskills-ci@main.
 #
 # Onboarding reference: NVIDIA/nvskills-ci/docs/team-onboarding.md
@@ -10,7 +10,7 @@
 #
 # Required repository secret: NVSKILLS_CI_DISPATCH_TOKEN
 
-name: Request NVSkills CI
+name: Automation / Request NVSkills CI
 
 on:
   issue_comment:

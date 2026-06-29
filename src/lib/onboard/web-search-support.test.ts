@@ -58,9 +58,9 @@ describe("agentSupportsWebSearch", () => {
     const agentDockerfile = writeDockerfile(root, "FROM scratch\n", "Agentfile");
     writeDockerfile(root, "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\n");
 
-    expect(agentSupportsWebSearch({ name: "openclaw", dockerfilePath: agentDockerfile }, null, root)).toBe(
-      false,
-    );
+    expect(
+      agentSupportsWebSearch({ name: "openclaw", dockerfilePath: agentDockerfile }, null, root),
+    ).toBe(false);
     const missingDockerfile = path.join(root, "missing-dockerfile");
     expect(
       agentSupportsWebSearch({ name: "openclaw", dockerfilePath: missingDockerfile }, null, root),

@@ -18,8 +18,7 @@ export default class DeprecatedStartCommand extends NemoClawCommand {
   static deprecationOptions = {
     message: "Deprecated: 'nemoclaw start' is now 'nemoclaw tunnel start'. See 'nemoclaw help'.",
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(DeprecatedStartCommand);

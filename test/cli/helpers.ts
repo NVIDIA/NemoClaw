@@ -130,7 +130,10 @@ function splitCliArgs(args: string): string[] {
   return tokens;
 }
 
-export function normalizeChildExit(code: number | null, signal: NodeJS.Signals | null): number | null {
+export function normalizeChildExit(
+  code: number | null,
+  signal: NodeJS.Signals | null,
+): number | null {
   if (code !== null) return code;
   if (signal === "SIGTERM") return 143;
   if (signal === "SIGINT") return 130;
@@ -156,18 +159,42 @@ export function runWithEnv(
   env: Record<string, string | undefined> = {},
   timeout: number = execTimeout(),
 ): CliRunResult {
+  return runWithEnvInternal(args, env, timeout);
+}
+
+export function runWithInput(
+  args: string,
+  input: string,
+  env: Record<string, string | undefined> = {},
+  timeout: number = execTimeout(),
+): CliRunResult {
+  return runWithEnvInternal(args, env, timeout, input);
+}
+
+function runWithEnvInternal(
+  args: string,
+  env: Record<string, string | undefined>,
+  timeout: number,
+  input?: string,
+): CliRunResult {
   const parsedArgs = splitCliArgs(args);
   const mergeStderrOnSuccess = parsedArgs.includes("2>&1");
   const cliArgs = parsedArgs.filter((token) => token !== "2>&1");
   const result = spawnSync(process.execPath, [CLI, ...cliArgs], {
     encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
+    input,
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     timeout,
     env: {
       ...process.env,
       HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-test-")),
       NEMOCLAW_HEALTH_POLL_COUNT: "1",
       NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      // #4710: the post-recovery settle-confirm waits 25s by default; CLI
+      // tests disable it to stay fast. Settle behavior has dedicated
+      // coverage in process-recovery.test.ts and a targeted CLI test in
+      // connect-recovery-settle.test.ts that overrides this with a short window.
+      NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS: "0",
       ...env,
     },
   });
@@ -220,8 +247,7 @@ export function writeSandboxRegistry(
   sandboxNameOrOverrides: string | SandboxOverrides = "alpha",
   sandboxOverridesArg: SandboxOverrides = {},
 ): void {
-  const sandboxName =
-    typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";
+  const sandboxName = typeof sandboxNameOrOverrides === "string" ? sandboxNameOrOverrides : "alpha";
   const sandboxOverrides =
     typeof sandboxNameOrOverrides === "string" ? sandboxOverridesArg : sandboxNameOrOverrides;
   const registryDir = path.join(home, ".nemoclaw");
@@ -321,7 +347,11 @@ export function createLogsTestSetup(
   };
 }
 
-export function createDoctorTestSetup(prefix: string, openshellLines: string[], sandboxName = "alpha") {
+export function createDoctorTestSetup(
+  prefix: string,
+  openshellLines: string[],
+  sandboxName = "alpha",
+) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const markerFile = path.join(home, "doctor-calls");
@@ -371,7 +401,10 @@ export function createDoctorTestSetup(prefix: string, openshellLines: string[], 
   };
 }
 
-export function createCloudflaredServiceDir(prefix: string): { sandboxName: string; serviceDir: string } {
+export function createCloudflaredServiceDir(prefix: string): {
+  sandboxName: string;
+  serviceDir: string;
+} {
   const suffix = [
     process.pid.toString(36),
     Date.now().toString(36),

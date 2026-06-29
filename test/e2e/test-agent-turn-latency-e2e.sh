@@ -4,15 +4,19 @@
 #
 # Real agent turn latency E2E.
 #
-# Installs one OpenClaw sandbox and one Hermes sandbox against NVIDIA Endpoints,
-# verifies that both are configured for the requested model, and times one real
-# model-backed turn through each runtime.
+# Installs one OpenClaw sandbox and one Hermes sandbox against the configured
+# hosted inference endpoint, verifies that both are configured for the requested
+# model, and times one real model-backed turn through each runtime.
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
+#
+# Environment:
+#   NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS - install attempts for transient
+#                                            provider validation (default: 2)
 
 # Do not use errexit because this test records pass/fail counts and exits
 # explicitly after critical failures or at the final summary.
@@ -28,6 +32,8 @@ source "${SCRIPT_DIR}/e2e-timeout.sh"
 source "${SCRIPT_DIR}/lib/openclaw-json.sh"
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 source "${SCRIPT_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${SCRIPT_DIR}/lib/ci-compatible-inference.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 source "${SCRIPT_DIR}/lib/install-path-refresh.sh"
 
@@ -48,6 +54,12 @@ fail() {
   printf '\033[31m  FAIL: %s\033[0m\n' "$1"
 }
 
+skip() {
+  ((SKIP++))
+  ((TOTAL++))
+  printf '\033[33m  SKIP: %s\033[0m\n' "$1"
+}
+
 section() {
   echo ""
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
@@ -57,6 +69,14 @@ info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 is_positive_int() {
   [[ "${1:-}" =~ ^[1-9][0-9]*$ ]]
+}
+
+is_transient_provider_validation_log() {
+  local log_path="$1"
+  [ -f "$log_path" ] || return 1
+
+  grep -qiE 'endpoint validation failed|failed to verify inference endpoint|Chat Completions API validation' "$log_path" \
+    && grep -qiE 'timed? out|timeout|curl failed \(exit (7|28|35|52|56)\)|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|HTTP (429|502|503|504)|returned HTTP (429|502|503|504)|temporar' "$log_path"
 }
 
 monotonic_ms() {
@@ -73,7 +93,7 @@ PY
 }
 
 strip_ansi() {
-  python3 -c 'import re, sys; sys.stdout.write(re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read()))'
+  nemoclaw_e2e_strip_ansi
 }
 
 parse_chat_content() {
@@ -118,8 +138,7 @@ assert_route() {
   fi
   plain_output=$(printf '%s' "$output" | strip_ansi)
 
-  if grep -Fq "Provider: ${EXPECTED_ROUTE_PROVIDER}" <<<"$plain_output" \
-    && grep -Fq "Model: ${TURN_MODEL}" <<<"$plain_output"; then
+  if nemoclaw_e2e_inference_output_matches "$plain_output" "$EXPECTED_ROUTE_PROVIDER" "$TURN_MODEL"; then
     pass "${label}: OpenShell route is ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}"
   else
     fail "${label}: route is not ${EXPECTED_ROUTE_PROVIDER} / ${TURN_MODEL}: ${plain_output:0:400}"
@@ -266,7 +285,7 @@ run_install() {
   local sandbox="$2"
   local agent="$3"
   local log_path="$4"
-  local install_pid tail_pid install_exit
+  local install_pid tail_pid install_exit attempt
 
   section "Install ${label}"
   info "Pre-cleaning sandbox ${sandbox} and the nemoclaw gateway..."
@@ -289,15 +308,40 @@ run_install() {
     unset NEMOCLAW_AGENT
   fi
 
-  info "Running install.sh for ${label} with ${TURN_PROVIDER_KEY} / ${TURN_MODEL}..."
-  bash install.sh --non-interactive --yes-i-accept-third-party-software >"$log_path" 2>&1 &
-  install_pid=$!
-  tail -f "$log_path" --pid="$install_pid" 2>/dev/null &
-  tail_pid=$!
-  wait "$install_pid"
-  install_exit=$?
-  kill "$tail_pid" 2>/dev/null || true
-  wait "$tail_pid" 2>/dev/null || true
+  for ((attempt = 1; attempt <= TURN_INSTALL_ATTEMPTS; attempt++)); do
+    if [ "$attempt" -gt 1 ]; then
+      info "Retrying ${label} install after transient provider validation failure..."
+      destroy_sandbox "$sandbox"
+    fi
+
+    info "Running install.sh for ${label} with ${TURN_PROVIDER_KEY} / ${TURN_MODEL} (attempt ${attempt}/${TURN_INSTALL_ATTEMPTS})..."
+    bash install.sh --non-interactive --yes-i-accept-third-party-software >"$log_path" 2>&1 &
+    install_pid=$!
+    tail -f "$log_path" --pid="$install_pid" 2>/dev/null &
+    tail_pid=$!
+    wait "$install_pid"
+    install_exit=$?
+    kill "$tail_pid" 2>/dev/null || true
+    wait "$tail_pid" 2>/dev/null || true
+
+    if [ "$install_exit" -eq 0 ]; then
+      break
+    fi
+
+    if is_transient_provider_validation_log "$log_path"; then
+      if [ "$attempt" -lt "$TURN_INSTALL_ATTEMPTS" ]; then
+        info "${label}: install attempt ${attempt}/${TURN_INSTALL_ATTEMPTS} hit transient provider validation; retrying..."
+        tail -40 "$log_path" || true
+        continue
+      fi
+
+      skip "${label}: install skipped after ${TURN_INSTALL_ATTEMPTS} transient provider validation attempt(s)"
+      tail -80 "$log_path" || true
+      return 1
+    fi
+
+    break
+  done
 
   nemoclaw_refresh_install_env
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -368,7 +412,7 @@ run_openclaw_turn() {
     return
   fi
 
-  if grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
+  if e2e_text_contains_integer_42 "$reply"; then
     pass "OpenClaw: real agent turn returned 42 in $(duration_s "$OPENCLAW_TURN_MS")"
     assert_latency_under_cap "OpenClaw" "$OPENCLAW_TURN_MS"
   else
@@ -419,7 +463,7 @@ print(json.dumps({
     return
   fi
 
-  if grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$content"; then
+  if e2e_text_contains_integer_42 "$content"; then
     pass "Hermes: real daemon turn returned 42 in $(duration_s "$HERMES_TURN_MS")"
     assert_latency_under_cap "Hermes" "$HERMES_TURN_MS"
   else
@@ -508,19 +552,21 @@ else
   exit 1
 fi
 
-TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
-TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
-EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
 OPENCLAW_SANDBOX_NAME="${NEMOCLAW_OPENCLAW_TURN_LATENCY_SANDBOX_NAME:-e2e-openclaw-turn-latency}"
 HERMES_SANDBOX_NAME="${NEMOCLAW_HERMES_TURN_LATENCY_SANDBOX_NAME:-e2e-hermes-turn-latency}"
 OPENCLAW_INSTALL_LOG="/tmp/nemoclaw-e2e-openclaw-turn-latency-install.log"
 HERMES_INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-turn-latency-install.log"
 RESULTS_JSON="/tmp/nemoclaw-e2e-agent-turn-latency.json"
+TURN_MODEL=""
+TURN_PROVIDER_KEY=""
+EXPECTED_ROUTE_PROVIDER=""
 
 MAX_TURN_SECONDS="${NEMOCLAW_TURN_LATENCY_MAX_SECONDS:-300}"
 is_positive_int "$MAX_TURN_SECONDS" || MAX_TURN_SECONDS=300
 COMMAND_TIMEOUT_SECONDS="${NEMOCLAW_TURN_LATENCY_COMMAND_TIMEOUT_SECONDS:-$((MAX_TURN_SECONDS + 30))}"
 is_positive_int "$COMMAND_TIMEOUT_SECONDS" || COMMAND_TIMEOUT_SECONDS=$((MAX_TURN_SECONDS + 30))
+TURN_INSTALL_ATTEMPTS="${NEMOCLAW_TURN_LATENCY_INSTALL_ATTEMPTS:-2}"
+is_positive_int "$TURN_INSTALL_ATTEMPTS" || TURN_INSTALL_ATTEMPTS=2
 
 OPENCLAW_TURN_MS=""
 HERMES_TURN_MS=""
@@ -530,6 +576,20 @@ HERMES_REPLY=""
 register_sandbox_for_teardown "$OPENCLAW_SANDBOX_NAME"
 register_sandbox_for_teardown "$HERMES_SANDBOX_NAME"
 nemoclaw_ensure_local_bin_on_path
+nemoclaw_e2e_configure_compatible_inference || {
+  fail "Hosted CI inference could not be configured"
+  finish
+}
+
+if nemoclaw_e2e_using_compatible_inference; then
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-custom}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+else
+  TURN_MODEL="${NEMOCLAW_TURN_LATENCY_MODEL:-${NEMOCLAW_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}}"
+  TURN_PROVIDER_KEY="${NEMOCLAW_TURN_LATENCY_PROVIDER:-build}"
+  EXPECTED_ROUTE_PROVIDER="${NEMOCLAW_TURN_LATENCY_ROUTE_PROVIDER:-nvidia-prod}"
+fi
 
 section "Prerequisites"
 if docker info >/dev/null 2>&1; then
@@ -539,10 +599,7 @@ else
   finish
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
-else
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   finish
 fi
 

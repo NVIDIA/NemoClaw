@@ -5,10 +5,9 @@ import {
   detectOpenShellStateRpcResultIssue,
   type OpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "../../adapters/openshell/runtime";
+import { captureOpenshellForStatus, isCommandTimeout } from "../../adapters/openshell/runtime";
+import { type AgentDefinition, getAgentRuntimeKind, loadAgent } from "../../agent/defs";
+import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -18,18 +17,18 @@ import {
 import { parseSandboxPhase } from "../../state/gateway";
 import * as registry from "../../state/registry";
 import { getSandboxDockerRuntime } from "./docker-health";
-import { withStdoutRedirectedToStderr } from "../../cli/stdout-guard";
 import type { SandboxGatewayState } from "./gateway-state";
-import {
-  getReconciledSandboxGatewayState,
-  getSandboxGatewayStateForStatus,
-} from "./gateway-state";
+import { getReconciledSandboxGatewayState, getSandboxGatewayStateForStatus } from "./gateway-state";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import {
   getSandboxStatusPreflight,
   type SandboxStatusFailureLayer,
   withoutTerminalPhasePreflight,
 } from "./status-preflight";
+import {
+  probeTerminalRuntimeCgroupOom,
+  type TerminalRuntimeOomProbeResult,
+} from "./terminal-runtime-health";
 
 type ProbeProviderHealth = (
   provider: string,
@@ -75,6 +74,10 @@ export interface SandboxStatusReport {
   schemaVersion: 1;
   name: string;
   found: boolean;
+  agent: string;
+  agentDisplayName: string;
+  agentRuntime: "gateway" | "terminal" | "unknown";
+  agentLoadError?: string;
   model: string;
   provider: string;
   phase: string | null;
@@ -92,6 +95,7 @@ export interface SandboxStatusReport {
   openshellVersion: string;
   policies: string[];
   failureLayer: SandboxStatusFailureLayer | null;
+  terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
   /**
    * Whether the resolved docker-driver sandbox container is paused
    * (`docker pause`). `false` for non-docker-driver sandboxes or when no
@@ -108,14 +112,49 @@ export interface SandboxStatusSnapshot {
   currentModel: string;
   currentProvider: string;
   inferenceHealth: ProviderHealthStatus | null;
+  terminalRuntimeHealth: TerminalRuntimeOomProbeResult | null;
 }
 
-type ReconcileSandboxGatewayState = (
-  sandboxName: string,
-) => Promise<SandboxGatewayState>;
+export interface SandboxStatusAgentInfo {
+  agentName: string;
+  agentDisplayName: string;
+  agentRuntime: "gateway" | "terminal" | "unknown";
+  agentLoadError?: string;
+  agentDefinition: AgentDefinition | null;
+}
+
+export function resolveSandboxStatusAgent(agentName = "openclaw"): SandboxStatusAgentInfo {
+  let agentDisplayName = agentName === "openclaw" ? "OpenClaw" : agentName;
+  let agentRuntime: SandboxStatusAgentInfo["agentRuntime"] = "gateway";
+  let agentLoadError: string | undefined;
+  let agentDefinition: AgentDefinition | null = null;
+  try {
+    const agent = loadAgent(agentName);
+    agentDisplayName = agent.displayName;
+    agentRuntime = getAgentRuntimeKind(agent);
+    agentDefinition = agentName === "openclaw" ? null : agent;
+  } catch (err) {
+    if (agentName !== "openclaw") {
+      agentRuntime = "unknown";
+      agentLoadError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return {
+    agentName,
+    agentDisplayName,
+    agentRuntime,
+    ...(agentLoadError ? { agentLoadError } : {}),
+    agentDefinition,
+  };
+}
+
+type ReconcileSandboxGatewayState = (sandboxName: string) => Promise<SandboxGatewayState>;
+type ProbeTerminalRuntimeHealth = (sandboxName: string) => TerminalRuntimeOomProbeResult;
 
 interface CollectSandboxStatusSnapshotDeps {
+  getSandbox?: typeof registry.getSandbox;
   probeProviderHealthImpl?: ProbeProviderHealth;
+  probeTerminalRuntimeHealth?: ProbeTerminalRuntimeHealth;
   reconcile?: ReconcileSandboxGatewayState;
 }
 
@@ -132,7 +171,8 @@ export async function collectSandboxStatusSnapshot(
       getReconciledSandboxGatewayState(name, {
         getState: getSandboxGatewayStateForStatus,
       }));
-  const sb = registry.getSandbox(sandboxName);
+  const getSandbox = opts.deps?.getSandbox ?? registry.getSandbox;
+  const sb = getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
     lookup = await reconcile(sandboxName);
@@ -160,6 +200,7 @@ export async function collectSandboxStatusSnapshot(
       currentModel: "unknown",
       currentProvider: "unknown",
       inferenceHealth: null,
+      terminalRuntimeHealth: null,
     };
   }
   const live =
@@ -198,7 +239,20 @@ export async function collectSandboxStatusSnapshot(
       inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
     }
   }
-  return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
+  const statusAgent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
+  const terminalRuntimeHealth =
+    lookup.state === "present" && statusAgent.agentRuntime === "terminal"
+      ? (opts.deps?.probeTerminalRuntimeHealth ?? probeTerminalRuntimeCgroupOom)(sandboxName)
+      : null;
+  return {
+    sb,
+    lookup,
+    rpcIssue,
+    currentModel,
+    currentProvider,
+    inferenceHealth,
+    terminalRuntimeHealth,
+  };
 }
 
 export async function getSandboxStatusReport(
@@ -210,37 +264,45 @@ export async function getSandboxStatusReport(
   // progress to stdout via console.log (step(), gateway-start streaming).
   // Redirect any such writes to stderr while the report is built so stdout
   // carries only the JSON document.
-  return withStdoutRedirectedToStderr(() =>
-    buildSandboxStatusReport(sandboxName, deps),
-  );
+  return withStdoutRedirectedToStderr(() => buildSandboxStatusReport(sandboxName, deps));
 }
 
 async function buildSandboxStatusReport(
   sandboxName: string,
   deps: CollectSandboxStatusSnapshotDeps,
 ): Promise<SandboxStatusReport> {
-  const preflight = await getSandboxStatusPreflight(registry.getSandbox(sandboxName));
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const preflight = await getSandboxStatusPreflight(getSandbox(sandboxName));
   const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
     suppressInferenceProbe: preflight.suppressInferenceProbe,
     deps,
   });
-  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
-  const dockerRuntime =
-    lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
-  const phase =
-    lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const {
+    sb,
+    lookup,
+    rpcIssue,
+    currentModel,
+    currentProvider,
+    inferenceHealth,
+    terminalRuntimeHealth,
+  } = snapshot;
+  const dockerRuntime = lookup.state === "present" ? getSandboxDockerRuntime(sandboxName) : null;
+  const phase = lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const effectivePreflight = withoutTerminalPhasePreflight(preflight, phase);
-  const sandboxGpuEnabled = sb
-    ? (sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true))
-    : false;
+  const sandboxGpuEnabled = sb ? (sb.sandboxGpuEnabled ?? sb.gpuEnabled === true) : false;
   const policies =
     sb && Array.isArray(sb.policies)
       ? sb.policies.filter((policy): policy is string => typeof policy === "string")
       : [];
+  const agent = resolveSandboxStatusAgent(sb?.agent || "openclaw");
   return {
     schemaVersion: 1,
     name: sandboxName,
     found: !!sb,
+    agent: agent.agentName,
+    agentDisplayName: agent.agentDisplayName,
+    agentRuntime: agent.agentRuntime,
+    ...(agent.agentLoadError ? { agentLoadError: agent.agentLoadError } : {}),
     model: currentModel,
     provider: currentProvider,
     phase,
@@ -256,6 +318,7 @@ async function buildSandboxStatusReport(
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
     failureLayer: effectivePreflight.failureLayer,
+    terminalRuntimeHealth,
     dockerPaused: !!dockerRuntime?.paused,
   };
 }

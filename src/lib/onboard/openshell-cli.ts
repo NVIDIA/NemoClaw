@@ -36,7 +36,10 @@ export function createOpenshellCliHelpers(deps: OpenshellCliDeps): OpenshellCliH
     return resolved;
   }
 
-  function openshellShellCommand(args: string[], options: { openshellBinary?: string } = {}): string {
+  function openshellShellCommand(
+    args: string[],
+    options: { openshellBinary?: string } = {},
+  ): string {
     const openshellBinary = options.openshellBinary || getOpenshellBinary();
     return [shellQuote(openshellBinary), ...args.map((arg) => shellQuote(arg))].join(" ");
   }

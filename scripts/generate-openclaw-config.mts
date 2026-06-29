@@ -9,15 +9,13 @@
 //
 // Main inputs:
 //   CHAT_UI_URL, NEMOCLAW_DASHBOARD_PORT, NEMOCLAW_MODEL,
-//   NEMOCLAW_PROVIDER_KEY, NEMOCLAW_PRIMARY_MODEL_REF,
+//   NEMOCLAW_PROVIDER_KEY, NEMOCLAW_UPSTREAM_PROVIDER, NEMOCLAW_PRIMARY_MODEL_REF,
 //   NEMOCLAW_INFERENCE_BASE_URL, NEMOCLAW_INFERENCE_API,
 //   NEMOCLAW_INFERENCE_INPUTS, NEMOCLAW_CONTEXT_WINDOW,
 //   NEMOCLAW_MAX_TOKENS, NEMOCLAW_REASONING,
 //   NEMOCLAW_AGENT_TIMEOUT, NEMOCLAW_AGENT_HEARTBEAT_EVERY,
-//   NEMOCLAW_INFERENCE_COMPAT_B64, NEMOCLAW_MESSAGING_CHANNELS_B64,
-//   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64, NEMOCLAW_DISCORD_GUILDS_B64,
-//   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
-//   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_INFERENCE_COMPAT_B64,
+//   NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
@@ -35,7 +33,6 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { spawnSync } from "node:child_process";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -48,6 +45,32 @@ const MODEL_SETUP_EFFECT_KEYS: Record<string, Set<string>> = {
 const DEFAULT_DASHBOARD_PORT = 18789;
 const MIN_DASHBOARD_PORT = 1024;
 const MAX_DASHBOARD_PORT = 65535;
+
+// Local Ollama small-context compaction policy (NemoClaw #5468).
+//
+// OpenClaw 2026.5.x auto-compaction reserves `reserveTokensFloor` tokens at the
+// tail of the context window for reply generation (default 20_000, see the
+// pinned openclaw package's pi-settings), then clamps that reserve so at least
+// OPENCLAW_MIN_PROMPT_BUDGET_TOKENS (8_000) of the window stays available for
+// prompt content. NemoClaw floors a Local Ollama runtime window to 16_384
+// (ollama-runtime-context.ts), so the default 20k reserve is clamped down and
+// the prompt budget is pinned at ~8k — too small for OpenClaw's base prompt +
+// tool catalogue (~7.4k tokens). The first user turn overflows and preemptive
+// compaction, with no prior history to compact, fails with
+// "Auto-compaction could not recover this turn".
+//
+// Below SMALL_OLLAMA_CONTEXT_THRESHOLD we lower both reserveTokens and
+// reserveTokensFloor to the model's own reply budget (maxTokens) so the prompt
+// budget becomes `contextWindow - reserve` and the first turn fits. Above the
+// threshold OpenClaw's default reserve already leaves an ample prompt budget, so
+// its safeguard is left untouched. Both keys must be set: OpenClaw applies
+// max(reserveTokens, reserveTokensFloor), so lowering the floor alone would let
+// the 20k default pull the reserve back up.
+const OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR = 20_000;
+const OPENCLAW_MIN_PROMPT_BUDGET_TOKENS = 8_000;
+const SMALL_OLLAMA_CONTEXT_THRESHOLD =
+  OPENCLAW_DEFAULT_RESERVE_TOKENS_FLOOR + OPENCLAW_MIN_PROMPT_BUDGET_TOKENS;
+const LOCAL_OLLAMA_UPSTREAM_PROVIDER = "ollama-local";
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const DEFAULT_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
 const DEFAULT_OPENCLAW_OTEL_SERVICE_NAME = "openclaw-gateway";
@@ -141,7 +164,9 @@ function buildOpenClawOtelConfig(env: Env): JsonObject | undefined {
     throw new Error("NEMOCLAW_OPENCLAW_OTEL_ENDPOINT must not include credentials");
   }
 
-  const serviceName = (env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME).trim();
+  const serviceName = (
+    env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME || DEFAULT_OPENCLAW_OTEL_SERVICE_NAME
+  ).trim();
   if (!serviceName) {
     throw new Error("NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME must not be empty");
   }
@@ -555,9 +580,26 @@ const ALLOWED_EXTRA_AGENT_KEYS = new Set<string>([
   "tools",
   "subagents",
   "description",
+  "model",
 ]);
 const ALLOWED_TOOLS_KEYS = new Set<string>(["profile", "allow", "deny"]);
-const ALLOWED_SUBAGENTS_KEYS = new Set<string>(["maxSpawnDepth"]);
+// Mirrors the OpenClaw per-agent `agents.list[].subagents` zod schema (see
+// openclaw/src/config/zod-schema.agent-runtime.ts). OpenClaw uses
+// .strict() on that object, so any field we do not list here would be
+// rejected by the runtime parser at boot. `maxSpawnDepth` is intentionally
+// absent: OpenClaw only accepts it on `agents.defaults.subagents`, never
+// per-agent.
+const ALLOWED_SUBAGENTS_KEYS = new Set<string>([
+  "delegationMode",
+  "allowAgents",
+  "model",
+  "thinking",
+  "requireAgentId",
+]);
+const ALLOWED_AGENTS_DEFAULTS_KEYS = new Set<string>(["subagents"]);
+const ALLOWED_DEFAULTS_SUBAGENTS_KEYS = new Set<string>(["maxSpawnDepth"]);
+const ALLOWED_MAIN_KEYS = new Set<string>(["tools", "subagents"]);
+const SUBAGENT_DELEGATION_MODES = new Set<string>(["suggest", "prefer"]);
 
 function rejectUnknownKeys(obj: JsonObject, allowed: Set<string>, label: string): void {
   const unknown = Object.keys(obj).filter((key) => !allowed.has(key));
@@ -599,9 +641,7 @@ function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
     const value = tools[key];
     if (value === undefined) continue;
     if (!Array.isArray(value) || value.some((token) => typeof token !== "string" || !token)) {
-      throw new Error(
-        `${label}.tools.${key} must be an array of non-empty strings when present.`,
-      );
+      throw new Error(`${label}.tools.${key} must be an array of non-empty strings when present.`);
     }
   }
   if (tools.profile !== undefined && typeof tools.profile !== "string") {
@@ -610,35 +650,193 @@ function validateExtraAgentTools(entry: JsonObject, label: string): JsonObject {
   return pickAllowed(tools, ALLOWED_TOOLS_KEYS);
 }
 
-function validateExtraAgentSubagents(entry: JsonObject, label: string): JsonObject {
-  const subagents = entry.subagents;
-  if (!isObject(subagents)) {
+function validateModelRef(label: string, raw: unknown, primaryProvider: string): string {
+  if (typeof raw !== "string" || raw.length === 0) {
+    throw new Error(`${label} must be a non-empty "provider/model" string when present`);
+  }
+  const slash = raw.indexOf("/");
+  if (slash <= 0 || slash === raw.length - 1) {
+    throw new Error(`${label} must be of the form "provider/model", got "${raw}"`);
+  }
+  const provider = raw.slice(0, slash);
+  const modelTail = raw.slice(slash + 1);
+  if (provider.trim() !== provider || provider.length === 0) {
     throw new Error(
-      `${label}.subagents must be an object containing maxSpawnDepth. Set maxSpawnDepth: 0 to forbid further spawning.`,
+      `${label} provider portion must be non-empty and contain no surrounding whitespace, got "${raw}"`,
     );
   }
-  rejectUnknownKeys(subagents, ALLOWED_SUBAGENTS_KEYS, `${label}.subagents`);
-  const depth = subagents.maxSpawnDepth;
-  if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 0) {
+  if (modelTail.trim() !== modelTail || modelTail.length === 0) {
     throw new Error(
-      `${label}.subagents.maxSpawnDepth must be a non-negative integer.`,
+      `${label} model portion must be non-empty and contain no surrounding whitespace, got "${raw}"`,
     );
   }
-  return pickAllowed(subagents, ALLOWED_SUBAGENTS_KEYS);
+  if (provider !== primaryProvider) {
+    throw new Error(
+      `${label} provider "${provider}" must match the onboard provider "${primaryProvider}"; cross-provider manifests are not supported`,
+    );
+  }
+  return raw;
 }
 
-function validateExtraAgents(value: unknown): JsonObject[] {
-  if (value === null || value === undefined) {
-    return [];
+function validateSubagentsBlock(raw: unknown, label: string, primaryProvider: string): JsonObject {
+  if (raw === undefined || raw === null) {
+    return {};
   }
-  if (!Array.isArray(value)) {
+  if (!isObject(raw)) {
     throw new Error(
-      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects",
+      `${label} must be an object with any of: ${[...ALLOWED_SUBAGENTS_KEYS].sort().join(", ")}`,
     );
   }
+  if ("maxSpawnDepth" in raw) {
+    throw new Error(
+      `${label}.maxSpawnDepth is not accepted per-agent; OpenClaw honours it only on agents.defaults.subagents. Set it under the manifest 'defaults.subagents.maxSpawnDepth' instead.`,
+    );
+  }
+  rejectUnknownKeys(raw, ALLOWED_SUBAGENTS_KEYS, label);
+  const out: JsonObject = {};
+  if (raw.delegationMode !== undefined) {
+    if (
+      typeof raw.delegationMode !== "string" ||
+      !SUBAGENT_DELEGATION_MODES.has(raw.delegationMode)
+    ) {
+      throw new Error(
+        `${label}.delegationMode must be one of: ${[...SUBAGENT_DELEGATION_MODES].sort().join(", ")}`,
+      );
+    }
+    out.delegationMode = raw.delegationMode;
+  }
+  if (raw.allowAgents !== undefined) {
+    if (
+      !Array.isArray(raw.allowAgents) ||
+      raw.allowAgents.some((token) => typeof token !== "string" || !token)
+    ) {
+      throw new Error(`${label}.allowAgents must be an array of non-empty strings when present`);
+    }
+    out.allowAgents = [...raw.allowAgents];
+  }
+  if (raw.model !== undefined) {
+    out.model = validateModelRef(`${label}.model`, raw.model, primaryProvider);
+  }
+  if (raw.thinking !== undefined) {
+    if (typeof raw.thinking !== "string" || !raw.thinking) {
+      throw new Error(`${label}.thinking must be a non-empty string when present`);
+    }
+    out.thinking = raw.thinking;
+  }
+  if (raw.requireAgentId !== undefined) {
+    if (typeof raw.requireAgentId !== "boolean") {
+      throw new Error(`${label}.requireAgentId must be a boolean when present`);
+    }
+    out.requireAgentId = raw.requireAgentId;
+  }
+  return out;
+}
+
+function validateAgentsDefaults(raw: unknown): {
+  subagents: JsonObject;
+} {
+  if (raw === undefined || raw === null) {
+    return { subagents: {} };
+  }
+  if (!isObject(raw)) {
+    throw new Error(
+      `NEMOCLAW_EXTRA_AGENTS_JSON.defaults must be an object (allowed: ${[...ALLOWED_AGENTS_DEFAULTS_KEYS].sort().join(", ")})`,
+    );
+  }
+  rejectUnknownKeys(raw, ALLOWED_AGENTS_DEFAULTS_KEYS, "NEMOCLAW_EXTRA_AGENTS_JSON.defaults");
+  const subagentsRaw = raw.subagents;
+  if (subagentsRaw === undefined || subagentsRaw === null) {
+    return { subagents: {} };
+  }
+  if (!isObject(subagentsRaw)) {
+    throw new Error(
+      `NEMOCLAW_EXTRA_AGENTS_JSON.defaults.subagents must be an object (allowed: ${[...ALLOWED_DEFAULTS_SUBAGENTS_KEYS].sort().join(", ")})`,
+    );
+  }
+  rejectUnknownKeys(
+    subagentsRaw,
+    ALLOWED_DEFAULTS_SUBAGENTS_KEYS,
+    "NEMOCLAW_EXTRA_AGENTS_JSON.defaults.subagents",
+  );
+  const out: JsonObject = {};
+  if (subagentsRaw.maxSpawnDepth !== undefined) {
+    const depth = subagentsRaw.maxSpawnDepth;
+    if (typeof depth !== "number" || !Number.isInteger(depth) || depth < 1 || depth > 5) {
+      throw new Error(
+        "NEMOCLAW_EXTRA_AGENTS_JSON.defaults.subagents.maxSpawnDepth must be an integer between 1 and 5 (OpenClaw schema)",
+      );
+    }
+    out.maxSpawnDepth = depth;
+  }
+  return { subagents: out };
+}
+
+function validateMainOverrides(
+  raw: unknown,
+  primaryProvider: string,
+): { tools?: JsonObject; subagents?: JsonObject } {
+  if (raw === undefined || raw === null) {
+    return {};
+  }
+  if (!isObject(raw)) {
+    throw new Error(
+      `NEMOCLAW_EXTRA_AGENTS_JSON.main must be an object (allowed: ${[...ALLOWED_MAIN_KEYS].sort().join(", ")})`,
+    );
+  }
+  rejectUnknownKeys(raw, ALLOWED_MAIN_KEYS, "NEMOCLAW_EXTRA_AGENTS_JSON.main");
+  const out: { tools?: JsonObject; subagents?: JsonObject } = {};
+  if (raw.tools !== undefined) {
+    out.tools = validateExtraAgentTools({ tools: raw.tools }, "NEMOCLAW_EXTRA_AGENTS_JSON.main");
+  }
+  if (raw.subagents !== undefined) {
+    const subagents = validateSubagentsBlock(
+      raw.subagents,
+      "NEMOCLAW_EXTRA_AGENTS_JSON.main.subagents",
+      primaryProvider,
+    );
+    if (Object.keys(subagents).length > 0) {
+      out.subagents = subagents;
+    }
+  }
+  return out;
+}
+
+export type ExtraAgentsPayload = {
+  agents: JsonObject[];
+  defaults: { subagents: JsonObject };
+  main: { tools?: JsonObject; subagents?: JsonObject };
+};
+
+function validateExtraAgents(value: unknown, primaryProvider: string): ExtraAgentsPayload {
+  if (value === null || value === undefined) {
+    return { agents: [], defaults: { subagents: {} }, main: {} };
+  }
+  let agentsRaw: unknown;
+  let defaultsRaw: unknown;
+  let mainRaw: unknown;
+  if (Array.isArray(value)) {
+    // Legacy payload shape: bare array of secondary agents.
+    agentsRaw = value;
+  } else if (isObject(value)) {
+    rejectUnknownKeys(
+      value,
+      new Set<string>(["agents", "defaults", "main"]),
+      "NEMOCLAW_EXTRA_AGENTS_JSON",
+    );
+    agentsRaw = value.agents ?? [];
+    defaultsRaw = value.defaults;
+    mainRaw = value.main;
+  } else {
+    throw new Error(
+      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects or an object with {agents,defaults?,main?}",
+    );
+  }
+  if (!Array.isArray(agentsRaw)) {
+    throw new Error("NEMOCLAW_EXTRA_AGENTS_JSON.agents must be a JSON array of agent objects");
+  }
   const seenIds = new Set<string>([MAIN_AGENT_ID]);
-  return value.map((entry, index) => {
-    const label = `NEMOCLAW_EXTRA_AGENTS_JSON[${index}]`;
+  const agents = agentsRaw.map((entry, index) => {
+    const label = `NEMOCLAW_EXTRA_AGENTS_JSON.agents[${index}]`;
     if (!isObject(entry)) {
       throw new Error(`${label} must be a JSON object`);
     }
@@ -660,15 +858,17 @@ function validateExtraAgents(value: unknown): JsonObject[] {
     const canonicalPaths: Record<string, string> = {};
     for (const pathKey of ["workspace", "agentDir"] as const) {
       const pathValue = entry[pathKey];
+      const expected = expectedAgentPath(pathKey, id);
+      if (pathValue === undefined) {
+        canonicalPaths[pathKey] = expected;
+        continue;
+      }
       if (typeof pathValue !== "string" || pathValue.length === 0) {
-        throw new Error(`${label}.${pathKey} must be a non-empty string`);
+        throw new Error(`${label}.${pathKey} must be a non-empty string when present`);
       }
       if (!isAbsolute(pathValue)) {
-        throw new Error(
-          `${label}.${pathKey} must be an absolute path, got "${pathValue}"`,
-        );
+        throw new Error(`${label}.${pathKey} must be an absolute path, got "${pathValue}"`);
       }
-      const expected = expectedAgentPath(pathKey, id);
       if (resolve(pathValue) !== expected) {
         throw new Error(
           `${label}.${pathKey} must equal "${expected}" for agent id "${id}", got "${pathValue}"`,
@@ -683,7 +883,11 @@ function validateExtraAgents(value: unknown): JsonObject[] {
     }
     rejectUnknownKeys(entry, ALLOWED_EXTRA_AGENT_KEYS, label);
     const tools = validateExtraAgentTools(entry, label);
-    const subagents = validateExtraAgentSubagents(entry, label);
+    const subagents = validateSubagentsBlock(
+      entry.subagents,
+      `${label}.subagents`,
+      primaryProvider,
+    );
     // Build the canonical entry from a fresh object, never from the raw
     // operator input. This guarantees:
     //   - workspace/agentDir are the canonical strings (a dot-segment-laden
@@ -695,17 +899,37 @@ function validateExtraAgents(value: unknown): JsonObject[] {
       workspace: canonicalPaths.workspace,
       agentDir: canonicalPaths.agentDir,
       tools,
-      subagents,
     };
+    if (Object.keys(subagents).length > 0) {
+      canonical.subagents = subagents;
+    }
     if (typeof entry.description === "string") {
       canonical.description = entry.description;
     }
+    if (entry.model !== undefined) {
+      canonical.model = validateModelRef(`${label}.model`, entry.model, primaryProvider);
+    }
     return canonical;
   });
+  return {
+    agents,
+    defaults: validateAgentsDefaults(defaultsRaw),
+    main: validateMainOverrides(mainRaw, primaryProvider),
+  };
 }
 
-function buildAgentsList(extras: JsonObject[]): JsonObject[] {
-  return [{ ...MAIN_AGENT_ENTRY }, ...extras];
+function buildAgentsList(
+  extras: JsonObject[],
+  mainOverrides: { tools?: JsonObject; subagents?: JsonObject },
+): JsonObject[] {
+  const main: JsonObject = { ...MAIN_AGENT_ENTRY };
+  if (mainOverrides.tools !== undefined) {
+    main.tools = mainOverrides.tools;
+  }
+  if (mainOverrides.subagents !== undefined) {
+    main.subagents = mainOverrides.subagents;
+  }
+  return [main, ...extras];
 }
 
 function applyOpenClawSetupEffects(
@@ -749,6 +973,27 @@ function applyOpenClawSetupEffects(
 function decodeJsonEnv(env: Env, name: string, defaultValue: string): any {
   const raw = env[name] || defaultValue;
   return JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
+}
+
+// Build the agents.defaults.compaction override for a Local Ollama small-context
+// window, or undefined when it does not apply. See the policy constants above.
+export function buildLocalOllamaSmallContextCompaction(
+  upstreamProvider: string | undefined,
+  contextWindow: number,
+  maxTokens: number,
+): JsonObject | undefined {
+  if ((upstreamProvider || "").trim() !== LOCAL_OLLAMA_UPSTREAM_PROVIDER) {
+    return undefined;
+  }
+  if (!Number.isFinite(contextWindow) || contextWindow > SMALL_OLLAMA_CONTEXT_THRESHOLD) {
+    return undefined;
+  }
+  // Reserve the model's reply budget, but never so much that the remaining
+  // prompt budget drops below OpenClaw's own minimum — mirrors OpenClaw's clamp
+  // so a pathological maxTokens cannot make the window worse than the default.
+  const maxReserve = Math.max(0, contextWindow - OPENCLAW_MIN_PROMPT_BUDGET_TOKENS);
+  const reserveTokens = Math.max(0, Math.min(maxTokens, maxReserve));
+  return { reserveTokens, reserveTokensFloor: reserveTokens };
 }
 
 export function buildConfig(env: Env = process.env): JsonObject {
@@ -812,9 +1057,11 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const inferenceCompat = coerceCompatDict(
     decodeJsonEnv(env, "NEMOCLAW_INFERENCE_COMPAT_B64", "e30="),
   );
-  const extraAgents = validateExtraAgents(
+  const extraAgentsPayload = validateExtraAgents(
     decodeJsonEnv(env, "NEMOCLAW_EXTRA_AGENTS_JSON_B64", "W10="),
+    providerKey,
   );
+  const extraAgents = extraAgentsPayload.agents;
   const openclawPlugins: JsonObject[] = [];
   const openclawPluginIds = new Set<string>();
   const openclawToolOverrides: JsonObject = {};
@@ -833,113 +1080,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
     inferenceCompat.supportsUsageInStreaming ??= true;
   }
 
-  const msgChannels = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=");
-  const allowedIds = decodeJsonEnv(env, "NEMOCLAW_MESSAGING_ALLOWED_IDS_B64", "e30=");
-  const discordGuilds = decodeJsonEnv(env, "NEMOCLAW_DISCORD_GUILDS_B64", "e30=");
-  const telegramConfig = decodeJsonEnv(env, "NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=");
-  const slackConfig = decodeJsonEnv(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30=");
-  const rawSlackChannels = isObject(slackConfig) ? slackConfig.allowedChannels : [];
-  const slackAllowedChannels = Array.isArray(rawSlackChannels)
-    ? unique(
-        rawSlackChannels
-          .map((channel) => String(channel).replaceAll("\r", "").replaceAll("\n", "").trim())
-          .filter(Boolean),
-      )
-    : [];
-
-  const tokenKeys: Record<string, string> = {
-    discord: "token",
-    telegram: "botToken",
-    slack: "botToken",
-  };
-  const envKeys: Record<string, string> = {
-    discord: "DISCORD_BOT_TOKEN",
-    telegram: "TELEGRAM_BOT_TOKEN",
-    slack: "SLACK_BOT_TOKEN",
-  };
-
-  function placeholder(channel: string, envKey: string): string {
-    if (channel === "slack" && envKey === "SLACK_BOT_TOKEN") {
-      return `xoxb-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    if (channel === "slack" && envKey === "SLACK_APP_TOKEN") {
-      return `xapp-OPENSHELL-RESOLVE-ENV-${envKey}`;
-    }
-    return `openshell:resolve:env:${envKey}`;
-  }
-
-  const channelConfig: JsonObject = {};
-  for (const channel of Array.isArray(msgChannels) ? msgChannels : []) {
-    const ch = String(channel);
-    if (ch === "whatsapp") {
-      channelConfig[ch] = {
-        enabled: true,
-        accounts: {
-          default: { enabled: true, healthMonitor: { enabled: false } },
-        },
-      };
-      continue;
-    }
-    if (!(ch in tokenKeys)) {
-      continue;
-    }
-    const account: JsonObject = {
-      [tokenKeys[ch]]: placeholder(ch, envKeys[ch]),
-      enabled: true,
-      healthMonitor: { enabled: false },
-    };
-    if (ch === "slack") {
-      account.appToken = placeholder(ch, "SLACK_APP_TOKEN");
-    }
-    if (ch === "telegram") {
-      account.proxy = proxyUrl;
-      account.groupPolicy = "open";
-    }
-    if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-      account.dmPolicy = "allowlist";
-      account.allowFrom = allowedIds[ch];
-      if (ch === "slack") {
-        account.groupPolicy = "allowlist";
-        account.channels = {
-          "*": {
-            enabled: true,
-            requireMention: true,
-            users: allowedIds[ch],
-          },
-        };
-      }
-    }
-    if (ch === "slack" && slackAllowedChannels.length > 0) {
-      account.groupPolicy = "allowlist";
-      const slackChannelConfig: JsonObject = {
-        enabled: true,
-        requireMention: true,
-      };
-      if (isObject(allowedIds) && ch in allowedIds && allowedIds[ch]) {
-        slackChannelConfig.users = allowedIds[ch];
-      }
-      account.channels = Object.fromEntries(
-        slackAllowedChannels.map((channelId) => [channelId, { ...slackChannelConfig }]),
-      );
-    }
-    channelConfig[ch] = { enabled: true, accounts: { default: account } };
-  }
-
-  if (
-    "discord" in channelConfig &&
-    isObject(discordGuilds) &&
-    Object.keys(discordGuilds).length > 0
-  ) {
-    Object.assign(channelConfig.discord, {
-      groupPolicy: "allowlist",
-      guilds: discordGuilds,
-    });
-  }
-
-  if ("telegram" in channelConfig && isObject(telegramConfig) && telegramConfig.requireMention) {
-    channelConfig.telegram.groups = { "*": { requireMention: true } };
-  }
-
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
   const loopbackOrigin = `http://127.0.0.1:${gatewayPort}`;
@@ -954,28 +1094,64 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const disableDeviceAuth = env.NEMOCLAW_DISABLE_DEVICE_AUTH === "1" || isRemote;
   const allowInsecure = parsed.scheme === "http";
 
+  const providerModels: JsonObject[] = [
+    {
+      ...(Object.keys(inferenceCompat).length > 0 ? { compat: inferenceCompat } : {}),
+      id: model,
+      name: primaryModelRef,
+      reasoning,
+      input: inferenceInputs,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow,
+      maxTokens,
+    },
+  ];
+  const seenModelRefs = new Set<string>([primaryModelRef]);
+  const referencedRefs: string[] = [];
+  const collectRef = (ref: unknown): void => {
+    if (typeof ref !== "string" || !ref) return;
+    if (seenModelRefs.has(ref)) return;
+    seenModelRefs.add(ref);
+    referencedRefs.push(ref);
+  };
+  for (const agent of extraAgents) {
+    collectRef(agent.model);
+    if (isObject(agent.subagents)) {
+      collectRef(agent.subagents.model);
+    }
+  }
+  if (extraAgentsPayload.main.subagents !== undefined) {
+    collectRef(extraAgentsPayload.main.subagents.model);
+  }
+  for (const ref of referencedRefs) {
+    const slash = ref.indexOf("/");
+    const secondaryModelId = ref.slice(slash + 1);
+    providerModels.push({
+      id: secondaryModelId,
+      name: ref,
+      reasoning,
+      input: inferenceInputs,
+      cost: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      contextWindow,
+      maxTokens,
+    });
+  }
   const providers = {
     [providerKey]: {
       baseUrl: inferenceBaseUrl,
       apiKey: "unused",
       api: inferenceApi,
-      models: [
-        {
-          ...(Object.keys(inferenceCompat).length > 0 ? { compat: inferenceCompat } : {}),
-          id: model,
-          name: primaryModelRef,
-          reasoning,
-          input: inferenceInputs,
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-          },
-          contextWindow,
-          maxTokens,
-        },
-      ],
+      models: providerModels,
     },
   };
 
@@ -983,13 +1159,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     acpx: { enabled: false },
     bonjour: { enabled: false },
     qqbot: { enabled: false },
-    "openclaw-weixin": { enabled: true },
   };
-  for (const ch of ["discord", "slack", "telegram", "whatsapp"]) {
-    if (ch in channelConfig) {
-      pluginEntries[ch] = { enabled: true };
-    }
-  }
   const bundledProviderPlugins: Record<string, Set<string>> = {
     "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
     "amazon-bedrock-mantle": new Set(["amazon-bedrock-mantle"]),
@@ -1032,11 +1202,26 @@ export function buildConfig(env: Env = process.env): JsonObject {
     skipBootstrap: true,
     thinkingDefault: "off",
   };
+  if (Object.keys(extraAgentsPayload.defaults.subagents).length > 0) {
+    agentDefaults.subagents = extraAgentsPayload.defaults.subagents;
+  }
+
+  const smallOllamaCompaction = buildLocalOllamaSmallContextCompaction(
+    env.NEMOCLAW_UPSTREAM_PROVIDER,
+    contextWindow,
+    maxTokens,
+  );
+  if (smallOllamaCompaction) {
+    agentDefaults.compaction = smallOllamaCompaction;
+  }
 
   const config: JsonObject = {
-    agents: { defaults: agentDefaults, list: buildAgentsList(extraAgents) },
+    agents: {
+      defaults: agentDefaults,
+      list: buildAgentsList(extraAgents, extraAgentsPayload.main),
+    },
     models: { mode: "merge", providers },
-    channels: { defaults: {}, ...channelConfig },
+    channels: { defaults: {} },
     tools: openclawTools,
     update: { checkOnStart: false },
     plugins,
@@ -1050,6 +1235,19 @@ export function buildConfig(env: Env = process.env): JsonObject {
       },
       trustedProxies: ["127.0.0.1", "::1"],
       auth: { token: "" },
+      // Restart-class config changes (plugins.installs, models.pricing,
+      // unrecognized keys, ...) must not let the gateway SIGUSR1-restart
+      // itself: in containers the in-process restart path can fail and park
+      // the process alive with no HTTP listener, which the PID-wait respawn
+      // loop in nemoclaw-start.sh cannot observe (#4710). Hot mode makes the
+      // gateway ignore plan-driven restarts; NemoClaw applies restart-class
+      // changes through sandbox rebuild or `nemoclaw <name> recover` instead.
+      // Removal condition (also for the serving watchdog in
+      // nemoclaw-start.sh): once the pinned OpenClaw release exits non-zero
+      // when a failed in-process restart cannot re-bind its listener — so the
+      // respawn loop sees the death — this pin can revert to the default
+      // reload mode after a wedge drill proves no regression.
+      reload: { mode: "hot" },
     },
   };
 
@@ -1072,10 +1270,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    tools.web.search = {
+    // OpenClaw 2026.5.x: web-search providers are external plugins. The
+    // provider-owned apiKey lives under plugins.entries.<plugin>.config,
+    // not inline in tools.web.search. Writing the legacy inline shape makes
+    // the build-time `openclaw plugins install` exit non-zero during its
+    // pre-install config validation (the brave plugin is not installed yet),
+    // aborting the image build under `set -eu` before `doctor --fix` can
+    // migrate it. Emit the current schema directly so install validates
+    // cleanly. See NemoClaw #5266 (follow-up to #4955 / #3948).
+    tools.web.search = { enabled: true, provider: "brave" };
+    config.plugins.entries.brave = {
       enabled: true,
-      provider: "brave",
-      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+      config: { webSearch: { apiKey: "openshell:resolve:env:BRAVE_API_KEY" } },
     };
   }
 
@@ -1108,124 +1314,17 @@ function preserveExistingPluginInstalls(config: JsonObject, configPath: string):
   Object.assign(currentPlugins.installs, existingInstalls);
 }
 
-function hasPluginInstall(config: JsonObject, pluginId: string): boolean {
-  const plugins = config.plugins;
-  if (!isObject(plugins)) {
-    return false;
-  }
-  const installs = plugins.installs;
-  return isObject(installs) && pluginId in installs;
-}
-
-function readJsonFile(pathValue: string): unknown {
-  return JSON.parse(readFileSync(pathValue, "utf-8"));
-}
-
-function looksLikeWechatPluginMetadata(metadata: unknown, pathValue: string): boolean {
-  return (
-    isObject(metadata) &&
-    (metadata.id === "openclaw-weixin" ||
-      metadata.name === "@tencent-weixin/openclaw-weixin" ||
-      pathValue.toLowerCase().includes("openclaw-weixin"))
-  );
-}
-
-function hasInstalledWechatPluginMetadata(): boolean {
-  const stateDir = expandUser("~/.openclaw");
-  const candidates = [
-    join(stateDir, "extensions", "openclaw-weixin", "openclaw.plugin.json"),
-    join(stateDir, "extensions", "openclaw-weixin", "package.json"),
-    join(
-      stateDir,
-      "npm",
-      "node_modules",
-      "@tencent-weixin",
-      "openclaw-weixin",
-      "openclaw.plugin.json",
-    ),
-    join(stateDir, "npm", "node_modules", "@tencent-weixin", "openclaw-weixin", "package.json"),
-  ];
-  for (const candidate of candidates) {
-    try {
-      if (looksLikeWechatPluginMetadata(readJsonFile(candidate), candidate)) {
-        return true;
-      }
-    } catch {
-      // Keep scanning; stale metadata should not break config generation.
-    }
-  }
-
-  const extensionsDir = join(stateDir, "extensions");
-  if (!existsSync(extensionsDir)) {
-    return false;
-  }
-
-  const ignoredDirs = new Set(["node_modules", "plugin-runtime-deps", ".git"]);
-  const stack = [extensionsDir];
-  while (stack.length > 0) {
-    const dir = stack.pop() as string;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!ignoredDirs.has(entry.name)) {
-          stack.push(join(dir, entry.name));
-        }
-        continue;
-      }
-      if (!entry.isFile() || !["openclaw.plugin.json", "package.json"].includes(entry.name)) {
-        continue;
-      }
-      const pathValue = join(dir, entry.name);
-      try {
-        if (looksLikeWechatPluginMetadata(readJsonFile(pathValue), pathValue)) {
-          return true;
-        }
-      } catch {
-        // Keep scanning; corrupt package metadata is ignored like the Python path.
-      }
-    }
-  }
-  return false;
-}
-
-function hasPreinstalledWechatPluginSignal(): boolean {
-  return ["1", "true", "yes", "on"].includes(
-    (process.env.NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED || "").trim().toLowerCase(),
-  );
-}
-
-function seedWechatAccountsIfAvailable(config: JsonObject): void {
-  if (
-    !hasPluginInstall(config, "openclaw-weixin") &&
-    !hasInstalledWechatPluginMetadata() &&
-    !hasPreinstalledWechatPluginSignal()
-  ) {
-    return;
-  }
-
-  const seedScript = resolve(SCRIPT_DIR, "seed-wechat-accounts.py");
-  const result = spawnSync("python3", [seedScript], {
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (result.error) {
-    throw result.error;
-  }
-  if (result.status !== null && result.status !== 0) {
-    process.exit(result.status);
-  }
-  if (result.signal) {
-    throw new Error(`${seedScript} terminated with signal ${result.signal}`);
-  }
-}
-
-export function main(): void {
+export function writeOpenClawConfig(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
   preserveExistingPluginInstalls(config, configPath);
   mkdirSync(dirname(configPath), { recursive: true });
   writeFileSync(configPath, JSON.stringify(config, null, 2));
   chmodSync(configPath, 0o600);
-  seedWechatAccountsIfAvailable(config);
+}
+
+export function main(): void {
+  writeOpenClawConfig();
 }
 
 function isMainModule(): boolean {

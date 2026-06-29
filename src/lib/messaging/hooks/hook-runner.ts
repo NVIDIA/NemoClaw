@@ -22,16 +22,7 @@ export async function runMessagingHook(
   context: MessagingHookRunContext,
 ): Promise<MessagingHookRunResult> {
   const handler = registry.require(hook.handler);
-  const result = await handler({
-    channelId: context.channelId,
-    hookId: hook.id,
-    phase: hook.phase,
-    ...(typeof context.isInteractive === "boolean"
-      ? { isInteractive: context.isInteractive }
-      : {}),
-    inputs: context.inputs,
-    outputDeclarations: hook.outputs,
-  });
+  const result = await handler(buildHandlerContext(hook, context));
   const outputs = result.outputs ?? EMPTY_OUTPUTS;
 
   assertHookOutputsMatchDeclaration(hook, outputs);
@@ -44,6 +35,48 @@ export async function runMessagingHook(
   };
 }
 
+export function runMessagingHookSync(
+  hook: ChannelHookSpec,
+  registry: MessagingHookRegistry,
+  context: MessagingHookRunContext,
+): MessagingHookRunResult {
+  const handler = registry.require(hook.handler);
+  const result = handler(buildHandlerContext(hook, context));
+  if (isPromiseLike(result)) {
+    throw new Error(`Messaging hook '${hook.id}' returned a Promise in a synchronous phase.`);
+  }
+  const outputs = result.outputs ?? EMPTY_OUTPUTS;
+
+  assertHookOutputsMatchDeclaration(hook, outputs);
+
+  return {
+    hookId: hook.id,
+    handlerId: hook.handler,
+    phase: hook.phase,
+    outputs,
+  };
+}
+
+function buildHandlerContext(hook: ChannelHookSpec, context: MessagingHookRunContext) {
+  return {
+    channelId: context.channelId,
+    hookId: hook.id,
+    phase: hook.phase,
+    ...(typeof context.isInteractive === "boolean" ? { isInteractive: context.isInteractive } : {}),
+    inputs: context.inputs,
+    outputDeclarations: hook.outputs,
+  };
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "then" in value &&
+    typeof (value as { then?: unknown }).then === "function"
+  );
+}
+
 function assertHookOutputsMatchDeclaration(
   hook: ChannelHookSpec,
   outputs: MessagingHookOutputMap,
@@ -52,9 +85,7 @@ function assertHookOutputsMatchDeclaration(
 
   for (const declaration of hook.outputs ?? []) {
     if (declaration.required && !Object.hasOwn(outputs, declaration.id)) {
-      throw new Error(
-        `Hook '${hook.id}' missing required output '${declaration.id}'`,
-      );
+      throw new Error(`Hook '${hook.id}' missing required output '${declaration.id}'`);
     }
   }
 

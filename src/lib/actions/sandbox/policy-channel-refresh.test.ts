@@ -12,15 +12,15 @@
  * silently let the in-sandbox POLICY.md drift.
  */
 
+import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
-import * as fs from "node:fs";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const D = (p: string) => requireDist(`../../${p}`);
 
 type PresetInfo = { name: string };
 
@@ -47,11 +47,7 @@ const {
   removeChannelPresetIfPresent: (sandboxName: string, channelName: string) => void;
 };
 
-const POLICY_PRESETS: PresetInfo[] = [
-  { name: "npm" },
-  { name: "pypi" },
-  { name: "discord" },
-];
+const POLICY_PRESETS: PresetInfo[] = [{ name: "npm" }, { name: "pypi" }, { name: "discord" }];
 
 let logSpy: MockInstance;
 let errSpy: MockInstance;
@@ -102,9 +98,7 @@ beforeEach(() => {
   });
   applyPresetMock = vi.spyOn(policies, "applyPreset").mockReturnValue(true);
   removePresetMock = vi.spyOn(policies, "removePreset").mockReturnValue(true);
-  applyPresetContentMock = vi
-    .spyOn(policies, "applyPresetContent")
-    .mockReturnValue(true);
+  applyPresetContentMock = vi.spyOn(policies, "applyPresetContent").mockReturnValue(true);
   loadPresetFromFileMock = vi.spyOn(policies, "loadPresetFromFile").mockImplementation(() => ({
     presetName: "custom",
     content: "network_policies:\n  custom:\n    host: custom.example.com\n",

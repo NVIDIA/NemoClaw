@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { SandboxMessagingPlan } from "../../../messaging/manifest";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import {
+  getActiveChannelsFromPlan,
+  getDisabledChannelsFromPlan,
+} from "../../messaging-plan-session";
 import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 // Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
@@ -18,8 +23,7 @@ export interface PolicyPresetEntry {
 }
 
 export interface ActiveSandboxPolicyState {
-  messagingChannels?: string[] | null;
-  disabledChannels?: string[] | null;
+  messaging?: { plan: SandboxMessagingPlan } | null;
 }
 
 export interface PolicyResumeSelection {
@@ -72,7 +76,10 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     ): PolicyResumeSelection;
     arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
     skippedStepMessage(stepName: string, detail?: string | null): void;
-    recordStateSkipped(state: "policies", metadata?: Record<string, unknown> | null): Promise<Session>;
+    recordStateSkipped(
+      state: "policies",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
     startRecordedStep(
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string; policyPresets: string[] },
@@ -107,6 +114,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
 export interface PoliciesStateResult {
   session: Session | null;
   recordedMessagingChannels: string[];
+  selectedMessagingChannels: string[];
   appliedPolicyPresets: string[];
   stateResult: OnboardStateTransitionResult;
 }
@@ -129,15 +137,16 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-  const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
-    ? latestSession.messagingChannels
-    : [];
+  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const activePlan = activeSandbox?.messaging?.plan;
+  const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);
+  const disabledChannels = getDisabledChannelsFromPlan(activePlan);
   const policyMessagingChannels = deps.mergePolicyMessagingChannels(
     selectedMessagingChannels,
     recordedMessagingChannels,
-    activeSandbox?.messagingChannels,
-    activeSandbox?.disabledChannels,
+    activeMessagingChannels,
+    disabledChannels,
   );
   deps.verifyCompatibleEndpointSandboxSmoke({
     sandboxName,
@@ -151,7 +160,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
 
   const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
     recordedPolicyPresets,
-    disabledChannels: activeSandbox?.disabledChannels,
+    disabledChannels,
     enabledChannels: policyMessagingChannels,
     hermesToolGateways,
     agent: normalizeAgentName((agent as { name?: string } | null)?.name),
@@ -206,7 +215,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
         ? recordedPolicyPresetsForSupport
         : null,
       enabledChannels: policyMessagingChannels,
-      disabledChannels: activeSandbox?.disabledChannels,
+      disabledChannels,
       webSearchConfig,
       provider,
       // selectOnboardAgent returns null for the default OpenClaw path (no
@@ -246,6 +255,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   return {
     session,
     recordedMessagingChannels,
+    selectedMessagingChannels: policyMessagingChannels,
     appliedPolicyPresets,
     stateResult: advanceTo("finalizing", {
       metadata: { state: "policies", policyPresets: appliedPolicyPresets },

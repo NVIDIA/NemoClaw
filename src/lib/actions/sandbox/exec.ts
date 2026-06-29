@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import os from "node:os";
+import { spawnExitCode } from "../../core/process-exit";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -15,6 +15,15 @@ type SpawnLikeResult = {
   signal?: NodeJS.Signals | null;
   error?: Error;
 };
+
+export type WorkdirProbeResult = {
+  status: number | null;
+  error?: Error;
+};
+
+export type WorkdirProbeOutcome = "ok" | "missing" | "unclear";
+
+export type WorkdirProbeRunner = (binary: string, args: readonly string[]) => WorkdirProbeResult;
 
 export function buildOpenshellExecArgs(
   sandboxName: string,
@@ -32,6 +41,21 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
+export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): string[] {
+  return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
+}
+
+export function workdirMissingMessage(workdir: string): string {
+  return `error: --workdir: ${workdir} does not exist inside the sandbox`;
+}
+
+export function evaluateWorkdirProbe(probe: WorkdirProbeResult): WorkdirProbeOutcome {
+  if (probe.error) return "unclear";
+  if (probe.status === 0) return "ok";
+  if (probe.status === 1) return "missing";
+  return "unclear";
+}
+
 export function computeExitCode(result: SpawnLikeResult): {
   code: number;
   errorMessage?: string;
@@ -39,21 +63,25 @@ export function computeExitCode(result: SpawnLikeResult): {
   if (result.error) {
     return { code: 1, errorMessage: result.error.message };
   }
-  if (result.status !== null) return { code: result.status };
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    return { code: signalNumber ? 128 + signalNumber : 1 };
-  }
-  return { code: 1 };
+  return { code: spawnExitCode(result) };
 }
 
-function exitWithSpawnResult(result: SpawnLikeResult): never {
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
-    console.error(`  Failed to invoke openshell: ${errorMessage}`);
-    console.error("  Ensure 'openshell' is installed and on PATH.");
+const defaultWorkdirProbeRunner: WorkdirProbeRunner = (binary, args) => {
+  const probe = spawnSync(binary, args, { stdio: ["ignore", "ignore", "ignore"] });
+  return { status: probe.status, error: probe.error };
+};
+
+export function validateWorkdirOrFail(
+  binary: string,
+  sandboxName: string,
+  workdir: string,
+  run: WorkdirProbeRunner = defaultWorkdirProbeRunner,
+): void {
+  const outcome = evaluateWorkdirProbe(run(binary, buildWorkdirProbeArgs(sandboxName, workdir)));
+  if (outcome === "missing") {
+    console.error(workdirMissingMessage(workdir));
+    process.exit(1);
   }
-  process.exit(code);
 }
 
 export async function execSandbox(
@@ -69,10 +97,17 @@ export async function execSandbox(
     );
     process.exit(2);
   }
-  const result = spawnSync(
-    getOpenshellBinary(),
-    buildOpenshellExecArgs(sandboxName, command, options),
-    { stdio: "inherit" },
-  );
-  exitWithSpawnResult(result);
+  const binary = getOpenshellBinary();
+  if (options.workdir) {
+    validateWorkdirOrFail(binary, sandboxName, options.workdir);
+  }
+  const result = spawnSync(binary, buildOpenshellExecArgs(sandboxName, command, options), {
+    stdio: "inherit",
+  });
+  const { code, errorMessage } = computeExitCode(result);
+  if (errorMessage) {
+    console.error(`  Failed to invoke openshell: ${errorMessage}`);
+    console.error("  Ensure 'openshell' is installed and on PATH.");
+  }
+  process.exit(code);
 }

@@ -171,20 +171,18 @@ describe("rebuild policy preset restoration (#1952)", () => {
 
     it("disabled messaging channel policy presets are not restored", () => {
       const manifest = { policyPresets: ["npm", "slack", "pypi"] };
-      const savedPresets = pruneDisabledMessagingPolicyPresets(
-        manifest.policyPresets || [],
-        ["slack"],
-      );
+      const savedPresets = pruneDisabledMessagingPolicyPresets(manifest.policyPresets || [], [
+        "slack",
+      ]);
       expect(savedPresets).toEqual(["npm", "pypi"]);
     });
 
-    it("preserves non-required channel presets for later start and rebuild", () => {
+    it("removes optional channel presets when their channel is disabled", () => {
       const manifest = { policyPresets: ["telegram", "npm", "pypi"] };
-      const savedPresets = pruneDisabledMessagingPolicyPresets(
-        manifest.policyPresets || [],
-        ["telegram"],
-      );
-      expect(savedPresets).toEqual(["telegram", "npm", "pypi"]);
+      const savedPresets = pruneDisabledMessagingPolicyPresets(manifest.policyPresets || [], [
+        "telegram",
+      ]);
+      expect(savedPresets).toEqual(["npm", "pypi"]);
     });
   });
 });

@@ -28,7 +28,9 @@ function getDisplayDescription(command: CommandDef): string {
   if (hasDisplaySpecificDescription(command)) {
     return command.description;
   }
-  return brandedPublicText(getRegisteredOclifCommandSummary(command.commandId) ?? command.description);
+  return brandedPublicText(
+    getRegisteredOclifCommandSummary(command.commandId) ?? command.description,
+  );
 }
 
 export function version(): void {

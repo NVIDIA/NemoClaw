@@ -5,7 +5,12 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { npmGlobalBin, npmLinkTargetPaths, npmLinkTargetsWritable, pathWithPrependedEntries } from "./npm";
+import {
+  npmGlobalBin,
+  npmLinkTargetPaths,
+  npmLinkTargetsWritable,
+  pathWithPrependedEntries,
+} from "./npm";
 
 function state(options: { existing?: string[]; writable?: string[] }) {
   const existing = new Set(options.existing ?? []);
@@ -33,14 +38,23 @@ describe("installer npm helpers", () => {
     expect(
       npmLinkTargetsWritable(
         "/tmp/prefix",
-        state({ existing: [paths.binDir, paths.nodeModulesDir], writable: [paths.binDir, paths.nodeModulesDir] }),
+        state({
+          existing: [paths.binDir, paths.nodeModulesDir],
+          writable: [paths.binDir, paths.nodeModulesDir],
+        }),
       ).ok,
     ).toBe(true);
     expect(
-      npmLinkTargetsWritable("/tmp/prefix", state({ existing: [paths.binDir], writable: [paths.nodeModulesDir] })),
+      npmLinkTargetsWritable(
+        "/tmp/prefix",
+        state({ existing: [paths.binDir], writable: [paths.nodeModulesDir] }),
+      ),
     ).toEqual({ ok: false, paths, reason: "bin-unwritable" });
     expect(
-      npmLinkTargetsWritable("/tmp/prefix", state({ existing: [paths.libDir], writable: [paths.prefix] })),
+      npmLinkTargetsWritable(
+        "/tmp/prefix",
+        state({ existing: [paths.libDir], writable: [paths.prefix] }),
+      ),
     ).toEqual({ ok: false, paths, reason: "lib-unwritable" });
     expect(npmLinkTargetsWritable("", state({}))).toEqual({
       ok: false,

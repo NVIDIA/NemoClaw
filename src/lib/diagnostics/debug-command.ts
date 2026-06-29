@@ -12,7 +12,11 @@ export interface RunDebugCommandDeps {
   exit?: (code: number) => never;
 }
 
-const SANDBOX_NAME_ENV_VARS = ["NEMOCLAW_SANDBOX_NAME", "NEMOCLAW_SANDBOX", "SANDBOX_NAME"] as const;
+const SANDBOX_NAME_ENV_VARS = [
+  "NEMOCLAW_SANDBOX_NAME",
+  "NEMOCLAW_SANDBOX",
+  "SANDBOX_NAME",
+] as const;
 
 function resolveExplicitName(
   options: DebugOptions,

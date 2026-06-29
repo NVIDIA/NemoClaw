@@ -7,19 +7,13 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { collectSandboxCreateFailureDiagnostics } from "../dist/lib/onboard/sandbox-create-failure.js";
+import { collectSandboxCreateFailureDiagnostics } from "../src/lib/onboard/sandbox-create-failure.js";
 
 describe("sandbox create failure diagnostics", () => {
   it("preserves gateway failure lines and VM console output before cleanup", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-create-failure-"));
     const homeDir = path.join(tmp, "home");
-    const logDir = path.join(
-      homeDir,
-      ".local",
-      "state",
-      "nemoclaw",
-      "openshell-docker-gateway",
-    );
+    const logDir = path.join(homeDir, ".local", "state", "nemoclaw", "openshell-docker-gateway");
     const sandboxId = "691344ae-f514-41c1-b29e-db7f2f7ef257";
     const stateDir = path.join(logDir, "vm-driver", "sandboxes", sandboxId);
     const consolePath = path.join(stateDir, "rootfs-console.log");

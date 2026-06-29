@@ -168,6 +168,10 @@ export function persistFinalizedPolicyPresets(
   const customPresetNames = registry.getCustomPolicies(sandboxName).map((preset) => preset.name);
   registry.updateSandbox(
     sandboxName,
-    buildFinalizedPolicyPresetsUpdate(appliedPolicyPresets, listBuiltinPresetNames(), customPresetNames),
+    buildFinalizedPolicyPresetsUpdate(
+      appliedPolicyPresets,
+      listBuiltinPresetNames(),
+      customPresetNames,
+    ),
   );
 }

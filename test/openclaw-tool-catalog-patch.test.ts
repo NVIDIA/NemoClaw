@@ -26,9 +26,8 @@ function realToolFixtureSource(allCustomToolsLine: string) {
   const longDescription =
     "Run a shell command in the sandbox workspace. ".repeat(60) +
     "Use this only when the user asks for command execution.";
-  const nestedDescription = "Nested schema metadata that should not be returned by tool_describe. ".repeat(
-    30,
-  );
+  const nestedDescription =
+    "Nested schema metadata that should not be returned by tool_describe. ".repeat(30);
 
   return [
     "const realCalls = [];",
@@ -153,7 +152,8 @@ function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {
   fs.writeFileSync(
     selectionPath,
     realToolFixtureSource(
-      opts.allCustomToolsLine ?? "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];",
+      opts.allCustomToolsLine ??
+        "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];",
     ),
   );
   return { root, dist, selectionPath };
@@ -182,7 +182,10 @@ describe("OpenClaw compact tool catalog patch", () => {
       expect(first.status, `${first.stdout}${first.stderr}`).toBe(0);
       expect(first.stdout).toContain("patched");
       const patched = fs.readFileSync(fixture.selectionPath, "utf-8");
-      expect((patched.match(new RegExp(MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length).toBe(1);
+      expect(
+        (patched.match(new RegExp(MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? [])
+          .length,
+      ).toBe(1);
       expect(patched).not.toContain("const allCustomTools = [...customTools, ...clientToolDefs];");
 
       const second = runPatch(fixture.dist);
@@ -308,7 +311,9 @@ describe("OpenClaw compact tool catalog patch", () => {
       const describe = turn.allCustomTools.find((tool: any) => tool.name === "tool_describe");
       const call = turn.allCustomTools.find((tool: any) => tool.name === "tool_call");
 
-      const searchPayload = parseToolResult(await search.execute("call-search", { query: "shell" }));
+      const searchPayload = parseToolResult(
+        await search.execute("call-search", { query: "shell" }),
+      );
       expect(searchPayload.matches.map((match: any) => match.name)).toEqual(["exec"]);
 
       const described = parseToolResult(await describe.execute("call-describe", { name: "exec" }));

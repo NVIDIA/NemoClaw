@@ -227,13 +227,13 @@ jobs:
         if: steps.docker.outputs.docker_ok == 'true'
         shell: powershell
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $script = @"
           set -euo pipefail
           cd '$env:WSL_WORKDIR'
-          export NVIDIA_API_KEY='$env:NVIDIA_API_KEY'
+          export NVIDIA_INFERENCE_API_KEY='$env:NVIDIA_INFERENCE_API_KEY'
           export GITHUB_TOKEN='$env:GITHUB_TOKEN'
           export NEMOCLAW_NON_INTERACTIVE='$env:NEMOCLAW_NON_INTERACTIVE'
           export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE='$env:NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE'

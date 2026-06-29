@@ -18,13 +18,13 @@
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1              - required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 - required
-#   NVIDIA_API_KEY                         - required for onboarding
+#   NVIDIA_INFERENCE_API_KEY                         - required for onboarding
 #   NEMOCLAW_SANDBOX_NAME                  - sandbox name (default: e2e-openclaw-discord-pairing)
 #   DISCORD_BOT_TOKEN                      - defaults to a fake token
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-openclaw-discord-pairing.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-openclaw-discord-pairing.sh
 
 # shellcheck disable=SC2016,SC2329
 # SC2016: Single-quoted strings are intentional for commands evaluated inside
@@ -185,8 +185,8 @@ check_fake_discord_gateway_capture() {
 const fs = require("fs");
 const file = process.argv[2];
 const expected = process.argv[3];
-const rows = fs
-  .readFileSync(file, "utf8")
+const serialized = fs.readFileSync(file, "utf8");
+const rows = serialized
   .trim()
   .split(/\n+/)
   .filter(Boolean)
@@ -197,7 +197,7 @@ if (!identify) {
   console.log("NO_IDENTIFY");
   process.exit(2);
 }
-if (identify.tokenMatchesExpected !== true || identify.token !== expected) {
+if (identify.tokenMatchesExpected !== true) {
   console.log("BAD_TOKEN_REWRITE");
   process.exit(3);
 }
@@ -205,17 +205,25 @@ if (identify.tokenLooksPlaceholder) {
   console.log("PLACEHOLDER_LEAK");
   process.exit(4);
 }
+if (Object.prototype.hasOwnProperty.call(identify, "token")) {
+  console.log("RAW_TOKEN_CAPTURED");
+  process.exit(5);
+}
+if (serialized.includes(expected)) {
+  console.log("RAW_TOKEN_LEAK");
+  process.exit(6);
+}
 console.log("OK");
 NODE
 }
 
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! docker info >/dev/null 2>&1; then
   fail "Docker is not running"

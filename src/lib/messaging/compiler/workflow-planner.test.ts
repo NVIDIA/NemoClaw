@@ -3,8 +3,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { createBuiltInChannelManifestRegistry } from "../channels";
+import {
+  createBuiltInChannelManifestRegistry,
+  createBuiltInRenderTemplateResolver,
+} from "../channels";
 import { createBuiltInMessagingHookRegistry, MessagingHookRegistry } from "../hooks";
+import { type ChannelManifest, createChannelManifestRegistry } from "../manifest";
 import { MessagingWorkflowPlanner } from "./workflow-planner";
 
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -13,13 +17,42 @@ const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
   WECHAT_BOT_TOKEN: "test-wechat-token",
   SLACK_BOT_TOKEN: "xoxb-test-slack-token",
   SLACK_APP_TOKEN: "xapp-test-slack-token",
+  MSTEAMS_APP_PASSWORD: "test-teams-client-secret",
 };
 const TEST_WECHAT_LOGIN = {
   token: "test-wechat-token",
   accountId: "test-wechat-account",
-  baseUrl: "https://ilinkai.wechat.example",
+  baseUrl: "https://ilinkai.wechat.com",
   userId: "test-wechat-user",
 } as const;
+
+const CREDENTIAL_ONLY_MANIFEST: ChannelManifest = {
+  schemaVersion: 1,
+  id: "matrix",
+  displayName: "Matrix",
+  supportedAgents: ["openclaw"],
+  auth: { mode: "none" },
+  inputs: [
+    {
+      id: "botToken",
+      kind: "secret",
+      required: true,
+      envKey: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  credentials: [
+    {
+      id: "botToken",
+      sourceInput: "botToken",
+      providerName: "{sandboxName}-matrix",
+      providerEnvKey: "MATRIX_BOT_TOKEN",
+      placeholder: "MATRIX_BOT_TOKEN",
+    },
+  ],
+  render: [],
+  state: {},
+  hooks: [],
+};
 
 function planner(): MessagingWorkflowPlanner {
   return new MessagingWorkflowPlanner(
@@ -65,6 +98,7 @@ function planner(): MessagingWorkflowPlanner {
         },
       },
     }),
+    createBuiltInRenderTemplateResolver(),
   );
 }
 
@@ -85,9 +119,7 @@ async function withEnv<T>(
   values: Readonly<Record<string, string | undefined>>,
   run: () => Promise<T>,
 ): Promise<T> {
-  const previous = Object.fromEntries(
-    Object.keys(values).map((key) => [key, process.env[key]]),
-  );
+  const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
   try {
     for (const [key, value] of Object.entries(values)) {
       if (value === undefined) {
@@ -120,10 +152,7 @@ describe("MessagingWorkflowPlanner", () => {
 
     expect(plan.workflow).toBe("onboard");
     expect(plan.disabledChannels).toEqual([]);
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "wechat",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "wechat"]);
     expect(plan.channels).toEqual([
       expect.objectContaining({
         channelId: "telegram",
@@ -222,6 +251,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildPlan({
       sandboxName: "demo",
       agent: "openclaw",
@@ -259,6 +289,25 @@ describe("MessagingWorkflowPlanner", () => {
         id: "slack.validateCredentials",
         handler: () => ({}),
       },
+      {
+        id: "wechat.seedOpenClawAccount",
+        handler: () => ({
+          outputs: {
+            openclawWeixinAccountsIndex: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts.json", content: [] },
+            },
+            openclawWeixinAccountFile: {
+              kind: "build-file",
+              value: { path: "openclaw-weixin/accounts/cached-wechat-account.json", content: {} },
+            },
+            openclawConfigPatch: {
+              kind: "build-file",
+              value: { path: "openclaw.json", merge: {} },
+            },
+          },
+        }),
+      },
     ]);
 
     await withEnv(
@@ -270,6 +319,7 @@ describe("MessagingWorkflowPlanner", () => {
         const plan = await new MessagingWorkflowPlanner(
           createBuiltInChannelManifestRegistry(),
           hooks,
+          createBuiltInRenderTemplateResolver(),
         ).buildPlan({
           sandboxName: "demo",
           agent: "openclaw",
@@ -329,9 +379,7 @@ describe("MessagingWorkflowPlanner", () => {
       "telegram",
       "slack",
     ]);
-    expect(
-      plan.credentialBindings.some((binding) => binding.channelId === "telegram"),
-    ).toBe(true);
+    expect(plan.credentialBindings.some((binding) => binding.channelId === "telegram")).toBe(true);
   });
 
   it("records re-enabled channels for start-channel plans", async () => {
@@ -477,6 +525,7 @@ describe("MessagingWorkflowPlanner", () => {
     const plan = await new MessagingWorkflowPlanner(
       createBuiltInChannelManifestRegistry(),
       hooks,
+      createBuiltInRenderTemplateResolver(),
     ).buildChannelAddPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
@@ -493,10 +542,7 @@ describe("MessagingWorkflowPlanner", () => {
     });
 
     expect(plan.workflow).toBe("add-channel");
-    expect(plan.channels.map((channel) => channel.channelId)).toEqual([
-      "telegram",
-      "slack",
-    ]);
+    expect(plan.channels.map((channel) => channel.channelId)).toEqual(["telegram", "slack"]);
     expect(plan.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
       active: true,
       configured: true,
@@ -511,6 +557,51 @@ describe("MessagingWorkflowPlanner", () => {
       "slack",
       "slack",
     ]);
+  });
+
+  it("does not trust credential availability from mismatched sandbox entry plans", async () => {
+    const registry = createChannelManifestRegistry([CREDENTIAL_ONLY_MANIFEST]);
+    const localPlanner = new MessagingWorkflowPlanner(
+      registry,
+      new MessagingHookRegistry(),
+      createBuiltInRenderTemplateResolver(),
+    );
+    const stalePlan = await localPlanner.buildPlan({
+      sandboxName: "other-sandbox",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["matrix"],
+      credentialAvailability: {
+        MATRIX_BOT_TOKEN: true,
+      },
+    });
+
+    const plan = await localPlanner.buildChannelAddPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: {
+          schemaVersion: 1,
+          plan: stalePlan,
+        },
+      },
+      channelId: "matrix",
+      isInteractive: false,
+      supportedChannelIds: ["matrix"],
+    });
+
+    expect(plan.channels).toHaveLength(1);
+    expect(plan.channels[0]).toMatchObject({
+      channelId: "matrix",
+      active: false,
+      configured: true,
+    });
+    expect(plan.credentialBindings[0]).toMatchObject({
+      channelId: "matrix",
+      credentialAvailable: false,
+    });
   });
 
   it("mutates disabled channel state in an existing sandbox entry plan", async () => {
@@ -546,6 +637,9 @@ describe("MessagingWorkflowPlanner", () => {
       active: false,
       disabled: true,
     });
+    expect(
+      (stopped?.runtimeSetup?.nodePreloads ?? []).some((entry) => entry.channelId === "telegram"),
+    ).toBe(false);
 
     const started = await planner().buildChannelStartPlanFromSandboxEntry({
       sandboxName: "demo",
@@ -566,6 +660,90 @@ describe("MessagingWorkflowPlanner", () => {
       active: true,
       disabled: false,
     });
+    expect(
+      (started?.runtimeSetup?.nodePreloads ?? []).some(
+        (entry) => entry.channelId === "telegram" && entry.module === "telegram-diagnostics",
+      ),
+    ).toBe(true);
+  });
+
+  it("removes Teams host forwarding while the channel is disabled", async () => {
+    await withEnv(
+      {
+        MSTEAMS_APP_ID: "test-teams-app-id",
+        MSTEAMS_TENANT_ID: "test-teams-tenant-id",
+        TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
+        MSTEAMS_PORT: "3977",
+      },
+      async () => {
+        const existingPlan = await planner().buildPlan({
+          sandboxName: "demo",
+          agent: "openclaw",
+          workflow: "onboard",
+          isInteractive: false,
+          configuredChannels: ["teams"],
+          credentialAvailability: {
+            MSTEAMS_APP_PASSWORD: true,
+          },
+        });
+
+        expect(
+          existingPlan.channels.find((channel) => channel.channelId === "teams"),
+        ).toMatchObject({
+          hostForward: {
+            channelId: "teams",
+            port: 3977,
+            label: "Microsoft Teams webhook",
+          },
+        });
+
+        const stopped = await planner().buildChannelStopPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "openclaw",
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: existingPlan,
+            },
+          },
+          channelId: "teams",
+        });
+
+        expect(stopped?.workflow).toBe("stop-channel");
+        expect(stopped?.channels.find((channel) => channel.channelId === "teams")).toMatchObject({
+          active: false,
+          disabled: true,
+        });
+        expect(
+          stopped?.channels.find((channel) => channel.channelId === "teams")?.hostForward,
+        ).toBeUndefined();
+
+        const started = await planner().buildChannelStartPlanFromSandboxEntry({
+          sandboxName: "demo",
+          agent: "openclaw",
+          sandboxEntry: {
+            name: "demo",
+            messaging: {
+              schemaVersion: 1,
+              plan: stopped!,
+            },
+          },
+          channelId: "teams",
+        });
+
+        expect(started?.workflow).toBe("start-channel");
+        expect(started?.channels.find((channel) => channel.channelId === "teams")).toMatchObject({
+          active: true,
+          disabled: false,
+          hostForward: {
+            channelId: "teams",
+            port: 3977,
+            label: "Microsoft Teams webhook",
+          },
+        });
+      },
+    );
   });
 
   it("removes a channel and its dependent plan entries from an existing sandbox entry plan", async () => {
@@ -598,13 +776,54 @@ describe("MessagingWorkflowPlanner", () => {
     expect(removed?.workflow).toBe("remove-channel");
     expect(removed?.channels.map((channel) => channel.channelId)).toEqual(["slack"]);
     expect(removed?.disabledChannels).toEqual([]);
-    expect(
-      removed?.credentialBindings.some((binding) => binding.channelId === "telegram"),
-    ).toBe(false);
-    expect(
-      removed?.networkPolicy.entries.some((entry) => entry.channelId === "telegram"),
-    ).toBe(false);
+    expect(removed?.credentialBindings.some((binding) => binding.channelId === "telegram")).toBe(
+      false,
+    );
+    expect(removed?.networkPolicy.entries.some((entry) => entry.channelId === "telegram")).toBe(
+      false,
+    );
     expect(removed?.agentRender.some((entry) => entry.channelId === "telegram")).toBe(false);
+  });
+
+  it("preserves an explicit empty plan on rebuild after the final channel is removed", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const removed = await planner().buildChannelRemovePlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      channelId: "telegram",
+    });
+
+    expect(removed?.channels).toEqual([]);
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: removed! },
+      },
+      supportedChannelIds: ["telegram"],
+    });
+
+    expect(rebuilt).toMatchObject({
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: [],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+    });
   });
 
   it("rebuilds from stored plan input values when config env is unavailable", async () => {
@@ -635,7 +854,6 @@ describe("MessagingWorkflowPlanner", () => {
           agent: "openclaw",
           sandboxEntry: {
             name: "demo",
-            messagingChannels: ["telegram"],
             messaging: {
               schemaVersion: 1,
               plan: existingPlan,
@@ -651,27 +869,128 @@ describe("MessagingWorkflowPlanner", () => {
         ).toMatchObject({
           value: "1",
         });
-        expect(rebuilt?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject({
-          active: true,
-          disabled: false,
-        });
+        expect(rebuilt?.channels.find((channel) => channel.channelId === "telegram")).toMatchObject(
+          {
+            active: true,
+            disabled: false,
+          },
+        );
       },
     );
   });
 
-  it("does not compile a rebuild plan when the sandbox entry has no stored plan", async () => {
+  it("does not compile a rebuild plan when the sandbox entry has no stored plan or channels", async () => {
     const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
       sandboxName: "demo",
       agent: "openclaw",
       sandboxEntry: {
         name: "demo",
-        messagingChannels: ["telegram"],
       },
     });
 
     expect(rebuilt).toBeNull();
   });
 
+  it("drops stored channels that fall outside the current supportedChannelIds allowlist on rebuild", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram", "slack"],
+      credentialAvailability: {
+        TELEGRAM_BOT_TOKEN: true,
+        SLACK_BOT_TOKEN: true,
+        SLACK_APP_TOKEN: true,
+      },
+    });
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      supportedChannelIds: ["telegram"],
+    });
+
+    expect(rebuilt?.channels.map((channel) => channel.channelId)).toEqual(["telegram"]);
+    expect(rebuilt?.credentialBindings.some((binding) => binding.channelId === "slack")).toBe(
+      false,
+    );
+    expect(rebuilt?.networkPolicy.entries.some((entry) => entry.channelId === "slack")).toBe(false);
+    expect(rebuilt?.agentRender.some((entry) => entry.channelId === "slack")).toBe(false);
+  });
+
+  it("returns null on rebuild when every stored channel falls outside the current allowlist", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const rebuilt = await planner().buildRebuildPlanFromSandboxEntry({
+      sandboxName: "demo",
+      agent: "openclaw",
+      sandboxEntry: {
+        name: "demo",
+        messaging: { schemaVersion: 1, plan: existingPlan },
+      },
+      supportedChannelIds: [],
+    });
+
+    expect(rebuilt).toBeNull();
+  });
+
+  it("drops a persisted plan during stop/start/remove mutations when supportedChannelIds: [] denies the stored channel", async () => {
+    const existingPlan = await planner().buildPlan({
+      sandboxName: "demo",
+      agent: "openclaw",
+      workflow: "onboard",
+      isInteractive: false,
+      configuredChannels: ["telegram"],
+      credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
+    });
+
+    const baseEntry = {
+      name: "demo",
+      messaging: { schemaVersion: 1, plan: existingPlan } as const,
+    };
+
+    expect(
+      await planner().buildChannelStopPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelStartPlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+
+    expect(
+      await planner().buildChannelRemovePlanFromSandboxEntry({
+        sandboxName: "demo",
+        agent: "openclaw",
+        channelId: "telegram",
+        sandboxEntry: baseEntry,
+        supportedChannelIds: [],
+      }),
+    ).toBeNull();
+  });
   it("reports unsupported channels deterministically before compiling", async () => {
     await expect(
       planner().buildPlan({
@@ -683,6 +1002,19 @@ describe("MessagingWorkflowPlanner", () => {
         supportedChannelIds: ["telegram"],
       }),
     ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: discord, slack");
+  });
+
+  it("rejects every configured channel when supportedChannelIds is an explicit empty allowlist", async () => {
+    await expect(
+      planner().buildPlan({
+        sandboxName: "demo",
+        agent: "openclaw",
+        workflow: "onboard",
+        isInteractive: false,
+        configuredChannels: ["telegram"],
+        supportedChannelIds: [],
+      }),
+    ).rejects.toThrow("Unsupported messaging channel(s) for openclaw: telegram");
   });
 
   it("returns serializable, secret-free plans suitable for dry-run and shadow output", async () => {

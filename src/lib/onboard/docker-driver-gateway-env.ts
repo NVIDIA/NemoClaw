@@ -108,16 +108,12 @@ export function buildDockerGatewayDebEnvFile(
   existing: string,
   override: Record<string, string>,
 ): string {
-  const managedKeyPattern = new RegExp(
-    `^(${DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS.join("|")})=`,
-  );
+  const managedKeyPattern = new RegExp(`^(${DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS.join("|")})=`);
   const preserved = existing
     .split("\n")
     .filter((line) => line.trim() && !managedKeyPattern.test(line));
   const managed = DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS.flatMap((key) =>
-    typeof override[key] === "string"
-      ? [formatEnvironmentFileAssignment(key, override[key])]
-      : [],
+    typeof override[key] === "string" ? [formatEnvironmentFileAssignment(key, override[key])] : [],
   );
   return `${[...preserved, ...managed].join("\n")}\n`;
 }

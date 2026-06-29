@@ -9,9 +9,6 @@
 //   Slow: SSH exec into sandbox, run version_command, cache result in registry
 
 import { spawnSync } from "child_process";
-import fs from "fs";
-import os from "os";
-import path from "path";
 
 import {
   captureSandboxSshConfigCommand,
@@ -22,6 +19,7 @@ import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { loadAgent } from "../agent/defs.js";
 import * as registry from "../state/registry.js";
+import { createTempSshConfig } from "./temp-ssh-config.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
@@ -65,17 +63,21 @@ export function probeAgentVersion(sandboxName: string): string | null {
   if (sshConfigResult.status !== 0) return null;
   if (!sshConfigResult.output.trim()) return null;
 
-  const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
-  fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600 });
+  const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ver-");
   try {
     const result = spawnSync(
       "ssh",
       [
-        "-F", tmpFile,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "UserKnownHostsFile=/dev/null",
-        "-o", "ConnectTimeout=5",
-        "-o", "LogLevel=ERROR",
+        "-F",
+        tmpSshConfig.file,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-o",
+        "LogLevel=ERROR",
         `openshell-${sandboxName}`,
         agent.versionCommand,
       ],
@@ -86,7 +88,7 @@ export function probeAgentVersion(sandboxName: string): string | null {
   } catch {
     return null;
   } finally {
-    try { fs.unlinkSync(tmpFile); } catch { /* ignore */ }
+    tmpSshConfig.cleanup();
   }
 }
 
@@ -104,7 +106,12 @@ export function checkAgentVersion(
   const expectedVersion = agent.expectedVersion;
 
   if (!expectedVersion) {
-    return { sandboxVersion: null, expectedVersion: null, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion: null,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const sb = registry.getSandbox(sandboxName);
@@ -121,7 +128,12 @@ export function checkAgentVersion(
   }
 
   if (opts?.skipProbe && !opts.forceProbe) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   // Slow path: SSH exec into sandbox
@@ -132,7 +144,12 @@ export function checkAgentVersion(
   }
 
   if (!probed) {
-    return { sandboxVersion: null, expectedVersion, isStale: false, detectionMethod: "unavailable" };
+    return {
+      sandboxVersion: null,
+      expectedVersion,
+      isStale: false,
+      detectionMethod: "unavailable",
+    };
   }
 
   const isStale = !versionGte(probed, expectedVersion);
@@ -147,10 +164,7 @@ export function checkAgentVersion(
 /**
  * Format a user-facing staleness warning for console output.
  */
-export function formatStalenessWarning(
-  sandboxName: string,
-  result: VersionCheckResult,
-): string[] {
+export function formatStalenessWarning(sandboxName: string, result: VersionCheckResult): string[] {
   const agentName = resolveAgentForSandbox(sandboxName).displayName;
   return [
     "",

@@ -85,7 +85,7 @@ jobs:
       - name: Run macOS full E2E
         if: steps.docker.outputs.docker_ok == 'true'
         env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"

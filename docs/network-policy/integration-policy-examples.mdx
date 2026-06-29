@@ -15,12 +15,13 @@ import { AgentOnly } from "../_components/AgentGuide";
 
 Use these examples when a sandbox is already installed and an integration needs network access.
 This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML under `nemoclaw-blueprint/policies/presets/`.
+For complete blueprint examples that combine a model, agent harness, OpenShell policy, and integration workflow, refer to [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community).
 Integration setup usually has two separate parts:
 
 - Configure the integration itself, such as a bot token, OAuth credential, or agent plugin setting.
 - Allow the sandbox to reach the integration's network endpoints through NemoClaw and OpenShell policy.
 
-Prefer NemoClaw commands for policy changes that should be tracked with the sandbox.
+Use NemoClaw commands for policy changes that should be tracked with the sandbox.
 Use OpenShell directly when you need to inspect blocked requests or approve a one-off request in the TUI.
 
 ## Before You Start
@@ -39,7 +40,7 @@ For a live view of blocked requests, open the OpenShell TUI in a separate host t
 openshell term
 ```
 
-When the agent reaches an endpoint that is not in policy, the TUI shows the host, port, requesting binary, method, and path when available.
+When the agent reaches an endpoint that is not in the policy, the TUI shows the host, port, requesting binary, method, and path when available.
 Approve a request only when you understand why the integration needs it.
 An approval updates the running policy, but it does not create a reviewable NemoClaw preset entry that `policy-add` can replay.
 
@@ -88,14 +89,14 @@ $$nemoclaw my-assistant policy-remove outlook --yes
 ## Email and Calendar With Microsoft 365
 
 Use the `outlook` preset for Microsoft 365 email and calendar workflows that use Microsoft Graph or Outlook endpoints.
-The preset allows `graph.microsoft.com`, Microsoft login, and Outlook service endpoints.
+The preset allows access to `graph.microsoft.com`, Microsoft login, and Outlook service endpoints.
 
 ```bash
 $$nemoclaw my-assistant policy-add outlook --dry-run
 $$nemoclaw my-assistant policy-add outlook --yes
 ```
 
-Then configure the email or calendar tool credentials through the integration you are running in the sandbox.
+Configure the email or calendar tool credentials through the integration you run in the sandbox.
 Keep OAuth client secrets and refresh tokens out of policy files.
 
 If the tool still fails, run `openshell term`, trigger the workflow again, and inspect the blocked request.
@@ -103,14 +104,14 @@ If the blocked endpoint is not covered by the maintained `outlook` preset, treat
 
 ## Telegram Bot Messaging
 
-Telegram needs both channel configuration and egress policy.
+Telegram needs channel configuration and egress policy.
 If you already enabled Telegram during onboarding but did not include the preset, add it to the running sandbox:
 
 ```bash
 $$nemoclaw my-assistant policy-add telegram --yes
 ```
 
-To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the image picks up the channel config, and make sure the policy preset is applied:
+To add Telegram after onboarding, set the token on the host, add the channel, rebuild so the image picks up the channel config, and apply the policy preset:
 
 ```bash
 export TELEGRAM_BOT_TOKEN=<your-bot-token>
@@ -129,7 +130,7 @@ The matching preset for each supported messaging channel is the channel name (`t
 
 ## Slack or Discord Messaging
 
-Slack and Discord also need both channel configuration and egress policy.
+Slack and Discord also need channel configuration and egress policy.
 Use the matching policy preset after you configure the channel credentials.
 
 For Slack:
@@ -166,7 +167,7 @@ Both rely on QR-based pairing flows that are more fragile than token-based bots.
 The upstream client libraries can change behavior without notice.
 
 WeChat uses Tencent's iLink Bot API for personal accounts.
-The bot token is captured by a host-side QR scan during onboarding rather than pasted from a developer portal.
+A host-side QR scan captures the bot token during onboarding rather than requiring you to paste it from a developer portal.
 Add the channel interactively and apply the preset:
 
 ```bash
@@ -193,7 +194,7 @@ $$nemoclaw my-assistant policy-add whatsapp --yes
 
 ## GitHub and Jira
 
-Use `github` when the agent needs GitHub API or Git access.
+Use `github` when the agent needs GitHub API access or Git access.
 Use `jira` when the agent needs Atlassian Jira access.
 
 Preview first:
@@ -213,6 +214,8 @@ $$nemoclaw my-assistant policy-add jira --yes
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
 When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
+An empty `curl -s` output from that endpoint is inconclusive before or after approval.
+Do not use it as a pass/fail signal.
 Use a body-visible API probe instead:
 
 ```bash
@@ -222,7 +225,7 @@ curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/tok
 
 Before approval, the curl probe should report `000` or a local policy denial.
 After explicitly approving curl for `api.atlassian.com` in OpenShell, it should return Atlassian's unauthenticated `401` JSON response.
-That `401` is the expected success signal for this manual probe.
+The `401` response is the expected success signal for this manual probe.
 This manual probe proves curl reached Atlassian, but no Jira credentials were supplied.
 
 Remove access when the task is done:
@@ -255,7 +258,7 @@ $$nemoclaw my-assistant policy-add weather --dry-run
 $$nemoclaw my-assistant policy-add weather --yes
 ```
 
-Use the `public-reference` preset when the agent needs read-only public-reference APIs, such as Wikipedia, Wikidata, Wikimedia Commons, Nominatim, or country metadata.
+Use the `public-reference` preset when the agent needs read-only public reference APIs, such as Wikipedia, Wikidata, Wikimedia Commons, Nominatim, or country metadata.
 The Open tier includes this preset by default.
 
 ```bash
@@ -265,7 +268,7 @@ $$nemoclaw my-assistant policy-add public-reference --yes
 
 ## Package and Model Tooling
 
-Use these presets when an agent workflow installs packages or downloads model assets:
+Use these presets when an agent workflow needs to install packages or download model assets:
 
 | Workflow | Preset |
 |----------|--------|
@@ -297,7 +300,7 @@ If `uv` is installed somewhere else in the sandbox, add a custom preset for that
 
 ### Homebrew Specifics
 
-The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
+The sandbox base image includes Homebrew (Linuxbrew), so apply the `brew` preset before installing a formula.
 A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while delegating to the Linuxbrew prefix.
 Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 
@@ -313,9 +316,10 @@ You do not need to bootstrap Homebrew, install build dependencies, or source `br
 
 <AgentOnly variant="openclaw">
 
-OpenClaw's gateway fetches reference pricing from LiteLLM and OpenRouter on every start to populate `usage.cost` in session JSONL records.
+OpenClaw's gateway fetches reference pricing from LiteLLM and OpenRouter at startup to populate `usage.cost` in session JSONL records.
 The default-strict egress policy denies both hosts.
-The fetch fails closed, the gateway logs `[gateway/model-pricing] LiteLLM pricing fetch failed: TypeError: fetch failed` (and the matching OpenRouter line) on every startup, and every session record records `usage.cost = 0` even though the input and output token counts populate correctly.
+The fetch fails closed, and the gateway logs `[gateway/model-pricing] LiteLLM pricing fetch failed: TypeError: fetch failed` and the matching OpenRouter line on every startup.
+Every session record sets `usage.cost = 0` even though the input and output token counts populate correctly.
 Tools that read the session log to display per-turn cost (audit dashboards, compliance review surfaces) cannot distinguish a real free run from this silent failure.
 
 Apply the `openclaw-pricing` preset to allow both pricing endpoints.
@@ -360,16 +364,30 @@ Use `policy-list` for normal preset state:
 $$nemoclaw my-assistant policy-list
 ```
 
-Use OpenShell when you need the full enforced YAML:
+Use OpenShell when you need an editable copy of the live policy.
+Requires OpenShell 0.0.44+ for `policy get --full` and `policy set --wait` syntax.
 
 ```bash
-openshell policy get --full my-assistant > live-policy.yaml
+# shellcheck shell=bash
+# Source-of-truth review:
+# invalidState: OpenShell 0.0.44 policy get --full emits metadata before the --- YAML header.
+# sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.
+# whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.
+# regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.
+# removalCondition: remove this pipeline after pinned OpenShell emits clean raw YAML.
+tmp_policy=$(mktemp)
+openshell policy get --full my-assistant \
+  | awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }' \
+  > "$tmp_policy" \
+  && grep -q '^version:' "$tmp_policy" \
+  && grep -q '^network_policies:' "$tmp_policy" \
+  && mv "$tmp_policy" current-policy.yaml
 ```
 
-If you must replace the live policy, edit the full policy file and set it back:
+If you must replace the live policy, edit the policy file and apply it back to the sandbox:
 
 ```bash
-openshell policy set --policy live-policy.yaml my-assistant --wait
+openshell policy set --policy current-policy.yaml --wait my-assistant
 ```
 
 `openshell policy set` replaces the live policy with the file you provide.

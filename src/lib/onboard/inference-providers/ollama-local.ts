@@ -4,10 +4,7 @@
 // Ollama local inference provider setup flow.
 // Extracted verbatim from onboard.setupInference (#767).
 
-import type {
-  OllamaDeps,
-  SetupInferenceResult,
-} from "./types";
+import type { OllamaDeps, SetupInferenceResult } from "./types";
 
 export async function setupOllamaLocalInference(
   args: { model: string; provider: string; allowToolsIncompatible: boolean },

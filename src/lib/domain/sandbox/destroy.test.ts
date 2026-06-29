@@ -18,7 +18,9 @@ describe("sandbox destroy helpers", () => {
   });
 
   it("classifies delete outcomes", () => {
-    expect(getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" })).toEqual({
+    expect(
+      getSandboxDeleteOutcome({ status: 1, stderr: "Error: sandbox alpha not found" }),
+    ).toEqual({
       output: "Error: sandbox alpha not found",
       alreadyGone: true,
     });

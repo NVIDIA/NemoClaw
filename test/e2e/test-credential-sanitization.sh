@@ -17,15 +17,15 @@
 # Prerequisites:
 #   - Docker running
 #   - NemoClaw installed and sandbox running (test-full-e2e.sh Phase 0-3)
-#   - NVIDIA_API_KEY set
+#   - NVIDIA_INFERENCE_API_KEY set
 #   - openshell on PATH
 #
 # Environment variables:
 #   NEMOCLAW_SANDBOX_NAME  — sandbox name (default: e2e-test)
-#   NVIDIA_API_KEY         — required
+#   NVIDIA_INFERENCE_API_KEY         — required
 #
 # Usage:
-#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
+#   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-credential-sanitization.sh
 #
 # See: https://github.com/NVIDIA/NemoClaw/pull/156
 
@@ -110,11 +110,11 @@ sandbox_exec() {
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! command -v openshell >/dev/null 2>&1; then
   fail "openshell not found on PATH"
@@ -193,7 +193,7 @@ cat >"$AUTH_DIR/auth-profiles.json" <<JSONEOF
   "nvidia:manual": {
     "type": "api_key",
     "provider": "nvidia",
-    "keyRef": { "source": "env", "id": "NVIDIA_API_KEY" },
+    "keyRef": { "source": "env", "id": "NVIDIA_INFERENCE_API_KEY" },
     "resolvedKey": "$FAKE_NVIDIA_KEY",
     "profileId": "nvidia:manual"
   },
@@ -720,7 +720,7 @@ const config = {
   displayName: 'should-be-preserved',
   sortKey: 'should-also-be-preserved',
   modelName: 'nvidia/nemotron-3-super-120b-a12b',
-  keyRef: { source: 'env', id: 'NVIDIA_API_KEY' },
+  keyRef: { source: 'env', id: 'NVIDIA_INFERENCE_API_KEY' },
   description: 'A secret garden (but not a real secret)',
   tokenizer: 'sentencepiece',
   endpoint: 'https://api.nvidia.com/v1',
@@ -754,7 +754,7 @@ for (const [key, expectedVal] of Object.entries(expected)) {
 }
 
 // keyRef is an object — check it's preserved structurally
-if (JSON.stringify(sanitized.keyRef) !== JSON.stringify({ source: 'env', id: 'NVIDIA_API_KEY' })) {
+if (JSON.stringify(sanitized.keyRef) !== JSON.stringify({ source: 'env', id: 'NVIDIA_INFERENCE_API_KEY' })) {
   console.log('CORRUPTED: keyRef');
   allPreserved = false;
 }

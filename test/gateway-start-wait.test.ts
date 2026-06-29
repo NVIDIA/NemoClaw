@@ -1,22 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
 import { createRequire } from "node:module";
+import { afterEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 const ORIGINAL_ENV = { ...process.env };
-const ONBOARD_MODULE = require.resolve("../dist/lib/onboard.js");
-const PORTS_MODULE = require.resolve("../dist/lib/core/ports.js");
-const GATEWAY_ADDRESS_MODULE = require.resolve("../dist/lib/core/gateway-address.js");
-const GATEWAY_ENV_MODULE = require.resolve("../dist/lib/onboard/docker-driver-gateway-env.js");
+const ONBOARD_MODULE = require.resolve("../src/lib/onboard.js");
+const PORTS_MODULE = require.resolve("../src/lib/core/ports.js");
+const GATEWAY_ADDRESS_MODULE = require.resolve("../src/lib/core/gateway-address.js");
+const GATEWAY_ENV_MODULE = require.resolve("../src/lib/onboard/docker-driver-gateway-env.js");
 
 function loadOnboard() {
   delete require.cache[ONBOARD_MODULE];
   delete require.cache[GATEWAY_ENV_MODULE];
   delete require.cache[PORTS_MODULE];
   delete require.cache[GATEWAY_ADDRESS_MODULE];
-  return require("../dist/lib/onboard");
+  return require("../src/lib/onboard");
 }
 
 afterEach(() => {
@@ -149,9 +149,7 @@ describe("gateway bootstrap secret repair", () => {
 
   it("repairs the client CA and client TLS secrets together", () => {
     const { getGatewayBootstrapRepairPlan } = loadOnboard();
-    expect(
-      getGatewayBootstrapRepairPlan(["openshell-client-tls"]),
-    ).toEqual({
+    expect(getGatewayBootstrapRepairPlan(["openshell-client-tls"])).toEqual({
       missingSecrets: ["openshell-client-tls"],
       needsRepair: true,
       needsServerTls: false,
@@ -164,7 +162,12 @@ describe("gateway bootstrap secret repair", () => {
     const { getGatewayBootstrapRepairPlan } = loadOnboard();
 
     expect(
-      getGatewayBootstrapRepairPlan(["openshell-client-tls", "noise", " openshell-server-tls ", ""]),
+      getGatewayBootstrapRepairPlan([
+        "openshell-client-tls",
+        "noise",
+        " openshell-server-tls ",
+        "",
+      ]),
     ).toEqual({
       missingSecrets: ["openshell-client-tls", "openshell-server-tls"],
       needsRepair: true,
@@ -187,8 +190,8 @@ describe("gateway bootstrap secret repair", () => {
     expect(script).toContain("openshell-server-client-ca");
     expect(script).toContain("openshell-client-tls");
     expect(script).toContain("openshell-ssh-handshake");
-    expect(script).toContain('CN=openshell-client-ca');
-    expect(script).toContain('CN=openshell-client');
+    expect(script).toContain("CN=openshell-client-ca");
+    expect(script).toContain("CN=openshell-client");
     expect(script).toContain("subjectAltName=DNS:openshell");
   });
 

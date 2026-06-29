@@ -16,7 +16,7 @@
 #
 # Required env (CI injects from secrets):
 #   BRAVE_API_KEY    real Brave Search subscription token (skip-suite gate)
-#   NVIDIA_API_KEY   drives the agent inference turn in B4a
+#   NVIDIA_INFERENCE_API_KEY   drives the agent inference turn in B4a
 #
 # Secret hygiene: BRAVE_API_KEY is never echoed raw. All output that may
 # contain it pipes through redact_stream; GitHub Actions auto-mask is the
@@ -24,7 +24,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     BRAVE_API_KEY=... NVIDIA_API_KEY=... \
+#     BRAVE_API_KEY=... NVIDIA_INFERENCE_API_KEY=... \
 #     bash test/e2e/test-brave-search-e2e.sh
 
 set -uo pipefail

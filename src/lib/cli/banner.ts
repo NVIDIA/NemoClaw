@@ -25,7 +25,8 @@ export function renderBox(
   { minInner = 53, columns }: RenderBoxOptions = {},
 ): string[] {
   const detectedColumns = columns ?? process.stdout.columns;
-  const terminalColumns = Number.isFinite(detectedColumns) && detectedColumns > 0 ? detectedColumns : 100;
+  const terminalColumns =
+    Number.isFinite(detectedColumns) && detectedColumns > 0 ? detectedColumns : 100;
   const maxInner = Math.max(0, Math.floor(terminalColumns) - 4);
   const contentInner = lines.reduce<number>(
     (max, line) => (line === null ? max : Math.max(max, line.length + 2)),

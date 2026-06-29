@@ -117,26 +117,23 @@ describe("http-probe helpers", () => {
 
   it("uses the last curl --max-time when the flag is repeated", () => {
     let timeout: number | undefined;
-    runCurlProbe(
-      ["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"],
-      {
-        spawnSyncImpl: (_command, args, options) => {
-          timeout = options.timeout;
-          const outputPath = args[args.indexOf("-o") + 1];
-          if (typeof outputPath === "string") {
-            fs.writeFileSync(outputPath, "{}");
-          }
-          return {
-            pid: 1,
-            output: [],
-            stdout: "200",
-            stderr: "",
-            status: 0,
-            signal: null,
-          };
-        },
+    runCurlProbe(["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"], {
+      spawnSyncImpl: (_command, args, options) => {
+        timeout = options.timeout;
+        const outputPath = args[args.indexOf("-o") + 1];
+        if (typeof outputPath === "string") {
+          fs.writeFileSync(outputPath, "{}");
+        }
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
       },
-    );
+    });
 
     expect(timeout).toBe(125_000);
   });
@@ -227,12 +224,15 @@ describe("http-probe helpers", () => {
 
   it("rejects curl probe request bodies that read from local files", () => {
     let spawned = false;
-    const result = runCurlProbe(["-sS", "--data-binary", "@/etc/passwd", "https://example.test/models"], {
-      spawnSyncImpl: () => {
-        spawned = true;
-        throw new Error("should not spawn");
+    const result = runCurlProbe(
+      ["-sS", "--data-binary", "@/etc/passwd", "https://example.test/models"],
+      {
+        spawnSyncImpl: () => {
+          spawned = true;
+          throw new Error("should not spawn");
+        },
       },
-    });
+    );
 
     expect(spawned).toBe(false);
     expect(result.ok).toBe(false);

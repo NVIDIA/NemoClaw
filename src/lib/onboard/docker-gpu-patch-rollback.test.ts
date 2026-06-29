@@ -5,8 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   type DockerContainerInspect,
+  getDockerGpuPatchFailureContext,
   recreateOpenShellDockerSandboxWithGpu,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
+} from "./docker-gpu-patch";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -93,8 +94,7 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     ).toThrow(/pre-patch sandbox restored/);
 
     const restoreRename = dockerRename.mock.calls.find(
-      (call) =>
-        String(call[0]).includes("nemoclaw-gpu-backup") && call[1] === "openshell-alpha",
+      (call) => String(call[0]).includes("nemoclaw-gpu-backup") && call[1] === "openshell-alpha",
     );
     expect(restoreRename).toBeDefined();
     expect(dockerStart).toHaveBeenCalledWith(
@@ -104,6 +104,159 @@ describe("recreateOpenShellDockerSandboxWithGpu rollback path", () => {
     expect(
       dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
     ).toBe(false);
+  });
+
+  it("restores the pre-patch sandbox when the recreate run fails before the supervisor wait (#5512)", () => {
+    const captureResponses: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspectFixture()]),
+      info: "",
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => captureResponses[String(args[0])] ?? "",
+    );
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
+    // The recreate `docker run` fails after the original was renamed aside.
+    const dockerRunDetached = vi.fn(() => ({ status: 1, stderr: "docker: boom" }));
+    const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "");
+
+    expect(() =>
+      recreateOpenShellDockerSandboxWithGpu(
+        { sandboxName: "alpha", timeoutSecs: 1 },
+        {
+          dockerCapture,
+          dockerRun,
+          dockerRunDetached,
+          dockerRename,
+          dockerStop,
+          dockerStart,
+          dockerRm,
+          runCaptureOpenshell,
+          sleep: vi.fn(),
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      ),
+    ).toThrow(/Could not start GPU-enabled sandbox container/);
+
+    // The original sandbox is restored from the backup (rename backup -> original, then start).
+    const restoreRename = dockerRename.mock.calls.find(
+      (call) => String(call[0]).includes("nemoclaw-gpu-backup") && call[1] === "openshell-alpha",
+    );
+    expect(restoreRename).toBeDefined();
+    expect(dockerStart).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    // The failed recreate container (named originalName by `docker run --name`) is removed.
+    expect(dockerRm).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
+    // The backup is renamed back, never left as an orphaned container.
+    expect(
+      dockerRm.mock.calls.some((call) => String(call[0]).includes("nemoclaw-gpu-backup")),
+    ).toBe(false);
+  });
+
+  it("reports early recreate rollback failure when backup rename back fails (#5512)", () => {
+    const captureResponses: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspectFixture()]),
+      info: "",
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => captureResponses[String(args[0])] ?? "",
+    );
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
+    const dockerRunDetached = vi.fn(() => ({ status: 1, stderr: "docker: boom" }));
+    const dockerRename = vi.fn((oldName: string) =>
+      String(oldName).includes("nemoclaw-gpu-backup")
+        ? { status: 1, stderr: "rename failed" }
+        : { status: 0 },
+    );
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 0 }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "");
+
+    let thrown: unknown;
+    try {
+      recreateOpenShellDockerSandboxWithGpu(
+        { sandboxName: "alpha", timeoutSecs: 1 },
+        {
+          dockerCapture,
+          dockerRun,
+          dockerRunDetached,
+          dockerRename,
+          dockerStop,
+          dockerStart,
+          dockerRm,
+          runCaptureOpenshell,
+          sleep: vi.fn(),
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(String((thrown as Error).message)).toMatch(
+      /rollback failed; pre-patch sandbox was NOT restored/,
+    );
+    expect(getDockerGpuPatchFailureContext(thrown)?.rolledBack).toBe(false);
+    expect(dockerStart).not.toHaveBeenCalled();
+  });
+
+  it("reports early recreate rollback failure when restored original start fails (#5512)", () => {
+    const captureResponses: Record<string, string> = {
+      ps: "old-container-id\n",
+      inspect: JSON.stringify([inspectFixture()]),
+      info: "",
+    };
+    const dockerCapture = vi.fn(
+      (args: readonly string[]) => captureResponses[String(args[0])] ?? "",
+    );
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id\n" }));
+    const dockerRunDetached = vi.fn(() => ({ status: 1, stderr: "docker: boom" }));
+    const dockerRename = vi.fn((_old: string, _next: string) => ({ status: 0 }));
+    const dockerStop = vi.fn(() => ({ status: 0 }));
+    const dockerStart = vi.fn(() => ({ status: 1, stderr: "container start failed" }));
+    const dockerRm = vi.fn((_name: string) => ({ status: 0 }));
+    const runCaptureOpenshell = vi.fn(() => "");
+
+    let thrown: unknown;
+    try {
+      recreateOpenShellDockerSandboxWithGpu(
+        { sandboxName: "alpha", timeoutSecs: 1 },
+        {
+          dockerCapture,
+          dockerRun,
+          dockerRunDetached,
+          dockerRename,
+          dockerStop,
+          dockerStart,
+          dockerRm,
+          runCaptureOpenshell,
+          sleep: vi.fn(),
+          now: () => new Date("2026-05-12T00:00:00Z"),
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(String((thrown as Error).message)).toMatch(
+      /rollback failed; pre-patch sandbox was NOT restored/,
+    );
+    expect(getDockerGpuPatchFailureContext(thrown)?.rolledBack).toBe(false);
+    expect(dockerStart).toHaveBeenCalledWith(
+      "openshell-alpha",
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 
   it("reports rollback failure when restoring the backup container fails", () => {

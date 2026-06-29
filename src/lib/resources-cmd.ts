@@ -91,10 +91,11 @@ export function getHardwareResources(): HardwareResources {
   let allocatableMemMB: number | undefined;
   try {
     const container = getGatewayContainer();
-    const result = dockerSpawnSync(
-      ["exec", container, "kubectl", "get", "nodes", "-o", "json"],
-      { encoding: "utf-8", timeout: 10000, stdio: ["ignore", "pipe", "ignore"] },
-    );
+    const result = dockerSpawnSync(["exec", container, "kubectl", "get", "nodes", "-o", "json"], {
+      encoding: "utf-8",
+      timeout: 10000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     if (result.status === 0 && result.stdout) {
       const nodes = JSON.parse(String(result.stdout));
       const alloc = nodes.items?.[0]?.status?.allocatable;
@@ -170,7 +171,9 @@ export function printHardwareResources(json: boolean): HardwareResources {
   }
   if (hw.gpu) {
     console.log(`  GPU:       ${hw.gpu.name}`);
-    console.log(`  VRAM:      ${hw.gpu.vramMB} MB (${hw.gpu.count} device${hw.gpu.count > 1 ? "s" : ""})`);
+    console.log(
+      `  VRAM:      ${hw.gpu.vramMB} MB (${hw.gpu.count} device${hw.gpu.count > 1 ? "s" : ""})`,
+    );
   } else {
     console.log("  GPU:       not detected");
   }
@@ -182,9 +185,7 @@ export function printHardwareResources(json: boolean): HardwareResources {
       const cpuStr = p.cpu.endsWith("%")
         ? `${p.cpu} \u2192 ${resolved.cpu} cores`
         : `${p.cpu} cores`;
-      const ramStr = p.memory.endsWith("%")
-        ? `${p.memory} \u2192 ${resolved.memory}`
-        : p.memory;
+      const ramStr = p.memory.endsWith("%") ? `${p.memory} \u2192 ${resolved.memory}` : p.memory;
       console.log(`    ${name}: cpu=${cpuStr}, ram=${ramStr}`);
     }
   }
@@ -197,11 +198,7 @@ export function printHardwareResources(json: boolean): HardwareResources {
  * Resolve a resource value that may be a percentage or absolute quantity.
  * Throws on invalid percentages so callers can surface clear errors.
  */
-export function resolveResourceValue(
-  value: string,
-  total: number,
-  unit: "cpu" | "memory",
-): string {
+export function resolveResourceValue(value: string, total: number, unit: "cpu" | "memory"): string {
   if (!value) return "";
   const trimmed = value.trim();
   if (trimmed.endsWith("%")) {
@@ -211,11 +208,11 @@ export function resolveResourceValue(
     }
     const pct = parseInt(trimmed.slice(0, -1), 10);
     if (unit === "cpu") {
-      const milliCores = Math.max(1, Math.floor(total * 1000 * pct / 100));
+      const milliCores = Math.max(1, Math.floor((total * 1000 * pct) / 100));
       return milliCores % 1000 === 0 ? String(milliCores / 1000) : `${milliCores}m`;
     }
     // Memory: use Mi for precision on smaller machines, Gi for larger
-    const resultMB = Math.floor(total * pct / 100);
+    const resultMB = Math.floor((total * pct) / 100);
     if (resultMB < 4096) {
       return `${Math.max(128, resultMB)}Mi`;
     }
@@ -247,7 +244,9 @@ function parseCpuQuantity(value: string): number | null {
  * host totals when gateway is not running.
  */
 export function resolveProfile(profile: ResourceProfile, hw: HardwareResources): ResourceProfile {
-  const cpuTotal = hw.cpu.allocatable ? (parseCpuQuantity(hw.cpu.allocatable) ?? hw.cpu.cores) : hw.cpu.cores;
+  const cpuTotal = hw.cpu.allocatable
+    ? (parseCpuQuantity(hw.cpu.allocatable) ?? hw.cpu.cores)
+    : hw.cpu.cores;
   const memTotalMB = hw.memory.allocatableMB ?? hw.memory.totalMB;
   return {
     cpu: resolveResourceValue(profile.cpu, cpuTotal, "cpu"),

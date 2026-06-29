@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  buildRebuildRecreateOnboardOpts,
-  rebuildShouldOptOutGpu,
-} from "../../../../dist/lib/actions/sandbox/rebuild-gpu-opt-out";
+import { buildRebuildRecreateOnboardOpts, rebuildShouldOptOutGpu } from "./rebuild-gpu-opt-out";
 
 describe("rebuildShouldOptOutGpu", () => {
   it("returns false when the registry entry is null", () => {
@@ -15,9 +12,7 @@ describe("rebuildShouldOptOutGpu", () => {
   });
 
   it("returns true when sandboxGpuMode is the explicit opt-out '0'", () => {
-    expect(
-      rebuildShouldOptOutGpu({ sandboxGpuMode: "0", sandboxGpuEnabled: false }),
-    ).toBe(true);
+    expect(rebuildShouldOptOutGpu({ sandboxGpuMode: "0", sandboxGpuEnabled: false })).toBe(true);
     expect(rebuildShouldOptOutGpu({ sandboxGpuMode: "0" })).toBe(true);
   });
 
@@ -37,12 +32,8 @@ describe("rebuildShouldOptOutGpu", () => {
   });
 
   it("returns false when sandboxGpuMode is '1' regardless of sandboxGpuEnabled", () => {
-    expect(
-      rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: true }),
-    ).toBe(false);
-    expect(
-      rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: false }),
-    ).toBe(false);
+    expect(rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: true })).toBe(false);
+    expect(rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: false })).toBe(false);
   });
 
   it("falls back to gpuEnabled=false for legacy entries with no sandboxGpuMode", () => {
@@ -50,9 +41,7 @@ describe("rebuildShouldOptOutGpu", () => {
   });
 
   it("ignores legacy gpuEnabled=false when sandboxGpuEnabled=true is recorded", () => {
-    expect(
-      rebuildShouldOptOutGpu({ sandboxGpuEnabled: true, gpuEnabled: false }),
-    ).toBe(false);
+    expect(rebuildShouldOptOutGpu({ sandboxGpuEnabled: true, gpuEnabled: false })).toBe(false);
   });
 
   it("returns false when no GPU metadata is recorded", () => {

@@ -26,9 +26,7 @@ function notFound(): RunResult {
   return { status: 1, stdout: "", stderr: "" };
 }
 
-function makeRun(
-  responses: Map<string, RunResult | ((args: string[]) => RunResult)>,
-): {
+function makeRun(responses: Map<string, RunResult | ((args: string[]) => RunResult)>): {
   calls: RunArgs[];
   run: HostGatewayProcessDeps["run"];
 } {
@@ -87,6 +85,42 @@ describe("stopHostGatewayProcesses", () => {
     expect(result.stopped).toEqual([9999887]);
     expect(kill).toHaveBeenCalledWith(9999887, "SIGTERM");
     expect(log).toHaveBeenCalledWith("Stopped host openshell-gateway process 9999887");
+  });
+
+  it("polls for host gateway exit before escalating to SIGKILL", () => {
+    const pid = 9999333;
+    const signals: Array<NodeJS.Signals | number | undefined> = [];
+    let pidChecks = 0;
+    const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok(`${pid}\n`)],
+      [`ps -p ${pid} -o user=`, ok("tester\n")],
+      [`ps -p ${pid} -o args=`, ok("/home/test/.local/bin/openshell-gateway --port 8080\n")],
+      [
+        `ps -p ${pid} -o pid=`,
+        () => {
+          pidChecks += 1;
+          return pidChecks >= 3 ? notFound() : ok(`${pid}\n`);
+        },
+      ],
+    ]);
+    const { run } = makeRun(responses);
+    const kill = vi.fn<HostGatewayProcessDeps["kill"]>((_pid, signal) => {
+      signals.push(signal);
+      return true;
+    });
+
+    const result = stopHostGatewayProcesses(
+      { run, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
+      {
+        pollIntervalMs: 0,
+        stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")),
+        termWaitMs: 20,
+      },
+    );
+
+    expect(result.stopped).toEqual([pid]);
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(pidChecks).toBe(3);
   });
 
   it("accepts the docker-compat parent PID whose argv0 is docker", () => {
@@ -266,9 +300,9 @@ describe("stopHostGatewayProcesses", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999456\n")],
-      ...psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
+      ...(psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
         key === "ps -p 9999123 -o pid=" ? [key, notFound()] : [key, value],
-      ) as [string, RunResult | ((args: string[]) => RunResult)][],
+      ) as [string, RunResult | ((args: string[]) => RunResult)][]),
       ...psResponses(9999456, { exited }),
     ]);
     const { run } = makeRun(responses);

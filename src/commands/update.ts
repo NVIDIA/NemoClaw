@@ -14,7 +14,8 @@ export default class UpdateCommand extends NemoClawCommand {
   static id = "update";
   static strict = true;
   static summary = `Run the maintained ${CLI_DISPLAY_NAME} installer update flow`;
-  static description = `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
+  static description =
+    `Check for a ${CLI_DISPLAY_NAME} CLI update and run the maintained installer flow.`;
   static usage = ["update [--check] [--yes|-y]"];
   static examples = [
     "<%= config.bin %> update --check",
@@ -22,7 +23,9 @@ export default class UpdateCommand extends NemoClawCommand {
     "<%= config.bin %> update --yes",
   ];
   static flags = {
-    check: Flags.boolean({ description: "Check update availability without running the installer" }),
+    check: Flags.boolean({
+      description: "Check update availability without running the installer",
+    }),
     yes: yesFlag(),
   };
 

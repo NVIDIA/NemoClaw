@@ -6,8 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials/store.js";
-import { cleanupStaleHostFiles } from "../dist/lib/host-artifact-cleanup.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../src/lib/credentials/store.js";
+import { cleanupStaleHostFiles } from "../src/lib/host-artifact-cleanup.js";
 
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS];
 
@@ -47,7 +47,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("cleanupStaleHostFiles (post-upgrade sweep, #3105)", () => {
+describe("cleanupStaleHostFiles post-upgrade sweep (#3105)", () => {
   it("removes an empty legacy credentials.json and logs the removal", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cleanup-"));
     const credsDir = path.join(home, ".nemoclaw");
@@ -68,7 +68,7 @@ describe("cleanupStaleHostFiles (post-upgrade sweep, #3105)", () => {
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    const payload = JSON.stringify({ NVIDIA_API_KEY: "nvapi-real" });
+    const payload = JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-real" });
     fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
     vi.stubEnv("HOME", home);
 

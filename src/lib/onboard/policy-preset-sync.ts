@@ -6,23 +6,27 @@ const { waitUntil }: typeof import("../core/wait") = require("../core/wait");
 
 function waitForPolicyMutation(description: string, mutate: () => boolean | void): void {
   let lastError: Error | null = null;
-  const success = waitUntil(() => {
-    try {
-      const result = mutate();
-      if (result === false) {
-        lastError = new Error(`${description} returned false`);
+  const success = waitUntil(
+    () => {
+      try {
+        const result = mutate();
+        if (result === false) {
+          lastError = new Error(`${description} returned false`);
+          return false;
+        }
+        return true;
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err));
+        lastError = error;
+        if (!error.message.includes("sandbox not found")) {
+          throw err;
+        }
         return false;
       }
-      return true;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      lastError = error;
-      if (!error.message.includes("sandbox not found")) {
-        throw err;
-      }
-      return false;
-    }
-  }, 10, 2000);
+    },
+    10,
+    2000,
+  );
 
   if (!success) {
     throw lastError || new Error(`${description} timed out`);

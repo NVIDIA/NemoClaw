@@ -65,28 +65,23 @@ describe("internal command documentation (#3782)", () => {
     expect(internalIds.length).toBeGreaterThanOrEqual(9);
   });
 
-  it.each(references)(
-    "documents every hidden internal command in $name",
-    ({ text, binary }) => {
-      const undocumented = internalIds.filter(
-        (id) => !text.includes(spaceFormInvocation(binary, id)),
-      );
-      expect(undocumented).toEqual([]);
-    },
-  );
+  it.each(references)("documents every hidden internal command in $name", ({ text, binary }) => {
+    const undocumented = internalIds.filter(
+      (id) => !text.includes(spaceFormInvocation(binary, id)),
+    );
+    expect(undocumented).toEqual([]);
+  });
 
-  it.each(references)(
-    "keeps internal commands out of the public command headings in $name",
-    ({ text, binary }) => {
-      // canonicalUsageList() (and thus check-docs.sh command-level parity) only
-      // sees non-hidden commands, so an `### \`<binary> internal …\`` heading
-      // would be flagged as docs-only drift. Internal commands must be listed
-      // in some other form (a table, prose, fenced block) instead.
-      const headingPrefix = `### \`${binary} internal`;
-      const offendingHeadings = text
-        .split("\n")
-        .filter((line) => line.startsWith(headingPrefix));
-      expect(offendingHeadings).toEqual([]);
-    },
-  );
+  it.each(references)("keeps internal commands out of the public command headings in $name", ({
+    text,
+    binary,
+  }) => {
+    // canonicalUsageList() (and thus check-docs.sh command-level parity) only
+    // sees non-hidden commands, so an `### \`<binary> internal …\`` heading
+    // would be flagged as docs-only drift. Internal commands must be listed
+    // in some other form (a table, prose, fenced block) instead.
+    const headingPrefix = `### \`${binary} internal`;
+    const offendingHeadings = text.split("\n").filter((line) => line.startsWith(headingPrefix));
+    expect(offendingHeadings).toEqual([]);
+  });
 });

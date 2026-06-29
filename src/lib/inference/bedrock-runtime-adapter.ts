@@ -67,7 +67,9 @@ const MAX_BODY_BYTES = 2 * 1024 * 1024;
 type AdapterLogFields = Record<string, string | number | boolean | null | undefined>;
 type AdapterLogger = (event: string, fields?: AdapterLogFields) => void;
 
-function normalizeLogField(value: string | number | boolean | null | undefined): string | number | boolean | null {
+function normalizeLogField(
+  value: string | number | boolean | null | undefined,
+): string | number | boolean | null {
   if (value === undefined) return null;
   if (typeof value === "string") return compactText(value).slice(0, 180);
   return value;
@@ -88,7 +90,11 @@ function defaultAdapterLogger(event: string, fields: AdapterLogFields = {}): voi
   }
 }
 
-function logAdapterEvent(logger: AdapterLogger, event: string, fields: AdapterLogFields = {}): void {
+function logAdapterEvent(
+  logger: AdapterLogger,
+  event: string,
+  fields: AdapterLogFields = {},
+): void {
   try {
     logger(event, fields);
   } catch {
@@ -278,7 +284,9 @@ export function startBedrockRuntimeAdapterFromEnv(): http.Server {
   const token = process.env[BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV];
   const endpointUrl = process.env.NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL;
   const region = process.env.NEMOCLAW_BEDROCK_RUNTIME_REGION || process.env.AWS_REGION;
-  const port = Number(process.env.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT || BEDROCK_RUNTIME_ADAPTER_PORT);
+  const port = Number(
+    process.env.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT || BEDROCK_RUNTIME_ADAPTER_PORT,
+  );
 
   if (!token) throw new Error(`${BEDROCK_RUNTIME_ADAPTER_PROVIDER_CREDENTIAL_ENV} is required`);
   if (!endpointUrl) throw new Error("NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL is required");
@@ -358,10 +366,9 @@ function adapterCredentialHash(options: {
   return crypto.createHash("sha256").update(stableJson(values)).digest("hex");
 }
 
-function probeAdapterHealth(options: {
-  port?: number;
-  tokenHash?: string | null;
-} = {}): Promise<boolean> {
+function probeAdapterHealth(
+  options: { port?: number; tokenHash?: string | null } = {},
+): Promise<boolean> {
   return probeLocalAdapterHealth({
     host: BEDROCK_RUNTIME_ADAPTER_LOOPBACK_HOST,
     port: options.port || BEDROCK_RUNTIME_ADAPTER_PORT,
@@ -369,7 +376,10 @@ function probeAdapterHealth(options: {
   });
 }
 
-async function waitForAdapterHealth(token: string, port = BEDROCK_RUNTIME_ADAPTER_PORT): Promise<boolean> {
+async function waitForAdapterHealth(
+  token: string,
+  port = BEDROCK_RUNTIME_ADAPTER_PORT,
+): Promise<boolean> {
   const tokenHash = adapterTokenHash(token);
   return waitForLocalAdapterHealth(() => probeAdapterHealth({ port, tokenHash }), {
     attempts: 20,

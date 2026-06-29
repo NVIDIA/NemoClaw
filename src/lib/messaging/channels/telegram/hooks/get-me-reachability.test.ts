@@ -150,9 +150,7 @@ describe("Telegram getMe reachability hook implementation", () => {
       hookId: "telegram-reachability",
       outputs: {},
     });
-    expect(logs).toEqual([
-      "  ⚠ Telegram reachability check failed: Bot API request failed.",
-    ]);
+    expect(logs).toEqual(["  ⚠ Telegram reachability check failed: Bot API request failed."]);
   });
 
   it("honors the explicit skip env without calling Telegram", async () => {

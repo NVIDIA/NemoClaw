@@ -81,10 +81,7 @@ describe("dashboard-url command helpers", () => {
       },
     );
 
-    expect(sinks.out).toEqual([
-      "  Dashboard URL:",
-      "  http://127.0.0.1:18789/#token=secret-token",
-    ]);
+    expect(sinks.out).toEqual(["  Dashboard URL:", "  http://127.0.0.1:18789/#token=secret-token"]);
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });
 
@@ -145,6 +142,30 @@ describe("dashboard-url command helpers", () => {
         },
       ),
     ).toThrow(/Could not resolve dashboard metadata/);
+    expect(sinks.out).toEqual([]);
+  });
+
+  it("explains terminal-runtime sandboxes have no dashboard instead of a token error (#5727)", () => {
+    const sinks = makeSinks();
+    const fetchToken = vi.fn(() => null);
+
+    expect(() =>
+      runDashboardUrlCommand(
+        "dcode-status",
+        { quiet: false },
+        {
+          fetchToken,
+          getSandbox: () => ({ agent: "langchain-deepagents-code", dashboardPort: 18789 }),
+          getAgentRuntimeInfo: () => ({
+            kind: "terminal",
+            displayName: "LangChain Deep Agents Code",
+          }),
+          log: sinks.log,
+          error: sinks.error,
+        },
+      ),
+    ).toThrow(/terminal runtime \(LangChain Deep Agents Code\) and does not have a dashboard/);
+    expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
   });
 

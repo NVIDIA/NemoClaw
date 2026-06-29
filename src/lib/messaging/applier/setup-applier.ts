@@ -8,6 +8,12 @@ import {
   applyAgentConfigAtOpenShell as applyAgentConfigPlanAtOpenShell,
   listHookRequests as listPlanHookRequests,
 } from "./agent-config";
+import {
+  applyHealthChecks as applyPlanHealthChecks,
+  applyMessagingHooksForPhase as applyPlanHooksForPhase,
+  applyPreEnableChecks as applyPlanPreEnableChecks,
+  type MessagingHookPhaseOptions,
+} from "./hook-phases";
 import { applyCredentialsAtOpenShell as applyCredentialsPlanAtOpenShell } from "./openshell-provider";
 import { applyPolicyAtOpenShell as applyPolicyPlanAtOpenShell } from "./policy";
 import {
@@ -36,10 +42,7 @@ export class MessagingSetupApplier {
     return parsed;
   }
 
-  static writePlanToEnv(
-    plan: SandboxMessagingPlan,
-    options: MessagingSetupEnvOptions = {},
-  ): void {
+  static writePlanToEnv(plan: SandboxMessagingPlan, options: MessagingSetupEnvOptions = {}): void {
     const env = options.env ?? process.env;
     env[options.envKey ?? MESSAGING_SETUP_APPLIER_ENV_KEY] = this.encodePlan(plan);
   }
@@ -69,6 +72,41 @@ export class MessagingSetupApplier {
   ): MessagingHookApplyRequest[] {
     assertSandboxMessagingPlan(plan);
     return listPlanHookRequests(plan, phase);
+  }
+
+  static listPreEnableChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "pre-enable");
+  }
+
+  static listHealthChecks(plan: SandboxMessagingPlan): MessagingHookApplyRequest[] {
+    assertSandboxMessagingPlan(plan);
+    return listPlanHookRequests(plan, "health-check");
+  }
+
+  static applyHooksForPhase(
+    plan: SandboxMessagingPlan,
+    phase: ChannelHookPhase,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanHooksForPhase> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHooksForPhase(plan, phase, options);
+  }
+
+  static applyPreEnableChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanPreEnableChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanPreEnableChecks(plan, options);
+  }
+
+  static applyHealthChecks(
+    plan: SandboxMessagingPlan,
+    options: MessagingHookPhaseOptions = {},
+  ): ReturnType<typeof applyPlanHealthChecks> {
+    assertSandboxMessagingPlan(plan);
+    return applyPlanHealthChecks(plan, options);
   }
 
   static async applyAgentConfigAtOpenShell(
@@ -111,11 +149,13 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
     typeof value.agent !== "string" ||
     typeof value.workflow !== "string" ||
     !Array.isArray(value.channels) ||
+    !value.channels.every(isSerializableChannelPlan) ||
     !Array.isArray(value.disabledChannels) ||
     !Array.isArray(value.credentialBindings) ||
     !isObject(value.networkPolicy) ||
     !Array.isArray(value.agentRender) ||
     !Array.isArray(value.buildSteps) ||
+    !isRuntimeSetup(value.runtimeSetup) ||
     !Array.isArray(value.stateUpdates) ||
     !Array.isArray(value.healthChecks)
   ) {
@@ -125,6 +165,31 @@ function assertSandboxMessagingPlan(value: unknown): asserts value is SandboxMes
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isSerializableChannelPlan(value: unknown): boolean {
+  if (!isObject(value)) return false;
+  if (!Object.hasOwn(value, "hostForward")) return true;
+  const hostForward = value.hostForward;
+  return (
+    isObject(hostForward) &&
+    typeof hostForward.channelId === "string" &&
+    typeof hostForward.port === "number" &&
+    Number.isInteger(hostForward.port) &&
+    hostForward.port >= 1 &&
+    hostForward.port <= 65535 &&
+    typeof hostForward.label === "string"
+  );
+}
+
+function isRuntimeSetup(value: unknown): boolean {
+  if (value === undefined) return true;
+  return (
+    isObject(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans)
+  );
 }
 
 function assertJsonSerializable(
@@ -143,9 +208,7 @@ function assertJsonSerializable(
   }
   if (Array.isArray(value)) {
     assertAcyclicObject(value, path, visiting, () => {
-      value.forEach((entry, index) =>
-        assertJsonSerializable(entry, `${path}[${index}]`, visiting),
-      );
+      value.forEach((entry, index) => assertJsonSerializable(entry, `${path}[${index}]`, visiting));
     });
     return;
   }

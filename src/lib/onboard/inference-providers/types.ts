@@ -17,9 +17,7 @@
 
 import type { HermesAuthMethod } from "../hermes-auth";
 
-export type SetupInferenceResult =
-  | { ok: true; retry?: undefined }
-  | { retry: "selection" };
+export type SetupInferenceResult = { ok: true; retry?: undefined } | { retry: "selection" };
 
 export type RunOpenshell = (
   args: string[],
@@ -153,10 +151,17 @@ export type HermesDeps = CommonDeps & {
 
 // `run` accepts an array form (execa-style) in the real onboard.ts; we type it
 // loosely so callers can pass either shape without casting.
-export type RunFn = (cmd: any, opts?: { ignoreError?: boolean; suppressOutput?: boolean }) => RunResult;
+export type RunFn = (
+  cmd: any,
+  opts?: { ignoreError?: boolean; suppressOutput?: boolean },
+) => RunResult;
 
 export type VllmDeps = CommonDeps & {
-  validateLocalProvider: (provider: string) => { ok: boolean; message?: string; diagnostic?: string };
+  validateLocalProvider: (provider: string) => {
+    ok: boolean;
+    message?: string;
+    diagnostic?: string;
+  };
   getLocalProviderHealthCheck: (provider: string) => any;
   getLocalProviderBaseUrl: (provider: string) => any;
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
@@ -165,7 +170,11 @@ export type VllmDeps = CommonDeps & {
 };
 
 export type OllamaDeps = CommonDeps & {
-  validateLocalProvider: (provider: string) => { ok: boolean; message?: string; diagnostic?: string };
+  validateLocalProvider: (provider: string) => {
+    ok: boolean;
+    message?: string;
+    diagnostic?: string;
+  };
   getLocalProviderBaseUrl: (provider: string) => any;
   applyLocalInferenceRoute: (provider: string, model: string) => Promise<boolean>;
   getOllamaWarmupCommand: (model: string) => any;

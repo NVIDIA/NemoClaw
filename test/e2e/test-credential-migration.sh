@@ -35,11 +35,11 @@
 # Prerequisites:
 #   - Docker running
 #   - openshell + nemoclaw on PATH
-#   - NVIDIA_API_KEY set (used as the migrated value)
+#   - NVIDIA_INFERENCE_API_KEY set (used as the migrated value)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-credential-migration.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-credential-migration.sh
 
 set -uo pipefail
 
@@ -93,11 +93,11 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 # ══════════════════════════════════════════════════════════════════
 section "Phase 0: Prerequisites"
 
-if [ -z "${NVIDIA_API_KEY:-}" ]; then
-  fail "NVIDIA_API_KEY not set"
+if [ -z "${NVIDIA_INFERENCE_API_KEY:-}" ]; then
+  fail "NVIDIA_INFERENCE_API_KEY not set"
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
+pass "NVIDIA_INFERENCE_API_KEY is set"
 
 if ! command -v openshell >/dev/null 2>&1 || ! command -v nemoclaw >/dev/null 2>&1; then
   info "openshell or nemoclaw not found; running install"
@@ -120,7 +120,7 @@ command -v nemoclaw >/dev/null 2>&1 || {
 }
 pass "openshell + nemoclaw on PATH"
 
-REAL_API_KEY="$NVIDIA_API_KEY"
+REAL_API_KEY="$NVIDIA_INFERENCE_API_KEY"
 NEMOCLAW_DIR="$HOME/.nemoclaw"
 LEGACY_FILE="$NEMOCLAW_DIR/credentials.json"
 
@@ -137,7 +137,7 @@ chmod 700 "$NEMOCLAW_DIR"
 # Tampered fixture: includes an unrelated key the migrator must ignore.
 cat >"$LEGACY_FILE" <<EOF
 {
-  "NVIDIA_API_KEY": "$REAL_API_KEY",
+  "NVIDIA_INFERENCE_API_KEY": "$REAL_API_KEY",
   "OPENSHELL_GATEWAY": "evil-gw-from-tampered-file",
   "NODE_OPTIONS": "--require=/tmp/evil.js"
 }
@@ -147,12 +147,12 @@ chmod 600 "$LEGACY_FILE"
 LEGACY_INODE_BEFORE=$(stat -c '%i' "$LEGACY_FILE" 2>/dev/null || stat -f '%i' "$LEGACY_FILE" 2>/dev/null || echo "")
 [ -n "$LEGACY_INODE_BEFORE" ] && info "Legacy file inode before onboard: $LEGACY_INODE_BEFORE"
 
-# Run onboard WITHOUT NVIDIA_API_KEY in the env. The only place the value
+# Run onboard WITHOUT NVIDIA_INFERENCE_API_KEY in the env. The only place the value
 # can come from is the legacy credentials.json — exactly the migration
 # path we want to exercise.
 ONBOARD_LOG="$(mktemp)"
 (
-  unset NVIDIA_API_KEY
+  unset NVIDIA_INFERENCE_API_KEY
   NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
@@ -200,7 +200,7 @@ fi
 info "Providers in nemoclaw gateway:"
 printf '%s\n' "$PROVIDERS_OUT" | indent
 
-# The legacy NVIDIA_API_KEY should have been registered as one of the
+# The legacy NVIDIA_INFERENCE_API_KEY should have been registered as one of the
 # inference providers (nvidia-prod, nvidia-nim, etc. — the exact name
 # depends on what onboarding chose). Just assert that at least one
 # provider was registered.

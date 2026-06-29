@@ -55,18 +55,25 @@ state_dirs:
   - whatsapp
   - credentials
 
+# ── Top-level durable state files ───────────────────────────────
+# openclaw.json holds the core OpenClaw settings the state dirs above do not
+# cover: model/provider config, MCP servers, custom agents, and channel
+# account blocks. Without this entry `nemoclaw backup-all` snapshotted the
+# data directories but dropped these settings, so they were lost on rebuild
+# (issue #5027). Backed up with the default copy strategy; the local backup is
+# credential-sanitized (gateway section dropped, secret-bearing fields scrubbed)
+# while OpenShell `resolve:env` placeholders and the `unused` provider sentinel
+# are preserved so the restored config keeps routing through proxy-injected
+# credentials.
+state_files:
+  - path: openclaw.json
+user_managed_files:
+  - .env
+  - .mcp.json
+
 # ── Authentication ──────────────────────────────────────────────
 device_pairing: true
 web_auth_method: device_pairing
-
-# ── Messaging platforms ─────────────────────────────────────────
-messaging_platforms:
-  supported:
-    - telegram
-    - discord
-    - slack
-    - wechat
-    - whatsapp
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

@@ -18,7 +18,10 @@ describe("dev shim domain helpers", () => {
   });
 
   it("builds a shim that preserves the Node directory and execs the source CLI", () => {
-    const contents = buildDevShimContents({ binPath: "/repo/bin/nemoclaw.js", nodeDir: "/opt/node/bin" });
+    const contents = buildDevShimContents({
+      binPath: "/repo/bin/nemoclaw.js",
+      nodeDir: "/opt/node/bin",
+    });
 
     expect(contents).toContain(DEV_SHIM_MARKER);
     expect(contents).toContain('export PATH="/opt/node/bin:$PATH"');
@@ -26,7 +29,9 @@ describe("dev shim domain helpers", () => {
   });
 
   it("detects whether PATH already contains a directory", () => {
-    expect(pathContainsDirectory("/bin:/home/me/.local/bin:/usr/bin", "/home/me/.local/bin")).toBe(true);
+    expect(pathContainsDirectory("/bin:/home/me/.local/bin:/usr/bin", "/home/me/.local/bin")).toBe(
+      true,
+    );
     expect(pathContainsDirectory("/bin:/usr/bin", "/home/me/.local/bin")).toBe(false);
   });
 });

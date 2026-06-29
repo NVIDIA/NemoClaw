@@ -192,9 +192,7 @@ const defaultSandboxContainerRunners: SandboxContainerFailureRunners = {
 };
 
 function isValidDashboardPort(port: number | null | undefined): port is number {
-  return (
-    typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535
-  );
+  return typeof port === "number" && Number.isInteger(port) && port >= 1 && port <= 65535;
 }
 
 export async function classifySandboxContainerFailure(
@@ -231,9 +229,7 @@ export async function classifySandboxContainerFailure(
   };
 }
 
-type SandboxDriverLookup = (
-  name: string,
-) => { openshellDriver?: string | null } | null | undefined;
+type SandboxDriverLookup = (name: string) => { openshellDriver?: string | null } | null | undefined;
 
 // Drivers whose sandbox runtime does NOT live in the local Docker daemon. Only
 // `vm` qualifies: the NemoClaw gateway always runs as the local Docker
@@ -256,10 +252,7 @@ const NON_DOCKER_DRIVERS = new Set(["vm"]);
  * guidance on a Docker-less host; that is preferable to silently regressing
  * every legacy Docker sandbox. (#4428)
  */
-function isDockerBackedSandbox(
-  sandboxName: string,
-  getSandbox: SandboxDriverLookup,
-): boolean {
+function isDockerBackedSandbox(sandboxName: string, getSandbox: SandboxDriverLookup): boolean {
   const driver = getSandbox(sandboxName)?.openshellDriver;
   return !(typeof driver === "string" && NON_DOCKER_DRIVERS.has(driver.toLowerCase()));
 }

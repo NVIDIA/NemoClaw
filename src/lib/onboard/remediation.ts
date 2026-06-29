@@ -23,7 +23,10 @@ export function printRemediationActions(
   }
 }
 
-export function getFutureShellPathHint(binDir: string, pathValue = process.env.PATH || ""): string | null {
+export function getFutureShellPathHint(
+  binDir: string,
+  pathValue = process.env.PATH || "",
+): string | null {
   const parts = String(pathValue).split(path.delimiter).filter(Boolean);
   if (parts[0] === binDir) {
     return null;

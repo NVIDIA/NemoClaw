@@ -20,9 +20,7 @@ type SandboxEntry = {
 };
 
 function normalizeDriver(driver: unknown): string | null {
-  return typeof driver === "string" && driver.trim()
-    ? driver.trim().toLowerCase()
-    : null;
+  return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
 
 function readSandboxEntry(sandboxName: string): SandboxEntry | null {
@@ -62,10 +60,7 @@ function owningRegisteredSandboxName(
   containerName: string,
   registeredNames: readonly string[],
 ): string | null {
-  return (
-    registeredNames.find((name) => containerNameMatchesSandbox(containerName, name)) ??
-    null
-  );
+  return registeredNames.find((name) => containerNameMatchesSandbox(containerName, name)) ?? null;
 }
 
 function selectDirectSandboxContainer(
@@ -99,11 +94,7 @@ function expectedDirectContainerPattern(sandboxName: string): string {
 function findDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
   const output = dockerCapture(["ps", "--format", "{{.Names}}"]);
-  return selectDirectSandboxContainer(
-    sandboxName,
-    output,
-    names,
-  );
+  return selectDirectSandboxContainer(sandboxName, output, names);
 }
 
 function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
@@ -122,20 +113,13 @@ function missingRegistryEntryError(sandboxName: string): Error {
   );
 }
 
-function resolveDirectSandboxContainer(
-  sandboxName: string,
-  driver: string | null,
-): string {
+function resolveDirectSandboxContainer(sandboxName: string, driver: string | null): string {
   const selected = findDirectSandboxContainer(sandboxName);
   if (selected) return selected;
   throw missingDirectContainerError(sandboxName, driver);
 }
 
-function privilegedSandboxExecArgv(
-  sandboxName: string,
-  cmd: string[],
-  stdin = false,
-): string[] {
+function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
   const driver = normalizeDriver(entry?.openshellDriver);
@@ -145,14 +129,7 @@ function privilegedSandboxExecArgv(
   // clearly if no matching sandbox container is running.
   const container = findDirectSandboxContainer(sandboxName);
   if (container) {
-    return [
-      "exec",
-      ...(stdin ? ["-i"] : []),
-      "--user",
-      "root",
-      container,
-      ...cmd,
-    ];
+    return ["exec", ...(stdin ? ["-i"] : []), "--user", "root", container, ...cmd];
   }
 
   throw missingDirectContainerError(sandboxName, driver);

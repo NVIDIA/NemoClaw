@@ -10,7 +10,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set for hosted inference
 #   - NEMOCLAW_NON_INTERACTIVE=1
 #   - NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 
@@ -441,12 +441,22 @@ E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${E2E_DIR}/lib/inference-switch-retry.sh"
 # shellcheck source=test/e2e/lib/anthropic-switch-provider.sh
 . "${E2E_DIR}/lib/anthropic-switch-provider.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes-inference-switch}"
-SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
-SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+if nemoclaw_e2e_using_compatible_inference; then
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-$(nemoclaw_e2e_expected_route_provider)}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-$(nemoclaw_e2e_hosted_inference_model)}"
+else
+  SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
+  SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
+fi
 SWITCH_INFERENCE_API="${NEMOCLAW_SWITCH_INFERENCE_API:-openai-completions}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_ENDPOINT_URL="${NEMOCLAW_SWITCH_ENDPOINT_URL:-}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_MOCK_ANTHROPIC="${NEMOCLAW_SWITCH_MOCK_ANTHROPIC:-0}"
+# shellcheck disable=SC2034 # consumed by sourced anthropic-switch-provider.sh
 SWITCH_MOCK_PORT="${NEMOCLAW_SWITCH_MOCK_PORT:-18766}"
 INSTALL_LOG="/tmp/nemoclaw-e2e-hermes-inference-switch-install.log"
 ENV_HASH_BEFORE=""
@@ -459,6 +469,7 @@ trap 'stop_mock_anthropic_switch_provider; _nemoclaw_sandbox_teardown' EXIT
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+nemoclaw_e2e_configure_compatible_inference || exit 1
 
 section "Phase 0: Pre-cleanup"
 if command -v nemohermes >/dev/null 2>&1; then
@@ -480,10 +491,7 @@ else
   exit 1
 fi
 
-if [ -n "${NVIDIA_API_KEY:-}" ] && [[ "${NVIDIA_API_KEY}" == nvapi-* ]]; then
-  pass "NVIDIA_API_KEY is set"
-else
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
 
@@ -551,7 +559,11 @@ pid_before="$(hermes_gateway_pid)"
 ENV_HASH_BEFORE=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sha256sum /sandbox/.hermes/.env 2>/dev/null | awk '{print $1}') || true
 
 info "Switching Hermes to ${SWITCH_PROVIDER} / ${SWITCH_MODEL} with nemohermes inference set..."
-switch_output=$(run_inference_set_with_retry nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL")
+switch_cmd=(nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL")
+if [ "$SWITCH_PROVIDER" = "compatible-anthropic-endpoint" ] && [ "$SWITCH_INFERENCE_API" = "anthropic-messages" ]; then
+  switch_cmd+=(--endpoint-url "$SWITCH_ENDPOINT_URL" --credential-env COMPATIBLE_ANTHROPIC_API_KEY --inference-api "$SWITCH_INFERENCE_API")
+fi
+switch_output=$(run_inference_set_with_retry "${switch_cmd[@]}")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemohermes inference set completed without --sandbox"

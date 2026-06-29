@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Guards src/lib/onboard.ts against direct reads of provider credential env vars.
+ * Guards onboarding boundary files against direct reads of provider credential env vars.
  *
- * Direct `process.env.NVIDIA_API_KEY`-style reads bypass credentials.json. Use
+ * Direct `process.env.NVIDIA_INFERENCE_API_KEY`-style reads bypass credentials.json. Use
  * resolveProviderCredential() or getCredential() for credential resolution unless
  * a narrowly-scoped raw env check is intentional and explicitly suppressed.
  */
@@ -15,7 +15,9 @@ import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 
 const CREDENTIAL_ENV_KEYS = new Set([
+  "NVIDIA_INFERENCE_API_KEY",
   "NVIDIA_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
@@ -51,9 +53,10 @@ export function findDirectCredentialEnvReads(
     scriptKindForPath(filePath),
   );
   const violations: DirectCredentialEnvViolation[] = [];
+  const constantCredentialEnvKeys = collectConstantCredentialEnvKeys(sourceFile);
 
   function visit(node: ts.Node): void {
-    const credentialKey = credentialKeyForProcessEnvAccess(node);
+    const credentialKey = credentialKeyForProcessEnvAccess(node, constantCredentialEnvKeys);
     if (
       credentialKey &&
       !isAssignmentOrDeleteTarget(node) &&
@@ -76,6 +79,30 @@ export function findDirectCredentialEnvReads(
   return violations;
 }
 
+function collectConstantCredentialEnvKeys(sourceFile: ts.SourceFile): Map<string, string> {
+  const keys = new Map<string, string>();
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined
+    ) {
+      const initializer = stripParentheses(node.initializer);
+      if (ts.isStringLiteral(initializer) || ts.isNoSubstitutionTemplateLiteral(initializer)) {
+        if (CREDENTIAL_ENV_KEYS.has(initializer.text)) {
+          keys.set(node.name.text, initializer.text);
+        }
+      }
+    }
+
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return keys;
+}
+
 export function checkFiles(filePaths: readonly string[]): DirectCredentialEnvViolation[] {
   return filePaths.flatMap((filePath) =>
     findDirectCredentialEnvReads(readFileSync(filePath, "utf-8"), filePath),
@@ -91,7 +118,10 @@ export function formatViolations(violations: readonly DirectCredentialEnvViolati
     .join("\n");
 }
 
-function credentialKeyForProcessEnvAccess(node: ts.Node): string | null {
+function credentialKeyForProcessEnvAccess(
+  node: ts.Node,
+  constantCredentialEnvKeys: ReadonlyMap<string, string>,
+): string | null {
   if (ts.isPropertyAccessExpression(node) && isProcessEnvExpression(node.expression)) {
     return CREDENTIAL_ENV_KEYS.has(node.name.text) ? node.name.text : null;
   }
@@ -105,8 +135,10 @@ function credentialKeyForProcessEnvAccess(node: ts.Node): string | null {
     return CREDENTIAL_ENV_KEYS.has(argument.text) ? argument.text : null;
   }
 
-  if (ts.isIdentifier(argument) && /credential/i.test(argument.text)) {
-    return `[${argument.text}]`;
+  if (ts.isIdentifier(argument)) {
+    const constantKey = constantCredentialEnvKeys.get(argument.text);
+    if (constantKey) return constantKey;
+    if (/credential/i.test(argument.text)) return `[${argument.text}]`;
   }
 
   return null;

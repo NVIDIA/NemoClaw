@@ -34,27 +34,27 @@ describe("SandboxExecCommand oclif parse path", () => {
       ["alpha", "--workdir", "/sandbox/workspace", "--", "ls", "-la"],
       rootDir,
     );
-    expect(execSandboxMock).toHaveBeenCalledWith(
-      "alpha",
-      ["ls", "-la"],
-      { workdir: "/sandbox/workspace", tty: null, timeoutSeconds: undefined },
-    );
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["ls", "-la"], {
+      workdir: "/sandbox/workspace",
+      tty: null,
+      timeoutSeconds: undefined,
+    });
   });
 
   it("parses --tty / --no-tty and --timeout into typed options", async () => {
     await SandboxExecCommand.run(["alpha", "--tty", "--timeout", "30", "--", "hostname"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith(
-      "alpha",
-      ["hostname"],
-      { workdir: undefined, tty: true, timeoutSeconds: 30 },
-    );
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["hostname"], {
+      workdir: undefined,
+      tty: true,
+      timeoutSeconds: 30,
+    });
     execSandboxMock.mockReset();
 
     await SandboxExecCommand.run(["alpha", "--no-tty", "--", "hostname"], rootDir);
-    expect(execSandboxMock).toHaveBeenCalledWith(
-      "alpha",
-      ["hostname"],
-      { workdir: undefined, tty: false, timeoutSeconds: undefined },
-    );
+    expect(execSandboxMock).toHaveBeenCalledWith("alpha", ["hostname"], {
+      workdir: undefined,
+      tty: false,
+      timeoutSeconds: undefined,
+    });
   });
 });

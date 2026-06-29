@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { listMessagingProviderSuffixes } from "../messaging/channels";
 import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../name-validation";
 
 export type SandboxProviderRunOpenshell = (
@@ -34,24 +35,18 @@ export type SandboxRecreateCleanupDeps = DetachSandboxProvidersDeps & {
 };
 
 export const SANDBOX_PROVIDER_SUFFIXES = [
-  "telegram-bridge",
-  "discord-bridge",
-  "slack-bridge",
-  "slack-app",
-  "wechat-bridge",
+  ...listMessagingProviderSuffixes().map((suffix) => suffix.replace(/^-/, "")),
   "brave-search",
-] as const;
+] as readonly string[];
 
-export type SandboxProviderSuffix = (typeof SANDBOX_PROVIDER_SUFFIXES)[number];
+export type SandboxProviderSuffix = string;
 
 const TOLERATED_DETACH_OUTPUT_RE =
   /\bNotAttached\b|\bnot\s+attached\b|provider[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
-const MISSING_SANDBOX_OUTPUT_RE =
-  /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
+const MISSING_SANDBOX_OUTPUT_RE = /sandbox[^\n]{0,200}?(?:\bNotFound\b|\bnot\s+found\b)/i;
 
-const ATTACHED_TO_SANDBOX_RE =
-  /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
+const ATTACHED_TO_SANDBOX_RE = /attached\s+to\s+sandbox\(\s*es?\s*\)?\s*:\s*([^"\n]+)/i;
 
 const MAX_WARNING_OUTPUT_CHARS = 500;
 
@@ -113,10 +108,11 @@ export function detachSandboxProviders(
   const failures: Array<{ name: string; output: string }> = [];
   for (const suffix of SANDBOX_PROVIDER_SUFFIXES) {
     const name = `${sandboxName}-${suffix}`;
-    const result = runOpenshell(
-      ["sandbox", "provider", "detach", sandboxName, name],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+    });
     if (result.status === 0) {
       detached.push(name);
       continue;
@@ -145,9 +141,7 @@ export function parseAttachedSandboxes(output: string): string[] {
   return match[1]
     .split(/[,\s]+/)
     .map((s) => s.trim().replace(/[.'"`]+$/u, ""))
-    .filter(
-      (s) => s.length > 0 && s.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(s),
-    );
+    .filter((s) => s.length > 0 && s.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(s));
 }
 
 export type RecoverProviderResult = {
@@ -172,10 +166,11 @@ export function recoverAttachedProvider(
   const detached: string[] = [];
   const failures: Array<{ sandbox: string; output: string }> = [];
   for (const sandbox of attachedSandboxes) {
-    const result = runOpenshell(
-      ["sandbox", "provider", "detach", sandbox, providerName],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const result = runOpenshell(["sandbox", "provider", "detach", sandbox, providerName], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      suppressOutput: true,
+    });
     if (result.status === 0) {
       detached.push(sandbox);
       continue;
@@ -268,6 +263,7 @@ export function deleteProviderWithRecovery(
   let result = runOpenshell(["provider", "delete", providerName], {
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
+    suppressOutput: true,
   });
   let recoveryFailures: Array<{ sandbox: string; output: string }> = [];
   if (result.status !== 0) {
@@ -279,6 +275,7 @@ export function deleteProviderWithRecovery(
       result = runOpenshell(["provider", "delete", providerName], {
         ignoreError: true,
         stdio: ["ignore", "pipe", "pipe"],
+        suppressOutput: true,
       });
     }
   }
@@ -304,9 +301,7 @@ export function emitProviderDetachResidualHint(
   if (failures.length === 0) return;
   const emit = warn ?? ((m: string) => console.warn(m));
   const names = failures.map((f) => f.name).join(", ");
-  emit(
-    `  Residual provider state may remain in the OpenShell gateway: ${names}.`,
-  );
+  emit(`  Residual provider state may remain in the OpenShell gateway: ${names}.`);
   emit(
     `  Run 'openshell sandbox provider detach ${sandboxName} <name>' then 'openshell provider delete <name>' for each before the next onboard.`,
   );

@@ -19,6 +19,7 @@
 
 import type { DashboardDeliveryChain } from "./dashboard/contract";
 import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
+import { listMessagingChannelsWithoutCredentials } from "./messaging/channels";
 import { getMessagingProviderNamesForChannel } from "./onboard/messaging-reuse";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -71,7 +72,10 @@ export interface VerifyDeploymentResult {
 
 export interface VerifyDeploymentDeps {
   /** Execute a command inside the sandbox via SSH. Returns null if sandbox unreachable. */
-  executeSandboxCommand: (name: string, script: string) => { status: number; stdout: string; stderr: string } | null;
+  executeSandboxCommand: (
+    name: string,
+    script: string,
+  ) => { status: number; stdout: string; stderr: string } | null;
 
   /** Probe an HTTP endpoint on the host. Returns the HTTP status code or 0 on failure. */
   probeHostPort: (port: number, path: string) => number;
@@ -125,7 +129,7 @@ function defaultSleep(ms: number): Promise<void> {
 // HTTP status codes that indicate the gateway process is alive.
 // 401 = device auth is enabled but the gateway is running.
 const GATEWAY_ALIVE_CODES = new Set([200, 401]);
-const TOKENLESS_MESSAGING_CHANNELS = new Set(["whatsapp"]);
+const CREDENTIALLESS_MESSAGING_CHANNELS = new Set(listMessagingChannelsWithoutCredentials());
 
 // Gateway-failure hint: cover both layers the probe could be failing at.
 // The probe runs curl inside the sandbox against the in-sandbox OpenClaw
@@ -190,10 +194,7 @@ async function verifyGatewayInSandbox(
 /**
  * Retrieve the gateway version from inside the sandbox.
  */
-function fetchGatewayVersion(
-  sandboxName: string,
-  deps: VerifyDeploymentDeps,
-): string | null {
+function fetchGatewayVersion(sandboxName: string, deps: VerifyDeploymentDeps): string | null {
   const script = `openclaw --version 2>/dev/null | awk '{print $2}' || echo ''`;
   const result = deps.executeSandboxCommand(sandboxName, script);
   if (!result || !result.stdout.trim()) return null;
@@ -268,7 +269,8 @@ async function verifyDashboardFromHost(
  */
 function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   if (chain.bindAddress === "0.0.0.0") return "proxy";
-  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost")) return "localhost";
+  if (chain.accessUrl.includes("127.0.0.1") || chain.accessUrl.includes("localhost"))
+    return "localhost";
   return "ssh-tunnel";
 }
 
@@ -320,7 +322,7 @@ function verifyMessagingBridges(
   const missingProviders: string[] = [];
   for (const channel of channels) {
     const providerNames = getMessagingProviderNamesForChannel(sandboxName, channel);
-    if (providerNames.length === 0 && TOKENLESS_MESSAGING_CHANNELS.has(channel)) {
+    if (providerNames.length === 0 && CREDENTIALLESS_MESSAGING_CHANNELS.has(channel)) {
       continue;
     }
     const expectedProviders = providerNames.length > 0 ? providerNames : [channel];

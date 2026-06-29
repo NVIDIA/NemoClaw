@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import type { ProviderHealthProbeOptions } from "../../inference/health";
 import {
   classifySandboxContainerFailureForStatus,
   classifySandboxStatusPreflightFailure,
@@ -10,8 +11,7 @@ import {
   maybeGetSandboxStatusInferenceHealth,
   sandboxGpuProofStatusSuffix,
   sandboxGpuProofUnverified,
-} from "../../../../dist/lib/actions/sandbox/status";
-import type { ProviderHealthProbeOptions } from "../../../../dist/lib/inference/health";
+} from "./status";
 
 describe("sandbox status inference health", () => {
   it("passes the current model with the current provider", () => {
@@ -96,9 +96,7 @@ describe("classifySandboxContainerFailureForStatus", () => {
     const probe = async () => {
       throw new Error("probe should not be invoked");
     };
-    await expect(
-      classifySandboxContainerFailureForStatus(null, probe),
-    ).resolves.toBeNull();
+    await expect(classifySandboxContainerFailureForStatus(null, probe)).resolves.toBeNull();
   });
 
   it("returns null when the openshell driver is not docker", async () => {
@@ -192,9 +190,7 @@ describe("maybeGetSandboxStatusInferenceHealth", () => {
       },
     );
     expect(result?.ok).toBe(true);
-    expect(calls).toEqual([
-      { provider: "nvidia-prod", options: { model: "nvidia/nemotron" } },
-    ]);
+    expect(calls).toEqual([{ provider: "nvidia-prod", options: { model: "nvidia/nemotron" } }]);
   });
 });
 
@@ -282,15 +278,15 @@ describe("sandbox GPU proof status rendering (#4231)", () => {
   it("does not call an unproven GPU healthy", () => {
     expect(sandboxGpuProofUnverified(null)).toBe(true);
     expect(sandboxGpuProofUnverified(undefined)).toBe(true);
-    expect(
-      sandboxGpuProofUnverified({ status: "unverified", cudaVerified: false, at: "t" }),
-    ).toBe(true);
-    expect(
-      sandboxGpuProofUnverified({ status: "verified", cudaVerified: true, at: "t" }),
-    ).toBe(false);
-    expect(
-      sandboxGpuProofUnverified({ status: "failed", cudaVerified: false, at: "t" }),
-    ).toBe(false);
+    expect(sandboxGpuProofUnverified({ status: "unverified", cudaVerified: false, at: "t" })).toBe(
+      true,
+    );
+    expect(sandboxGpuProofUnverified({ status: "verified", cudaVerified: true, at: "t" })).toBe(
+      false,
+    );
+    expect(sandboxGpuProofUnverified({ status: "failed", cudaVerified: false, at: "t" })).toBe(
+      false,
+    );
   });
 
   it("renders verified / unverified / failed suffixes distinctly", () => {

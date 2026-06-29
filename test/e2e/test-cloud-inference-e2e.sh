@@ -12,7 +12,7 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
 #   - NEMOCLAW_NON_INTERACTIVE=1, NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 #
 # Environment:
@@ -24,7 +24,7 @@
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#     NVIDIA_API_KEY=nvapi-... bash test/e2e/test-cloud-inference-e2e.sh
+#     NVIDIA_INFERENCE_API_KEY=nvapi-... bash test/e2e/test-cloud-inference-e2e.sh
 
 set -uo pipefail
 
@@ -90,6 +90,9 @@ CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 . "${E2E_DIR}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/ci-compatible-inference.sh
+. "${E2E_DIR}/lib/ci-compatible-inference.sh"
+nemoclaw_e2e_configure_compatible_inference
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -103,11 +106,9 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-if [ -z "${NVIDIA_API_KEY:-}" ] || [[ "${NVIDIA_API_KEY}" != nvapi-* ]]; then
-  fail "NVIDIA_API_KEY not set or invalid"
+if ! nemoclaw_e2e_require_hosted_inference_key; then
   exit 1
 fi
-pass "NVIDIA_API_KEY is set"
 
 cd "$REPO" || {
   fail "Could not cd to repo root"

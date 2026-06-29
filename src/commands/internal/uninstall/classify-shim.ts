@@ -13,7 +13,9 @@ export default class InternalUninstallClassifyShimCommand extends NemoClawComman
   static summary = "Internal: classify a NemoClaw shim path";
   static description = "Classify whether a shim path is safe for the uninstaller to remove.";
   static usage = ["internal uninstall classify-shim <path> [--json]"];
-  static examples = ["<%= config.bin %> internal uninstall classify-shim ~/.local/bin/nemoclaw --json"];
+  static examples = [
+    "<%= config.bin %> internal uninstall classify-shim ~/.local/bin/nemoclaw --json",
+  ];
   static args = {
     path: Args.string({ description: "Shim path to classify", required: true }),
   };

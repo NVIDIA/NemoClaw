@@ -1,16 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createConfigPromptHookRegistration,
-  type ConfigPromptHookOptions,
-} from "./config-prompt";
-import {
-  createTokenPasteHookRegistration,
-  type TokenPasteHookOptions,
-} from "./token-paste";
 import { getCredential, prompt, saveCredential } from "../../../credentials/store";
 import type { MessagingHookRegistration } from "../types";
+import { type ConfigPromptHookOptions, createConfigPromptHookRegistration } from "./config-prompt";
+import { createStaticOutputsHookRegistration } from "./static-outputs";
+import { createTokenPasteHookRegistration, type TokenPasteHookOptions } from "./token-paste";
 
 export interface CommonHookOptions extends TokenPasteHookOptions {
   readonly tokenPaste?: TokenPasteHookOptions;
@@ -33,6 +28,7 @@ export function createCommonHookRegistrations(
   };
 
   return [
+    createStaticOutputsHookRegistration(),
     createTokenPasteHookRegistration(tokenPasteOptions),
     createConfigPromptHookRegistration(configPromptOptions),
   ] as const;
@@ -84,4 +80,5 @@ function logMessage(message: string): void {
 }
 
 export * from "./config-prompt";
+export * from "./static-outputs";
 export * from "./token-paste";

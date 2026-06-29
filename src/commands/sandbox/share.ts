@@ -10,7 +10,8 @@ export default class ShareCommand extends NemoClawCommand {
   static id = "sandbox:share";
   static strict = true;
   static summary = "Mount/unmount sandbox filesystem on the host via SSHFS";
-  static description = "Share files between host and sandbox using SSHFS over OpenShell's SSH proxy.";
+  static description =
+    "Share files between host and sandbox using SSHFS over OpenShell's SSH proxy.";
   static usage = ["<mount|unmount|status> <name>"];
   static examples = [
     "<%= config.bin %> sandbox share mount alpha",
@@ -20,8 +21,7 @@ export default class ShareCommand extends NemoClawCommand {
   static args = {
     sandboxName: sandboxNameArg,
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(ShareCommand);

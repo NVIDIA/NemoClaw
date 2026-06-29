@@ -17,8 +17,12 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
   static examples = [`${CLI_NAME} internal uninstall plan --json --yes`];
   static flags = {
     json: jsonFlag("Print the uninstall plan as JSON"),
-    yes: Flags.boolean({ description: "Accepted for parity with run-plan; ignored while planning" }),
-    "delete-models": Flags.boolean({ description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models` }),
+    yes: Flags.boolean({
+      description: "Accepted for parity with run-plan; ignored while planning",
+    }),
+    "delete-models": Flags.boolean({
+      description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models`,
+    }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),
     gateway: Flags.string({ description: "Gateway name", default: "nemoclaw" }),
   };
@@ -32,6 +36,7 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
       keepOpenShell: flags["keep-openshell"] ?? false,
     });
     if (flags.json) this.logJson(plan);
-    else console.log(`Uninstall plan: ${plan.steps.length} steps for gateway '${plan.gatewayName}'`);
+    else
+      console.log(`Uninstall plan: ${plan.steps.length} steps for gateway '${plan.gatewayName}'`);
   }
 }

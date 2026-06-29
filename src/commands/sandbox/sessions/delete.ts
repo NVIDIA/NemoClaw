@@ -27,9 +27,7 @@ export default class SandboxSessionsDeleteCommand extends NemoClawCommand {
     "Pass --keep-transcript to retain the on-disk `<sessionId>.jsonl` after the",
     "session entry is removed.",
   ].join("\n");
-  static usage = [
-    "<name> <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]",
-  ];
+  static usage = ["<name> <key> [--agent <id>] [--keep-transcript] [--json] [--verbose]"];
   static examples = [
     "<%= config.bin %> sandbox sessions delete alpha telegram:t-1",
     "<%= config.bin %> sandbox sessions delete alpha agent:work:telegram:t-1",

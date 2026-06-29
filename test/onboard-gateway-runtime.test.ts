@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
+import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../src/lib/onboard/vm-driver-process.js";
 
 const {
   areRequiredDockerDriverBinariesPresent,
@@ -19,7 +19,7 @@ const {
   parseDockerCdiSpecDirs,
   shouldAllowOpenshellAboveBlueprintMax,
   shouldRequireDockerDriverEnv,
-} = require("../dist/lib/onboard") as {
+} = require("../src/lib/onboard") as {
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -215,8 +215,7 @@ describe("onboard gateway runtime helpers", () => {
       getDockerDriverGatewayRuntimeDriftFromSnapshot({
         processEnv: {
           ...desiredEnv,
-          OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
-            "ghcr.io/nvidia/openshell/supervisor:0.0.36",
+          OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.36",
         },
         processExe: gatewayBin,
         desiredEnv,
@@ -280,7 +279,7 @@ describe("onboard gateway runtime helpers", () => {
         desiredEnv,
         gatewayBin: "/home/user/.local/bin/openshell-gateway",
       })?.reason,
-    ).toContain("executable=/usr/bin/docker");
+    ).toMatch(/^executable=.* \(expected \/home\/user\/\.local\/bin\/openshell-gateway\)$/);
   });
 
   it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {
@@ -297,9 +296,9 @@ describe("onboard gateway runtime helpers", () => {
     expect(
       isDockerDriverGatewayPortListener({ ok: false, process: "openshell-", pid: 1234 }, opts),
     ).toBe(true);
-    expect(
-      isDockerDriverGatewayPortListener({ ok: false, process: "node", pid: 1234 }, opts),
-    ).toBe(false);
+    expect(isDockerDriverGatewayPortListener({ ok: false, process: "node", pid: 1234 }, opts)).toBe(
+      false,
+    );
     expect(
       isDockerDriverGatewayPortListener(
         { ok: false, process: "openshell", pid: 1234 },
@@ -356,9 +355,7 @@ describe("onboard gateway runtime helpers", () => {
       const specPath = path.join(cdiDir, "gpu-devices.yaml");
       fs.writeFileSync(
         specPath,
-        ["cdiVersion: 0.6.0", "kind: nvidia.com/gpu", "devices:", "  - name: all", ""].join(
-          "\n",
-        ),
+        ["cdiVersion: 0.6.0", "kind: nvidia.com/gpu", "devices:", "  - name: all", ""].join("\n"),
       );
       expect(findReadableNvidiaCdiSpecFiles([emptyDir, cdiDir])).toEqual([specPath]);
     } finally {

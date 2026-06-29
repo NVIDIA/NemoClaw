@@ -43,12 +43,22 @@ function stageLegacySandboxBuildContext(
 ): StagedBuildContext {
   const buildCtx = createBuildContextDir(tmpDir);
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), path.join(buildCtx, "Dockerfile"));
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
   fs.cpSync(path.join(rootDir, "nemoclaw"), path.join(buildCtx, "nemoclaw"), { recursive: true });
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
   });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "messaging"),
+    path.join(buildCtx, "src", "lib", "messaging"),
+    { recursive: true },
+  );
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
@@ -71,6 +81,10 @@ function stageOptimizedSandboxBuildContext(
   const stagedScriptsDir = path.join(buildCtx, "scripts");
 
   fs.copyFileSync(path.join(rootDir, "Dockerfile"), stagedDockerfile);
+  fs.copyFileSync(
+    path.join(rootDir, "tsconfig.runtime-preloads.json"),
+    path.join(buildCtx, "tsconfig.runtime-preloads.json"),
+  );
 
   fs.mkdirSync(stagedNemoclawDir, { recursive: true });
   for (const fileName of [
@@ -122,11 +136,19 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
     path.join(stagedScriptsDir, "codex-acp-wrapper.sh"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
+    path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
+  );
   // Shared sandbox initialisation library sourced by the entrypoint (#2277)
   fs.mkdirSync(path.join(stagedScriptsDir, "lib"), { recursive: true });
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-init.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
+    path.join(stagedScriptsDir, "lib", "sandbox-rlimits.sh"),
   );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "openclaw_device_approval_policy.py"),
@@ -136,22 +158,13 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
     path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
   );
-  // OpenClaw config generator extracted in #2449 (fixed in #2565)
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "generate-openclaw-config.mts"),
-    path.join(stagedScriptsDir, "generate-openclaw-config.mts"),
+  // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
+  fs.cpSync(
+    path.join(rootDir, "src", "lib", "messaging"),
+    path.join(buildCtx, "src", "lib", "messaging"),
+    { recursive: true },
   );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "openclaw-build-messaging-plugins.py"),
-    path.join(stagedScriptsDir, "openclaw-build-messaging-plugins.py"),
-  );
-  // WeChat-account seed for the @tencent-weixin/openclaw-weixin plugin —
-  // runs at image build time when WeChat is enabled to skip the upstream
-  // plugin's in-sandbox QR login.
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "seed-wechat-accounts.py"),
-    path.join(stagedScriptsDir, "seed-wechat-accounts.py"),
-  );
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "src"));
   fs.copyFileSync(
     path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),
     path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.js"),

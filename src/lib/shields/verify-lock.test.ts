@@ -2,18 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import path from "node:path";
 
-// Import from compiled dist/ for correct coverage attribution.
-async function loadVerifier(): Promise<typeof import("../../../dist/lib/shields/verify-lock")> {
-  const distModulePath = path.join(
-    process.cwd(),
-    "dist",
-    "lib",
-    "shields",
-    "verify-lock.js",
-  );
-  return import(distModulePath);
+async function loadVerifier(): Promise<typeof import("./verify-lock")> {
+  return import("./verify-lock");
 }
 
 const target = {
@@ -80,24 +71,19 @@ describe("verifyShieldsLockState", () => {
     ["404", "missing group read"],
     ["644", "owner-writable file"],
     ["445", "world-execute file"],
-  ])(
-    "rejects mode %s (%s) so writable perms cannot masquerade as locked",
-    async (mode, _description) => {
-      const { verifyShieldsLockState } = await loadVerifier();
-      const exec = makeExec({
-        "/sandbox/.openclaw/openclaw.json": `${mode} root:root`,
-        "/sandbox/.openclaw/.config-hash": "444 root:root",
-        "/sandbox/.openclaw": "755 root:root",
-      });
+  ])("rejects mode %s (%s) so writable perms cannot masquerade as locked", async (mode, _description) => {
+    const { verifyShieldsLockState } = await loadVerifier();
+    const exec = makeExec({
+      "/sandbox/.openclaw/openclaw.json": `${mode} root:root`,
+      "/sandbox/.openclaw/.config-hash": "444 root:root",
+      "/sandbox/.openclaw": "755 root:root",
+    });
 
-      const result = verifyShieldsLockState("openclaw", target, { exec });
+    const result = verifyShieldsLockState("openclaw", target, { exec });
 
-      expect(result.ok).toBe(false);
-      expect(result.issues).toContain(
-        `/sandbox/.openclaw/openclaw.json mode=${mode} (expected 444)`,
-      );
-    },
-  );
+    expect(result.ok).toBe(false);
+    expect(result.issues).toContain(`/sandbox/.openclaw/openclaw.json mode=${mode} (expected 444)`);
+  });
 
   it("rejects any non-755 dir mode even when the file modes are clean", async () => {
     const { verifyShieldsLockState } = await loadVerifier();
@@ -122,12 +108,8 @@ describe("verifyShieldsLockState", () => {
     const result = verifyShieldsLockState("openclaw", target, { exec });
 
     expect(result.ok).toBe(false);
-    expect(result.issues.some((issue: string) => issue.includes("stat failed"))).toBe(
-      true,
-    );
-    expect(
-      result.issues.some((issue: string) => issue.includes("Container not found")),
-    ).toBe(true);
+    expect(result.issues.some((issue: string) => issue.includes("stat failed"))).toBe(true);
+    expect(result.issues.some((issue: string) => issue.includes("Container not found"))).toBe(true);
   });
 
   it("flags missing immutable bit only when verifyChattr is requested", async () => {
@@ -176,9 +158,7 @@ describe("verifyShieldsLockState", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.issues).toContain(
-      "legacy data dir exists: /sandbox/.openclaw-data",
-    );
+    expect(result.issues).toContain("legacy data dir exists: /sandbox/.openclaw-data");
   });
 
   it("rejects calls without an exec dependency so production paths cannot silently no-op", async () => {
@@ -197,10 +177,8 @@ describe("verifyShieldsLockState", () => {
   // content tamper that restores the perms afterwards.
   // ---------------------------------------------------------------------------
 
-  const CLEAN_OPENCLAW_HASH =
-    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-  const CLEAN_CONFIG_HASH_HASH =
-    "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+  const CLEAN_OPENCLAW_HASH = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+  const CLEAN_CONFIG_HASH_HASH = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
   const expectedHashes = {
     "/sandbox/.openclaw/openclaw.json": CLEAN_OPENCLAW_HASH,
     "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,
@@ -243,16 +221,14 @@ describe("verifyShieldsLockState", () => {
 
     expect(result.ok).toBe(false);
     expect(
-      result.issues.some(
-        (issue: string) =>
-          issue.startsWith("/sandbox/.openclaw/openclaw.json content drifted"),
+      result.issues.some((issue: string) =>
+        issue.startsWith("/sandbox/.openclaw/openclaw.json content drifted"),
       ),
     ).toBe(true);
     // The clean file must not show up as drifted.
     expect(
-      result.issues.some(
-        (issue: string) =>
-          issue.startsWith("/sandbox/.openclaw/.config-hash content drifted"),
+      result.issues.some((issue: string) =>
+        issue.startsWith("/sandbox/.openclaw/.config-hash content drifted"),
       ),
     ).toBe(false);
   });
@@ -352,9 +328,7 @@ describe("verifyShieldsLockState", () => {
 
     expect(result.ok).toBe(false);
     expect(
-      result.issues.some((issue: string) =>
-        issue.includes("sha256sum output unparsable"),
-      ),
+      result.issues.some((issue: string) => issue.includes("sha256sum output unparsable")),
     ).toBe(true);
   });
 

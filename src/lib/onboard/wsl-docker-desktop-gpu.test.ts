@@ -58,9 +58,9 @@ describe("WSL Docker Desktop GPU compatibility helpers", () => {
     expect(action.reason).toContain("--gpus");
     expect(action.commands.join("\n")).not.toContain("nvidia-ctk");
 
-    expect(wslDockerDesktopGpuCompatibilityRemediationLines("docker-desktop")?.join("\n")).toContain(
-      "Docker --gpus compatibility",
-    );
+    expect(
+      wslDockerDesktopGpuCompatibilityRemediationLines("docker-desktop")?.join("\n"),
+    ).toContain("Docker --gpus compatibility");
     expect(wslDockerDesktopGpuCompatibilityRemediationLines("unknown")?.join("\n")).toContain(
       "could not determine whether Docker is Docker Desktop",
     );
@@ -159,11 +159,13 @@ describe("createArm64WslDockerDesktopGpuProver (#4565)", () => {
   });
 
   it("honors a positive NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS override", () => {
-    expect(wslDockerDesktopGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "5000" })).toBe(5000);
-    expect(wslDockerDesktopGpuProofTimeoutMs({})).toBeGreaterThan(0);
-    expect(wslDockerDesktopGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "-1" })).toBeGreaterThan(
-      0,
+    expect(wslDockerDesktopGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "5000" })).toBe(
+      5000,
     );
+    expect(wslDockerDesktopGpuProofTimeoutMs({})).toBeGreaterThan(0);
+    expect(
+      wslDockerDesktopGpuProofTimeoutMs({ NEMOCLAW_WSL_GPU_PROOF_TIMEOUT_MS: "-1" }),
+    ).toBeGreaterThan(0);
   });
 
   it("detects Docker exec-format-error diagnostics", () => {

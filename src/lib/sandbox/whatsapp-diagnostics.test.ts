@@ -48,9 +48,7 @@ describe("evaluateWhatsappDiagnostics", () => {
   it("returns config_gap when the channel is not registered for the sandbox", () => {
     const report = evaluateWhatsappDiagnostics(baseInput({ channelEnabledInRegistry: false }));
     expect(report.verdict).toBe("config_gap");
-    expect(
-      report.signals.find((s) => s.label === "Channel registration")?.severity,
-    ).toBe("fail");
+    expect(report.signals.find((s) => s.label === "Channel registration")?.severity).toBe("fail");
     expect(report.hints[0]).toMatch(/channels add whatsapp/);
   });
 
@@ -366,9 +364,9 @@ describe("parseWhatsappHeartbeat", () => {
     const result = parseWhatsappHeartbeat(
       JSON.stringify({ lastInboundAt: "2026-05-28T03:59:30+00:00" }),
     );
-    expect(
-      "heartbeat" in result && result.heartbeat.lastInboundAt,
-    ).toBe("2026-05-28T03:59:30.000Z");
+    expect("heartbeat" in result && result.heartbeat.lastInboundAt).toBe(
+      "2026-05-28T03:59:30.000Z",
+    );
   });
 
   it("returns parseError when the heartbeat is not an object", () => {

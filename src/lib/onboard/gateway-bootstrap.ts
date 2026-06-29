@@ -143,10 +143,13 @@ done
     if (!plan.needsRepair) return { repaired: false, missingSecrets };
 
     log(`  OpenShell bootstrap secrets missing: ${plan.missingSecrets.join(", ")}. Repairing...`);
-    const repairResult = runGatewayCluster(buildGatewayBootstrapSecretsScript(plan.missingSecrets), {
-      ignoreError: true,
-      suppressOutput: true,
-    });
+    const repairResult = runGatewayCluster(
+      buildGatewayBootstrapSecretsScript(plan.missingSecrets),
+      {
+        ignoreError: true,
+        suppressOutput: true,
+      },
+    );
     const remainingSecrets = listMissingGatewayBootstrapSecrets();
     if (repairResult.status === 0 && remainingSecrets.length === 0) {
       log("  ✓ OpenShell bootstrap secrets created");

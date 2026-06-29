@@ -335,7 +335,9 @@ export function interpretToolScopeProbe(
   if (sig.gateway1006) symptomParts.push("gateway closed 1006");
   if (sig.scopePending) symptomParts.push("scope upgrade pending approval");
   if (sig.loopbackDenied) {
-    const portText = probe.dashboardPort ? `127.0.0.1:${probe.dashboardPort}` : "the dashboard port";
+    const portText = probe.dashboardPort
+      ? `127.0.0.1:${probe.dashboardPort}`
+      : "the dashboard port";
     symptomParts.push(`policy denial to ${portText}`);
   }
 
@@ -449,9 +451,7 @@ export function buildToolScopeChecks(
 ): DoctorToolScopeCheck[] {
   const readPolicy = deps.readPolicyModule ?? readAutoPairApprovalPolicyModule;
   const policyModule = readPolicy();
-  const policyModuleB64 = policyModule
-    ? Buffer.from(policyModule, "utf-8").toString("base64")
-    : "";
+  const policyModuleB64 = policyModule ? Buffer.from(policyModule, "utf-8").toString("base64") : "";
   const script = buildToolScopeProbeScript(policyModuleB64);
 
   const firstRaw = deps.exec(sandboxName, script);
@@ -474,10 +474,7 @@ export function buildToolScopeChecks(
     // pass's self-report: OpenClaw's local-fallback `devices approve` can apply
     // the upgrade server-side after the bounded client subprocess has already
     // timed out, so the delta is the authoritative "net cleared" signal.
-    const repaired = Math.max(
-      0,
-      firstProbe.pendingAllowlisted - secondProbe.pendingAllowlisted,
-    );
+    const repaired = Math.max(0, firstProbe.pendingAllowlisted - secondProbe.pendingAllowlisted);
     const fix = { reported: repaired > 0 || passResult.reported, approved: repaired };
     return interpretToolScopeProbe(secondProbe, { sandboxName, cliName, wantsFix, fix });
   }

@@ -180,8 +180,7 @@ function isBlueprint(value: unknown): value is Blueprint {
     return false;
   }
 
-  const version = value.version;
-  if (!isOptionalString(version)) {
+  if (!isOptionalString(value.version)) {
     return false;
   }
 

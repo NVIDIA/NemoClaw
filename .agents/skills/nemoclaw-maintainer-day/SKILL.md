@@ -29,7 +29,7 @@ The first script determines the target version. The second shows shipped vs open
 
 From the open version-targeted items, pick the highest-value one:
 
-1. **Ready-now PR** — green CI, no conflicts, no major CodeRabbit, has tests → follow [MERGE-GATE.md](MERGE-GATE.md)
+1. **Ready-now PR** — green CI, no conflicts, no major CodeRabbit or PR Review Advisor findings, has tests → follow [MERGE-GATE.md](MERGE-GATE.md)
 2. **Salvage-now PR** — close to ready, needs small fix → follow [SALVAGE-PR.md](SALVAGE-PR.md)
 3. **Security item** — touches risky areas → follow [SECURITY-SWEEP.md](SECURITY-SWEEP.md)
 4. **Test-gap item** — risky code with weak tests → follow [TEST-GAPS.md](TEST-GAPS.md)
@@ -64,7 +64,8 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 ## Commit Hygiene
 
-The prek "Regenerate agent skills from docs" hook auto-stages `.agents/skills/` files. Before every `git add` and `git commit` on a PR branch, run `git reset HEAD .agents/skills/nemoclaw-maintainer-*` to unstage them. Only commit skill files in dedicated skill PRs.
+Only commit skill files when the task intentionally changes agent guidance.
+Keep unrelated `.agents/skills/` changes out of ordinary code or docs PRs.
 
 ## Stop and Ask When
 

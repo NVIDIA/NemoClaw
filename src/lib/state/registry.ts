@@ -4,9 +4,33 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import type { SandboxMessagingPlan } from "../messaging/manifest";
-import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
+import type { InferenceSelection } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import type { SandboxMessagingState } from "./registry-messaging";
+
+export {
+  getSandboxEntryDisplayInference,
+  getSandboxEntryInference,
+  type SandboxEntryDisplayInference,
+  type SandboxEntryInference,
+} from "./registry-entry-view";
+
+import {
+  cloneSandboxMessagingState,
+  getConfiguredMessagingChannels as getRegistryConfiguredMessagingChannels,
+  getDisabledChannels as getRegistryDisabledChannels,
+  serializeSandboxMessagingStateForDisk,
+  setChannelDisabled as setRegistryChannelDisabled,
+} from "./registry-messaging";
+
+export {
+  getConfiguredMessagingChannelsFromEntry,
+  getDisabledMessagingChannelsFromEntry,
+  getHydratedMessagingPlanFromEntry,
+  getMessagingPlanFromEntry,
+  type SandboxMessagingState,
+} from "./registry-messaging";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -34,12 +58,9 @@ export interface SandboxGpuProofResult {
   at: string;
 }
 
-export interface SandboxEntry {
+export interface SandboxEntry extends Partial<InferenceSelection> {
   name: string;
   createdAt?: string;
-  model?: string | null;
-  nimContainer?: string | null;
-  provider?: string | null;
   gpuEnabled?: boolean;
   hostGpuDetected?: boolean;
   sandboxGpuEnabled?: boolean;
@@ -59,16 +80,20 @@ export interface SandboxEntry {
   policyPresetsFinalized?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
+  // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
+  // NemoClaw-managed images at create/rebuild time. `upgrade-sandboxes` compares
+  // it against the running NemoClaw build so an image/build change with an
+  // unchanged agent version is still detected as needing a rebuild. Custom-image
+  // (`--from`) sandboxes are intentionally left without a fingerprint so they
+  // are never auto-rebuilt onto the default image (#5026).
+  nemoclawVersion?: string | null;
   imageTag?: string | null;
-  messagingChannels?: string[];
-  messagingChannelConfig?: MessagingChannelConfig;
   messaging?: SandboxMessagingState;
   hermesToolGateways?: string[];
   hermesDashboardEnabled?: boolean;
   hermesDashboardPort?: number | null;
   hermesDashboardInternalPort?: number | null;
   hermesDashboardTui?: boolean;
-  disabledChannels?: string[];
   dashboardPort?: number | null;
   // OpenShell gateway registration name and host port bound to this sandbox.
   // Persisted so later lifecycle commands operate on the sandbox's own gateway
@@ -76,11 +101,6 @@ export interface SandboxEntry {
   // different NEMOCLAW_GATEWAY_PORT no longer recreates/kills the first (#4422).
   gatewayName?: string | null;
   gatewayPort?: number | null;
-}
-
-export interface SandboxMessagingState {
-  schemaVersion: 1;
-  plan: SandboxMessagingPlan;
 }
 
 export interface SandboxRegistry {
@@ -207,10 +227,7 @@ export function acquireLock(): void {
       }
       return;
     } catch (error) {
-      if (
-        !isErrnoException(error) ||
-        error.code !== "EEXIST"
-      ) {
+      if (!isErrnoException(error) || error.code !== "EEXIST") {
         throw error;
       }
       let lockStat: fs.Stats;
@@ -229,8 +246,7 @@ export function acquireLock(): void {
         ownerPid = null;
       }
       const ownerAlive = ownerPid !== null ? isProcessAlive(ownerPid) : false;
-      const processStartMs =
-        ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
+      const processStartMs = ownerPid !== null && ownerAlive ? readProcessStartMs(ownerPid) : null;
       const decision = classifyExistingLock({
         ownerPid,
         ownerAlive,
@@ -274,20 +290,14 @@ export function releaseLock(): void {
   try {
     fs.unlinkSync(LOCK_OWNER);
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
   try {
     fs.rmSync(LOCK_DIR, { recursive: true, force: true });
   } catch (error) {
-    if (
-      !isErrnoException(error) ||
-      error.code !== "ENOENT"
-    ) {
+    if (!isErrnoException(error) || error.code !== "ENOENT") {
       throw error;
     }
   }
@@ -303,11 +313,87 @@ export function withLock<T>(fn: () => T): T {
 }
 
 export function load(): SandboxRegistry {
-  return readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null });
+  return normalizeRegistry(
+    readConfigFile<SandboxRegistry>(REGISTRY_FILE, { sandboxes: {}, defaultSandbox: null }),
+  );
 }
 
 export function save(data: SandboxRegistry): void {
-  writeConfigFile(REGISTRY_FILE, data);
+  writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
+}
+
+function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        normalizeSandboxEntryForRuntime(entry),
+      ]),
+    ),
+  };
+}
+
+function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
+  return {
+    defaultSandbox: data.defaultSandbox ?? null,
+    sandboxes: Object.fromEntries(
+      sandboxRegistryEntries(data).map(([name, entry]) => [
+        name,
+        serializeSandboxEntryForDisk(entry),
+      ]),
+    ),
+  };
+}
+
+function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
+  const sandboxes = isRecord(data.sandboxes) ? data.sandboxes : {};
+  return Object.entries(sandboxes).filter((entry): entry is [string, SandboxEntry] =>
+    isSandboxEntryLike(entry[1]),
+  );
+}
+
+function isSandboxEntryLike(entry: unknown): entry is SandboxEntry {
+  return isRecord(entry);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeSandboxEntryForRuntime(entry: SandboxEntry): SandboxEntry {
+  const messaging = cloneSandboxMessagingState(entry.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = entry;
+    return rest;
+  }
+  return { ...entry, messaging };
+}
+
+/**
+ * Prepare a sandbox entry for persistence: normalize messaging state and drop
+ * transient #5714 display-only markers (`recoveredFromGateway`, `livePhase`)
+ * that must never reach sandboxes.json.
+ */
+function serializeSandboxEntryForDisk(entry: SandboxEntry): SandboxEntry {
+  // #5714: defensively drop transient, display-only recovery markers so they
+  // can never reach sandboxes.json even if a caller force-passed one through
+  // updateSandbox(). These are not part of the durable SandboxEntry type; they
+  // live only on the ephemeral list-recovery rows.
+  const {
+    recoveredFromGateway: _recovered,
+    livePhase: _phase,
+    ...durable
+  } = entry as SandboxEntry & {
+    recoveredFromGateway?: boolean;
+    livePhase?: string | null;
+  };
+  const messaging = serializeSandboxMessagingStateForDisk(durable.messaging);
+  if (!messaging) {
+    const { messaging: _messaging, ...rest } = durable;
+    return rest;
+  }
+  return { ...durable, messaging };
 }
 
 export function getSandbox(name: string): SandboxEntry | null {
@@ -330,9 +416,7 @@ export function registerSandbox(entry: SandboxEntry): void {
     data.sandboxes[entry.name] = {
       name: entry.name,
       createdAt: entry.createdAt || new Date().toISOString(),
-      model: entry.model || null,
-      nimContainer: entry.nimContainer || null,
-      provider: entry.provider || null,
+      ...inferenceSelectionRegistryFields(entry),
       gpuEnabled: entry.gpuEnabled || false,
       hostGpuDetected: entry.hostGpuDetected === true,
       sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
@@ -350,12 +434,8 @@ export function registerSandbox(entry: SandboxEntry): void {
       // cannot inherit a stale finalized marker. See #4621.
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
+      nemoclawVersion: entry.nemoclawVersion || null,
       imageTag: entry.imageTag || null,
-      messagingChannels: entry.messagingChannels || [],
-      messagingChannelConfig:
-        entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
-          ? { ...entry.messagingChannelConfig }
-          : undefined,
       messaging: cloneSandboxMessagingState(entry.messaging),
       hermesToolGateways:
         Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
@@ -365,10 +445,6 @@ export function registerSandbox(entry: SandboxEntry): void {
       hermesDashboardPort: entry.hermesDashboardPort ?? undefined,
       hermesDashboardInternalPort: entry.hermesDashboardInternalPort ?? undefined,
       hermesDashboardTui: entry.hermesDashboardTui === true ? true : undefined,
-      disabledChannels:
-        Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
-          ? [...entry.disabledChannels]
-          : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
       gatewayName: entry.gatewayName ?? undefined,
       gatewayPort: entry.gatewayPort ?? undefined,
@@ -378,16 +454,6 @@ export function registerSandbox(entry: SandboxEntry): void {
     }
     save(data);
   });
-}
-
-function cloneSandboxMessagingState(
-  messaging: SandboxMessagingState | undefined,
-): SandboxMessagingState | undefined {
-  if (!messaging || messaging.schemaVersion !== 1) return undefined;
-  return {
-    schemaVersion: 1,
-    plan: JSON.parse(JSON.stringify(messaging.plan)) as SandboxMessagingPlan,
-  };
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
@@ -414,6 +480,36 @@ export function removeSandbox(name: string): boolean {
     }
     save(data);
     return true;
+  });
+}
+
+/**
+ * Restore a previously-removed sandbox entry verbatim under the registry lock,
+ * preserving every field exactly (unlike `registerSandbox`, which rebuilds a
+ * fresh entry from known fields). Used to roll back a failed stale-sandbox
+ * rebuild recovery (#4497): the entry was removed before the recreate, and on
+ * failure it must come back intact. Operates on the CURRENT registry (it does
+ * not clobber other sandboxes' entries another command added during the rebuild
+ * window).
+ *
+ * `reclaimDefault` undoes the default-pointer move the original `removeSandbox`
+ * performed: when this sandbox was the default, `removeSandbox` reassigned
+ * `defaultSandbox` to another remaining sandbox (or null), so the rollback puts
+ * it back. This is best-effort "undo my operation" — a deliberate default change
+ * by a concurrent command during the rebuild window is an inherent race and may
+ * be overwritten.
+ */
+export function restoreSandboxEntry(
+  entry: SandboxEntry,
+  options: { reclaimDefault?: string | null } = {},
+): void {
+  withLock(() => {
+    const data = load();
+    data.sandboxes[entry.name] = entry;
+    if (options.reclaimDefault && data.defaultSandbox !== options.reclaimDefault) {
+      data.defaultSandbox = options.reclaimDefault;
+    }
+    save(data);
   });
 }
 
@@ -477,20 +573,13 @@ export function removeCustomPolicyByName(name: string, presetName: string): bool
 }
 
 export function getDisabledChannels(name: string): string[] {
-  const data = load();
-  return data.sandboxes[name]?.disabledChannels ?? [];
+  return getRegistryDisabledChannels(name, { load });
+}
+
+export function getConfiguredMessagingChannels(name: string): string[] {
+  return getRegistryConfiguredMessagingChannels(name, { load });
 }
 
 export function setChannelDisabled(name: string, channel: string, disabled: boolean): boolean {
-  return withLock(() => {
-    const data = load();
-    const entry = data.sandboxes[name];
-    if (!entry) return false;
-    const current = new Set(entry.disabledChannels ?? []);
-    if (disabled) current.add(channel);
-    else current.delete(channel);
-    entry.disabledChannels = current.size > 0 ? Array.from(current).sort() : undefined;
-    save(data);
-    return true;
-  });
+  return setRegistryChannelDisabled(name, channel, disabled, { load, save, withLock });
 }

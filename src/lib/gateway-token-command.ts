@@ -12,8 +12,15 @@
  *   exit 1: token unavailable; diagnostics written to stderr.
  */
 
+import { getAgentBranding } from "./cli/branding";
+
 export interface GatewayTokenCommandDeps {
-  /** Pull gateway.auth.token from the sandbox config (host-side helper). */
+  /**
+   * Fetch the agent-appropriate auth token for the sandbox (host-side helper).
+   * The bridge wires the right fetcher based on the resolved agent: OpenClaw's
+   * gateway.auth.token, or a bearer_token agent's web-auth key (e.g. Hermes'
+   * API_SERVER_KEY).
+   */
   fetchToken: (sandboxName: string) => string | null;
   /**
    * Resolve the agent name registered for the sandbox (e.g. "openclaw",
@@ -24,6 +31,14 @@ export interface GatewayTokenCommandDeps {
    * existed.
    */
   getSandboxAgent?: (sandboxName: string) => string | null;
+  /**
+   * Whether the resolved agent exposes a retrievable auth token. OpenClaw
+   * (gateway token) and bearer_token agents like Hermes (API key) return
+   * true; agents with no token mechanism return false and get the
+   * not-applicable message. Defaults to "openclaw only" when omitted so
+   * callers without agent metadata keep the historical behaviour.
+   */
+  agentExposesToken?: (agentName: string | null) => boolean;
   /** Optional stdout sink -- defaults to console.log. */
   log?: (message: string) => void;
   /** Optional stderr sink -- defaults to console.error. */
@@ -52,8 +67,34 @@ function gatewayTokenFail(lines: string | readonly string[], exitCode = 1): neve
   throw new GatewayTokenCommandError(lines, exitCode);
 }
 
-const SECURITY_WARNING =
-  "Treat this token like a password -- do not log, share, or commit it.";
+const SECURITY_WARNING = "Treat this token like a password -- do not log, share, or commit it.";
+
+/**
+ * Build the agent-aware "not applicable" diagnostic for a non-OpenClaw agent.
+ *
+ * NCQ #5249: the bare "this command only supports OpenClaw" line (NCQ #3180)
+ * leaves Hermes users following generic dashboard-token quickstart patterns
+ * without a next step. For Hermes specifically, point them at the supported
+ * dashboard auth path so Day0 verification is not a dead end. Other
+ * non-OpenClaw agents keep the single explanatory line.
+ */
+function notApplicableLines(sandboxName: string, agent: string): readonly string[] {
+  const lead = `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${agent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`;
+  if (agent === "hermes") {
+    // Pull the invoked CLI name from branding so the hint matches whatever the
+    // user actually typed: `nemohermes` when launched through the alias,
+    // `nemoclaw` when Hermes is selected through the default binary. Resolving
+    // at call time (not import time) keeps the hint in sync with
+    // NEMOCLAW_INVOKED_AS even when the env var is set after module load.
+    const cliName = getAgentBranding().cli;
+    return [
+      lead,
+      `  For Hermes dashboard access, run: ${cliName} ${sandboxName} dashboard-url`,
+      "  Hermes dashboard auth is read from the in-sandbox config (/sandbox/.hermes/config.yaml), not a gateway token.",
+    ];
+  }
+  return [lead];
+}
 
 /**
  * Run the gateway-token command. Throws {@link GatewayTokenCommandError} on
@@ -68,10 +109,11 @@ export function runGatewayTokenCommand(
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
-  // NCQ #3180: gateway-token only applies to the OpenClaw agent. Hermes (and
-  // any other non-OpenClaw agent) does not store a gateway auth token, so
-  // skip the OpenClaw lookup entirely and surface an agent-aware message
-  // instead of the misleading "make sure the sandbox is running" hint.
+  // NCQ #3180: surface an agent-aware "not applicable" message (instead of the
+  // misleading "make sure the sandbox is running" hint) for agents that have no
+  // retrievable auth token. OpenClaw exposes its gateway token; bearer_token
+  // agents like Hermes expose their web-auth key (API_SERVER_KEY). Anything
+  // else is rejected.
   let resolvedAgent: string | null = null;
   if (deps.getSandboxAgent) {
     try {
@@ -80,10 +122,11 @@ export function runGatewayTokenCommand(
       resolvedAgent = null;
     }
   }
-  if (resolvedAgent && resolvedAgent !== "openclaw") {
-    gatewayTokenFail(
-      `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
-    );
+  const exposesToken = deps.agentExposesToken
+    ? deps.agentExposesToken(resolvedAgent)
+    : resolvedAgent === null || resolvedAgent === "openclaw";
+  if (!exposesToken) {
+    gatewayTokenFail(notApplicableLines(sandboxName, resolvedAgent ?? "unknown"));
   }
 
   let token: string | null;

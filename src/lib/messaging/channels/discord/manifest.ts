@@ -28,6 +28,7 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_SERVER_ID",
+      envAliases: ["DISCORD_SERVER_IDS"],
       statePath: "discordGuilds.serverId",
       prompt: {
         label: "Discord Server ID (for guild workspace access)",
@@ -43,6 +44,7 @@ export const discordManifest = {
       statePath: "discordGuilds.requireMention",
       promptWhenInput: "serverId",
       validValues: ["0", "1"],
+      defaultValue: "1",
       prompt: {
         label: "Discord mention mode",
         help: "Choose whether the bot should reply only when @mentioned or to all messages in this server.",
@@ -53,6 +55,7 @@ export const discordManifest = {
       kind: "config",
       required: false,
       envKey: "DISCORD_USER_ID",
+      envAliases: ["DISCORD_ALLOWED_IDS"],
       statePath: "discordGuilds.userIds",
       promptWhenInput: "serverId",
       prompt: {
@@ -71,24 +74,41 @@ export const discordManifest = {
       placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
     },
   ],
-  policyPresets: ["discord"],
+  policyPresets: [
+    {
+      name: "discord",
+      validationWarningLines: [
+        "For Discord preset validation, do not use curl as the success signal:",
+        "curl is not in the preset binary allowlist, so curl probes can fail even",
+        "when the policy is working. Use Node HTTPS against",
+        "https://discord.com/api/v10/gateway or validate the configured",
+        'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+        "can also be inconclusive behind a proxy.",
+      ],
+    },
+  ],
   render: [
     {
-      id: "discord-openclaw-account",
+      id: "discord-openclaw-channel",
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
       fragment: {
-        path: "channels.discord.accounts.default",
+        path: "channels.discord",
         value: {
-          token: "{{credential.discordBotToken.placeholder}}",
           enabled: true,
-          healthMonitor: {
-            enabled: false,
+          accounts: {
+            default: {
+              token: "{{credential.discordBotToken.placeholder}}",
+              enabled: true,
+              healthMonitor: {
+                enabled: false,
+              },
+              proxy: "{{discordProxyUrl}}",
+              dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
+              allowFrom: "{{discord.allowedUsers.values}}",
+            },
           },
-          proxy: "{{discordProxyUrl}}",
-          dmPolicy: "{{discord.allowedUsers.dmPolicy}}",
-          allowFrom: "{{discord.allowedUsers.values}}",
         },
       },
     },
@@ -97,11 +117,24 @@ export const discordManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
+      when: "{{discord.hasGuilds}}",
       fragment: {
         path: "channels.discord",
         value: {
           groupPolicy: "allowlist",
           guilds: "{{discord.guilds}}",
+        },
+      },
+    },
+    {
+      id: "discord-openclaw-plugin",
+      kind: "json-fragment",
+      agent: "openclaw",
+      target: "openclaw.json",
+      fragment: {
+        path: "plugins.entries.discord",
+        value: {
+          enabled: true,
         },
       },
     },
@@ -134,6 +167,37 @@ export const discordManifest = {
         },
       },
     },
+    {
+      id: "discord-hermes-platform",
+      kind: "json-fragment",
+      agent: "hermes",
+      target: "~/.hermes/config.yaml",
+      fragment: {
+        path: "platforms.discord",
+        value: {
+          enabled: true,
+        },
+      },
+    },
+  ],
+  runtime: {
+    openclaw: {
+      channelName: "discord",
+      visibility: {
+        configKeys: ["discord"],
+        logPatterns: ["discord"],
+      },
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/discord@{{openclaw.version}}",
+      pin: true,
+      required: true,
+    },
   ],
   state: {
     persist: {
@@ -155,6 +219,13 @@ export const discordManifest = {
     ],
   },
   hooks: [
+    {
+      id: "discord-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "discord.openclawBridgeHealth",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    },
     {
       id: "discord-token-paste",
       phase: "enroll",

@@ -277,9 +277,7 @@ describe("CLI dispatch", () => {
     "classifies docker probe timeouts distinctly from a missing gateway",
     testTimeoutOptions(60_000),
     () => {
-      const { dockerLog, env, localBin } = makeCliFixture(
-        "nemoclaw-cli-hosts-docker-timeout-",
-      );
+      const { dockerLog, env, localBin } = makeCliFixture("nemoclaw-cli-hosts-docker-timeout-");
       writeDockerStub(localBin, [
         "#!/usr/bin/env bash",
         `log_file=${JSON.stringify(dockerLog)}`,

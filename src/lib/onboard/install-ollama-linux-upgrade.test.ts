@@ -7,7 +7,7 @@ import {
   decideInstallOllamaLinuxMode,
   type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
-} from "../../../dist/lib/onboard/install-ollama-linux";
+} from "./install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
   return {
@@ -133,7 +133,7 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   it("pins the resolved Ollama host to local loopback after a successful install", () => {
     // Resolve through the same CJS require cache the helper uses internally
     // so the `_resolvedOllamaHost` mutation is observable from the test.
-    const localInference = require("../../../dist/lib/inference/local");
+    const localInference = require("../inference/local");
     localInference.setResolvedOllamaHost("host.docker.internal");
     try {
       const opts = makeOpts({
@@ -150,7 +150,9 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   });
 
   it("falls back to a manual loopback launch when systemd is not applicable and no daemon is reachable", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const waitForHttpImpl = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
     const opts = makeOpts({
       modeOverride: "system",
@@ -167,7 +169,9 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   });
 
   it("skips the manual launch when systemd is not applicable but the local loopback daemon already responds", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const waitForHttpImpl = vi.fn().mockReturnValue(true);
     const opts = makeOpts({
       modeOverride: "system",
@@ -183,7 +187,9 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   });
 
   it("stops the stale Ollama daemon before relaunching on the upgrade path", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const waitForHttpImpl = vi.fn().mockReturnValue(true);
     const sleepSecondsImpl = vi.fn();
     const opts = makeOpts({
@@ -206,7 +212,9 @@ describe("installOllamaOnLinux (upgrade recovery)", () => {
   });
 
   it("re-probes loopback fresh instead of trusting the cached findReachableOllamaHost result", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
+    const runShellImpl = vi
+      .fn()
+      .mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
     const waitForHttpImpl = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
     const opts = makeOpts({
       modeOverride: "system",

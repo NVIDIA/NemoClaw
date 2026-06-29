@@ -14,6 +14,15 @@ vi.mock("../adapters/openshell/runtime", () => ({
 
 vi.mock("../inference/local", () => ({
   DEFAULT_OLLAMA_MODEL: "llama3.1",
+  validateLocalProvider: vi.fn(() => ({ ok: true })),
+}));
+
+vi.mock("../onboard/local-inference-topology", () => ({
+  ensureLocalProviderReachable: vi.fn(() => true),
+}));
+
+vi.mock("../inference/context-window", () => ({
+  resolveContextWindowForModel: vi.fn(() => null),
 }));
 
 vi.mock("../sandbox/config", () => ({
@@ -27,6 +36,7 @@ vi.mock("../shields/audit", () => ({
   appendAuditEntry: vi.fn(),
 }));
 
+import type { ValidationResult } from "../inference/local";
 import {
   type InferenceSetDeps,
   patchHermesInferenceConfig,
@@ -77,9 +87,7 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: null,
     webSearchConfig: null,
     policyPresets: null,
-    messagingChannels: null,
-    messagingChannelConfig: null,
-    disabledChannels: null,
+    messagingPlan: null,
     migratedLegacyValueHashes: null,
     hermesToolGateways: null,
     gpuPassthrough: false,
@@ -106,15 +114,22 @@ function createDeps(options: {
   target?: AgentConfigTarget;
   session?: Session | null;
   openshellStatus?: number;
+  localValidation?: ValidationResult;
+  localReachable?: boolean;
+  contextWindow?: number | null;
 }): InferenceSetDeps & {
   calls: {
     runOpenshell: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
+    readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
     log: ReturnType<typeof vi.fn>;
+    validateLocalProvider: ReturnType<typeof vi.fn>;
+    ensureLocalProviderReachable: ReturnType<typeof vi.fn>;
+    resolveContextWindowForModel: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -125,12 +140,13 @@ function createDeps(options: {
     return acc;
   }, {});
   const defaultSandbox =
-    options.defaultSandbox === undefined ? entries[0]?.name ?? null : options.defaultSandbox;
+    options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
   const calls = {
     runOpenshell: vi.fn(() => ({ status: options.openshellStatus ?? 0, stdout: "", stderr: "" })),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     updateSandbox: vi.fn(() => true),
+    readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();
       session = mutator(current) ?? current;
@@ -138,6 +154,11 @@ function createDeps(options: {
     }),
     appendAuditEntry: vi.fn(),
     log: vi.fn(),
+    validateLocalProvider: vi.fn((): ValidationResult => options.localValidation ?? { ok: true }),
+    ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
+    resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
+      options.contextWindow === undefined ? null : options.contextWindow,
+    ),
   };
   return {
     getDefaultSandbox: () => defaultSandbox,
@@ -148,12 +169,17 @@ function createDeps(options: {
     loadSession: () => session,
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
-    readSandboxConfig: () => options.config,
+    readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     runOpenshell: calls.runOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
+    isLocalInferenceProvider: (provider) =>
+      provider === "ollama-local" || provider === "vllm-local",
+    validateLocalProvider: calls.validateLocalProvider,
+    ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
+    resolveContextWindowForModel: calls.resolveContextWindowForModel,
     calls,
     getSession: () => session,
   };
@@ -429,10 +455,24 @@ describe("runInferenceSet", () => {
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        credentialEnv: null,
+        endpointUrl: null,
+        nimContainer: null,
+        preferredInferenceApi: null,
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
@@ -503,6 +543,10 @@ describe("runInferenceSet", () => {
       { ignoreError: true },
     );
     expect(config).toEqual({
+      _nemoclaw_upstream: {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      },
       model: {
         default: "openai/gpt-5.4-mini",
         provider: "custom",
@@ -517,10 +561,13 @@ describe("runInferenceSet", () => {
       "/sandbox/.hermes/config.yaml",
     );
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes", {
-      provider: "hermes-provider",
-      model: "openai/gpt-5.4-mini",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.getSession()).toMatchObject({
       provider: "hermes-provider",
       model: "openai/gpt-5.4-mini",
@@ -558,7 +605,16 @@ describe("runInferenceSet", () => {
         },
       },
     };
-    const deps = createDeps({ config, session: baseSession() });
+    const deps = createDeps({
+      config,
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    });
 
     const result = await runInferenceSet(
       {
@@ -588,6 +644,16 @@ describe("runInferenceSet", () => {
         },
       },
     });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
@@ -596,6 +662,186 @@ describe("runInferenceSet", () => {
     expect(result).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
+    });
+  });
+
+  it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow(/without trusted durable endpoint metadata/);
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects Anthropic Messages metadata for OpenAI-compatible endpoint switches", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "mock-openai-model",
+          noVerify: true,
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /inference-api for 'compatible-endpoint' must be one of: openai-completions, openai-responses/,
+    );
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit inference API through the final registry and session sync", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        noVerify: true,
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-responses",
+      },
+      deps,
+    );
+
+    expect(config.models).toMatchObject({
+      providers: {
+        inference: {
+          api: "openai-responses",
+          models: [{ id: "mock-responses-model", name: "inference/mock-responses-model" }],
+        },
+      },
+    });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "mock-responses-model",
+      endpointUrl: "https://compatible.example/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        noVerify: true,
+        endpointUrl: "http://host.openshell.internal:18767/",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        inferenceApi: "anthropic-messages",
+      },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        endpointUrl: "http://host.openshell.internal:18767",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+        nimContainer: null,
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      model: "mock-anthropic-model",
+      endpointUrl: "http://host.openshell.internal:18767",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+      nimContainer: null,
     });
   });
 
@@ -691,8 +937,11 @@ describe("runInferenceSet", () => {
       session: baseSession({
         agent: "hermes",
         sandboxName: "hermes",
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
       }),
     });
 
@@ -713,6 +962,22 @@ describe("runInferenceSet", () => {
       api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
       api_mode: "anthropic_messages",
     });
+    // The upstream annotation must track the selected provider together with
+    // the API-family field, so the two cannot drift apart on later switches.
+    expect(config._nemoclaw_upstream).toEqual({
+      provider: "compatible-anthropic-endpoint",
+      model: "claude-sonnet-proxy",
+    });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "hermes",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
@@ -788,15 +1053,14 @@ describe("runInferenceSet", () => {
 
     await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
 
-    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith(
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes-one", HERMES_TARGET, config);
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
       "hermes-one",
-      HERMES_TARGET,
-      config,
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "z-ai/glm-5.1",
+      }),
     );
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes-one", {
-      provider: "hermes-provider",
-      model: "z-ai/glm-5.1",
-    });
   });
 
   it("requires --sandbox when the nemohermes alias cannot choose one Hermes sandbox", async () => {
@@ -846,6 +1110,33 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
+    const deps = createDeps({ config: {}, session: baseSession() });
+    deps.calls.readSandboxConfig.mockImplementation(() => {
+      throw new Error("sandbox config unreadable");
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow("sandbox config unreadable");
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+      }),
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("keeps gateway and registry consistent when the in-sandbox config write fails (#3726)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
@@ -869,10 +1160,13 @@ describe("runInferenceSet", () => {
     );
 
     // Registry still updated despite the in-sandbox sync throwing (no stale registry → no revert).
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       provider: "nvidia-prod",
@@ -910,10 +1204,13 @@ describe("runInferenceSet", () => {
 
     // Config write happened and registry is updated; the run resolves without aborting.
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(result).toMatchObject({ inSandboxConfigSynced: false });
 
     // Degraded: warns about the stale integrity hash, points at rebuild, no "synced".
@@ -921,5 +1218,132 @@ describe("runInferenceSet", () => {
     expect(logged).toMatch(/integrity hash/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
+  });
+});
+
+describe("runInferenceSet local-provider verification", () => {
+  const localConfig = (): ConfigObject => ({
+    agents: { defaults: { model: { primary: "inference/qwen2.5:7b" } } },
+    models: {
+      providers: {
+        inference: {
+          api: "openai-completions",
+          models: [{ id: "qwen2.5:7b", name: "inference/qwen2.5:7b" }],
+        },
+      },
+    },
+  });
+
+  it("forces --no-verify for a local provider whose host validation passes", async () => {
+    const deps = createDeps({ config: localConfig(), session: baseSession() });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
+
+    expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).toContain("--no-verify");
+    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
+  });
+
+  it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+      localValidation: {
+        ok: false,
+        message: "Local Ollama is responding on 127.0.0.1, but the container check failed.",
+        diagnostic: "add-host probe timed out",
+      },
+      localReachable: true,
+    });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
+
+    expect(deps.calls.ensureLocalProviderReachable).toHaveBeenCalledWith("ollama-local");
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).toContain("--no-verify");
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/reachable/);
+  });
+
+  it("aborts without touching the route when the host stack is unreachable", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+      localValidation: {
+        ok: false,
+        message: "Local Ollama was selected, but nothing is responding on http://127.0.0.1:11434.",
+      },
+      localReachable: false,
+    });
+
+    await expect(
+      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps),
+    ).rejects.toThrow(/Cannot reach local provider 'ollama-local'/);
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("does not run local validation or force --no-verify for cloud providers", async () => {
+    const deps = createDeps({
+      config: localConfig(),
+      session: baseSession(),
+    });
+
+    await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+      deps,
+    );
+
+    expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
+    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
+    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    expect(args).not.toContain("--no-verify");
+  });
+});
+
+describe("runInferenceSet context window", () => {
+  const ollamaConfig = (): ConfigObject => ({
+    agents: { defaults: { model: { primary: "inference/llama3.2:3b" } } },
+    models: {
+      providers: {
+        inference: {
+          api: "openai-completions",
+          models: [{ id: "llama3.2:3b", name: "inference/llama3.2:3b", contextWindow: 131072 }],
+        },
+      },
+    },
+  });
+
+  function inferenceModels(config: ConfigObject): Array<Record<string, unknown>> {
+    const models = config.models as { providers: { inference: { models: unknown } } };
+    return models.providers.inference.models as Array<Record<string, unknown>>;
+  }
+
+  it("writes the recomputed context window into the in-sandbox config", async () => {
+    const config = ollamaConfig();
+    const deps = createDeps({ config, session: baseSession(), contextWindow: 16384 });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
+      "ollama-local",
+      "qwen2.5:7b",
+    );
+    expect(inferenceModels(config)[0].contextWindow).toBe(16384);
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
+  });
+
+  it("keeps the existing window and warns when it cannot be determined", async () => {
+    const config = ollamaConfig();
+    const deps = createDeps({ config, session: baseSession(), contextWindow: null });
+
+    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
+
+    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
+    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
+    expect(logged).toMatch(/could not determine the context window/i);
+    expect(logged).toMatch(/rebuild/);
   });
 });

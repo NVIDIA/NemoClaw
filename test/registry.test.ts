@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
-import os from "node:os";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // Use a temp dir so tests don't touch real ~/.nemoclaw.
 // HOME must be set before loading registry (it reads HOME at require time),
@@ -14,9 +14,41 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
 const require = createRequire(import.meta.url);
-const registry = require("../dist/lib/state/registry");
+const registry = require("../src/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
+
+function makeMessagingPlan(
+  name: string,
+  channels: string[] = ["telegram"],
+  disabledChannels: string[] = [],
+) {
+  const disabled = new Set<string>(disabledChannels);
+  return {
+    schemaVersion: 1,
+    sandboxName: name,
+    agent: "openclaw",
+    workflow: "onboard",
+    channels: channels.map((channelId) => ({
+      channelId,
+      displayName: channelId,
+      authMode: "token-paste",
+      active: !disabled.has(channelId),
+      selected: true,
+      configured: true,
+      disabled: disabled.has(channelId),
+      inputs: [],
+      hooks: [],
+    })),
+    disabledChannels,
+    credentialBindings: [],
+    networkPolicy: { presets: [], entries: [] },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
 
 beforeEach(() => {
   if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
@@ -37,16 +69,24 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("alpha");
   });
 
-  it("stores provided model/provider at registration time", () => {
+  it("stores durable inference metadata at registration time", () => {
     registry.registerSandbox({
       name: "alpha",
       gpuEnabled: false,
       model: "nvidia/nemotron-3-super-120b-a12b",
       provider: "nvidia-prod",
+      endpointUrl: "https://integrate.api.nvidia.com/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
     });
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
     expect(data.sandboxes.alpha.model).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(data.sandboxes.alpha.provider).toBe("nvidia-prod");
+    expect(data.sandboxes.alpha.endpointUrl).toBe("https://integrate.api.nvidia.com/v1");
+    expect(data.sandboxes.alpha.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
+    expect(data.sandboxes.alpha.preferredInferenceApi).toBe("openai-completions");
+    expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
@@ -70,6 +110,41 @@ describe("registry", () => {
     // The second registration must not retarget the first sandbox's binding.
     expect(registry.getSandbox("first").gatewayName).toBe("nemoclaw");
     expect(registry.getSandbox("first").gatewayPort).toBe(8080);
+  });
+
+  it("registry serialization and update strip recoveredFromGateway display marker (#5714)", () => {
+    // The transient #5714 display markers must never reach sandboxes.json even
+    // if a caller force-passes one through updateSandbox(). They are not part of
+    // the durable SandboxEntry type; serializeSandboxEntryForDisk strips them.
+    registry.registerSandbox({ name: "alpha", model: "m", provider: "p" });
+    registry.updateSandbox("alpha", {
+      policies: ["npm"],
+      recoveredFromGateway: true,
+      livePhase: "Ready",
+    });
+
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.policies).toEqual(["npm"]);
+    expect(data.sandboxes.alpha.recoveredFromGateway).toBeUndefined();
+    expect(data.sandboxes.alpha.livePhase).toBeUndefined();
+  });
+
+  it("normalizes configured inference fields into a discriminated view", () => {
+    const configured = { name: "alpha", provider: "nvidia-prod", model: "nvidia/test" };
+    const missingProvider = { name: "beta", provider: null, model: "nvidia/test" };
+    const missingModel = { name: "gamma", provider: "nvidia-prod", model: null };
+    const blankProvider = { name: "delta", provider: "", model: "nvidia/test" };
+    const blankModel = { name: "epsilon", provider: "nvidia-prod", model: "   " };
+
+    expect(registry.getSandboxEntryInference(configured)).toEqual({
+      kind: "configured",
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+    });
+    expect(registry.getSandboxEntryInference(missingProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(missingModel)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankProvider)).toEqual({ kind: "unconfigured" });
+    expect(registry.getSandboxEntryInference(blankModel)).toEqual({ kind: "unconfigured" });
   });
 
   it("first registered becomes default", () => {
@@ -196,26 +271,99 @@ describe("registry", () => {
     expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
   });
 
-  it("stores messaging channel config at registration time", () => {
+  it("stores messaging plan state at registration time", () => {
+    const basePlan = makeMessagingPlan("messaging", ["telegram"]);
+    const plan = {
+      ...basePlan,
+      channels: [
+        {
+          ...basePlan.channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "botToken",
+              kind: "secret",
+              required: true,
+              sourceEnv: "TELEGRAM_BOT_TOKEN",
+              credentialAvailable: true,
+            },
+          ],
+        },
+      ],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegramBotToken",
+          sourceInput: "botToken",
+          providerName: "messaging-telegram-bridge",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialAvailable: true,
+          credentialHash: "hash",
+        },
+      ],
+    };
     registry.registerSandbox({
       name: "messaging",
-      messagingChannels: ["telegram"],
-      messagingChannelConfig: {
-        TELEGRAM_ALLOWED_IDS: "123,456",
-        TELEGRAM_REQUIRE_MENTION: "1",
-      },
+      messaging: { schemaVersion: 1, plan },
     });
 
     const sb = registry.getSandbox("messaging");
-    expect(sb.messagingChannelConfig).toEqual({
-      TELEGRAM_ALLOWED_IDS: "123,456",
-      TELEGRAM_REQUIRE_MENTION: "1",
+    expect(sb.messaging).toMatchObject({
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "messaging",
+        channels: [expect.objectContaining({ channelId: "telegram", active: true })],
+      },
     });
+    const rawSandbox = sb as unknown as Record<string, unknown>;
+    expect(rawSandbox.messagingChannels).toBeUndefined();
+    expect(rawSandbox.messagingChannelConfig).toBeUndefined();
+    expect(registry.getConfiguredMessagingChannels("messaging")).toEqual(["telegram"]);
+    const hydrated = registry.getHydratedMessagingPlanFromEntry(sb);
+    expect(
+      hydrated.agentRender.some((entry: { channelId: string }) => entry.channelId === "telegram"),
+    ).toBe(true);
+    expect(
+      hydrated.channels[0].hooks.some(
+        (hook: { channelId: string }) => hook.channelId === "telegram",
+      ),
+    ).toBe(true);
     const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(data.sandboxes.messaging.messagingChannelConfig).toEqual({
-      TELEGRAM_ALLOWED_IDS: "123,456",
-      TELEGRAM_REQUIRE_MENTION: "1",
+    expect(data.sandboxes.messaging.messaging.schemaVersion).toBe(1);
+    expect(data.sandboxes.messaging.messaging.plan).toMatchObject({
+      schemaVersion: 1,
+      sandboxName: "messaging",
+      channels: [{ channelId: "telegram" }],
     });
+    expect(data.sandboxes.messaging.messaging.plan.networkPolicy).toEqual({
+      presets: [],
+      entries: [],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.agentRender).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.buildSteps).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.runtimeSetup).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.stateUpdates).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.healthChecks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.channels[0]).toEqual({
+      channelId: "telegram",
+      active: true,
+      configured: true,
+      disabled: false,
+      inputs: [{ inputId: "botToken", credentialAvailable: true }],
+    });
+    expect(data.sandboxes.messaging.messaging.plan.channels[0].hooks).toBeUndefined();
+    expect(data.sandboxes.messaging.messaging.plan.credentialBindings).toEqual([
+      {
+        channelId: "telegram",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        credentialAvailable: true,
+        credentialHash: "hash",
+      },
+    ]);
+    expect(data.sandboxes.messaging.messagingChannels).toBeUndefined();
+    expect(data.sandboxes.messaging.messagingChannelConfig).toBeUndefined();
   });
 
   it("imageTag defaults to null when not provided", () => {
@@ -238,8 +386,32 @@ describe("registry", () => {
     expect(sandboxes.length).toBe(0);
   });
 
+  it("skips malformed sandbox entries while loading the registry", () => {
+    fs.mkdirSync(path.dirname(regFile), { recursive: true });
+    fs.writeFileSync(
+      regFile,
+      JSON.stringify({
+        defaultSandbox: "broken",
+        sandboxes: {
+          good: { name: "good", model: "m1" },
+          broken: null,
+          text: "not-an-entry",
+        },
+      }),
+    );
+
+    expect(registry.getSandbox("broken")).toBe(null);
+    expect(registry.getDefault()).toBe("good");
+    expect(
+      registry.listSandboxes().sandboxes.map((sandbox: { name: string }) => sandbox.name),
+    ).toEqual(["good"]);
+  });
+
   it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
-    registry.registerSandbox({ name: "s1" });
+    registry.registerSandbox({
+      name: "s1",
+      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram", "discord"]) },
+    });
     expect(registry.getDisabledChannels("s1")).toEqual([]);
 
     expect(registry.setChannelDisabled("s1", "telegram", true)).toBe(true);
@@ -252,20 +424,25 @@ describe("registry", () => {
     expect(registry.getDisabledChannels("s1")).toEqual(["discord"]);
   });
 
-  it("setChannelDisabled clears the disabledChannels field when empty", () => {
-    registry.registerSandbox({ name: "s1" });
+  it("setChannelDisabled clears plan.disabledChannels when empty", () => {
+    registry.registerSandbox({
+      name: "s1",
+      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+    });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.setChannelDisabled("s1", "telegram", false);
     const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.messaging.plan.disabledChannels).toEqual([]);
     expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
   });
 
-  it("updateSandbox clears disabledChannels when explicitly set to undefined", () => {
-    registry.registerSandbox({ name: "s1" });
-    registry.setChannelDisabled("s1", "telegram", true);
-    expect(registry.updateSandbox("s1", { disabledChannels: undefined })).toBe(true);
-    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
-    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  it("setChannelDisabled returns false when the channel is not configured in the plan", () => {
+    registry.registerSandbox({
+      name: "s1",
+      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+    });
+    expect(registry.setChannelDisabled("s1", "discord", true)).toBe(false);
+    expect(registry.getDisabledChannels("s1")).toEqual([]);
   });
 
   it("setChannelDisabled returns false when sandbox is missing", () => {
@@ -273,11 +450,14 @@ describe("registry", () => {
   });
 
   it("registerSandbox preserves disabledChannels when re-registering", () => {
-    registry.registerSandbox({ name: "s1" });
+    registry.registerSandbox({
+      name: "s1",
+      messaging: { schemaVersion: 1, plan: makeMessagingPlan("s1", ["telegram"]) },
+    });
     registry.setChannelDisabled("s1", "telegram", true);
     registry.registerSandbox({
       name: "s1",
-      disabledChannels: registry.getDisabledChannels("s1"),
+      messaging: registry.getSandbox("s1").messaging,
     });
     expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
   });
@@ -465,7 +645,7 @@ describe("advisory file locking", () => {
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
     const registryPath = path.resolve(
-      path.join(import.meta.dirname, "..", "dist", "lib", "state", "registry.js"),
+      path.join(import.meta.dirname, "..", "src", "lib", "state", "registry.ts"),
     );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes

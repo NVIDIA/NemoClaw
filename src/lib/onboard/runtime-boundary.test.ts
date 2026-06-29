@@ -62,8 +62,13 @@ function transitionMachine(session: Session, state: OnboardMachineState): void {
     version: session.machine.version,
     state,
     stateEnteredAt: "2026-05-27T00:00:00.000Z",
-    revision: session.machine.state === state ? session.machine.revision : session.machine.revision + 1,
+    revision:
+      session.machine.state === state ? session.machine.revision : session.machine.revision + 1,
   };
+}
+
+function shouldUpdateMachine(options: StepMutationOptions | undefined): boolean {
+  return options?.updateMachine !== false;
 }
 
 function createRuntimeHarness(overrides: Partial<Session> = {}) {
@@ -96,7 +101,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         current.status = "in_progress";
         current.failure = null;
         const state = STEP_TO_STATE[stepName];
-        if (state) transitionMachine(current, state);
+        if (state && shouldUpdateMachine(options)) transitionMachine(current, state);
         return current;
       });
     },
@@ -112,7 +117,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
         current.failure = null;
         Object.assign(current, filterSafeUpdates(updates));
         const nextState = nextStateAfterCompletedStep(stepName, current);
-        if (nextState) transitionMachine(current, nextState);
+        if (nextState && shouldUpdateMachine(options)) transitionMachine(current, nextState);
         return current;
       });
     },
@@ -126,7 +131,9 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
       stepOptionCalls.push({ method: "markStepFailed", options });
       return updateSession((current) => {
         current.steps[stepName].status = "failed";
-        current.failure = { step: stepName, message: message ?? null, recordedAt: "now" };
+        current.failure = shouldUpdateMachine(options)
+          ? { step: stepName, message: message ?? null, recordedAt: "now" }
+          : current.failure;
         return current;
       });
     },
@@ -145,6 +152,7 @@ function createRuntimeHarness(overrides: Partial<Session> = {}) {
     createRuntime: () => new OnboardRuntime(deps),
     events,
     stepOptionCalls,
+    getSession: () => cloneSession(session ?? createSession()),
   };
 }
 
@@ -168,14 +176,12 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events[1]).toMatchObject({ state: "init" });
   });
 
-  it("forwards configured step mutation options through boundary recorders", async () => {
+  it("defaults boundary step recorders to record-only machine mutations", async () => {
     const harness = createRuntimeHarness();
-    const recordOnlyOptions = { updateMachine: false };
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
-      stepMutationOptions: recordOnlyOptions,
     });
 
     await boundary.startRecordedStep("preflight");
@@ -183,13 +189,13 @@ describe("OnboardRuntimeBoundary", () => {
     await boundary.recordStepFailed("gateway", "boom");
 
     expect(harness.stepOptionCalls).toEqual([
-      { method: "markStepStarted", options: recordOnlyOptions },
-      { method: "markStepComplete", options: recordOnlyOptions },
-      { method: "markStepFailed", options: recordOnlyOptions },
+      { method: "markStepStarted", options: { updateMachine: false } },
+      { method: "markStepComplete", options: { updateMachine: false } },
+      { method: "markStepFailed", options: { updateMachine: false } },
     ]);
   });
 
-  it("applies state results unless legacy step helpers already advanced the machine", async () => {
+  it("keeps default boundary step recorders from advancing the machine", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
@@ -197,38 +203,51 @@ describe("OnboardRuntimeBoundary", () => {
       createRuntime: harness.createRuntime,
     });
 
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await boundary.startRecordedStep("preflight");
+    expect(harness.getSession().machine.state).toBe("init");
+    await boundary.recordStepComplete("preflight");
+    expect(harness.getSession().machine.state).toBe("init");
 
-    expect(harness.events.map((event) => event.type)).toEqual([
-      "state.exited",
-      "state.entered",
-      "state.result.skipped",
-      "state.exited",
-      "state.entered",
-    ]);
-    expect(harness.events[1]).toMatchObject({ state: "preflight" });
-    expect(harness.events[2]).toMatchObject({
-      state: "preflight",
-      metadata: {
-        reason: "already_at_target",
-        currentState: "preflight",
-        targetState: "preflight",
-      },
-    });
-    expect(harness.events[4]).toMatchObject({ state: "gateway" });
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
+    expect(harness.getSession().machine.state).toBe("preflight");
   });
 
-  it("emits diagnostics for stale compatible state results", async () => {
+  it("forwards configured step mutation options through boundary recorders", async () => {
+    const harness = createRuntimeHarness();
+    const legacyOptions = { updateMachine: true };
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+      stepMutationOptions: legacyOptions,
+    });
+
+    await boundary.startRecordedStep("preflight");
+    await boundary.recordStepComplete("preflight");
+    await boundary.recordStepFailed("gateway", "boom");
+
+    expect(harness.stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: legacyOptions },
+      { method: "markStepComplete", options: legacyOptions },
+      { method: "markStepFailed", options: legacyOptions },
+    ]);
+    expect(harness.getSession().machine.state).toBe("gateway");
+  });
+
+  it("emits diagnostics for legacy-compatible stale state results", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
+      stepMutationOptions: { updateMachine: true },
     });
 
-    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
 
     expect(harness.events).toHaveLength(1);
     expect(harness.events[0]).toMatchObject({
@@ -243,12 +262,50 @@ describe("OnboardRuntimeBoundary", () => {
     });
   });
 
+  it("emits diagnostics for explicit repaired resume compatibility results", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordCompatibleStateResult(
+      advanceTo("gateway", { metadata: { state: "preflight" } }),
+    );
+
+    expect(harness.events[0]).toMatchObject({
+      type: "state.result.skipped",
+      metadata: {
+        reason: "source_state_mismatch",
+        currentState: "init",
+        sourceState: "preflight",
+        targetState: "gateway",
+      },
+    });
+  });
+
+  it("emits diagnostics for explicit compatible replay of stale default results", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    const result = advanceTo("preflight", { metadata: { state: "missing" } });
+    await expect(boundary.recordCompatibleStateResult(result)).resolves.toMatchObject({
+      machine: { state: "init" },
+    });
+  });
+
   it("rejects skipped transition results that carry context updates", async () => {
     const harness = createRuntimeHarness();
     const boundary = new OnboardRuntimeBoundary({
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
+      stepMutationOptions: { updateMachine: true },
     });
 
     await expect(
@@ -264,6 +321,7 @@ describe("OnboardRuntimeBoundary", () => {
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
+      stepMutationOptions: { updateMachine: true },
     });
 
     const session = await boundary.recordStateResultWithStepCompatibility(
@@ -292,6 +350,7 @@ describe("OnboardRuntimeBoundary", () => {
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
+      stepMutationOptions: { updateMachine: true },
     });
 
     await boundary.startRecordedStep("preflight");
@@ -307,19 +366,32 @@ describe("OnboardRuntimeBoundary", () => {
     );
 
     await boundary.startRecordedStep("provider_selection");
-    await boundary.recordStepComplete("provider_selection", { provider: "bad", model: "bad-model" });
+    await boundary.recordStepComplete("provider_selection", {
+      provider: "bad",
+      model: "bad-model",
+    });
     await boundary.startRecordedStep("inference", { provider: "bad", model: "bad-model" });
     const retryResult = retryTo("provider_selection", {
-      metadata: { state: "inference", provider: "bad", model: "bad-model", reason: "selection_retry" },
+      metadata: {
+        state: "inference",
+        provider: "bad",
+        model: "bad-model",
+        reason: "selection_retry",
+      },
     });
     await boundary.startRecordedStep("provider_selection");
-    await boundary.recordStepComplete("provider_selection", { provider: "nvidia", model: "nemotron" });
+    await boundary.recordStepComplete("provider_selection", {
+      provider: "nvidia",
+      model: "nemotron",
+    });
     await boundary.startRecordedStep("inference", { provider: "nvidia", model: "nemotron" });
     await boundary.recordStepComplete("inference", { provider: "nvidia", model: "nemotron" });
-    await boundary.recordStateResultsWithStepCompatibility([
-      retryResult,
-      advanceTo("sandbox", { metadata: { state: "inference", provider: "nvidia", model: "nemotron" } }),
-    ]);
+    await boundary.recordStateResultWithStepCompatibility(retryResult);
+    await boundary.recordStateResultWithStepCompatibility(
+      advanceTo("sandbox", {
+        metadata: { state: "inference", provider: "nvidia", model: "nemotron" },
+      }),
+    );
 
     await boundary.startRecordedStep("sandbox");
     await boundary.recordStepComplete("sandbox", { sandboxName: "openclaw-sb" });
@@ -383,6 +455,7 @@ describe("OnboardRuntimeBoundary", () => {
       toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
       maybeForceE2eStepFailure: () => undefined,
       createRuntime: harness.createRuntime,
+      stepMutationOptions: { updateMachine: true },
     });
 
     await boundary.recordStateResult(advanceTo("preflight"));

@@ -188,9 +188,7 @@ describe("ShareCommand mount/status actions", () => {
       return { status: 1, stdout: "", stderr: "" };
     });
 
-    await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(
-      ShareCommandError,
-    );
+    await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(ShareCommandError);
 
     expect(deps.ensureLive).not.toHaveBeenCalled();
     await expect(runShareMount({ sandboxName: "alpha" }, deps)).rejects.toThrow(

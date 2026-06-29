@@ -47,7 +47,8 @@ export function decidePolicyCarryForward(
   if (shouldCarryPreviousPolicies(prev, env, nonInteractive)) {
     return { newPresets: prev, overrideNote: null };
   }
-  if (!prev || prev.length === 0 || !nonInteractive) return { newPresets: null, overrideNote: null };
+  if (!prev || prev.length === 0 || !nonInteractive)
+    return { newPresets: null, overrideNote: null };
   const wasList = prev.join(", ");
   if ((env.NEMOCLAW_POLICY_PRESETS ?? "").trim().length > 0) {
     return {

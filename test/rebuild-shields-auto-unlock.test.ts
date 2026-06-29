@@ -90,7 +90,6 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           policies: [],
           agent: null,
           openshellDriver: "vm",
-          messagingChannels: null,
         },
       },
     }),
@@ -99,7 +98,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
 
   fs.writeFileSync(
     path.join(nemoclawDir, "credentials.json"),
-    JSON.stringify({ NVIDIA_API_KEY: "nvapi-test" }),
+    JSON.stringify({ NVIDIA_INFERENCE_API_KEY: "nvapi-test" }),
     { mode: 0o600 },
   );
 
@@ -121,12 +120,12 @@ function createFixture(opts: { shieldsLocked: boolean }) {
       provider: "nvidia-prod",
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
       policyPresets: [],
-      messagingChannels: null,
+      messagingPlan: null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -309,40 +308,32 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-describe("Issue #3113: rebuild auto-unlocks when shields are UP", () => {
-  it(
-    "detects locked shields and prints auto-unlock notice",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({ shieldsLocked: true });
-      const r = runRebuild(f);
-      const output = (r.stdout || "") + (r.stderr || "");
+describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
+  it("detects locked shields and prints auto-unlock notice", { timeout: 60_000 }, () => {
+    const f = createFixture({ shieldsLocked: true });
+    const r = runRebuild(f);
+    const output = (r.stdout || "") + (r.stderr || "");
 
-      // Without the fix this would be:
-      //   "Failed to back up sandbox state. Aborting rebuild to prevent data loss."
-      expect(output).not.toContain("Aborting rebuild to prevent data loss");
-      // With the fix, rebuild detects shields-up and unlocks before backup.
-      expect(output).toContain("Shields are UP");
-      expect(output).toContain("temporarily unlocking for rebuild backup");
-      // Shields-down was invoked programmatically (no permissive policy printout
-      // is required to assert; we just verify the snapshot capture step ran).
-      expect(output).toContain("Capturing current policy snapshot");
-      // Backup proceeds.
-      expect(output).toContain("Backing up sandbox state");
-    },
-  );
+    // Without the fix this would be:
+    //   "Failed to back up sandbox state. Aborting rebuild to prevent data loss."
+    expect(output).not.toContain("Aborting rebuild to prevent data loss");
+    // With the fix, rebuild detects shields-up and unlocks before backup.
+    expect(output).toContain("Shields are UP");
+    expect(output).toContain("temporarily unlocking for rebuild backup");
+    // Shields-down was invoked programmatically (no permissive policy printout
+    // is required to assert; we just verify the snapshot capture step ran).
+    expect(output).toContain("Capturing current policy snapshot");
+    // Backup proceeds.
+    expect(output).toContain("Backing up sandbox state");
+  });
 
-  it(
-    "skips auto-unlock when shields are not configured",
-    { timeout: 60_000 },
-    () => {
-      const f = createFixture({ shieldsLocked: false });
-      const r = runRebuild(f);
-      const output = (r.stdout || "") + (r.stderr || "");
+  it("skips auto-unlock when shields are not configured", { timeout: 60_000 }, () => {
+    const f = createFixture({ shieldsLocked: false });
+    const r = runRebuild(f);
+    const output = (r.stdout || "") + (r.stderr || "");
 
-      expect(output).not.toContain("Shields are UP");
-      expect(output).not.toContain("temporarily unlocking for rebuild backup");
-      expect(output).toContain("Backing up sandbox state");
-    },
-  );
+    expect(output).not.toContain("Shields are UP");
+    expect(output).not.toContain("temporarily unlocking for rebuild backup");
+    expect(output).toContain("Backing up sandbox state");
+  });
 });

@@ -17,10 +17,7 @@ export function resetStepForAgentChange(session: Session, stepName: string): voi
   stepState.error = null;
 }
 
-export function clearAgentScopedResumeState(
-  session: Session,
-  selectedAgentName: string,
-): Session {
+export function clearAgentScopedResumeState(session: Session, selectedAgentName: string): Session {
   const normalizedAgentName = normalizeAgentNameForResumeState(selectedAgentName);
   session.agent = normalizedAgentName === "openclaw" ? null : normalizedAgentName;
   session.provider = null;

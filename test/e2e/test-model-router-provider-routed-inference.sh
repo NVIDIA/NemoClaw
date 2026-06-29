@@ -68,7 +68,11 @@ redact_file() {
   python3 - "$file" <<'PY'
 import os, sys
 path = sys.argv[1]
-secrets = [os.environ.get("NVIDIA_API_KEY", ""), os.environ.get("NEMOCLAW_PROVIDER_KEY", "")]
+secrets = [
+    os.environ.get("NVIDIA_API_KEY", ""),
+    os.environ.get("NVIDIA_INFERENCE_API_KEY", ""),
+    os.environ.get("NEMOCLAW_PROVIDER_KEY", ""),
+]
 text = open(path, "r", errors="replace").read()
 for secret in filter(None, secrets):
     text = text.replace(secret, "<REDACTED>")
@@ -130,7 +134,7 @@ env \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_POLICY_TIER="open" \
   NEMOCLAW_PROVIDER="routed" \
-  NVIDIA_API_KEY="$NVIDIA_API_KEY" \
+  NVIDIA_INFERENCE_API_KEY="$NVIDIA_API_KEY" \
   "$TIMEOUT_CMD" 1500 nemoclaw onboard --fresh --non-interactive --yes-i-accept-third-party-software \
   >"$ONBOARD_LOG" 2>&1
 onboard_rc=$?

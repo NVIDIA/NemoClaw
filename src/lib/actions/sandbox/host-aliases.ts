@@ -82,9 +82,7 @@ function hostAliasesFail(lines: string | readonly string[], exitCode = 1): never
 }
 
 function normalizeDriver(driver: unknown): string | null {
-  return typeof driver === "string" && driver.trim()
-    ? driver.trim().toLowerCase()
-    : null;
+  return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
 
 // Host aliases are persisted on the legacy Kubernetes gateway `Sandbox`
@@ -198,13 +196,10 @@ function normalizeHostAliasHostname(hostname: string): string {
 }
 
 function runKubectlInClusterRaw(args: string[]): string {
-  return dockerExecFileSync(
-    ["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args],
-    {
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
-    },
-  );
+  return dockerExecFileSync(["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
+  });
 }
 
 function throwKubectlError(action: string, error: unknown): never {
@@ -222,7 +217,10 @@ function runKubectlInCluster(args: string[], action: string): string {
 }
 
 function getSandboxResource(sandboxName: string): SandboxResource {
-  const raw = runKubectlInCluster(["get", "sandbox", sandboxName, "-o", "json"], "read host aliases");
+  const raw = runKubectlInCluster(
+    ["get", "sandbox", sandboxName, "-o", "json"],
+    "read host aliases",
+  );
   try {
     return JSON.parse(raw) as SandboxResource;
   } catch (error) {
@@ -333,9 +331,10 @@ export function listSandboxHostAliases(sandboxName: string): void {
   }
 }
 
-export function validateSandboxHostAliasAddOptions(
-  options: AddSandboxHostAliasOptions,
-): { hostname: string; ip: string } {
+export function validateSandboxHostAliasAddOptions(options: AddSandboxHostAliasOptions): {
+  hostname: string;
+  ip: string;
+} {
   const { hostname: rawHostname, ip } = options;
   if (!rawHostname || !ip) {
     hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
@@ -350,9 +349,9 @@ export function validateSandboxHostAliasAddOptions(
   return { hostname, ip };
 }
 
-export function validateSandboxHostAliasRemoveOptions(
-  options: RemoveSandboxHostAliasOptions,
-): { hostname: string } {
+export function validateSandboxHostAliasRemoveOptions(options: RemoveSandboxHostAliasOptions): {
+  hostname: string;
+} {
   const { hostname: rawHostname } = options;
   if (!rawHostname) {
     hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);

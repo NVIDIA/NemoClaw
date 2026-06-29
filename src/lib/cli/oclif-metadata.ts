@@ -61,9 +61,7 @@ export function getRegisteredOclifCommandsMetadata(): Record<string, OclifComman
   return loadGeneratedOclifMetadata();
 }
 
-export function getRegisteredOclifCommandMetadata(
-  commandId: string,
-): OclifCommandMetadata | null {
+export function getRegisteredOclifCommandMetadata(commandId: string): OclifCommandMetadata | null {
   return getRegisteredOclifCommandsMetadata()[commandId] ?? null;
 }
 

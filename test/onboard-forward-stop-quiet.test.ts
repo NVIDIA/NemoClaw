@@ -16,8 +16,15 @@ interface RunnerCall {
 
 describe("onboard bestEffortForwardStop (#3971)", () => {
   it("calls forward stop with ignoreError and suppressOutput", () => {
-    const distPath = path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "forward-cleanup");
-    const { bestEffortForwardStop } = requireFromHere(distPath) as {
+    const sourcePath = path.join(
+      import.meta.dirname,
+      "..",
+      "src",
+      "lib",
+      "onboard",
+      "forward-cleanup.ts",
+    );
+    const { bestEffortForwardStop } = requireFromHere(sourcePath) as {
       bestEffortForwardStop: (
         runner: (args: string[], opts: RunnerCall["opts"]) => unknown,
         port: string | number,
@@ -43,8 +50,15 @@ describe("onboard bestEffortForwardStop (#3971)", () => {
   });
 
   it("coerces numeric and string ports to string in argv", () => {
-    const distPath = path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "forward-cleanup");
-    const { bestEffortForwardStop } = requireFromHere(distPath) as {
+    const sourcePath = path.join(
+      import.meta.dirname,
+      "..",
+      "src",
+      "lib",
+      "onboard",
+      "forward-cleanup.ts",
+    );
+    const { bestEffortForwardStop } = requireFromHere(sourcePath) as {
       bestEffortForwardStop: (
         runner: (args: string[], opts: RunnerCall["opts"]) => unknown,
         port: string | number,

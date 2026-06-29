@@ -5,11 +5,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
-const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+const credentialsPath = JSON.stringify(
+  path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
+);
 const onboardSourcePath = path.join(repoRoot, "src", "lib", "onboard.ts");
 
 type RunResult = {

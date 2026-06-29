@@ -3,10 +3,7 @@
 
 import { addTraceEvent, withDashboardReadinessTrace, withSandboxReadinessTrace } from "./tracing";
 
-type RunCaptureOpenshell = (
-  args: string[],
-  options?: { ignoreError?: boolean },
-) => string;
+type RunCaptureOpenshell = (args: string[], options?: { ignoreError?: boolean }) => string;
 
 export type CreatedSandboxReadinessResult =
   | { ready: true; reason: "ready"; failurePhase: null }

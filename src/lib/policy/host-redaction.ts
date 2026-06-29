@@ -42,7 +42,8 @@ const RESERVED_HOSTS: ReadonlySet<string> = new Set([
 ]);
 
 const IPV4_PATTERN = /^(?:\d{1,3}\.){3}\d{1,3}$/;
-const HOSTNAME_PATTERN = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+const HOSTNAME_PATTERN =
+  /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 function stripUrlSyntax(value: string): string {
   let working = value;
@@ -131,7 +132,10 @@ export function canonicaliseHost(value: string): string | null {
     // Anything left containing a colon must be an IPv6 literal. Require
     // at least one `::` (compressed form) or three colons (full eight-
     // group form) before accepting it.
-    if (/^[0-9a-f:.]+$/.test(remapped) && (remapped.includes("::") || remapped.split(":").length >= 3)) {
+    if (
+      /^[0-9a-f:.]+$/.test(remapped) &&
+      (remapped.includes("::") || remapped.split(":").length >= 3)
+    ) {
       return remapped;
     }
     return null;

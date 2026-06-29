@@ -13,11 +13,8 @@
  *
  * This test covers all remote providers in REMOTE_PROVIDER_CONFIG.
  *
- * NOTE: This test imports from dist/lib/onboard.js (the compiled CLI
- * output).  If you modify src/lib/onboard.ts, rebuild with
- * `npm run build:cli` before running this test — otherwise it will
- * exercise stale compiled code.  The test gracefully skips when dist/
- * is missing entirely.
+ * The child process loads the TypeScript source through the same CommonJS
+ * source hook used by the integration project.
  */
 
 import { spawnSync } from "node:child_process";
@@ -51,7 +48,7 @@ afterEach(() => {
  * We run a small script that:
  *   1. Sets up a temp HOME with credentials.json containing the key
  *   2. Ensures process.env does NOT have the key
- *   3. Imports the compiled onboard module
+ *   3. Imports the source onboard module
  *   4. Calls hydrateCredentialEnv(credentialEnv)
  *   5. Checks that process.env now has the key
  */
@@ -68,12 +65,12 @@ function verifyCredentialHydration(credentialEnv: string, credentialValue: strin
     { mode: 0o600 },
   );
 
-  const distPath = path.join(REPO_ROOT, "dist", "lib", "onboard.js");
+  const onboardPath = path.join(REPO_ROOT, "src", "lib", "onboard.ts");
   const scriptPath = path.join(tmpDir, "check-hydrate.js");
   fs.writeFileSync(
     scriptPath,
     `
-const onboardPath = ${JSON.stringify(distPath)};
+const onboardPath = ${JSON.stringify(onboardPath)};
 const { hydrateCredentialEnv } = require(onboardPath);
 
 // Ensure the env var is NOT set
@@ -91,24 +88,37 @@ process.stdout.write(JSON.stringify(payload));
 `,
   );
 
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: REPO_ROOT,
-    encoding: "utf-8",
-    env: {
-      HOME: tmpDir,
-      PATH: path.dirname(process.execPath) + ":/usr/bin:/bin",
-      NO_COLOR: "1",
+  const result = spawnSync(
+    process.execPath,
+    ["--require", path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: {
+        HOME: tmpDir,
+        PATH: path.dirname(process.execPath) + ":/usr/bin:/bin",
+        NO_COLOR: "1",
+      },
+      timeout: CHILD_PROCESS_TIMEOUT_MS,
     },
-    timeout: CHILD_PROCESS_TIMEOUT_MS,
-  });
+  );
 
   return { result, tmpDir };
 }
 
-describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => {
+describe("credential hydration from legacy storage, layer 1 (#2273)", () => {
   // Test each provider's credential env to ensure parametric coverage
   const providers = [
-    { name: "NVIDIA Endpoints", credentialEnv: "NVIDIA_API_KEY", value: "nvapi-test-hydrate" },
+    {
+      name: "NVIDIA Endpoints",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      value: "nvapi-test-hydrate",
+    },
+    {
+      name: "NVIDIA Endpoints legacy alias",
+      credentialEnv: "NVIDIA_API_KEY",
+      value: "nvapi-test-hydrate",
+    },
     { name: "OpenAI", credentialEnv: "OPENAI_API_KEY", value: "sk-test-hydrate" },
     { name: "Anthropic", credentialEnv: "ANTHROPIC_API_KEY", value: "sk-ant-test-hydrate" },
     { name: "Google Gemini", credentialEnv: "GEMINI_API_KEY", value: "gemini-test-hydrate" },
@@ -125,27 +135,20 @@ describe("Issue #2273 Layer 1: credential hydration from legacy storage", () => 
   ];
 
   for (const { name, credentialEnv, value } of providers) {
-    it(
-      `hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`,
-      { timeout: TEST_TIMEOUT_MS },
-      () => {
-        const { result } = verifyCredentialHydration(credentialEnv, value);
+    it(`hydrates ${credentialEnv} (${name}) from legacy credentials.json when not in process.env`, {
+      timeout: TEST_TIMEOUT_MS,
+    }, () => {
+      const { result } = verifyCredentialHydration(credentialEnv, value);
 
-        if (result.status !== 0) {
-          if ((result.stderr || "").includes("Cannot find module")) {
-            throw new Error(
-              `dist/lib/onboard.js not found. Run \`npm run build:cli\` before running this test.\n${result.stderr}`,
-            );
-          }
-          throw new Error(
-            `Script failed (exit ${result.status}):\n${result.stderr}\n${result.stdout}`,
-          );
-        }
+      if (result.status !== 0) {
+        throw new Error(
+          `Script failed (exit ${result.status}):\n${result.stderr}\n${result.stdout}`,
+        );
+      }
 
-        const payload = JSON.parse(result.stdout);
-        expect(payload.hydrated).toBe(value);
-        expect(payload.envValue).toBe(value);
-      },
-    );
+      const payload = JSON.parse(result.stdout);
+      expect(payload.hydrated).toBe(value);
+      expect(payload.envValue).toBe(value);
+    });
   }
 });

@@ -68,9 +68,11 @@ afterEach(() => {
   else process.env.NEMOCLAW_OPENCLAW_OTEL = originalOtelEnv.enabled;
   if (originalOtelEnv.endpoint === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
   else process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = originalOtelEnv.endpoint;
-  if (originalOtelEnv.serviceName === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
+  if (originalOtelEnv.serviceName === undefined)
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
   else process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME = originalOtelEnv.serviceName;
-  if (originalOtelEnv.sampleRate === undefined) delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
+  if (originalOtelEnv.sampleRate === undefined)
+    delete process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE;
   else process.env.NEMOCLAW_OPENCLAW_OTEL_SAMPLE_RATE = originalOtelEnv.sampleRate;
 });
 
@@ -130,7 +132,11 @@ network_policies:
       "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
-    expect(commands.map((entry) => entry.id)).toEqual(["nvidia-smi", "proc-comm-write", "cuda-init"]);
+    expect(commands.map((entry) => entry.id)).toEqual([
+      "nvidia-smi",
+      "proc-comm-write",
+      "cuda-init",
+    ]);
     expect(commands[1].optional).toBe(true);
     expect(commands[2].optional).toBe(true);
     expect(commands[0].args).toEqual([
@@ -154,9 +160,9 @@ network_policies:
   });
 
   it("returns network policy names from a policy document", () => {
-    expect(getNetworkPolicyNames("version: 1\nnetwork_policies:\n  slack: {}\n  npm: {}\n")).toEqual(
-      new Set(["slack", "npm"]),
-    );
+    expect(
+      getNetworkPolicyNames("version: 1\nnetwork_policies:\n  slack: {}\n  npm: {}\n"),
+    ).toEqual(new Set(["slack", "npm"]));
   });
 
   it("returns null when policy YAML cannot be parsed", () => {
@@ -199,6 +205,7 @@ network_policies:
         "  telegram: {}",
         "  discord: {}",
         "  slack: {}",
+        "  teams: {}",
         "  wechat_bridge: {}",
         "",
       ].join("\n"),
@@ -229,6 +236,7 @@ network_policies:
     expect(policyNames?.has("discord")).toBe(true);
     expect(policyNames?.has("telegram")).toBe(false);
     expect(policyNames?.has("slack")).toBe(false);
+    expect(policyNames?.has("teams")).toBe(false);
     expect(policyNames?.has("wechat_bridge")).toBe(false);
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
@@ -270,5 +278,19 @@ network_policies:
     expect(prepared.appliedPresets).toEqual(["openclaw-diagnostics-otel-local"]);
     expect(prepared.policyPath).not.toBe(basePolicyPath);
     expect(prepared.cleanup?.()).toBe(true);
+  });
+
+  it("does not merge OpenClaw OTEL policy at create time for terminal agents", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+    process.env.NEMOCLAW_OPENCLAW_OTEL = "1";
+    process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT = "http://host.openshell.internal:4318";
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, [], {
+      agentName: "langchain-deepagents-code",
+    });
+
+    expect(prepared.appliedPresets).toEqual([]);
+    expect(prepared.policyPath).toBe(basePolicyPath);
+    expect(prepared.cleanup).toBeUndefined();
   });
 });

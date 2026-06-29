@@ -15,18 +15,11 @@ const { getCredsDir } = require("./credentials/store");
 const oauth = require("./oauth-device-code");
 const onboardProviders = require("./onboard/providers");
 
-const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV =
-  "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
+const HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV = "NEMOCLAW_HERMES_TOOL_GATEWAY_REFRESH_TOKEN";
 const HERMES_TOOL_GATEWAY_PORT = 11436;
 const HERMES_TOOL_GATEWAY_STATE_DIR = path.join(getCredsDir(), "hermes-tool-gateway");
-const HERMES_TOOL_GATEWAY_PID_PATH = path.join(
-  getCredsDir(),
-  "hermes-tool-gateway-broker.pid",
-);
-const HERMES_TOOL_GATEWAY_HASH_PATH = path.join(
-  getCredsDir(),
-  "hermes-tool-gateway-broker.hash",
-);
+const HERMES_TOOL_GATEWAY_PID_PATH = path.join(getCredsDir(), "hermes-tool-gateway-broker.pid");
+const HERMES_TOOL_GATEWAY_HASH_PATH = path.join(getCredsDir(), "hermes-tool-gateway-broker.hash");
 const HERMES_TOOL_GATEWAY_SCRIPT = path.join(
   ROOT,
   "agents",
@@ -55,7 +48,10 @@ function ensurePrivateDir(dir) {
 }
 
 function hashRefreshToken(refreshToken) {
-  return crypto.createHash("sha256").update(String(refreshToken || "")).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(String(refreshToken || ""))
+    .digest("hex");
 }
 
 function generateHermesToolGatewayBrokerToken() {
@@ -246,20 +242,24 @@ function spawnHermesToolGatewayBroker(refreshToken) {
   if (typeof refreshToken === "string" && refreshToken.trim()) {
     credentialEnv[HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV] = refreshToken.trim();
   }
-  const child = spawn(process.execPath, ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT], {
-    detached: true,
-    stdio: "ignore",
-    cwd: ROOT,
-    env: buildSubprocessEnv({
-      HERMES_TOOL_GATEWAY_PORT: String(HERMES_TOOL_GATEWAY_PORT),
-      HERMES_TOOL_GATEWAY_STATE_DIR,
-      HERMES_TOOL_GATEWAY_MATRIX_PATH,
-      HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
-      NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
-      NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
-      ...credentialEnv,
-    }),
-  });
+  const child = spawn(
+    process.execPath,
+    ["--experimental-strip-types", HERMES_TOOL_GATEWAY_SCRIPT],
+    {
+      detached: true,
+      stdio: "ignore",
+      cwd: ROOT,
+      env: buildSubprocessEnv({
+        HERMES_TOOL_GATEWAY_PORT: String(HERMES_TOOL_GATEWAY_PORT),
+        HERMES_TOOL_GATEWAY_STATE_DIR,
+        HERMES_TOOL_GATEWAY_MATRIX_PATH,
+        HERMES_TOOL_GATEWAY_REFRESH_CREDENTIAL_ENV,
+        NOUS_PORTAL_BASE_URL: process.env.NOUS_PORTAL_BASE_URL || oauth.DEFAULT_PORTAL_BASE_URL,
+        NEMOCLAW_OPENSHELL_BIN: process.env.NEMOCLAW_OPENSHELL_BIN || "openshell",
+        ...credentialEnv,
+      }),
+    },
+  );
   child.unref();
   writePid(child.pid);
   writeBrokerHash(brokerRuntimeHash());

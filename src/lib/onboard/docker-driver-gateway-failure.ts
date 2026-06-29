@@ -55,19 +55,20 @@ export function reportDockerDriverGatewayStartFailure(
   { exitOnFailure }: ReportDockerDriverGatewayStartFailureOpts,
 ): void {
   const tail = fs.existsSync(logPath)
-    ? fs
-        .readFileSync(logPath, "utf-8")
-        .split("\n")
-        .filter(Boolean)
-        .slice(-20)
-        .join("\n")
+    ? fs.readFileSync(logPath, "utf-8").split("\n").filter(Boolean).slice(-20).join("\n")
     : "";
 
   console.error("  Docker-driver gateway failed to start.");
   if (childExit.exited) {
-    console.error(
-      `  Gateway process ${childExit.describeExit()} before becoming ready.`,
-    );
+    console.error(`  Gateway process ${childExit.describeExit()} before becoming ready.`);
+  } else {
+    // #5334: the start loop also reaches this reporter when the poll budget is
+    // exhausted, or when the process's liveness dropped before its 'exit' event
+    // was observed. We therefore do NOT assert the process is "still running"
+    // (that would misreport a gateway that already died) and instead state only
+    // the observable fact: it never became healthy in time. The status commands
+    // in the Troubleshooting footer below are what reveal why.
+    console.error("  The gateway process did not become healthy within the timeout.");
   }
   if (tail) {
     console.error("  Gateway log tail:");
@@ -78,6 +79,8 @@ export function reportDockerDriverGatewayStartFailure(
   }
   console.error("  Troubleshooting:");
   console.error(`    tail -100 ${logPath}`);
+  console.error("    openshell status");
+  console.error("    openshell gateway info");
   console.error("    docker info --format '{{json .CDISpecDirs}}'");
 
   if (exitOnFailure) {

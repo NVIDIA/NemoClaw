@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { validateOllamaModel } from "../../../dist/lib/inference/local";
+import { validateOllamaModel } from "./local";
 
 describe("Ollama probe timeout retry", () => {
   it("retries with extended timeout on non-Spark hosts when first probe times out", () => {
@@ -16,7 +16,12 @@ describe("Ollama probe timeout retry", () => {
       return { stdout: JSON.stringify({ response: "Hi" }), exitCode: 0, timedOut: false };
     };
 
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
+    const result = validateOllamaModel(
+      "nemotron-3-nano:30b",
+      () => "",
+      () => false,
+      captureEx,
+    );
 
     expect(result.ok).toBe(true);
     expect(captureExCallCount).toBe(2);

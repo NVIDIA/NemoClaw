@@ -11,7 +11,7 @@ import {
   validateAnthropicModel,
   validateNvidiaEndpointModel,
   validateOpenAiLikeModel,
-} from "../../../dist/lib/inference/provider-models";
+} from "./provider-models";
 
 describe("provider model helpers", () => {
   it("fetches NVIDIA endpoint model ids", () => {
@@ -116,16 +116,22 @@ describe("provider model helpers", () => {
   });
 
   it("preserves structured status fields through validation failures", () => {
-    const result = validateOpenAiLikeModel("Example", "https://example.test/v1", "gpt-4.1", "sk-x", {
-      runCurlProbeImpl: () => ({
-        ok: false,
-        httpStatus: 429,
-        curlStatus: 0,
-        body: "",
-        stderr: "",
-        message: "rate limited",
-      }),
-    });
+    const result = validateOpenAiLikeModel(
+      "Example",
+      "https://example.test/v1",
+      "gpt-4.1",
+      "sk-x",
+      {
+        runCurlProbeImpl: () => ({
+          ok: false,
+          httpStatus: 429,
+          curlStatus: 0,
+          body: "",
+          stderr: "",
+          message: "rate limited",
+        }),
+      },
+    );
 
     expect(result).toEqual({
       ok: false,

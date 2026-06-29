@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import fs from "node:fs";
 import path from "node:path";
 
@@ -9,34 +8,38 @@ import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
   createBuiltInMessagingHookRegistry,
+  createBuiltInRenderTemplateResolver,
+  createMessagingPreEnableHookInputs,
+  formatSupportedMessagingAgentIds,
   getMessagingManifestAvailabilityContext,
+  isMessagingChannelSupportedByAgent,
+  isMessagingHookConflictError,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
+  runMessagingHook,
   type SandboxMessagingChannelPlan,
   type SandboxMessagingPlan,
   toMessagingAgentId,
+  tryGetMessagingAgentId,
 } from "../../messaging";
-import {
-  type MessagingChannelConfig,
-  mergeMessagingChannelConfigs,
-  normalizeMessagingChannelConfigValue,
-  resolveMessagingChannelConfigEnvValue,
-  sanitizeMessagingChannelConfig,
-} from "../../messaging-channel-config";
+import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
 
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
 
-const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
+const onboardSession =
+  require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import {
@@ -56,14 +59,11 @@ import {
   persistChannelTokens,
 } from "../../sandbox/channels";
 import * as registry from "../../state/registry";
-import {
-  isDockerRuntimeDown,
-  printDockerRuntimeDownGuidance,
-} from "./gateway-failure-classifier";
+import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
-import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -330,21 +330,35 @@ function resolveChannelManifest(name: string): ChannelManifest | undefined {
 }
 
 function availableManifestChannelsForAgent(agent: AgentDefinition): ChannelManifest[] {
-  return messagingManifestRegistry.listAvailable(getMessagingManifestAvailabilityContext(agent));
+  return messagingManifestRegistry.listAvailable(
+    getMessagingManifestAvailabilityContext(agent, messagingManifestRegistry.list()),
+  );
 }
 
-function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
-  return availableManifestChannelsForAgent(agent).some((manifest) => manifest.id === channelName);
+function channelSupportedByAgent(manifest: ChannelManifest, agent: AgentDefinition): boolean {
+  return isMessagingChannelSupportedByAgent(manifest, agent);
 }
 
 export function listSandboxChannels(sandboxName: string) {
   const agent = resolveAgentForSandbox(sandboxName);
+  const availableChannels = availableManifestChannelsForAgent(agent);
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
-  for (const manifest of availableManifestChannelsForAgent(agent)) {
+  if (availableChannels.length === 0) {
+    console.log(`    (none supported by agent '${agent.name}')`);
+  }
+  for (const manifest of availableChannels) {
     console.log(`    ${manifest.id} — ${manifest.description ?? manifest.displayName}`);
   }
   console.log("");
+}
+
+function formatAvailableChannelsForAgent(agent: AgentDefinition): string {
+  return (
+    availableManifestChannelsForAgent(agent)
+      .map((manifest) => manifest.id)
+      .join(", ") || "(none)"
+  );
 }
 
 // Map a channel + token-env-key to the OpenShell provider name onboarding
@@ -361,35 +375,10 @@ function bridgeProviderName(sandboxName: string, channelName: string, envKey: st
   return `${sandboxName}-${channelName}-bridge`;
 }
 
-// Tri-state gateway probe for cross-sandbox messaging conflict backfill,
-// mirroring onboard.ts makeConflictProbe(). An upfront liveness check keeps a
-// transient gateway failure ("error") from being mis-recorded as "no
-// providers" ("absent"), which would permanently suppress backfill retries.
-function makeChannelsConflictProbe() {
-  let gatewayAlive: boolean | null = null;
-  const isGatewayAlive = (): boolean => {
-    if (gatewayAlive === null) {
-      const result = runOpenshell(["sandbox", "list"], {
-        ignoreError: true,
-        stdio: ["ignore", "ignore", "ignore"],
-      });
-      gatewayAlive = result.status === 0;
-    }
-    return gatewayAlive;
-  };
-  return {
-    providerExists: (name: string): "present" | "absent" | "error" => {
-      if (!isGatewayAlive()) return "error";
-      return onboardProviders.providerExistsInGateway(name, runOpenshell) ? "present" : "absent";
-    },
-  };
-}
-
 // Detect whether another sandbox already uses one of this channel's
 // credentials. Mirrors the onboard.ts conflict check. Returns true if the
 // caller should PROCEED with the add, false if it should abort. Never logs
-// credential values. Backfill probe failures are non-fatal, but core
-// conflict-detection errors fail closed unless --force is set.
+// credential values. Conflict-detection errors fail closed unless --force is set.
 async function checkChannelAddConflict(
   sandboxName: string,
   channelName: string,
@@ -414,14 +403,8 @@ async function checkChannelAddConflict(
   }
   if (Object.keys(credentialHashes).length === 0) return true;
 
-  const { backfillMessagingChannels, findChannelConflicts } =
+  const { findChannelConflicts } =
     require("../../messaging/applier") as typeof import("../../messaging/applier");
-
-  try {
-    backfillMessagingChannels(registry, makeChannelsConflictProbe());
-  } catch {
-    // Non-fatal: a backfill blow-up must not block adding a channel.
-  }
 
   let conflicts: ReturnType<typeof findChannelConflicts>;
   try {
@@ -443,9 +426,7 @@ async function checkChannelAddConflict(
       );
       process.exit(1);
     }
-    const answer = (
-      await askPrompt("  Continue without a completed conflict check? [y/N]: ")
-    )
+    const answer = (await askPrompt("  Continue without a completed conflict check? [y/N]: "))
       .trim()
       .toLowerCase();
     if (answer === "y" || answer === "yes") return true;
@@ -480,12 +461,83 @@ async function checkChannelAddConflict(
   return false;
 }
 
-// Push channel tokens to the OpenShell gateway and add the channel to the
-// sandbox registry's messagingChannels list. Done eagerly at `channels
-// add` time (not deferred to rebuild) because the host-side credential
-// helpers are env-only after the fix — without an immediate gateway
-// upsert plus registry update, a "rebuild later" answer would drop the
-// queued change since process.env disappears when the CLI exits.
+// Channel-owned pre-enable checks run after `checkChannelAddConflict` so the
+// shared credential axis is reported first. Registry read failures stay
+// fail-soft: they warn and proceed instead of crashing the add path.
+async function checkMessagingPreEnableHooks(
+  sandboxName: string,
+  channelName: string,
+  plan: SandboxMessagingPlan,
+  force: boolean,
+): Promise<boolean> {
+  const requests = MessagingSetupApplier.listPreEnableChecks(plan);
+  if (requests.length === 0) return true;
+
+  let registryEntries: ReturnType<typeof registry.listSandboxes>["sandboxes"];
+  try {
+    registryEntries = registry.listSandboxes().sandboxes;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`  ${YW}⚠${R} Could not verify messaging pre-enable checks: ${message}`);
+    return true;
+  }
+
+  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const currentGatewayName = getSandboxTargetGatewayName(sandboxName);
+  const additionalInputs = createMessagingPreEnableHookInputs({
+    currentSandbox: sandboxName,
+    currentGatewayName,
+    registryEntries,
+  });
+
+  try {
+    await MessagingSetupApplier.applyPreEnableChecks(plan, {
+      additionalInputs,
+      runHook: (request) =>
+        runMessagingHook(
+          {
+            id: request.hookId,
+            phase: request.phase,
+            handler: request.handler,
+            inputs: request.inputKeys,
+            outputs: request.outputs,
+            onFailure: request.onFailure,
+          },
+          hookRegistry,
+          {
+            channelId: request.channelId,
+            isInteractive: !isNonInteractive(),
+            inputs: request.inputs,
+          },
+        ),
+    });
+  } catch (err) {
+    if (!isMessagingHookConflictError(err)) throw err;
+    const message = err instanceof Error ? err.message : String(err);
+    for (const line of message.split("\n").filter((line) => line.trim().length > 0)) {
+      console.log(`  ${YW}⚠${R} ${line}`);
+    }
+    if (force) {
+      console.log("  --force: proceeding despite the messaging pre-enable conflict above.");
+      return true;
+    }
+    if (isNonInteractive()) {
+      console.error(
+        `  Aborting: resolve the messaging pre-enable conflict above, run \`${CLI_NAME} <sandbox> channels remove ${channelName}\` on the other sandbox, or re-run with --force.`,
+      );
+      process.exit(1);
+    }
+    const answer = (await askPrompt("  Continue anyway? [y/N]: ")).trim().toLowerCase();
+    if (answer === "y" || answer === "yes") return true;
+    console.log("  Aborting channel add.");
+    return false;
+  }
+
+  return true;
+}
+
+// Push channel tokens to the OpenShell gateway. Durable channel state is
+// written separately as a compiled messaging plan.
 async function applyChannelAddToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
@@ -497,37 +549,24 @@ async function applyChannelAddToGatewayAndRegistry(
     token,
   }));
   if (tokenDefs.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
       );
       console.error("  in env for this run only — re-run after starting the gateway, or run");
-      console.error("  'openshell gateway start --name nemoclaw' manually.");
+      console.error(`  'openshell gateway start --name ${gatewayName}' manually.`);
       process.exit(1);
     }
     // upsertMessagingProviders handles create-or-update and process.exits on
     // failure, so reaching the next line means every entry is registered.
     onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
   }
-
-  // Persist the enabled-channels list in the registry so a deferred
-  // `nemoclaw <sandbox> rebuild` knows the channel set without needing
-  // tokens on disk.
-  const entry = registry.getSandbox(sandboxName);
-  if (entry) {
-    const enabled = new Set(entry.messagingChannels || []);
-    enabled.add(channelName);
-    const disabled = (entry.disabledChannels || []).filter((c: string) => c !== channelName);
-    registry.updateSandbox(sandboxName, {
-      messagingChannels: Array.from(enabled).sort(),
-      disabledChannels: disabled,
-    });
-  }
 }
 
 // Remove a channel's bridge providers from the gateway and drop it from the
-// registry's messagingChannels list. Mirrors applyChannelAddToGatewayAndRegistry.
+// compiled messaging plan. Mirrors applyChannelAddToGatewayAndRegistry.
 async function applyChannelRemoveToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
@@ -539,13 +578,14 @@ async function applyChannelRemoveToGatewayAndRegistry(
   let gatewayReachable = true;
 
   if (channelTokenKeys.length > 0) {
-    const recovery = await recoverNamedGatewayRuntime();
+    const gatewayName = getSandboxTargetGatewayName(sandboxName);
+    const recovery = await recoverNamedGatewayRuntime({ gatewayName });
     if (!recovery.recovered) {
       console.error(
         `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
       );
       console.error(
-        "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
+        `  Re-run after starting the gateway, or run 'openshell gateway start --name ${gatewayName}'.`,
       );
       if (!bestEffort) process.exit(1);
       gatewayReachable = false;
@@ -629,12 +669,6 @@ async function applyChannelRemoveToGatewayAndRegistry(
     }
   }
 
-  const entry = registry.getSandbox(sandboxName);
-  if (entry) {
-    const enabled = (entry.messagingChannels || []).filter((c: string) => c !== channelName);
-    registry.updateSandbox(sandboxName, { messagingChannels: enabled });
-  }
-
   return { ok: residual.length === 0, residual };
 }
 
@@ -659,121 +693,50 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
   return true;
 }
 
-// Channels that share the canonical OpenClaw `channels.<name>.enabled` shape
-// and emit `[<name>] [default]` startup breadcrumbs in /tmp/gateway.log.
-// WhatsApp is QR-only (no host-side bridge process at this point), and WeChat
-// is recorded under the `openclaw-weixin` channel id with its own per-account
-// metadata flow seeded by seed-wechat-accounts.py — neither match the probe
-// shape and would produce false-negative warnings here.
-const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
+// Run manifest-owned post-rebuild health hooks.
+// Failures remain best-effort warnings because the rebuild has already
+// succeeded; this phase surfaces likely channel startup issues without making
+// channel ownership leak back into this action.
+async function runMessagingHealthChecksAfterRebuild(
+  sandboxName: string,
+  plan: SandboxMessagingPlan,
+): Promise<void> {
+  if (MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
 
-// Probe OpenClaw runtime state for a freshly added messaging channel. Runs
-// after `channels add <channel>` triggers a successful rebuild. Reads the
-// baked openclaw.json and tails the gateway log to confirm the bridge module
-// is enabled and emitted a startup breadcrumb. Failures here are best-effort
-// warnings — the rebuild has already succeeded; the goal is to surface
-// "bridge did not spawn" so the user does not discover it from radio silence
-// hours later (#4314, #4390). Restricted to the OpenClaw agent because Hermes
-// sandboxes use /sandbox/.hermes with a different config layout.
-function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: string): void {
-  if (!OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS.has(channelName)) return;
-  const agent = resolveAgentForSandbox(sandboxName);
-  if (agent.name !== "openclaw") return;
-  const configProbe = executeSandboxExecCommand(
-    sandboxName,
-    "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
-    10000,
-  );
-  if (!configProbe || configProbe.status !== 0 || !configProbe.stdout) {
-    console.log(
-      `  ${YW}⚠${R} Could not read /sandbox/.openclaw/openclaw.json to verify '${channelName}' bridge startup.`,
-    );
-    console.log(
-      `    Run '${CLI_NAME} ${sandboxName} status' to inspect the sandbox once it is fully running.`,
-    );
-    return;
-  }
-  let channelEnabled = false;
-  let channelBlock: any = null;
+  const hookRegistry = createBuiltInMessagingHookRegistry({
+    openclawBridgeHealth: {
+      sandboxName,
+      executeSandboxCommand: (command, timeoutMs) =>
+        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+    },
+  });
   try {
-    const cfg = JSON.parse(configProbe.stdout);
-    channelBlock = cfg?.channels?.[channelName];
-    channelEnabled = Boolean(channelBlock?.enabled);
-  } catch {
-    // Malformed config — fall through to the log probe to capture context.
+    await MessagingSetupApplier.applyHealthChecks(plan, {
+      runHook: (request) =>
+        runMessagingHook(
+          {
+            id: request.hookId,
+            phase: request.phase,
+            handler: request.handler,
+            inputs: request.inputKeys,
+            outputs: request.outputs,
+            onFailure: request.onFailure,
+          },
+          hookRegistry,
+          {
+            channelId: request.channelId,
+            isInteractive: !isNonInteractive(),
+            inputs: request.inputs,
+          },
+        ),
+    });
+  } catch (err) {
+    console.log(`  ${YW}⚠${R} Messaging health check failed: ${formatErrorMessage(err)}`);
   }
-  if (!channelEnabled) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked openclaw.json after rebuild.`,
-    );
-    console.log(
-      `    The bridge will not start. Re-run '${CLI_NAME} ${sandboxName} rebuild' or 'channels remove ${channelName}' and add again.`,
-    );
-    return;
-  }
-  // Match both the channel module's own breadcrumbs (`[<channel>] [default]`)
-  // and the channel-guard preloads' aggregated form (`[channels] [<channel>]`).
-  // The Slack guard writes "[channels] [slack] provider failed to start..."
-  // when a token is rejected; ignoring that line here would leave the user
-  // with a generic "no breadcrumb" warning instead of the actionable cause.
-  const logProbe = executeSandboxExecCommand(
-    sandboxName,
-    `tail -n 400 /tmp/gateway.log 2>/dev/null | grep -E "^\\[${channelName}\\] |^\\[channels\\] \\[${channelName}\\]" || true`,
-    10000,
-  );
-  const lines = (logProbe?.stdout || "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length === 0) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in /tmp/gateway.log yet.`,
-    );
-    console.log(
-      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
-    );
-    return;
-  }
-  const credentialWarnings = lines.filter((line) =>
-    /credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i.test(
-      line,
-    ),
-  );
-  if (credentialWarnings.length > 0) {
-    console.log(
-      `  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`,
-    );
-    for (const line of credentialWarnings.slice(0, 3)) {
-      console.log(`    ${line}`);
-    }
-    console.log(
-      `    Verify the OpenShell provider for ${channelName} holds a valid credential and re-run '${CLI_NAME} ${sandboxName} rebuild' if needed.`,
-    );
-    return;
-  }
-  // Treat the channel as observably started only when we see a positive
-  // startup signal from the bridge module itself ("starting provider" /
-  // "provider ready"). Otherwise the grep above matched a tangential
-  // breadcrumb (e.g. a stale "no startup detected" line) and a green
-  // "startup detected" message would be misleading.
-  const positiveStartup = lines.some((line) =>
-    /\bstarting provider\b|\bprovider ready\b/.test(line),
-  );
-  if (positiveStartup) {
-    console.log(
-      `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
-    );
-    if (channelName === "telegram") {
-      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
-    }
-    return;
-  }
-  console.log(
-    `  ${YW}⚠${R} '${channelName}' bridge log lines found but no startup confirmation yet.`,
-  );
-  console.log(
-    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
-  );
+}
+
+function formatErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 async function planSandboxChannelAdd(
@@ -784,16 +747,17 @@ async function planSandboxChannelAdd(
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     createBuiltInMessagingHookRegistry(),
+    createBuiltInRenderTemplateResolver(),
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
   const supportedChannelIds = availableChannels.map((manifest) => manifest.id);
 
-  hydrateAddChannelEnvFromSession(sandboxName, channelId);
+  hydrateAddChannelEnvFromStoredState(sandboxName);
 
   try {
     const plan = await planner.buildChannelAddPlanFromSandboxEntry({
       sandboxName,
-      agent: toMessagingAgentId(agent),
+      agent: toMessagingAgentId(agent, messagingManifestRegistry.list()),
       isInteractive: !isNonInteractive(),
       channelId,
       sandboxEntry: registry.getSandbox(sandboxName),
@@ -809,18 +773,24 @@ async function planSandboxChannelAdd(
   }
 }
 
-async function persistManifestChannelDisabledPlan(
+export async function persistManifestChannelDisabledPlan(
   sandboxName: string,
   channelId: string,
   disabled: boolean,
-): Promise<void> {
+): Promise<SandboxMessagingPlan | null> {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry) return;
+  if (!entry?.messaging?.plan) return null;
   const agent = resolveAgentForSandbox(sandboxName);
-  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const agentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
+  if (agentId === null) return null;
+  const planner = new MessagingWorkflowPlanner(
+    messagingManifestRegistry,
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const context = {
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
@@ -828,25 +798,38 @@ async function persistManifestChannelDisabledPlan(
   const plan = disabled
     ? await planner.buildChannelStopPlanFromSandboxEntry(context)
     : await planner.buildChannelStartPlanFromSandboxEntry(context);
-  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+  if (!plan) return null;
+  return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan) ? plan : null;
 }
 
-async function persistManifestChannelRemovePlan(
+export async function persistManifestChannelRemovePlan(
   sandboxName: string,
   channelId: string,
-): Promise<void> {
+): Promise<boolean> {
   const entry = registry.getSandbox(sandboxName);
-  if (!entry) return;
+  if (!entry) return false;
   const agent = resolveAgentForSandbox(sandboxName);
-  const planner = new MessagingWorkflowPlanner(messagingManifestRegistry);
+  const agentId = tryGetMessagingAgentId(agent, messagingManifestRegistry.list());
+  if (agentId === null) {
+    if (entry.messaging?.plan) {
+      return registry.updateSandbox(sandboxName, { messaging: undefined });
+    }
+    return true;
+  }
+  const planner = new MessagingWorkflowPlanner(
+    messagingManifestRegistry,
+    undefined,
+    createBuiltInRenderTemplateResolver(),
+  );
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
     sandboxName,
-    agent: toMessagingAgentId(agent),
+    agent: agentId,
     channelId,
     sandboxEntry: entry,
     supportedChannelIds: availableManifestChannelsForAgent(agent).map((manifest) => manifest.id),
   });
-  if (plan) MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+  if (!plan) return !entry.messaging?.plan;
+  return MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
 }
 
 function buildCredentialAvailability(channelIds: readonly string[]): Record<string, boolean> {
@@ -882,14 +865,18 @@ function assertAddChannelPlanActive(
   const channelPlan = plan.channels.find((channel) => channel.channelId === manifest.id);
   if (channelPlan?.active) return channelPlan;
 
-  const missing = channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
+  const missing =
+    channelPlan?.inputs.filter((input) => input.required && !inputAvailable(input)) ?? [];
   if (missing.length > 0) {
     console.error(
       `  Missing required input(s) for channel '${manifest.id}': ${missing
         .map(formatMissingInput)
         .join(", ")}.`,
     );
-    if (manifest.auth.mode === "host-qr" && getMessagingToken(manifest.credentials[0]?.providerEnvKey)) {
+    if (
+      manifest.auth.mode === "host-qr" &&
+      getMessagingToken(manifest.credentials[0]?.providerEnvKey)
+    ) {
       console.error(
         `  Run '${CLI_NAME} ${sandboxName} channels remove ${manifest.id}' then '${CLI_NAME} ${sandboxName} channels add ${manifest.id}' to capture fresh account metadata.`,
       );
@@ -914,88 +901,9 @@ function formatMissingInput(input: SandboxMessagingChannelPlan["inputs"][number]
   return input.sourceEnv ? `${input.inputId} (${input.sourceEnv})` : input.inputId;
 }
 
-function hydrateAddChannelEnvFromSession(sandboxName: string, channelId: string): void {
-  if (channelId !== "wechat") return;
+function hydrateAddChannelEnvFromStoredState(sandboxName: string): void {
   const savedSession = safeLoadOnboardSession();
-  const savedWechat =
-    savedSession?.sandboxName === sandboxName ? savedSession.wechatConfig ?? null : null;
-  if (!savedWechat) return;
-  if (savedWechat.accountId && !process.env.WECHAT_ACCOUNT_ID) {
-    process.env.WECHAT_ACCOUNT_ID = savedWechat.accountId;
-  }
-  if (savedWechat.baseUrl && !process.env.WECHAT_BASE_URL) {
-    process.env.WECHAT_BASE_URL = savedWechat.baseUrl;
-  }
-  if (savedWechat.userId && !process.env.WECHAT_USER_ID) {
-    process.env.WECHAT_USER_ID = savedWechat.userId;
-  }
-}
-
-function persistManifestAddState(sandboxName: string, manifest: ChannelManifest): void {
-  persistManifestMessagingConfig(sandboxName, manifest);
-  if (manifest.id === "wechat") persistWechatConfigFromEnv(sandboxName);
-}
-
-function persistManifestMessagingConfig(sandboxName: string, manifest: ChannelManifest): void {
-  const config = readManifestMessagingConfigFromEnv(manifest);
-  if (!config) return;
-
-  const entry = registry.getSandbox(sandboxName);
-  const mergedRegistryConfig = mergeMessagingChannelConfigs(entry?.messagingChannelConfig, config);
-  if (entry && mergedRegistryConfig) {
-    registry.updateSandbox(sandboxName, { messagingChannelConfig: mergedRegistryConfig });
-  }
-
-  const session = safeLoadOnboardSession();
-  if (session?.sandboxName !== sandboxName) return;
-  const mergedSessionConfig = mergeMessagingChannelConfigs(session.messagingChannelConfig, config);
-  if (!mergedSessionConfig) return;
-  try {
-    onboardSession.updateSession((current) => {
-      current.messagingChannelConfig = mergedSessionConfig;
-      return current;
-    });
-  } catch {
-    // Best-effort: registry state still carries the config when available.
-  }
-}
-
-function readManifestMessagingConfigFromEnv(manifest: ChannelManifest): MessagingChannelConfig | null {
-  const result: MessagingChannelConfig = {};
-  for (const input of manifest.inputs) {
-    if (input.kind !== "config" || !input.envKey) continue;
-    const resolved = resolveMessagingChannelConfigEnvValue(input.envKey, process.env);
-    const normalized =
-      resolved.value ??
-      normalizeMessagingChannelConfigValue(input.envKey, process.env[input.envKey]);
-    if (normalized) result[input.envKey] = normalized;
-  }
-  return sanitizeMessagingChannelConfig(result);
-}
-
-function persistWechatConfigFromEnv(sandboxName: string): void {
-  const captured = {
-    accountId: normalizeEnvValue(process.env.WECHAT_ACCOUNT_ID),
-    baseUrl: normalizeEnvValue(process.env.WECHAT_BASE_URL),
-    userId: normalizeEnvValue(process.env.WECHAT_USER_ID),
-  };
-  if (!captured.accountId && !captured.baseUrl && !captured.userId) return;
-  const session = safeLoadOnboardSession();
-  if (session?.sandboxName !== sandboxName) return;
-  try {
-    onboardSession.updateSession((current) => {
-      const prior = current.wechatConfig;
-      current.wechatConfig = {
-        accountId: captured.accountId || prior?.accountId,
-        baseUrl: captured.baseUrl || prior?.baseUrl,
-        userId: captured.userId || prior?.userId,
-      };
-      return current;
-    });
-  } catch {
-    // The channel remains usable for an immediate rebuild; deferred rebuilds
-    // can be recovered by re-running channels add for the same sandbox.
-  }
+  hydrateMessagingChannelConfig(getStoredMessagingChannelConfig(sandboxName, savedSession));
 }
 
 function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession> {
@@ -1004,11 +912,6 @@ function safeLoadOnboardSession(): ReturnType<typeof onboardSession.loadSession>
   } catch {
     return null;
   }
-}
-
-function normalizeEnvValue(value: string | undefined): string | undefined {
-  const normalized = value?.replace(/\r/g, "").trim();
-  return normalized || undefined;
 }
 
 export async function addSandboxChannel(
@@ -1033,11 +936,16 @@ export async function addSandboxChannel(
   const canonical = manifest.id;
 
   const agent = resolveAgentForSandbox(sandboxName);
-  if (!channelSupportedByAgent(canonical, agent)) {
+  if (!channelSupportedByAgent(manifest, agent)) {
     console.error(
-      `  Channel '${canonical}' is not supported by agent '${agent.name}' for sandbox '${sandboxName}'.`,
+      `  Channel '${canonical}' does not support agent '${agent.name}' for sandbox '${sandboxName}'.`,
     );
-    console.error(`  Supported channels: ${agent.messagingPlatforms.join(", ") || "(none)"}`);
+    console.error(
+      `  Channel-supported agents: ${formatSupportedMessagingAgentIds(manifest.supportedAgents)}.`,
+    );
+    console.error(
+      `  Channels supported by agent '${agent.name}': ${formatAvailableChannelsForAgent(agent)}.`,
+    );
     process.exit(1);
   }
 
@@ -1066,6 +974,11 @@ export async function addSandboxChannel(
   if (!(await checkChannelAddConflict(sandboxName, canonical, acquired, force))) {
     return; // user aborted; nothing registered or widened
   }
+  // Credential axis passed; now channel-owned pre-enable hooks can catch
+  // channel-specific conflicts before provider/policy mutation.
+  if (!(await checkMessagingPreEnableHooks(sandboxName, canonical, plan, force))) {
+    return; // user aborted; nothing registered or widened
+  }
   assertAddChannelPlanActive(sandboxName, manifest, plan);
 
   // QR-paired channels that own their session inside the sandbox have no
@@ -1076,8 +989,10 @@ export async function addSandboxChannel(
       process.exit(1);
     }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
-    persistManifestAddState(sandboxName, manifest);
-    MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+    if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
+      console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+      process.exit(1);
+    }
     console.log("");
     const help = manifest.enrollmentHelp ?? manifest.inputs[0]?.prompt?.help;
     if (help) console.log(`  ${help}`);
@@ -1091,7 +1006,10 @@ export async function addSandboxChannel(
       console.log(`  ${line}`);
     }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-    if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
+    if (rebuilt) {
+      ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+      await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+    }
     return;
   }
 
@@ -1101,10 +1019,9 @@ export async function addSandboxChannel(
     process.exit(1);
   }
   const priorEntry = registry.getSandbox(sandboxName);
-  const priorMessagingChannels: string[] = priorEntry?.messagingChannels
-    ? [...priorEntry.messagingChannels]
-    : [];
-  const wasAlreadyEnabled = priorMessagingChannels.includes(canonical);
+  const wasAlreadyEnabled = registry
+    .getConfiguredMessagingChannelsFromEntry(priorEntry)
+    .includes(canonical);
   const channelTokenKeys = getChannelTokenKeys(channelDef);
   const priorCreds: Record<string, string> = {};
   for (const key of channelTokenKeys) {
@@ -1123,17 +1040,24 @@ export async function addSandboxChannel(
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
     await rollbackChannelAdd(sandboxName, channelDef, canonical, {
       wasAlreadyEnabled,
-      priorMessagingChannels,
       priorCreds,
     });
     process.exit(1);
   }
 
-  persistManifestAddState(sandboxName, manifest);
-  MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan);
+  if (!MessagingHostStateApplier.applyPlanToRegistry(sandboxName, plan)) {
+    console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+    console.error(
+      "  Earlier gateway or policy side effects may already have run, but durable channel state was not saved.",
+    );
+    process.exit(1);
+  }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
-  if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
+  if (rebuilt) {
+    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+    await runMessagingHealthChecksAfterRebuild(sandboxName, plan);
+  }
 }
 
 async function rollbackChannelAdd(
@@ -1142,7 +1066,6 @@ async function rollbackChannelAdd(
   canonical: string,
   snapshot: {
     wasAlreadyEnabled: boolean;
-    priorMessagingChannels: string[];
     priorCreds: Record<string, string>;
   },
 ): Promise<{ ok: boolean; residual: string[] }> {
@@ -1150,9 +1073,6 @@ async function rollbackChannelAdd(
     console.error(
       `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
     );
-    registry.updateSandbox(sandboxName, {
-      messagingChannels: snapshot.priorMessagingChannels,
-    });
     clearChannelTokens(channel);
     if (Object.keys(snapshot.priorCreds).length > 0) {
       persistChannelTokens(snapshot.priorCreds);
@@ -1183,7 +1103,7 @@ async function rollbackChannelAdd(
   }
 
   console.error(
-    `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
+    `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messaging plan and policy state aligned.`,
   );
   clearChannelTokens(channel);
   const result = await applyChannelRemoveToGatewayAndRegistry(
@@ -1401,12 +1321,11 @@ export async function removeSandboxChannel(
     sessionForSandbox = null;
   }
   const sessionPolicyPresets =
-    sessionForSandbox?.sandboxName === sandboxName &&
-    Array.isArray(sessionForSandbox.policyPresets)
+    sessionForSandbox?.sandboxName === sandboxName && Array.isArray(sessionForSandbox.policyPresets)
       ? sessionForSandbox.policyPresets
       : [];
   const hasChannelResidue =
-    (registryEntry?.messagingChannels || []).includes(canonical) ||
+    registry.getConfiguredMessagingChannelsFromEntry(registryEntry).includes(canonical) ||
     (registryEntry?.policies || []).includes(canonical) ||
     sessionPolicyPresets.includes(canonical) ||
     policies.getAppliedPresets(sandboxName).includes(canonical);
@@ -1419,7 +1338,11 @@ export async function removeSandboxChannel(
   // when the registry/policy show no residue — `channels remove` on a
   // never-configured/already-clean sandbox must remain a quiet no-op even
   // when the sandbox is stopped (#4001 review).
-  if (isQrChannel && hasChannelResidue && !clearSandboxChannelDurableState(sandboxName, canonical)) {
+  if (
+    isQrChannel &&
+    hasChannelResidue &&
+    !clearSandboxChannelDurableState(sandboxName, canonical)
+  ) {
     console.error(
       `  Refusing to proceed: '${canonical}' session state is still inside the sandbox.`,
     );
@@ -1437,7 +1360,10 @@ export async function removeSandboxChannel(
   }
 
   removeChannelPresetIfPresent(sandboxName, canonical);
-  await persistManifestChannelRemovePlan(sandboxName, canonical);
+  if (!(await persistManifestChannelRemovePlan(sandboxName, canonical))) {
+    console.error(`  ${YW}⚠${R} Could not persist messaging plan for '${sandboxName}'.`);
+    process.exit(1);
+  }
 
   // Token-based channels: best-effort tidy of any leftover dir. Token
   // revocation already prevents the bot from authenticating, so a
@@ -1470,12 +1396,18 @@ async function sandboxChannelsSetEnabled(
     process.exit(1);
   }
 
-  if (!registry.getSandbox(sandboxName)) {
+  const registryEntry = registry.getSandbox(sandboxName);
+  if (!registryEntry) {
     console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
     process.exit(1);
   }
 
   const normalized = channelArg.trim().toLowerCase();
+  const configuredChannels = registry.getConfiguredMessagingChannelsFromEntry(registryEntry);
+  if (!configuredChannels.includes(normalized)) {
+    console.error(`  Channel '${normalized}' is not configured for '${sandboxName}'.`);
+    process.exit(1);
+  }
   const alreadyDisabled = registry.getDisabledChannels(sandboxName).includes(normalized);
   if (alreadyDisabled === disabled) {
     console.log(
@@ -1489,14 +1421,17 @@ async function sandboxChannelsSetEnabled(
     return;
   }
 
-  if (!registry.setChannelDisabled(sandboxName, normalized, disabled)) {
-    console.error(`  Sandbox '${sandboxName}' not found in the registry.`);
+  const plan = await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
+  if (!plan) {
+    console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
     process.exit(1);
   }
-  await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
   const state = disabled ? "disabled" : "enabled";
   console.log(`  ${G}✓${R} Marked ${normalized} ${state} for '${sandboxName}'.`);
-  await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
+  if (rebuilt && !disabled) {
+    ensureMessagingHostForwardAfterRebuild(sandboxName, plan);
+  }
 }
 
 export async function stopSandboxChannel(

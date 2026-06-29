@@ -11,12 +11,12 @@ import {
   isOllamaProviderPinned,
   runOllamaStartupOrGate,
   setOllamaAutostartDisabled,
-} from "../../../dist/lib/onboard/ollama-startup";
+} from "./ollama-startup";
 
-const wait = require("../../../dist/lib/core/wait");
-const runner = require("../../../dist/lib/runner");
+const wait = require("../core/wait");
+const runner = require("../runner");
 
-describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
+describe("runOllamaStartupOrGate steer hint (#4365)", () => {
   let originalWaitForHttp: typeof wait.waitForHttp;
   let originalRunShell: typeof runner.runShell;
   let originalProviderEnv: string | undefined;
@@ -102,11 +102,9 @@ describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
         ),
       ).toBe(true);
       // The steer hint targets a re-prompt menu that never appears here.
-      expect(
-        errLines.some((l) =>
-          l.includes("Pick a non-Ollama provider in the next menu"),
-        ),
-      ).toBe(false);
+      expect(errLines.some((l) => l.includes("Pick a non-Ollama provider in the next menu"))).toBe(
+        false,
+      );
     } finally {
       errSpy.mockRestore();
       exitSpy.mockRestore();

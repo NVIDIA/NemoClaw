@@ -20,7 +20,10 @@ export async function runDeployAction(instanceName?: string): Promise<void> {
     execFileSync: (
       file: string,
       args: string[],
-      opts: Omit<import("node:child_process").ExecFileSyncOptionsWithStringEncoding, "encoding"> = {},
+      opts: Omit<
+        import("node:child_process").ExecFileSyncOptionsWithStringEncoding,
+        "encoding"
+      > = {},
     ) => String(execFileSync(file, args, { encoding: "utf-8", ...opts })),
     spawnSync,
     log: console.log,

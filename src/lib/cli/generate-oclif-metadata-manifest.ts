@@ -18,11 +18,7 @@ function toPlainJson<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function setIfDefined(
-  target: SerializableCommandMetadata,
-  key: string,
-  value: unknown,
-): void {
+function setIfDefined(target: SerializableCommandMetadata, key: string, value: unknown): void {
   if (value !== undefined) target[key] = toPlainJson(value);
 }
 

@@ -5,16 +5,15 @@ import { createRequire } from "node:module";
 
 import { afterEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-import {
+const requireDist = createRequire(import.meta.url);
+const {
   detectOpenShellStateRpcPreflightIssue,
   detectOpenShellStateRpcResultIssue,
   formatOpenShellStateRpcIssue,
   getGatewayClusterImageDrift,
   getGatewayHostProcessDrift,
   parseGatewayClusterImageVersion,
-} from "../../../../dist/lib/adapters/openshell/gateway-drift";
-
-const requireDist = createRequire(import.meta.url);
+} = requireDist("./gateway-drift.ts") as typeof import("./gateway-drift");
 
 describe("OpenShell gateway drift preflight", () => {
   let spies: MockInstance[] = [];
@@ -25,9 +24,9 @@ describe("OpenShell gateway drift preflight", () => {
   });
 
   it("parses OpenShell cluster image versions", () => {
-    expect(
-      parseGatewayClusterImageVersion("ghcr.io/nvidia/openshell/cluster:0.0.36"),
-    ).toBe("0.0.36");
+    expect(parseGatewayClusterImageVersion("ghcr.io/nvidia/openshell/cluster:0.0.36")).toBe(
+      "0.0.36",
+    );
     expect(parseGatewayClusterImageVersion("example.com/other/image:0.0.36")).toBeNull();
   });
 
@@ -75,8 +74,8 @@ describe("OpenShell gateway drift preflight", () => {
   });
 
   it("uses the shared gateway-health classifier when checking the active cluster gateway", () => {
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-    const docker = requireDist("../../../../dist/lib/adapters/docker/inspect.js");
+    const openshellRuntime = requireDist("./runtime.js");
+    const docker = requireDist("../docker/inspect.js");
     spies.push(
       vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
         const args = rawArgs as string[];
@@ -92,20 +91,17 @@ describe("OpenShell gateway drift preflight", () => {
         }
         return {
           status: 0,
-          output:
-            "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
+          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: https://127.0.0.1:8080",
         };
       }),
-      vi
-        .spyOn(docker, "dockerContainerInspectFormat")
-        .mockImplementation((rawFormat: unknown) => {
-          const format = String(rawFormat);
-          if (format === "{{.State.Running}}") return "true";
-          if (format === "{{json .NetworkSettings.Ports}}") {
-            return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
-          }
-          return "ghcr.io/nvidia/openshell/cluster:0.0.36";
-        }),
+      vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
+        const format = String(rawFormat);
+        if (format === "{{.State.Running}}") return "true";
+        if (format === "{{json .NetworkSettings.Ports}}") {
+          return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
+        }
+        return "ghcr.io/nvidia/openshell/cluster:0.0.36";
+      }),
     );
 
     expect(
@@ -121,8 +117,8 @@ describe("OpenShell gateway drift preflight", () => {
   });
 
   it("ignores stale cluster containers whose published port is not the active gateway endpoint", () => {
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-    const docker = requireDist("../../../../dist/lib/adapters/docker/inspect.js");
+    const openshellRuntime = requireDist("./runtime.js");
+    const docker = requireDist("../docker/inspect.js");
     spies.push(
       vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
         const args = rawArgs as string[];
@@ -134,20 +130,17 @@ describe("OpenShell gateway drift preflight", () => {
         }
         return {
           status: 0,
-          output:
-            "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:18081",
+          output: "Gateway Info\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:18081",
         };
       }),
-      vi
-        .spyOn(docker, "dockerContainerInspectFormat")
-        .mockImplementation((rawFormat: unknown) => {
-          const format = String(rawFormat);
-          if (format === "{{.State.Running}}") return "true";
-          if (format === "{{json .NetworkSettings.Ports}}") {
-            return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
-          }
-          return "ghcr.io/nvidia/openshell/cluster:0.0.36";
-        }),
+      vi.spyOn(docker, "dockerContainerInspectFormat").mockImplementation((rawFormat: unknown) => {
+        const format = String(rawFormat);
+        if (format === "{{.State.Running}}") return "true";
+        if (format === "{{json .NetworkSettings.Ports}}") {
+          return '{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}';
+        }
+        return "ghcr.io/nvidia/openshell/cluster:0.0.36";
+      }),
     );
 
     expect(

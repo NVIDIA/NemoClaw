@@ -8,9 +8,16 @@ import path from "node:path";
 
 import { dockerSpawnSync } from "../../adapters/docker/exec";
 import { type AgentBranding, getAgentBranding } from "../../cli/branding";
+import { isStdinTty, readLineFromStdin } from "../../core/stdin";
 import { sleepMs } from "../../core/wait";
-import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
+import {
+  defaultUninstallPaths,
+  NEMOCLAW_OLLAMA_MODELS,
+  NEMOCLAW_PROVIDERS,
+  type UninstallPaths,
+} from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { isModelRouterCommandLineForPort } from "../../onboard/model-router-process";
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
@@ -66,7 +73,10 @@ function defaultRunDocker(args: string[], options: SpawnSyncOptions = {}): RunRe
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
   if (!command || command.includes("\0")) return false;
-  const hasPathSeparator = command.includes(path.sep) || command.includes(path.posix.sep) || command.includes(path.win32.sep);
+  const hasPathSeparator =
+    command.includes(path.sep) ||
+    command.includes(path.posix.sep) ||
+    command.includes(path.win32.sep);
   const candidates = hasPathSeparator
     ? [command]
     : String(env.PATH || "")
@@ -82,15 +92,6 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
     }
   }
   return false;
-}
-
-function defaultReadLine(env: NodeJS.ProcessEnv): string | null {
-  const result = defaultRun("sh", ["-c", "IFS= read -r reply; printf '%s' \"$reply\""], {
-    encoding: "utf-8",
-    env,
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  return result.status === 0 ? result.stdout : null;
 }
 
 function splitNonEmptyLines(output: string): string[] {
@@ -110,7 +111,10 @@ function globToRegExp(pattern: string): RegExp {
   );
 }
 
-function removeGlob(pattern: string, deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>): void {
+function removeGlob(
+  pattern: string,
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+): void {
   const dir = path.dirname(pattern);
   const matcher = globToRegExp(pattern);
   if (!deps.existsSync(dir)) return;
@@ -122,7 +126,10 @@ function removeGlob(pattern: string, deps: Required<Pick<UninstallRunDeps, "exis
   }
 }
 
-function removePath(target: string, deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>): void {
+function removePath(
+  target: string,
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+): void {
   if (!deps.existsSync(target)) return;
   deps.rmSync(target, { force: true, recursive: true });
   deps.log(`Removed ${target}`);
@@ -232,7 +239,9 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
-    isTty: deps.isTty ?? !!process.stdin.isTTY,
+    // Side-effect-free TTY check + EAGAIN-tolerant reader; the
+    // process.stdin/non-blocking-fd hazard is documented in core/stdin.ts.
+    isTty: deps.isTty ?? isStdinTty(),
     kill:
       deps.kill ??
       ((pid, signal) => {
@@ -244,7 +253,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
-    readLine: deps.readLine ?? (() => defaultReadLine(env)),
+    readLine: deps.readLine ?? readLineFromStdin,
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
@@ -281,10 +290,19 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log("  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)");
   runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
-  runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
+  runtime.log(
+    options.deleteModels
+      ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}`
+      : "  · Ollama models: kept",
+  );
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
+  if (reply === null) {
+    runtime.log(
+      "No input available on stdin (closed or non-interactive); re-run with --yes to skip this prompt.",
+    );
+  }
   runtime.log("Aborted.");
   return false;
 }
@@ -311,7 +329,13 @@ function runOptional(
 
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
   const startServices = path.join(paths.repoRoot, "scripts", "start-services.sh");
-  if (runtime.existsSync(startServices)) runOptional(runtime, `Stopped ${runtimeBranding(runtime).display} helper services`, startServices, ["--stop"]);
+  if (runtime.existsSync(startServices))
+    runOptional(
+      runtime,
+      `Stopped ${runtimeBranding(runtime).display} helper services`,
+      startServices,
+      ["--stop"],
+    );
 }
 
 function stopMatchingPids(pattern: string, runtime: UninstallRuntime, label: string): void {
@@ -458,13 +482,96 @@ function stopOllamaAuthProxy(paths: UninstallPaths, runtime: UninstallRuntime): 
   if (stopped.size === 0) runtime.log("No Ollama auth proxy processes found");
 }
 
+const DEFAULT_MODEL_ROUTER_PORT = 4000;
+
+function resolveModelRouterPort(_runtime: UninstallRuntime): number {
+  // Routed onboard profiles use blueprint port 4000 by default; a custom port
+  // would require reading the blueprint, which uninstall does not do today.
+  return DEFAULT_MODEL_ROUTER_PORT;
+}
+
+function readOnboardSessionRouterPid(paths: UninstallPaths): number | null {
+  const sessionFile = path.join(paths.nemoclawStateDir, "onboard-session.json");
+  try {
+    const raw = fs.readFileSync(sessionFile, "utf-8");
+    const data = JSON.parse(raw) as { routerPid?: unknown };
+    const pid = data.routerPid;
+    if (typeof pid === "number" && Number.isInteger(pid) && pid > 0) return pid;
+  } catch {
+    /* ignore — State step deletes the file shortly anyway */
+  }
+  return null;
+}
+
+function isModelRouterPid(pid: number, port: number, runtime: UninstallRuntime): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!pidExists(pid, runtime)) return false;
+  const result = runtime.run("ps", ["-p", String(pid), "-o", "args="], { env: runtime.env });
+  if (result.status !== 0) return false;
+  const args = result.stdout.trim().split(/\s+/).filter(Boolean);
+  return isModelRouterCommandLineForPort(args, port);
+}
+
+function tryStopModelRouterPid(pid: number, runtime: UninstallRuntime): boolean {
+  runtime.kill(pid);
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.kill(pid, "SIGKILL");
+  if (waitForPidExit(pid, runtime, 1000)) {
+    runtime.log(`Stopped model router ${pid}`);
+    return true;
+  }
+  runtime.warn(`Failed to stop model router ${pid}`);
+  return false;
+}
+
+function stopModelRouter(paths: UninstallPaths, runtime: UninstallRuntime): void {
+  // The model router is a detached child started during routed onboard that
+  // listens on port 4000 by default. Without this cleanup, uninstall +
+  // reinstall fails with "Port 4000 already has a healthy router endpoint".
+  // The tracked PID lives in ~/.nemoclaw/onboard-session.json (routerPid), not
+  // a dedicated .pid file. Mirrors stopOllamaAuthProxy() and issue #5169.
+  const stopped = new Set<number>();
+  const routerPort = resolveModelRouterPort(runtime);
+
+  const recordedPid = readOnboardSessionRouterPid(paths);
+  if (
+    recordedPid !== null &&
+    pidOwnedByCurrentUser(recordedPid, runtime) &&
+    isModelRouterPid(recordedPid, routerPort, runtime)
+  ) {
+    if (tryStopModelRouterPid(recordedPid, runtime)) stopped.add(recordedPid);
+  }
+
+  if (!runtime.commandExists("lsof")) {
+    if (stopped.size === 0) {
+      runtime.warn("lsof not found; skipping orphan model router scan.");
+    }
+    return;
+  }
+  const lsof = runtime.run("lsof", ["-ti", `:${routerPort}`], { env: runtime.env });
+  const pids = splitNonEmptyLines(lsof.stdout).map(Number).filter(Number.isFinite);
+  for (const pid of pids) {
+    if (stopped.has(pid)) continue;
+    if (!pidOwnedByCurrentUser(pid, runtime)) continue;
+    if (!isModelRouterPid(pid, routerPort, runtime)) continue;
+    if (tryStopModelRouterPid(pid, runtime)) stopped.add(pid);
+  }
+
+  if (stopped.size === 0) runtime.log("No model router processes found");
+}
+
 function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
   if (!runtime.commandExists("pgrep")) {
     runtime.warn("pgrep not found; skipping orphaned openshell process cleanup.");
     return;
   }
   const user = runtime.env.SUDO_USER || runtime.env.LOGNAME || os.userInfo().username;
-  const args = user ? ["-u", user, "-f", "openshell (sandbox create|ssh-proxy)"] : ["-f", "openshell (sandbox create|ssh-proxy)"];
+  const args = user
+    ? ["-u", user, "-f", "openshell (sandbox create|ssh-proxy)"]
+    : ["-f", "openshell (sandbox create|ssh-proxy)"];
   const result = runtime.run("pgrep", args, { env: runtime.env });
   const pids = splitNonEmptyLines(result.stdout).map(Number).filter(Number.isFinite);
   if (pids.length === 0) {
@@ -472,7 +579,8 @@ function stopOrphanedOpenShell(runtime: UninstallRuntime): void {
     return;
   }
   for (const pid of pids) {
-    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL")) runtime.log(`Stopped orphaned openshell process ${pid}`);
+    if (runtime.kill(pid) || runtime.kill(pid, "SIGKILL"))
+      runtime.log(`Stopped orphaned openshell process ${pid}`);
     else runtime.warn(`Failed to stop orphaned openshell process ${pid}`);
   }
 }
@@ -482,9 +590,17 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
     runtime.warn("openshell not found; skipping gateway/provider/sandbox cleanup.");
     return;
   }
-  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", ["sandbox", "delete", "--all"]);
+  runOptional(runtime, "Deleted all OpenShell sandboxes", "openshell", [
+    "sandbox",
+    "delete",
+    "--all",
+  ]);
   for (const provider of NEMOCLAW_PROVIDERS) {
-    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", ["provider", "delete", provider]);
+    runOptional(runtime, `Deleted provider '${provider}'`, "openshell", [
+      "provider",
+      "delete",
+      provider,
+    ]);
   }
   const gatewayLabel = options.gatewayName || "nemoclaw";
   runOptional(
@@ -555,7 +671,9 @@ function removeNemoclawCli(paths: UninstallPaths, runtime: UninstallRuntime): vo
   const shim = classifyShimPath(paths.nemoclawShimPath);
   if (shim.remove) removePath(paths.nemoclawShimPath, runtime);
   else if (shim.kind === "preserve-foreign-file") {
-    runtime.warn(`Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`);
+    runtime.warn(
+      `Leaving ${paths.nemoclawShimPath} in place because it is not an installer-managed shim.`,
+    );
   }
   removeNvmLeftovers(paths, runtime);
   removeAliases(paths, runtime);
@@ -574,7 +692,9 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
 }
 
 function removeDockerContainers(runtime: UninstallRuntime): void {
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env: runtime.env });
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], {
+    env: runtime.env,
+  });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
@@ -583,13 +703,16 @@ function removeDockerContainers(runtime: UninstallRuntime): void {
     return;
   }
   for (const id of [...new Set(ids)]) {
-    if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker container ${id}`);
+    if (runtime.runDocker(["rm", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Docker container ${id}`);
     else runtime.warn(`Failed to remove Docker container ${id}`);
   }
 }
 
 function removeDockerImages(runtime: UninstallRuntime): void {
-  const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], { env: runtime.env });
+  const result = runtime.runDocker(["images", "--format", "{{.ID}} {{.Repository}}:{{.Tag}}"], {
+    env: runtime.env,
+  });
   const ids = splitNonEmptyLines(result.stdout)
     .filter((line) => /openshell|openclaw|nemoclaw/i.test(line))
     .map((line) => line.split(/\s+/)[0]);
@@ -598,14 +721,23 @@ function removeDockerImages(runtime: UninstallRuntime): void {
     return;
   }
   for (const id of [...new Set(ids)]) {
-    if (runtime.runDocker(["rmi", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker image ${id}`);
+    if (runtime.runDocker(["rmi", "-f", id], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Docker image ${id}`);
     else runtime.warn(`Failed to remove Docker image ${id}`);
   }
 }
 
 function removeDockerVolume(name: string, runtime: UninstallRuntime): void {
-  if (runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !== 0) return;
-  if (runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Docker volume ${name}`);
+  if (
+    runtime.runDocker(["volume", "inspect", name], { env: runtime.env, stdio: "ignore" }).status !==
+    0
+  )
+    return;
+  if (
+    runtime.runDocker(["volume", "rm", "-f", name], { env: runtime.env, stdio: "ignore" })
+      .status === 0
+  )
+    runtime.log(`Removed Docker volume ${name}`);
   else runtime.warn(`Failed to remove Docker volume ${name}`);
 }
 
@@ -619,7 +751,8 @@ function removeOllamaModels(options: UninstallRunOptions, runtime: UninstallRunt
     return;
   }
   for (const model of NEMOCLAW_OLLAMA_MODELS) {
-    if (runtime.run("ollama", ["rm", model], { env: runtime.env, stdio: "ignore" }).status === 0) runtime.log(`Removed Ollama model '${model}'`);
+    if (runtime.run("ollama", ["rm", model], { env: runtime.env, stdio: "ignore" }).status === 0)
+      runtime.log(`Removed Ollama model '${model}'`);
     else runtime.warn(`Ollama model '${model}' not found or already removed`);
   }
 }
@@ -630,14 +763,19 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
     return;
   }
   if (!runtime.existsSync(paths.managedSwapMarkerPath)) {
-    runtime.warn(`No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`);
+    runtime.warn(
+      `No ${runtimeBranding(runtime).display}-managed swap marker found, skipping swap cleanup.`,
+    );
     return;
   }
   if (runtime.env.NEMOCLAW_NON_INTERACTIVE === "1" || !runtime.isTty) {
     runtime.warn("Skipping swap cleanup in non-interactive mode (requires sudo).");
     return;
   }
-  const swapoff = runtime.run("sudo", ["swapoff", "/swapfile"], { env: runtime.env, stdio: "ignore" });
+  const swapoff = runtime.run("sudo", ["swapoff", "/swapfile"], {
+    env: runtime.env,
+    stdio: "ignore",
+  });
   if (swapoff.status !== 0) {
     runtime.warn("Failed to disable /swapfile; skipping swap cleanup.");
     return;
@@ -661,7 +799,9 @@ function resolvePreserveSet(
 ): readonly string[] {
   // Explicit acknowledgement env var → full purge, matches today's behaviour.
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-    runtime.log("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.");
+    runtime.log(
+      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.",
+    );
     return [];
   }
   const preservable = detectPreservableEntries(paths, runtime);
@@ -704,7 +844,11 @@ function executePlan(
     if (step.name === "Stopping services") {
       stopHelperServices(paths, runtime);
       removeGlob(paths.helperServiceGlob, runtime);
-      stopMatchingPids(`openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`, runtime, "local OpenShell forward processes");
+      stopMatchingPids(
+        `openshell.*forward.*${runtime.env.NEMOCLAW_DASHBOARD_PORT || "18789"}`,
+        runtime,
+        "local OpenShell forward processes",
+      );
       stopStaleDashboardListeners({
         run: runtime.run,
         kill: runtime.kill,
@@ -726,6 +870,7 @@ function executePlan(
         { logNoProcesses: true },
       );
       stopOllamaAuthProxy(paths, runtime);
+      stopModelRouter(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
     } else if (step.name === "NemoClaw CLI") {
@@ -734,7 +879,8 @@ function executePlan(
       if (dockerIsAvailable(runtime)) {
         removeDockerContainers(runtime);
         removeDockerImages(runtime);
-        for (const action of step.actions) if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
+        for (const action of step.actions)
+          if (action.kind === "delete-docker-volume") removeDockerVolume(action.name, runtime);
       }
     } else if (step.name === "Ollama models") {
       removeOllamaModels(options, runtime);
@@ -742,7 +888,9 @@ function executePlan(
       removeManagedSwap(paths, runtime);
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
       if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
-      else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
+      else
+        for (const target of paths.openshellInstallPaths)
+          removeFileWithOptionalSudo(target, runtime);
       if (!removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime)) ok = false;
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
@@ -752,7 +900,10 @@ function executePlan(
   return { ok };
 }
 
-export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): { paths: UninstallPaths; plan: UninstallPlan } {
+export function buildRunPlan(
+  options: UninstallRunOptions,
+  deps: UninstallRunDeps = {},
+): { paths: UninstallPaths; plan: UninstallPlan } {
   const env = { ...process.env, ...(deps.env ?? {}) };
   const home = env.HOME || os.homedir();
   const paths = defaultUninstallPaths({
@@ -770,7 +921,10 @@ export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDep
   return { paths, plan };
 }
 
-export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {
+export function runUninstallPlan(
+  options: UninstallRunOptions,
+  deps: UninstallRunDeps = {},
+): UninstallRunOutcome {
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
@@ -780,7 +934,9 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   if (ok) {
     printBye(runtime);
   } else {
-    runtime.error("Uninstall completed with errors. Some state may remain on disk; see warnings above.");
+    runtime.error(
+      "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+    );
   }
   return { exitCode: ok ? 0 : 1, plan };
 }

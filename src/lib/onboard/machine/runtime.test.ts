@@ -13,13 +13,7 @@ import {
 } from "../../state/onboard-session";
 import type { StepMutationOptions } from "../../state/onboard-step-mutation";
 import type { OnboardMachineEvent } from "./events";
-import {
-  advanceTo,
-  branchTo,
-  completeOnboardMachine,
-  failOnboardMachine,
-  retryTo,
-} from "./result";
+import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import { InvalidOnboardMachineTransitionError } from "./transitions";
 
@@ -149,6 +143,20 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
   });
 
+  it("defaults step recording dependencies to record-only machine mutations", async () => {
+    const { runtime, stepOptionCalls } = createHarness();
+
+    await runtime.markStepStarted("preflight");
+    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" });
+    await runtime.markStepFailed("gateway", "boom");
+
+    expect(stepOptionCalls).toEqual([
+      { method: "markStepStarted", options: { updateMachine: false } },
+      { method: "markStepComplete", options: { updateMachine: false } },
+      { method: "markStepFailed", options: { updateMachine: false } },
+    ]);
+  });
+
   it("forwards step mutation options to step recording dependencies", async () => {
     const { runtime, getSession, stepOptionCalls } = createHarness();
     const recordOnlyOptions = { updateMachine: false };
@@ -199,14 +207,14 @@ describe("OnboardRuntime", () => {
     await runtime.updateContext({
       provider: "nvidia-prod",
       endpointUrl: "https://alice:secret@example.com/v1?token=super-secret&keep=yes#token=frag",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       apiKey: "super-secret",
     } as Parameters<typeof runtime.updateContext>[0] & { apiKey: string });
 
     expect(getSession()).toMatchObject({
       provider: "nvidia-prod",
       endpointUrl: "https://example.com/v1?token=%3CREDACTED%3E&keep=yes",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
     });
     expect("apiKey" in getSession()).toBe(false);
     expect(events).toHaveLength(1);
@@ -301,11 +309,11 @@ describe("OnboardRuntime", () => {
   it("fails non-terminal sessions with redacted failure events", async () => {
     const { runtime, events, getSession } = createHarness(sessionInState("gateway"));
 
-    await runtime.fail("NVIDIA_API_KEY=super-secret", { step: "gateway" });
+    await runtime.fail("NVIDIA_INFERENCE_API_KEY=super-secret", { step: "gateway" });
 
     expect(getSession()).toMatchObject({
       status: "failed",
-      failure: { step: "gateway", message: "NVIDIA_API_KEY=<REDACTED>" },
+      failure: { step: "gateway", message: "NVIDIA_INFERENCE_API_KEY=<REDACTED>" },
       machine: { state: "failed", revision: 8 },
     });
     expect(events.map((event) => event.type)).toEqual(["state.failed", "onboard.failed"]);

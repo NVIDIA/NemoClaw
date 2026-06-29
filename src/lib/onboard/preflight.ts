@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
+import { printRemediationActions } from "./remediation";
 import {
   assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
@@ -358,8 +359,7 @@ export function isDockerUnderProvisioned(
 ): boolean {
   const cpuLow = typeof cpus === "number" && cpus < MIN_RECOMMENDED_DOCKER_CPUS;
   const memLow =
-    typeof memTotalBytes === "number" &&
-    memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
+    typeof memTotalBytes === "number" && memTotalBytes < MIN_RECOMMENDED_DOCKER_MEM_GIB * 1024 ** 3;
   return cpuLow || memLow;
 }
 
@@ -386,11 +386,46 @@ function isHeadlessLikely(env: NodeJS.ProcessEnv): boolean {
   return !env.DISPLAY && !env.WAYLAND_DISPLAY && !env.TERM_PROGRAM;
 }
 
-function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
-  if (!commandExists("nvidia-smi", runCaptureImpl)) {
+// lspci line shape: "<slot> <class label>: <vendor> <device> ...".
+// The slot token contains colons (e.g. "01:00.0"), so anchor on the class
+// label that follows it and ends at the first ": ".
+const LSPCI_LINE = /^\S+\s+([^:]+):\s*(.*)$/;
+// NVIDIA GPUs surface as display-class devices: "VGA compatible controller"
+// (graphics cards), "3D controller" (datacenter/Tesla parts), or the generic
+// "Display controller". Restricting to these classes prevents NVIDIA/Mellanox
+// NICs and other non-GPU NVIDIA PCI devices from being mistaken for a GPU.
+const PCI_DISPLAY_CLASS = /\b(?:vga compatible controller|3d controller|display controller)\b/i;
+
+function lspciLineIsNvidiaGpu(line: string): boolean {
+  const match = LSPCI_LINE.exec(line.trim());
+  if (!match) return false;
+  const [, classLabel, deviceDescription] = match;
+  return PCI_DISPLAY_CLASS.test(classLabel) && /nvidia/i.test(deviceDescription);
+}
+
+function detectNvidiaGpuHardware(runCaptureImpl: RunCaptureFn): boolean {
+  // PCI bus probe so a physically present NVIDIA GPU is still detected when the
+  // driver is not loaded (nvidia-smi unavailable). Mirrors the lspci hint used
+  // by the onboarding GPU-passthrough note.
+  if (!commandExists("lspci", runCaptureImpl)) {
     return false;
   }
-  return Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim());
+  const output = String(runCaptureImpl(["lspci"], { ignoreError: true }) || "");
+  return output.split("\n").some(lspciLineIsNvidiaGpu);
+}
+
+function detectNvidiaGpu(runCaptureImpl: RunCaptureFn): boolean {
+  if (
+    commandExists("nvidia-smi", runCaptureImpl) &&
+    Boolean(String(runCaptureImpl(["nvidia-smi", "-L"], { ignoreError: true }) || "").trim())
+  ) {
+    return true;
+  }
+  // The driver may be missing or unloaded (nvidia-smi absent/empty) even when
+  // NVIDIA GPU hardware is present. Fall back to a hardware probe so CDI/toolkit
+  // remediation still fires when the toolkit is missing and Docker CDI dirs are
+  // configured (#5489); otherwise preflight silently skips toolkit enforcement.
+  return detectNvidiaGpuHardware(runCaptureImpl);
 }
 
 function detectPackageManager(runCaptureImpl: RunCaptureFn): PackageManager {
@@ -603,6 +638,47 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   }
 
   return assessment;
+}
+
+/**
+ * Decide whether onboarding must enforce a present-and-configured NVIDIA CDI
+ * spec (i.e. block on a missing/stale spec). The fix for #5489 makes
+ * `assessHost().hasNvidiaGpu` true via an lspci hardware probe when the driver
+ * is unloaded, which is what flags `cdiNvidiaGpuSpecMissing`. The onboard gate
+ * must enforce based on whether the operator *explicitly* opted out of GPU
+ * passthrough — NOT on whether sandbox GPU was *auto*-disabled because
+ * `nvidia-smi` is unavailable. Auto-disable was the bypass that let onboard skip
+ * the toolkit/CDI remediation in #5489; an explicit `--no-gpu` still skips it so
+ * a host with an unusable GPU can still onboard CPU-only.
+ */
+export function shouldEnforceCdiNvidiaGpuSpec(opts: {
+  cdiNvidiaGpuSpecMissing: boolean;
+  cdiNvidiaGpuSpecNeedsRepair: boolean;
+  explicitlyOptedOutGpuPassthrough: boolean;
+}): boolean {
+  if (opts.explicitlyOptedOutGpuPassthrough) return false;
+  return opts.cdiNvidiaGpuSpecNeedsRepair || opts.cdiNvidiaGpuSpecMissing;
+}
+
+export function assertCdiNvidiaGpuSpecPresent(
+  host: HostAssessment,
+  explicitlyOptedOutGpuPassthrough: boolean,
+  hostGpuPlatform: string | null | undefined = null,
+): void {
+  if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
+  if (
+    !shouldEnforceCdiNvidiaGpuSpec({
+      cdiNvidiaGpuSpecMissing: host.cdiNvidiaGpuSpecMissing,
+      cdiNvidiaGpuSpecNeedsRepair: host.cdiNvidiaGpuSpecNeedsRepair ?? false,
+      explicitlyOptedOutGpuPassthrough,
+    })
+  )
+    return;
+  console.error(
+    "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
+  );
+  printRemediationActions(planHostRemediation(host));
+  process.exit(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {
@@ -854,10 +930,7 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         title,
         kind: "sudo",
         reason: `${reason} The nvidia-container-toolkit package (which provides nvidia-ctk) is not installed on the host.`,
-        commands: buildContainerToolkitBootstrapCommands(
-          assessment.packageManager,
-          repairCommands,
-        ),
+        commands: buildContainerToolkitBootstrapCommands(assessment.packageManager, repairCommands),
         blocking: true,
       });
     }
@@ -1532,7 +1605,9 @@ function captureProbeExecution(
 }
 
 function probeCombinedOutput(execution: ReturnType<typeof normalizeProbeExecution>): string {
-  return [execution.stdout, execution.stderr].filter((part) => String(part || "").trim()).join("\n");
+  return [execution.stdout, execution.stderr]
+    .filter((part) => String(part || "").trim())
+    .join("\n");
 }
 
 function outputTail(output: string, maxLength = 400): string {
@@ -1916,6 +1991,198 @@ export function isFatalContainerDnsProbeFailure(result: DnsProbeResult): boolean
   // through `docker_daemon_unreachable` above; pull failures through the
   // image_pull_failed branch below.
   return result.reason === "image_pull_failed" && isRegistryResolutionFailure(result.details ?? "");
+}
+
+// ── Host DNS probe (#4784) ────────────────────────────────────────
+// `probeContainerDns` above only proves the *docker container* network
+// namespace can reach a resolver. A host whose OUTPUT chain drops
+// tcp/udp:53 (a corporate firewall, a VPN kill-switch, or a literal
+// `iptables -I OUTPUT -p udp --dport 53 -j DROP`) can still pass the
+// container probe — docker's embedded resolver at 127.0.0.11 and the
+// bridge NAT take a different egress path — while the NemoClaw CLI
+// process itself cannot resolve the provider endpoint. That gap let
+// onboarding print "Container DNS resolution works" and then fail much
+// later at NVIDIA Endpoints validation with the cryptic
+// `curl: (6) Could not resolve host: integrate.api.nvidia.com`. This
+// probe resolves the provider hostname from the host (CLI) process so
+// the blocked-DNS condition surfaces up front, distinct from the
+// container-DNS path.
+
+/** The NVIDIA Endpoints provider host onboarding validates by default. */
+export const DEFAULT_HOST_DNS_PROBE_HOSTNAME = "integrate.api.nvidia.com";
+
+/**
+ * Host DNS probe budget (ms). Shorter than the container probe: there is
+ * no image pull, just a c-ares round-trip to the system resolver.
+ */
+const HOST_DNS_PROBE_TIMEOUT_MS = 10_000;
+
+export interface HostDnsProbeResult {
+  ok: boolean;
+  hostname: string;
+  reason?: "servers_unreachable" | "resolution_failed" | "timeout" | "killed" | "error";
+  details?: string;
+}
+
+export interface ProbeHostDnsOpts {
+  /** Hostname to resolve (default: the NVIDIA Endpoints provider host). */
+  hostname?: string;
+  /** Override structured probe execution (test seam). */
+  runProbeImpl?: RunProbeFn;
+  /** Override the node executable used to run the resolver (test seam). */
+  nodeExecPath?: string;
+  /** Probe budget (ms). Defaults to HOST_DNS_PROBE_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+// getaddrinfo (and c-ares fallback) error codes meaning "the resolver
+// could not be reached at all": the UDP/TCP:53 egress is blocked. This is
+// the #4784 signature. `EAI_AGAIN` ("Temporary failure in name
+// resolution") is what getaddrinfo returns when the stub/upstream resolver
+// is unreachable.
+const HOST_DNS_UNREACHABLE_CODES = new Set([
+  "EAI_AGAIN",
+  "EAI_FAIL",
+  "ECONNREFUSED",
+  "ETIMEOUT",
+  "ETIMEDOUT",
+  "ESERVFAIL",
+  "ECONNRESET",
+  "EREFUSED",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ECANCELLED",
+]);
+
+// Error codes meaning "the resolver answered but there is no usable
+// record". For a real, always-present provider host this still blocks
+// onboarding (provider validation cannot resolve it), so it is fatal too.
+const HOST_DNS_RESOLUTION_CODES = new Set([
+  "ENOTFOUND",
+  "ENODATA",
+  "EAI_NONAME",
+  "EAI_NODATA",
+  "ENXDOMAIN",
+  "EBADNAME",
+  "EBADRESP",
+]);
+
+/**
+ * Resolve `hostname` from the host (CLI) process to prove the host can
+ * reach a DNS resolver for the provider endpoint. Uses `dns.lookup`
+ * (getaddrinfo) — not `dns.resolve` — so it follows the *same* resolution
+ * path the later curl-based provider validation does: `/etc/hosts`,
+ * nsswitch, and the system resolver. That keeps it from false-failing
+ * hosts that reach the provider via an `/etc/hosts` entry. Runs `node -e`
+ * in a child process so the check stays synchronous like
+ * `probeContainerDns` and is fully injectable for tests. The hostname is
+ * passed as a process argument (never interpolated into the script body),
+ * so it cannot inject shell or JS tokens; we still validate it as a plain
+ * DNS name as defense in depth and to keep error output sane.
+ */
+export function probeHostDns(opts: ProbeHostDnsOpts = {}): HostDnsProbeResult {
+  const hostname = opts.hostname ?? DEFAULT_HOST_DNS_PROBE_HOSTNAME;
+  if (!/^[a-z0-9]([a-z0-9.-]{0,253})$/i.test(hostname)) {
+    throw new Error(
+      `hostname must be a plain DNS name (RFC 1035 label characters), got: ${JSON.stringify(hostname)}`,
+    );
+  }
+  const timeoutMs = opts.timeoutMs ?? HOST_DNS_PROBE_TIMEOUT_MS;
+  // Bound the c-ares query inside the child too, so a silently dropped
+  // UDP:53 (no RST / ICMP unreachable) cannot outlive the spawn timeout:
+  // print a stable marker and exit non-zero a beat before the outer
+  // budget so the marker (not a SIGTERM) classifies the failure.
+  const innerTimeoutMs = Math.max(1_000, timeoutMs - 1_000);
+  const script = [
+    "const dns=require('node:dns');",
+    "const host=process.argv[1];",
+    "let settled=false;",
+    `const t=setTimeout(()=>{if(settled)return;settled=true;process.stderr.write('HOSTDNS_TIMEOUT');process.exit(2);},${innerTimeoutMs});`,
+    "if(typeof t.unref==='function')t.unref();",
+    "dns.lookup(host,{all:false},(err,addr)=>{if(settled)return;settled=true;clearTimeout(t);",
+    "if(err){process.stderr.write('HOSTDNS_ERR '+(err.code||err.errno||err.message||'unknown'));process.exit(3);}",
+    "process.stdout.write('HOSTDNS_OK '+(addr||''));process.exit(0);});",
+  ].join("");
+  const nodeExec = opts.nodeExecPath ?? process.execPath;
+  const command = [nodeExec, "-e", script, hostname];
+
+  const runProbe = opts.runProbeImpl ?? defaultRunProbe;
+  let execution: ReturnType<typeof normalizeProbeExecution>;
+  try {
+    execution = normalizeProbeExecution(runProbe(command, { timeout: timeoutMs }));
+  } catch (e) {
+    return { ok: false, hostname, reason: "error", details: String((e as Error)?.message ?? e) };
+  }
+
+  const output = probeCombinedOutput(execution);
+
+  // Outer spawn timeout / kill signal dominate the exit code, so check
+  // them before parsing the resolver markers.
+  if (execution.timedOut) {
+    return {
+      ok: false,
+      hostname,
+      reason: "timeout",
+      details: probeExecutionDetails("host DNS probe", execution, timeoutMs, output),
+    };
+  }
+  if (execution.signal) {
+    return {
+      ok: false,
+      hostname,
+      reason: "killed",
+      details: probeExecutionDetails("host DNS probe", execution, timeoutMs, output),
+    };
+  }
+
+  if (execution.exitCode === 0 && /HOSTDNS_OK/.test(output)) {
+    return { ok: true, hostname };
+  }
+  if (/HOSTDNS_TIMEOUT/.test(output)) {
+    return {
+      ok: false,
+      hostname,
+      reason: "timeout",
+      details: probeExecutionDetails("host DNS probe", execution, timeoutMs, output),
+    };
+  }
+  const errMatch = output.match(/HOSTDNS_ERR\s+(\S+)/);
+  if (errMatch) {
+    const code = errMatch[1].toUpperCase();
+    const details = `dns.lookup ${hostname}: ${errMatch[1]}`;
+    if (HOST_DNS_UNREACHABLE_CODES.has(code)) {
+      return { ok: false, hostname, reason: "servers_unreachable", details };
+    }
+    if (HOST_DNS_RESOLUTION_CODES.has(code)) {
+      return { ok: false, hostname, reason: "resolution_failed", details };
+    }
+    return { ok: false, hostname, reason: "error", details };
+  }
+  // Couldn't run node / unexpected output — stay inconclusive so we
+  // never abort onboarding on a probe-infrastructure failure.
+  return {
+    ok: false,
+    hostname,
+    reason: "error",
+    details: output.trim() ? outputTail(output) : "host DNS probe produced no output",
+  };
+}
+
+/**
+ * A host DNS probe failure is fatal when the host genuinely cannot
+ * resolve the provider endpoint (resolver unreachable, NXDOMAIN/ENODATA,
+ * or the probe timed out / was killed mid-query). A generic `error`
+ * (could not even spawn the probe) stays inconclusive — the probe never
+ * proved host DNS is broken, so onboarding must not abort on it.
+ */
+export function isFatalHostDnsProbeFailure(result: HostDnsProbeResult): boolean {
+  if (result.ok) return false;
+  return (
+    result.reason === "servers_unreachable" ||
+    result.reason === "resolution_failed" ||
+    result.reason === "timeout" ||
+    result.reason === "killed"
+  );
 }
 
 export function probeDockerBridgeContainerStart(

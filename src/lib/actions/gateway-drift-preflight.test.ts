@@ -7,9 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 import type { OpenShellStateRpcIssue } from "../adapters/openshell/gateway-drift";
 
-type BackupAll = typeof import("../../../dist/lib/actions/maintenance")["backupAll"];
-type UpgradeSandboxes =
-  typeof import("../../../dist/lib/actions/upgrade-sandboxes")["upgradeSandboxes"];
+type BackupAll = typeof import("./maintenance")["backupAll"];
+type UpgradeSandboxes = typeof import("./upgrade-sandboxes")["upgradeSandboxes"];
 
 const requireDist = createRequire(import.meta.url);
 
@@ -57,14 +56,14 @@ describe("gateway drift preflight for maintenance actions", () => {
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const gatewayDrift = requireDist("../../../dist/lib/adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../../dist/lib/adapters/openshell/runtime.js");
-    const registry = requireDist("../../../dist/lib/state/registry.js");
-    const sandboxState = requireDist("../../../dist/lib/state/sandbox.js");
-    const sandboxVersion = requireDist("../../../dist/lib/sandbox/version.js");
-    const upgradeDomain = requireDist("../../../dist/lib/domain/maintenance/upgrade.js");
-    const rebuild = requireDist("../../../dist/lib/actions/sandbox/rebuild.js");
-    const gatewayRuntime = requireDist("../../../dist/lib/gateway-runtime-action.js");
+    const gatewayDrift = requireDist("../adapters/openshell/gateway-drift.js");
+    const openshellRuntime = requireDist("../adapters/openshell/runtime.js");
+    const registry = requireDist("../state/registry.js");
+    const sandboxState = requireDist("../state/sandbox.js");
+    const sandboxVersion = requireDist("../sandbox/version.js");
+    const upgradeDomain = requireDist("../domain/maintenance/upgrade.js");
+    const rebuild = requireDist("./sandbox/rebuild.js");
+    const gatewayRuntime = requireDist("../gateway-runtime-action.js");
 
     detectPreflightIssueSpy = vi
       .spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue")
@@ -113,8 +112,8 @@ describe("gateway drift preflight for maintenance actions", () => {
       vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined),
     );
 
-    ({ backupAll } = requireDist("../../../dist/lib/actions/maintenance.js"));
-    ({ upgradeSandboxes } = requireDist("../../../dist/lib/actions/upgrade-sandboxes.js"));
+    ({ backupAll } = requireDist("./maintenance.js"));
+    ({ upgradeSandboxes } = requireDist("./upgrade-sandboxes.js"));
   });
 
   afterEach(() => {
@@ -173,7 +172,12 @@ describe("gateway drift preflight for maintenance actions", () => {
     await backupAll();
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(captureOpenshellSpy).toHaveBeenNthCalledWith(1, ["sandbox", "list"]);
@@ -192,7 +196,7 @@ describe("gateway drift preflight for maintenance actions", () => {
   });
 
   it("backup-all skips sandboxes that are not in Ready phase", async () => {
-    const registry = requireDist("../../../dist/lib/state/registry.js");
+    const registry = requireDist("../state/registry.js");
     (registry.listSandboxes as ReturnType<typeof vi.fn>).mockReturnValue({
       sandboxes: [
         { name: "alpha", provider: "nvidia-prod", model: "nemotron" },
@@ -214,9 +218,7 @@ describe("gateway drift preflight for maintenance actions", () => {
 
     expect(backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
     expect(backupSandboxStateSpy).not.toHaveBeenCalledWith("beta");
-    expect(logSpy.mock.calls.flat().join("\n")).toContain(
-      "Skipping 'beta' (not running)",
-    );
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Skipping 'beta' (not running)");
   });
 
   it("backup-all fails closed on protobuf mismatch instead of treating sandboxes as stopped", async () => {
@@ -260,13 +262,20 @@ describe("gateway drift preflight for maintenance actions", () => {
     await upgradeSandboxes({ check: true });
 
     expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({
-      recoverableStates: ["missing_named", "named_unhealthy", "named_unreachable"],
+      recoverableStates: [
+        "missing_named",
+        "named_unhealthy",
+        "named_unreachable",
+        "connected_other",
+      ],
     });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(2);
     expect(classifyUpgradeableSandboxesSpy).toHaveBeenCalledWith(
       [{ name: "alpha", provider: "nvidia-prod", model: "nemotron" }],
       new Set(["alpha"]),
       expect.any(Function),
+      // #5026: the running NemoClaw build is passed so image drift is detected.
+      expect.objectContaining({ currentNemoclawVersion: expect.any(String) }),
     );
   });
 

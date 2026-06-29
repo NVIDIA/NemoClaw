@@ -57,7 +57,10 @@ describe("policy mutation oclif commands", () => {
 
   it("rejects mutually exclusive custom policy sources before dispatch", async () => {
     await expect(
-      PolicyAddCommand.run(["alpha", "--from-file", "preset.yaml", "--from-dir", "presets"], rootDir),
+      PolicyAddCommand.run(
+        ["alpha", "--from-file", "preset.yaml", "--from-dir", "presets"],
+        rootDir,
+      ),
     ).rejects.toThrow(/from-file|from-dir/);
 
     expect(mocks.addSandboxPolicy).not.toHaveBeenCalled();

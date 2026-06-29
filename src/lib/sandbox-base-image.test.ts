@@ -14,7 +14,7 @@ import {
   getVersionedBaseImageTags,
   parseGlibcVersion,
   versionGte,
-} from "../../dist/lib/sandbox-base-image";
+} from "./sandbox-base-image";
 
 const tmpRoots: string[] = [];
 const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
@@ -46,10 +46,14 @@ function buildGitEnv(): NodeJS.ProcessEnv {
 const gitEnv = buildGitEnv();
 
 function git(root: string, args: string[]) {
-  const result = spawnSync("git", ["-c", `core.hooksPath=${emptyGitHooksDir}`, "-C", root, ...args], {
-    encoding: "utf-8",
-    env: gitEnv,
-  });
+  const result = spawnSync(
+    "git",
+    ["-c", `core.hooksPath=${emptyGitHooksDir}`, "-C", root, ...args],
+    {
+      encoding: "utf-8",
+      env: gitEnv,
+    },
+  );
   if (result.status !== 0) {
     throw new Error(`git ${args.join(" ")} failed:\n${result.stderr}\n${result.stdout}`);
   }
@@ -67,6 +71,7 @@ function createGitFixture() {
   tmpRoots.push(root);
   git(root, ["init", "-b", "main"]);
   writeFixture(root, "Dockerfile.base", "FROM node:22\n");
+  writeFixture(root, "agents/langchain-deepagents-code/Dockerfile.base", "FROM python:3.13\n");
   writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
   writeFixture(root, "src/other.ts", "export const value = 1;\n");
   git(root, ["add", "."]);
@@ -157,10 +162,11 @@ describe("sandbox base image helpers", () => {
     expect(output).toContain("the --mount option requires BuildKit");
   });
 
-  it("surfaces stdout-only build diagnostics — BuildKit can land errors there (Codex review on #3584)", () => {
+  it("surfaces stdout-only build diagnostics because BuildKit can put errors there per Codex review (#3584)", () => {
     const output = formatBuildFailureDiagnostics({
       stderr: "",
-      stdout: "ERROR: failed to solve: process \"/bin/sh -c apt-get install\" did not complete successfully",
+      stdout:
+        'ERROR: failed to solve: process "/bin/sh -c apt-get install" did not complete successfully',
     });
     expect(output).toContain("ERROR: failed to solve");
   });
@@ -226,6 +232,36 @@ describe("sandbox base image helpers", () => {
     git(root, ["commit", "-m", "change base input"]);
 
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("detects committed agent Dockerfile.base changes when an agent base path is supplied", () => {
+    const root = createGitFixture();
+    const agentBase = path.join(root, "agents/langchain-deepagents-code/Dockerfile.base");
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(
+      root,
+      "agents/langchain-deepagents-code/Dockerfile.base",
+      "FROM python:3.13\nRUN echo changed\n",
+    );
+    git(root, ["add", "agents/langchain-deepagents-code/Dockerfile.base"]);
+    git(root, ["commit", "-m", "change agent base input"]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+    expect(baseImageInputsChangedSinceMain(root, gitEnv, [agentBase])).toBe(true);
+  });
+
+  it("rejects traversal paths before checking base-image input diffs", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 2;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "change app code"]);
+
+    expect(
+      baseImageInputsChangedSinceMain(root, gitEnv, [
+        "agents/foo/../../../outside/Dockerfile.base",
+      ]),
+    ).toBe(false);
   });
 
   it("ignores non-base-image source changes relative to origin/main", () => {

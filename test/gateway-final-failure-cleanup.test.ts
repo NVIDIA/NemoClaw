@@ -19,12 +19,11 @@ function isOnboardGatewayFailureInternals(
   value: object | null,
 ): value is OnboardGatewayFailureInternals {
   return (
-    value !== null &&
-    typeof Reflect.get(value, "handleFinalGatewayStartFailure") === "function"
+    value !== null && typeof Reflect.get(value, "handleFinalGatewayStartFailure") === "function"
   );
 }
 
-const loadedOnboardInternals = require("../dist/lib/onboard");
+const loadedOnboardInternals = require("../src/lib/onboard");
 const onboardInternals =
   typeof loadedOnboardInternals === "object" && loadedOnboardInternals !== null
     ? loadedOnboardInternals

@@ -1,173 +1,140 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw E2E scenario framework
+# NemoClaw E2E Vitest Fixtures
 
-NemoClaw's scenario E2E framework is currently a **hybrid** migration model.
-It combines typed scenario builders, product-facing setup manifests, YAML
-runtime metadata, and reusable shell suites while the older live E2E scripts
-continue to run in parallel.
+NemoClaw E2E now has one target execution model, Vitest as the harness and
+GitHub Actions as the matrix. Vitest owns discovery, filtering, timeouts,
+reporters, fixture lifecycle, skips, and CI integration. NemoClaw owns the
+domain layer: scenario metadata, phase fixtures, product clients, evidence
+artifacts, redaction, cleanup, expected-state probes, and typed assertion
+helpers.
 
-This hybrid model is transitional. The target architecture for #3588 is a
-single scenario runner that owns scenario resolution, orchestration, evidence
-collection, redaction, and assertion dispatch. Shell scripts should be kept to
-the smallest practical set of system-boundary probes or command fixtures, not a
-second planning or assertion-control runtime.
+The retired typed-shell scenario runner is documented in
+[`RETIREMENT.md`](./RETIREMENT.md). Do not add new durable behavior to the old
+YAML/bash scenario-runner shape.
 
-## Current sources of truth
+Direct legacy E2E scripts under `test/e2e/test-*.sh` still provide most live
+nightly and platform coverage. Those scripts are not deleted by the scenario
+runner cutover; migrate them by contract using the rules in `MIGRATION.md`.
 
-Use the source that matches the task while the migration is in progress:
+## Sources Of Truth
 
-| Task | Current source |
+| Task | Source |
 | --- | --- |
-| Scenario workflow fan-out and dry-run planning | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts`, and `test/e2e-scenario/scenarios/run.ts` |
-| Product-facing desired setup/onboarding state | `test/e2e-scenario/manifests/*.yaml` |
-| Shell runner scenario resolution and live scenario execution | `test/e2e-scenario/nemoclaw_scenarios/scenarios.yaml`, `expected-states.yaml`, and `validation_suites/suites.yaml` |
-| Reusable live suite assertions | `test/e2e-scenario/validation_suites/` |
-| Existing nightly and platform E2E coverage | legacy `test/e2e/test-*.sh` scripts and their workflows |
+| Live scenario IDs and metadata | `test/e2e-scenario/scenarios/registry.ts`, `test/e2e-scenario/scenarios/scenarios/baseline.ts` |
+| GitHub Actions matrix emission | `test/e2e-scenario/scenarios/run.ts --emit-live-matrix` |
+| Live scenario execution | `test/e2e-scenario/live/registry-scenarios.test.ts` |
+| Phase fixtures and clients | `test/e2e-scenario/fixtures/` |
+| Expected-state probes | `test/e2e-scenario/scenarios/expected-states.ts` |
+| Product-facing setup/onboarding state | `test/e2e-scenario/manifests/*.yaml` |
+| Legacy direct E2E coverage | `test/e2e/test-*.sh` and their workflows |
+| Migration status and retirement decisions | GitHub issues and pull requests |
 
-The near-term migration goal is to keep these surfaces aligned while coverage is
-being moved into scenario contracts and suites. The long-term goal is to remove
-the split between typed planning and shell execution. Do not add new
-legacy-style `test/e2e/test-*.sh` entrypoints unless there is a specific
-maintainer-approved reason.
+## Scenario Model
 
-## Target runner model
-
-Future scenario coverage should move toward one runner with these properties:
-
-- the runner compiles one typed plan for each scenario and treats that plan as
-  the source of truth for setup, onboarding, expected state, suites, assertions,
-  evidence paths, and expected failures;
-- product-facing manifests remain declarative setup inputs, not executable test
-  programs;
-- assertion modules prefer TypeScript probes and typed client helpers;
-- shell is used only when the system under test is a shell command, host
-  process, container command, or platform-specific probe;
-- every shell call goes through a controlled spawn boundary with scoped
-  environment, timeout, redaction, artifact capture, and command/argument
-  validation;
-- bridge work that expands the YAML/bash runner must also identify how that
-  behavior will move into the single runner before legacy runner paths are
-  removed.
-
-The #4347-#4357 audit-phase issues should be read as acceptance coverage
-requirements, not as a permanent requirement to keep YAML resolver or bash
-runner deliverables. If a phase issue names YAML or shell-runner artifacts, map
-that requirement to equivalent single-runner behavior unless maintainers
-explicitly decide to keep a bridge path for the current migration step.
-
-## Layered scenario model
-
-The conceptual model is layered:
+The typed registry still describes scenarios as layered metadata:
 
 ```text
 base environment
-  → onboarding profile / manifest
-    → onboarding assertions
-      → expected state
-        → post-onboard suites
+  -> onboarding profile / manifest
+    -> expected state
+      -> optional lifecycle profile
+        -> suite metadata for migration tracking
 ```
 
-The current YAML shell runner expresses this through:
+Live execution happens through Vitest fixtures:
 
-- `base_scenarios`: platform + install + runtime
-- `onboarding_profiles`: user onboarding choices
-- `test_plans`: base + onboarding + expected state + suites
-- `setup_scenarios`: friendly aliases and compatibility metadata
-- `onboarding_assertions`: setup/onboarding checks that run before suites
+- `environment` checks CLI/install/runtime readiness.
+- `onboard` performs supported onboarding profiles.
+- `lifecycle` performs supported post-onboard mutations.
+- `stateValidation` probes host-observable expected state.
+- `artifacts`, `secrets`, `cleanup`, and `shellProbe` provide shared fixture
+  services.
 
-The typed scenario registry expresses the same intent as deterministic code and
-is used by the scenario workflow matrix and dry-run plan artifacts. The target
-single runner should collapse these parallel expressions into one executable
-plan model.
+The `test/e2e-scenario/fixtures/` path is fixture/support code, not a test
+harness or runner. Vitest remains the only test harness.
 
-## How to run
+`suiteIds` remain metadata for reporting and migration planning. They do not
+dispatch shell validation suites.
+
+## How To Run
 
 ```bash
-# YAML/shell scenario runner
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --plan-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --dry-run
-bash test/e2e-scenario/runtime/run-scenario.sh <id> --validate-only
-bash test/e2e-scenario/runtime/run-scenario.sh <id>
-
-# Suite runner against an existing scenario context
-bash test/e2e-scenario/runtime/run-suites.sh <suite-id> [<suite-id>...]
-
-# Scenario metadata coverage report
-bash test/e2e-scenario/runtime/coverage-report.sh
-
-# Typed scenario registry / workflow dry-run path
+# List canonical scenario ids
 npx tsx test/e2e-scenario/scenarios/run.ts --list
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --plan-only
-npx tsx test/e2e-scenario/scenarios/run.ts --scenarios <id> --dry-run
-npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix
+
+# Emit the GitHub Actions fan-out matrix payload
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix
+
+# Emit the matrix for selected scenario ids
+npx tsx test/e2e-scenario/scenarios/run.ts --emit-live-matrix --scenarios ubuntu-repo-cloud-openclaw
+
+# Fixture/support tests
+npx vitest run --project e2e-vitest-support --silent=false --reporter=default
+
+# Opt-in live Vitest scenarios
+npm run build:cli
+NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live --silent=false --reporter=default
+
+# Force two retries locally (three total attempts) for external-service flakes
+NEMOCLAW_RUN_E2E_SCENARIOS=1 NEMOCLAW_E2E_RETRIES=2 npx vitest run --project e2e-scenarios-live
 ```
 
-Override the runtime context directory with `E2E_CONTEXT_DIR=<path>` (default
-`.e2e/`, gitignored). The shell scenario runner and suites communicate through
-`$E2E_CONTEXT_DIR/context.env`; suites should not rediscover setup state.
+Live Vitest E2E projects retry failed tests automatically in CI. The default is
+2 retries after the first failure (3 total attempts). Local opt-in runs default
+to no full-test retry; set `NEMOCLAW_E2E_RETRIES=<count>` to override either
+local or CI behavior. Overrides are capped at 5 retries so a typo cannot create
+unbounded credentialed live infrastructure attempts.
 
-## Repository layout
+The retired `--emit-matrix`, direct `--scenarios` execution, and `--plan-only`
+paths must not be reintroduced.
+
+## Repository Layout
 
 ```text
 test/e2e-scenario/
-  docs/                              # This guide and migration notes
-  manifests/                         # Product-facing NemoClawInstance desired state
-  scenarios/                         # Typed builders, registry, compiler, assertions, dry-run orchestration
-  nemoclaw_scenarios/                # YAML runtime metadata and setup helpers
-    scenarios.yaml
-    expected-states.yaml
-    install/
-    onboard/
-    fixtures/
-    helpers/
-  validation_suites/                 # Suite definitions and shell assertion steps
-    suites.yaml
-    smoke/
-    inference/
-    messaging/
-    platform/
-    security/
-    sandbox/
-  runtime/                           # Shell runner, suite runner, resolver, coverage report, shared libs
-    run-scenario.sh
-    run-suites.sh
-    coverage-report.sh
-    resolver/
-    lib/
+  docs/                  # Fixture guide, migration notes, retirement record
+  fixtures/              # Vitest fixtures, clients, redaction, artifacts, cleanup
+  live/                  # Opt-in live Vitest scenario tests
+  manifests/             # Product-facing NemoClawInstance desired state
+  scenarios/             # Typed registry, matrix helpers, expected states
+  support-tests/         # Fast fixture/support and metadata tests
 ```
 
-## CI entry points
+## CI Entry Points
 
-- `.github/workflows/e2e-scenarios.yaml` runs typed scenario dry-runs for
-  manually selected scenario IDs.
-- `.github/workflows/e2e-scenarios-all.yaml` fans out typed scenario dry-runs
-  from the typed registry matrix.
+- `.github/workflows/e2e-vitest-scenarios.yaml` runs selected or all supported
+  live Vitest scenarios and uploads an explicit artifact allowlist with
+  JSON summaries plus action, log, and shell command-evidence directories under
+  14-day retention.
 - Existing workflows such as `nightly-e2e.yaml`, `e2e-branch-validation.yaml`,
   `macos-e2e.yaml`, `wsl-e2e.yaml`, `ollama-proxy-e2e.yaml`, and
-  `regression-e2e.yaml` still run legacy live E2E scripts during the migration.
-- `vitest.config.ts` contains the `e2e-scenario-framework` project for framework
-  and metadata tests.
+  `regression-e2e.yaml` still run direct legacy E2E scripts during migration.
+- `vitest.config.ts` contains `e2e-vitest-support` for fast fixture/support
+  tests and `e2e-scenarios-live` for opt-in live scenario execution.
 
-## Migration tracking
+## Migration Tracking
 
-Migration status is tracked outside the repository in GitHub issues and PRs,
-not in repo-local checklists. The parent architecture issue is #3588. Active
-audit-coverage work is tracked by the #4347–#4357 issue set, with focused
-follow-ups such as #4378 for specific drift fixes.
+Migration status is tracked outside the repository. GitHub issues and pull
+requests are the source of truth for script-by-script state, ownership,
+replacement Vitest coverage, and retirement decisions.
 
-The old workflow-level parity report has been removed. Use scenario framework
-tests, the coverage report, PR review, and the audit issues to decide what to
-migrate next.
+GitHub issues and PRs own changing migration status. The key issues are:
 
-When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
-`FAIL: <id>` log line, and record migration evidence or follow-up state in the
-owning issue or PR. Sandbox lifecycle assertions should use
-`validation_suites/lib/sandbox_lifecycle.sh`, consume
-`$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks
-isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios
-such as GPU, macOS, WSL, Brev, or DGX Spark must also list
-`runner_requirements` in `scenarios.yaml`.
+- #3588: parent layered E2E architecture epic
+- #4941: Vitest fixtures as the scenario execution model
+- #4990: phase fixtures and registry-driven live discovery
+- #5098: direct legacy bash-suite migration epic
 
-Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.
+The former repo-local `legacy-inventory.json` ledger and generated legacy
+assertion inventories are removed because they duplicated live GitHub state and
+drifted quickly. The durable guardrail is the workflow contract test that
+freezes both the top-level legacy `test/e2e/test-*.sh` set and the scheduled
+`nightly-e2e.yaml` legacy wiring. When a nightly-wired legacy script is
+intentionally retired, remove the script, remove the nightly workflow reference,
+and update the allowlist test in the same PR.
+
+Prefer new E2E coverage in Vitest fixtures. When shell, installer, process,
+platform, or full user-flow behavior is the contract, invoke that real boundary
+from Vitest rather than preserving a second durable runner.

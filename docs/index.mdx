@@ -3,14 +3,15 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
 sidebar-title: "Home"
-description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and packaged agent skills."
-keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, agent skills, sandboxing, inference routing"
+description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and Markdown docs for AI assistants."
+keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, Markdown docs, sandboxing, inference routing"
 layout: overview
 position: 1
 ---
 
 import { BadgeLinks } from "./_components/BadgeLinks";
 import { CommandTerminal } from "./_components/CommandTerminal";
+import { StarterPromptButton } from "./_components/StarterPromptButton";
 
 <BadgeLinks
   badges={[
@@ -35,11 +36,20 @@ import { CommandTerminal } from "./_components/CommandTerminal";
 NVIDIA NemoClaw is an open-source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
 NemoClaw provides onboarding, lifecycle management, and agent operations within OpenShell containers.
 It installs the OpenShell runtime, part of NVIDIA Agent Toolkit, and sets up an environment designed for executing agents with additional security and inference routing capabilities.
-NemoClaw also ships user skills for AI coding assistants, so tools such as Cursor and Claude Code can guide you through setup, inference, policy management, monitoring, deployment, security, and troubleshooting from the same documentation.
 
 ## Get Started
 
 Install NemoClaw and run the onboard wizard to get started.
+
+### From Your Coding Agent
+
+Copy the starter prompt and paste it into your local coding agent such as Codex, Cursor, or Claude Code.
+
+<StarterPromptButton />
+
+### From Your Terminal
+
+Paste this command into your terminal for the default installation process.
 
 <llms-ignore>
 
@@ -49,11 +59,14 @@ Install NemoClaw and run the onboard wizard to get started.
 
 <llms-only>
 
-```shell
+```bash
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 </llms-only>
+
+This starts the interactive installer and onboard wizard.
+Use the quickstart guides for scripted installs and failed-session recovery.
 
 By default, NemoClaw installs the OpenClaw agent. Use one of the following quickstart guides to get started with your preferred agent.
 
@@ -62,9 +75,48 @@ By default, NemoClaw installs the OpenClaw agent. Use one of the following quick
 | OpenClaw (default) | [Quickstart with OpenClaw](../openclaw/get-started/quickstart) |
 | Hermes | [Quickstart with Hermes](../hermes/get-started/quickstart) |
 
-## Select User Guide for Your Agent
+<section>
 
-The NemoClaw documentation provides separate user guides for the agents it supports. Select the guide that matches your agent. You can also select the guide from the dropdown at the top of the left navigation pane.
+## NemoClaw Docs for AI Agents
+
+Use NemoClaw's Markdown docs or the docs-routing skill when you want your AI coding agent to help you install or operate a sandbox.
+The assistant fetches the same canonical pages that power this site and applies them to your local environment.
+
+<Cards>
+
+<Card title="Use AI Agent Docs" href="resources/agent-skills">
+
+Give your assistant the docs entry points or optional routing skill so NemoClaw guidance is available directly in chat.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
+</Card>
+
+</Cards>
+
+</section>
+
+<section>
+
+## Resources
+
+Use the following resources to explore NemoClaw end-to-end examples, showcases, and integrations.
+
+<Cards>
+
+<Card title="Explore Community Examples" href="https://github.com/NVIDIA/nemoclaw-community">
+
+Browse community-driven examples, showcases, and integrations built from NemoClaw blueprints.
+
+<Badge intent="tip" minimal outlined>Examples</Badge>
+</Card>
+
+</Cards>
+
+</section>
+
+## Select User Guide Variant for Your Preferred Agent
+
+Select the user guide variant for your preferred agent to sandbox. You can also switch guide variants from the dropdown at the top of the left navigation pane.
 
 <Cards>
 
@@ -80,22 +132,6 @@ Read the OpenClaw-focused overview before launching the default sandboxed agent.
 Read the Hermes-focused overview before launching a Hermes sandboxed agent.
 
 <Badge intent="tip" minimal outlined>Overview</Badge>
-</Card>
-
-</Cards>
-
-## Use NemoClaw User Skills
-
-If you work from an AI coding assistant, load NemoClaw's user skills before you install or operate a sandbox.
-The skills turn these docs into task-focused guidance that your assistant can apply to your local environment.
-
-<Cards>
-
-<Card title="Set Up Agent Skills" href="resources/agent-skills">
-
-Clone the skills or add them to your assistant so NemoClaw guidance is available directly in chat.
-
-<Badge intent="tip" minimal outlined>Resource</Badge>
 </Card>
 
 </Cards>

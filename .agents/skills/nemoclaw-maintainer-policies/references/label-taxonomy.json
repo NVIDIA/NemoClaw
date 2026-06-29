@@ -100,6 +100,17 @@
       "mutually_exclusive_group": null
     },
     {
+      "name": "PRR",
+      "family": "reporting",
+      "item_kinds": ["issue", "pull_request"],
+      "description": "Reserved Product Readiness Review label for reports or follow-up used to assess product readiness and user experience.",
+      "positive_signals": ["maintainer-applied Product Readiness Review report", "dedicated PRR workflow-applied report", "PRR follow-up", "product readiness assessment tied to a PRR", "user experience assessment tied to a PRR"],
+      "negative_signals": ["normal triage output", "generic readiness concern", "ordinary UX bug", "release validation without PRR evidence", "ordinary QA issue", "daily release label or readiness claim"],
+      "application_policy": "Reserved for maintainers or dedicated PRR workflows. Triage agents must not recommend or apply this label during normal triage.",
+      "triage_recommendation_allowed": false,
+      "mutually_exclusive_group": null
+    },
+    {
       "name": "needs: triage",
       "family": "needs",
       "item_kinds": ["issue", "pull_request"],
@@ -527,6 +538,7 @@
       ],
       "values": [
         "integration: brave",
+        "integration: dcode",
         "integration: discord",
         "integration: hermes",
         "integration: openclaw",
@@ -541,6 +553,12 @@
           "description": "Brave integration behavior.",
           "positive_signals": ["Brave", "browser integration", "Brave-specific channel or app behavior"],
           "negative_signals": ["generic browser issue without Brave evidence"]
+        },
+        {
+          "name": "integration: dcode",
+          "description": "LangChain Deep Code integration behavior.",
+          "positive_signals": ["LangChain Deep Code", "Deep Code", "langchain-deepagents-code", "dcode", "agents/langchain-deepagents-code"],
+          "negative_signals": ["generic LangChain issue without Deep Code evidence", "generic coding-agent issue without LangChain Deep Code evidence"]
         },
         {
           "name": "integration: discord",

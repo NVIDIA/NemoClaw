@@ -79,14 +79,26 @@ export function rollbackToBackupContainer(
   };
   deps.dockerStop(refs.newContainerId, containerOpts);
   deps.dockerRm(refs.newContainerId, containerOpts);
-  const restored = deps.dockerRename(
-    refs.backupContainerName,
-    refs.originalName,
-    containerOpts,
-  );
+  const restored = deps.dockerRename(refs.backupContainerName, refs.originalName, containerOpts);
   if (!isZeroStatus(restored)) return false;
   const started = deps.dockerStart(refs.originalName, containerOpts);
   return isZeroStatus(started);
+}
+
+/**
+ * Roll back a Docker GPU patch that failed *before* the supervisor wait — e.g.
+ * the recreate `docker run` itself failed after the original sandbox was already
+ * renamed to the backup. Restores the pre-patch sandbox so onboarding never
+ * leaves an orphaned `*-nemoclaw-gpu-backup-*` container (which otherwise
+ * collides on the next retry) (#5512). Accepts raw deps so the real
+ * `docker start`/`docker rename` defaults are resolved even when the caller's
+ * deps only carry the recreate subset.
+ */
+export function rollbackDockerGpuPatchOnRecreateFailure(
+  refs: { newContainerId: string; backupContainerName: string; originalName: string },
+  deps: DockerGpuPatchDeps = {},
+): boolean {
+  return rollbackToBackupContainer(refs, resolveRollbackDeps(deps));
 }
 
 export type DockerGpuPatchFinalizeOptions = {
@@ -118,10 +130,7 @@ export function finalizeDockerGpuPatchBackup(
     // even if `docker rm` cannot delete it (e.g. concurrent admin action,
     // daemon timeout). Reflect the actual rm status in the outcome so
     // diagnostics can flag a leaked backup container.
-    const rmResult = resolved.dockerRm(
-      options.result.backupContainerName,
-      containerOpts,
-    );
+    const rmResult = resolved.dockerRm(options.result.backupContainerName, containerOpts);
     return { backupRemoved: isZeroStatus(rmResult), rolledBack: false };
   }
   const rolledBack = rollbackToBackupContainer(

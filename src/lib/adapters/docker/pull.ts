@@ -24,10 +24,7 @@ export interface DockerPullWatchdogOptions {
   watchdogIntervalMs?: number;
   logLine?: (line: string) => void;
   env?: NodeJS.ProcessEnv;
-  spawnImpl?: (
-    args: readonly string[],
-    options: SpawnOptions,
-  ) => DockerPullChildProcess;
+  spawnImpl?: (args: readonly string[], options: SpawnOptions) => DockerPullChildProcess;
 }
 
 export interface DockerPullWatchdogResult {
@@ -96,10 +93,7 @@ export async function dockerPullWithProgressWatchdog(
   imageRef: string,
   opts: DockerPullWatchdogOptions = {},
 ): Promise<DockerPullWatchdogResult> {
-  const stallTimeoutMs = positiveMs(
-    opts.stallTimeoutMs,
-    DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS,
-  );
+  const stallTimeoutMs = positiveMs(opts.stallTimeoutMs, DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS);
   const maxTimeoutMs = positiveMs(opts.maxTimeoutMs, DEFAULT_DOCKER_PULL_MAX_TIMEOUT_MS);
   const watchdogIntervalMs = positiveMs(
     opts.watchdogIntervalMs,

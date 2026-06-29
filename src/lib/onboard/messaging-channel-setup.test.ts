@@ -4,14 +4,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { getCredential, prompt, saveCredential } from "../credentials/store";
-import { HOST_QR_LOGIN_HANDLERS } from "../host-qr-handlers";
 import { createBuiltInChannelManifestRegistry, MessagingSetupApplier } from "../messaging";
 import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../messaging/applier/types";
+import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
+import { runWechatHostQrLogin } from "../messaging/channels/wechat/login";
 import {
+  detectMessagingChannelsFromEnv,
   setupMessagingChannels,
   setupSelectedMessagingChannels,
 } from "./messaging-channel-setup";
-import { validateSlackCredentials } from "../messaging/channels/slack/hooks/credential-validation";
 
 vi.mock("../credentials/store", () => ({
   getCredential: vi.fn(() => null),
@@ -22,10 +23,8 @@ vi.mock("../credentials/store", () => ({
   saveCredential: vi.fn(),
 }));
 
-vi.mock("../host-qr-handlers", () => ({
-  HOST_QR_LOGIN_HANDLERS: {
-    wechat: vi.fn(),
-  },
+vi.mock("../messaging/channels/wechat/login", () => ({
+  runWechatHostQrLogin: vi.fn(),
 }));
 
 vi.mock("../messaging/channels/slack/hooks/credential-validation", () => ({
@@ -76,7 +75,7 @@ describe("setupSelectedMessagingChannels", () => {
     vi.restoreAllMocks();
   });
 
-  it("#4068 prints Telegram group privacy-mode setup guidance during onboarding", async () => {
+  it("prints Telegram group privacy-mode setup guidance during onboarding (#4068)", async () => {
     process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
     process.env.TELEGRAM_REQUIRE_MENTION = "1";
     process.env.TELEGRAM_ALLOWED_IDS = "123456789";
@@ -126,18 +125,14 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["telegram"]);
 
-    const plan = await setupSelectedMessagingChannels(
-      ["telegram"],
-      enabled,
-      manifests("telegram"),
-    );
+    const plan = await setupSelectedMessagingChannels(["telegram"], enabled, manifests("telegram"));
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(enabled.has("telegram")).toBe(false);
     expect(plan?.channels[0]).toMatchObject({ channelId: "telegram", active: false });
-    expect(
-      logs.filter((line) => line.includes("Bot token was rejected by Telegram")),
-    ).toHaveLength(1);
+    expect(logs.filter((line) => line.includes("Bot token was rejected by Telegram"))).toHaveLength(
+      1,
+    );
   });
 
   it("accepts Telegram allowlist aliases during manifest channel setup", async () => {
@@ -172,11 +167,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).not.toHaveBeenCalled();
@@ -200,11 +191,7 @@ describe("setupSelectedMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    const plan = await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    const plan = await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(true);
     expect(plan?.channels[0]).toMatchObject({ channelId: "slack", active: true });
@@ -213,14 +200,8 @@ describe("setupSelectedMessagingChannels", () => {
       "  Slack Member IDs (comma-separated allowlist): ",
       "  Slack Channel IDs (comma-separated allowlist): ",
     ]);
-    expect(saveCredential).toHaveBeenCalledWith(
-      "SLACK_BOT_TOKEN",
-      "xoxb-recovered-token",
-    );
-    expect(saveCredential).not.toHaveBeenCalledWith(
-      "SLACK_APP_TOKEN",
-      "xapp-existing-token",
-    );
+    expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-recovered-token");
+    expect(saveCredential).not.toHaveBeenCalledWith("SLACK_APP_TOKEN", "xapp-existing-token");
     expect(process.env.SLACK_BOT_TOKEN).toBe("xoxb-recovered-token");
     expect(process.env.SLACK_APP_TOKEN).toBe("xapp-existing-token");
     expect(logs.join("\n")).toContain("Invalid existing slack token ignored");
@@ -249,11 +230,42 @@ describe("setupSelectedMessagingChannels", () => {
       "  Telegram Bot Token: ",
       "  Reply only when @mentioned? [Y/n]: ",
       "  Telegram User ID (for DM access): ",
+      "  Telegram group policy [open/allowlist/disabled; default: open]: ",
       "  Discord Bot Token: ",
       "  Discord Server ID (for guild workspace access): ",
     ]);
     expect(process.env.TELEGRAM_REQUIRE_MENTION).toBe("0");
+    expect(process.env.TELEGRAM_GROUP_POLICY).toBe("open");
     expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("123456789");
+  });
+
+  it("does not prompt for OpenClaw-only Telegram group policy during Hermes onboarding", async () => {
+    const questions: string[] = [];
+    vi.mocked(prompt).mockImplementation(async (question) => {
+      questions.push(question);
+      if (question.includes("Telegram Bot Token")) return "123456:telegram-token";
+      if (question.includes("Reply only")) return "n";
+      if (question.includes("Telegram User ID")) return "123456789";
+      return "";
+    });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const plan = await setupSelectedMessagingChannels(
+      ["telegram"],
+      new Set(["telegram"]),
+      manifests("telegram"),
+      { agent: { name: "hermes" } },
+    );
+
+    expect(plan?.agent).toBe("hermes");
+    expect(questions).toEqual([
+      "  Telegram Bot Token: ",
+      "  Reply only when @mentioned? [Y/n]: ",
+      "  Telegram User ID (for DM access): ",
+    ]);
+    expect(process.env.TELEGRAM_REQUIRE_MENTION).toBe("0");
+    expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("123456789");
+    expect(process.env.TELEGRAM_GROUP_POLICY).toBeUndefined();
   });
 
   it("prompts Discord guild-only config after the manifest server ID input is set", async () => {
@@ -267,11 +279,7 @@ describe("setupSelectedMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["discord"],
-      new Set(["discord"]),
-      manifests("discord"),
-    );
+    await setupSelectedMessagingChannels(["discord"], new Set(["discord"]), manifests("discord"));
 
     expect(process.env.DISCORD_SERVER_ID).toBe("1491590992753590594");
     expect(process.env.DISCORD_REQUIRE_MENTION).toBe("0");
@@ -282,16 +290,14 @@ describe("setupSelectedMessagingChannels", () => {
   });
 
   it("runs WeChat host-QR enrollment through the manifest hook", async () => {
-    vi.mocked(HOST_QR_LOGIN_HANDLERS.wechat).mockResolvedValue({
+    vi.mocked(runWechatHostQrLogin).mockResolvedValue({
       kind: "ok",
-      token: "wechat-token",
-      extraEnv: {
-        WECHAT_ACCOUNT_ID: "wechat-account",
-        WECHAT_BASE_URL: "https://ilinkai.wechat.example",
-        WECHAT_USER_ID: "wechat-user",
+      credentials: {
+        token: "wechat-token",
+        accountId: "wechat-account",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "wechat-user",
       },
-      defaultUserId: "wechat-user",
-      summary: "account wechat-account",
     });
     const logs: string[] = [];
     vi.spyOn(console, "log").mockImplementation((message = "") => {
@@ -306,7 +312,7 @@ describe("setupSelectedMessagingChannels", () => {
 
     expect(saveCredential).toHaveBeenCalledWith("WECHAT_BOT_TOKEN", "wechat-token");
     expect(process.env.WECHAT_ACCOUNT_ID).toBe("wechat-account");
-    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.example");
+    expect(process.env.WECHAT_BASE_URL).toBe("https://ilinkai.wechat.com");
     expect(process.env.WECHAT_USER_ID).toBe("wechat-user");
     expect(process.env.WECHAT_ALLOWED_IDS).toBe("wechat-user");
     expect(plan?.channels[0]).toMatchObject({ channelId: "wechat", active: true });
@@ -451,9 +457,7 @@ describe("setupMessagingChannels", () => {
     });
 
     expect(result).toEqual(["wechat"]);
-    expect(notes).toEqual([
-      "  [non-interactive] Messaging channel inputs detected: wechat",
-    ]);
+    expect(notes).toEqual(["  [non-interactive] Messaging channel inputs detected: wechat"]);
     expect(prompt).not.toHaveBeenCalled();
   });
 
@@ -472,9 +476,7 @@ describe("setupMessagingChannels", () => {
     });
 
     expect(result).toEqual([]);
-    expect(notes).toEqual([
-      "  [non-interactive] Messaging channel inputs detected: slack",
-    ]);
+    expect(notes).toEqual(["  [non-interactive] Messaging channel inputs detected: slack"]);
     expect(logs.join("\n")).toContain("Slack bot tokens start with 'xoxb-'");
     expect(logs.join("\n")).toContain("Skipped slack (invalid token format)");
     expect(prompt).not.toHaveBeenCalled();
@@ -502,11 +504,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-fake-bot-token");
@@ -536,11 +534,7 @@ describe("setupMessagingChannels", () => {
     });
     const enabled = new Set(["slack"]);
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-timeout-bot-token");
@@ -568,11 +562,7 @@ describe("setupMessagingChannels", () => {
       logs.push(String(message));
     });
 
-    await setupSelectedMessagingChannels(
-      ["slack"],
-      enabled,
-      manifests("slack"),
-    );
+    await setupSelectedMessagingChannels(["slack"], enabled, manifests("slack"));
 
     expect(enabled.has("slack")).toBe(false);
     expect(prompt).toHaveBeenCalledWith("  Slack Member IDs (comma-separated allowlist): ");
@@ -581,5 +571,74 @@ describe("setupMessagingChannels", () => {
     const output = logs.join("\n");
     expect(output).toContain("token_revoked");
     expect(output).toContain("slack — already configured");
+  });
+
+  it("exits with code 1 when TELEGRAM_GROUP_POLICY is set to an unrecognised value (#5696)", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+    process.env.TELEGRAM_GROUP_POLICY = "lockdown";
+    const errors: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((message = "") => {
+      errors.push(String(message));
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("process.exit");
+    });
+
+    await expect(
+      setupMessagingChannels(null, null, { isNonInteractive: () => true }),
+    ).rejects.toThrow("process.exit");
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(errors.join("\n")).toContain("TELEGRAM_GROUP_POLICY");
+    expect(errors.join("\n")).toContain("lockdown");
+    expect(errors.join("\n")).toContain("open");
+    expect(errors.join("\n")).toContain("allowlist");
+    expect(errors.join("\n")).toContain("disabled");
+  });
+});
+
+describe("detectMessagingChannelsFromEnv", () => {
+  function clearMessagingEnv(): void {
+    const envKeys = manifestRegistry
+      .listAvailable({ agent: "openclaw", supportedChannelIds: null })
+      .flatMap((manifest) => manifest.inputs)
+      .map((input) => input.envKey)
+      .filter((envKey): envKey is string => Boolean(envKey));
+    for (const envKey of envKeys) delete process.env[envKey];
+    delete process.env.NEMOCLAW_POLICY_PRESETS;
+  }
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.clearAllMocks();
+    vi.mocked(getCredential).mockReturnValue(null);
+    clearMessagingEnv();
+  });
+
+  afterEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    vi.restoreAllMocks();
+  });
+
+  it("returns no telegram channel when no messaging env inputs are present", () => {
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
+  });
+
+  it("detects telegram when TELEGRAM_BOT_TOKEN is supplied", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv(null)).toContain("telegram");
+  });
+
+  it("does not detect channels for unsupported named agents even when env inputs are complete", () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+
+    expect(detectMessagingChannelsFromEnv({ name: "custom-agent" } as never)).toEqual([]);
+  });
+
+  it("does not select telegram from NEMOCLAW_POLICY_PRESETS alone", () => {
+    process.env.NEMOCLAW_POLICY_PRESETS = "telegram";
+
+    expect(detectMessagingChannelsFromEnv(null)).not.toContain("telegram");
   });
 });

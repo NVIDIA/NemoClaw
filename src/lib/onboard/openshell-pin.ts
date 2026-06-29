@@ -26,9 +26,7 @@ export type OpenshellInstallPinDeps = {
   error?: (message: string) => void;
 };
 
-export type OpenshellInstallEnvDirective =
-  | { env: NodeJS.ProcessEnv }
-  | { env: null };
+export type OpenshellInstallEnvDirective = { env: NodeJS.ProcessEnv } | { env: null };
 
 export type OpenshellInstallPinResult =
   | { kind: "pin"; version: string; latest: string | null; reason: "latest" | "max-cap" }
@@ -184,9 +182,7 @@ export function computeOpenshellInstallEnv(
   if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
   if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
   if (pin.kind === "pin") overlay.NEMOCLAW_OPENSHELL_PIN_VERSION = pin.version;
-  return Object.keys(overlay).length === 0
-    ? { env: baseEnv }
-    : { env: { ...baseEnv, ...overlay } };
+  return Object.keys(overlay).length === 0 ? { env: baseEnv } : { env: { ...baseEnv, ...overlay } };
 }
 
 export type RunOpenshellInstallDeps = OpenshellInstallPinDeps & {

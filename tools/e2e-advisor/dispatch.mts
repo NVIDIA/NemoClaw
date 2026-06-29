@@ -60,6 +60,7 @@ type DispatchPlan = {
   jobs?: string[];
   ignoredJobs?: string[];
   recommendedJobs?: string[];
+  targetRefSecretBlockedJobs?: string[];
   dispatchableJobCount?: number;
   prNumber?: number;
   targetRef?: string;
@@ -127,7 +128,9 @@ async function main(): Promise<void> {
             token,
           });
         } catch (error: unknown) {
-          console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(
+            `Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
         output = {
           ...plan,
@@ -142,7 +145,9 @@ async function main(): Promise<void> {
     // Do not write exception details to artifacts. This catch can include
     // network-layer failures from the GitHub API dispatch path, and those
     // messages are not needed in uploaded advisor artifacts.
-    console.error(`E2E advisor dispatch failed: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `E2E advisor dispatch failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     output = {
       status: "failed",
       reason: "E2E advisor dispatch failed; see workflow logs for details",
@@ -187,7 +192,10 @@ export function planAutoDispatch({
     return { ...base, reason: `event ${eventName || "<unknown>"} is not pull_request` };
   }
   if (repository !== allowedRepository) {
-    return { ...base, reason: `repository ${repository || "<unknown>"} is not ${allowedRepository}` };
+    return {
+      ...base,
+      reason: `repository ${repository || "<unknown>"} is not ${allowedRepository}`,
+    };
   }
   if (!pr) {
     return { ...base, reason: "pull_request payload was not available" };
@@ -209,10 +217,16 @@ export function planAutoDispatch({
 
   const authorAssociation = pr.author_association || "";
   const authorLogin = pr.user?.login || "";
-  const allowedAssociations = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS);
-  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(normalizeLogin);
+  const allowedAssociations = parseCsv(
+    env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS,
+  );
+  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(
+    normalizeLogin,
+  );
   const allowedByAssociation = allowedAssociations.includes(authorAssociation);
-  const allowedByAuthorAllowlist = Boolean(authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)));
+  const allowedByAuthorAllowlist = Boolean(
+    authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)),
+  );
   if (!allowedByAssociation && !allowedByAuthorAllowlist) {
     return {
       ...base,
@@ -247,15 +261,36 @@ export function planAutoDispatch({
     };
   }
 
-  const dispatchableJobs = extractDispatchableJobs(workflowText);
+  const targetRef = pr.head?.sha || pr.head?.ref || "";
+  const dispatchableJobInfos = extractDispatchableJobInfos(workflowText);
+  const dispatchableJobs = dispatchableJobInfos.map((job) => job.id);
   const recommendedJobs = collectRecommendedJobs(result, targetWorkflow);
-  const jobs = unique(recommendedJobs.filter((job) => dispatchableJobs.includes(job)));
-  const ignoredJobs = unique(recommendedJobs.filter((job) => !dispatchableJobs.includes(job)));
+  const dispatchableRecommendedJobs = unique(
+    recommendedJobs.filter((job) => dispatchableJobs.includes(job)),
+  );
+  const targetRefSecretBlockedJobs =
+    targetRef === ""
+      ? []
+      : dispatchableRecommendedJobs.filter((job) =>
+          dispatchableJobInfos.some((info) => info.id === job && info.targetRefSecretBlocked),
+        );
+  const jobs = unique(
+    dispatchableRecommendedJobs.filter((job) => !targetRefSecretBlockedJobs.includes(job)),
+  );
+  const ignoredJobs = unique([
+    ...recommendedJobs.filter((job) => !dispatchableJobs.includes(job)),
+    ...targetRefSecretBlockedJobs,
+  ]);
 
   if (jobs.length === 0) {
+    const onlyBlockedByTargetRefSecrets =
+      dispatchableRecommendedJobs.length > 0 &&
+      dispatchableRecommendedJobs.every((job) => targetRefSecretBlockedJobs.includes(job));
     return {
       ...base,
-      reason: "no required advisor recommendations matched dispatchable jobs in the target workflow",
+      reason: onlyBlockedByTargetRefSecrets
+        ? "no required advisor recommendations can run with target_ref because hosted inference secrets are withheld"
+        : "no required advisor recommendations matched dispatchable jobs in the target workflow",
       prNumber: pr.number,
       authorAssociation,
       authorLogin,
@@ -263,10 +298,10 @@ export function planAutoDispatch({
       dispatchableJobCount: dispatchableJobs.length,
       recommendedJobs,
       ignoredJobs,
+      targetRefSecretBlockedJobs,
     };
   }
 
-  const targetRef = pr.head?.sha || pr.head?.ref || "";
   const dispatchRef = env.E2E_ADVISOR_AUTO_DISPATCH_REF || pr.base?.ref || DEFAULT_DISPATCH_REF;
   const advisorDispatchId = buildAdvisorDispatchId(pr.number, env);
   const inputs = {
@@ -285,6 +320,7 @@ export function planAutoDispatch({
     inputs,
     jobs,
     ignoredJobs,
+    targetRefSecretBlockedJobs,
     dispatchableJobCount: dispatchableJobs.length,
     prNumber: pr.number,
     targetRef,
@@ -297,11 +333,20 @@ export function planAutoDispatch({
 }
 
 export function extractDispatchableJobs(workflowText: string): string[] {
+  return extractDispatchableJobInfos(workflowText).map((job) => job.id);
+}
+
+type DispatchableJobInfo = {
+  id: string;
+  targetRefSecretBlocked: boolean;
+};
+
+function extractDispatchableJobInfos(workflowText: string): DispatchableJobInfo[] {
   const jobsBlockStart = workflowText.search(/^jobs:\s*$/m);
   if (jobsBlockStart === -1) return [];
 
   const lines = workflowText.slice(jobsBlockStart).split(/\r?\n/);
-  const jobs: string[] = [];
+  const jobs: DispatchableJobInfo[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const match = lines[index].match(/^  ([A-Za-z0-9_-]+):\s*$/);
     if (!match) continue;
@@ -314,18 +359,38 @@ export function extractDispatchableJobs(workflowText: string): string[] {
     }
     const body = bodyLines.join("\n");
     if (body.includes("inputs.jobs") && body.includes(`,${job},`)) {
-      jobs.push(job);
+      jobs.push({
+        id: job,
+        targetRefSecretBlocked: isTargetRefSecretBlockedJob(body),
+      });
     }
   }
-  return jobs.sort();
+  return jobs.sort((left, right) => left.id.localeCompare(right.id));
 }
 
-export function collectRecommendedJobs(result: AdvisorResult, targetWorkflow = DEFAULT_TARGET_WORKFLOW): string[] {
+function isTargetRefSecretBlockedJob(body: string): boolean {
+  const callsScriptRunnerWithHostedInference =
+    body.includes("uses: ./.github/workflows/e2e-script.yaml") &&
+    /^\s+nvidia_api_key:\s*true\s*$/m.test(body);
+  if (callsScriptRunnerWithHostedInference) return true;
+
+  const hasTargetRefGuardedInferenceSecret =
+    body.includes("inputs.target_ref == ''") && body.includes("secrets.NVIDIA_INFERENCE_API_KEY");
+  const usesHostedInferenceSecret =
+    body.includes("NEMOCLAW_E2E_USE_HOSTED_INFERENCE") || body.includes("COMPATIBLE_API_KEY");
+  return hasTargetRefGuardedInferenceSecret && usesHostedInferenceSecret;
+}
+
+export function collectRecommendedJobs(
+  result: AdvisorResult,
+  targetWorkflow = DEFAULT_TARGET_WORKFLOW,
+): string[] {
   const requiredTests = Array.isArray(result.requiredTests) ? result.requiredTests : [];
   const jobs: string[] = [];
   for (const test of requiredTests) {
     const workflow = typeof test.workflow === "string" ? path.basename(test.workflow.trim()) : "";
-    const workflowMatches = !workflow || workflow === targetWorkflow || workflow === path.basename(targetWorkflow);
+    const workflowMatches =
+      !workflow || workflow === targetWorkflow || workflow === path.basename(targetWorkflow);
     if (!workflowMatches) continue;
     if (typeof test.job === "string" && test.job.trim()) jobs.push(test.job.trim());
     if (typeof test.id === "string" && test.id.trim()) jobs.push(test.id.trim());
@@ -375,11 +440,15 @@ async function dispatchWorkflow({
   // same-repository/OWNER-or-MEMBER gating and strict validation of the target
   // workflow, ref, PR number, and comma-separated E2E job names.
   try {
-    await githubApi<void>(`repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`, token, {
-      method: "POST",
-      body: { ref: safeRef, inputs: safeInputs },
-      userAgent: "nemoclaw-e2e-advisor-dispatcher",
-    });
+    await githubApi<void>(
+      `repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`,
+      token,
+      {
+        method: "POST",
+        body: { ref: safeRef, inputs: safeInputs },
+        userAgent: "nemoclaw-e2e-advisor-dispatcher",
+      },
+    );
   } catch {
     // Do not include the response body in thrown errors. GitHub API error text
     // is network-controlled and this script records failures to artifact files.
@@ -425,9 +494,13 @@ async function findDispatchedWorkflowRun({
     if (attempt > 0) await delay(2000);
     let data: WorkflowRunSearchResult;
     try {
-      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, { userAgent: "nemoclaw-e2e-advisor-dispatcher" });
+      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, {
+        userAgent: "nemoclaw-e2e-advisor-dispatcher",
+      });
     } catch (error: unknown) {
-      console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(
+        `Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return undefined;
     }
     const match = data.workflow_runs?.find(
@@ -505,7 +578,17 @@ function renderDispatchSummary(result: DispatchPlan): string {
     lines.push(`Jobs: ${result.jobs.map((job) => `\`${job}\``).join(", ")}`);
   }
   if (Array.isArray(result.ignoredJobs) && result.ignoredJobs.length > 0) {
-    lines.push(`Ignored recommendations: ${result.ignoredJobs.map((job) => `\`${job}\``).join(", ")}`);
+    lines.push(
+      `Ignored recommendations: ${result.ignoredJobs.map((job) => `\`${job}\``).join(", ")}`,
+    );
+  }
+  if (
+    Array.isArray(result.targetRefSecretBlockedJobs) &&
+    result.targetRefSecretBlockedJobs.length > 0
+  ) {
+    lines.push(
+      `Target-ref secret blocked jobs: ${result.targetRefSecretBlockedJobs.map((job) => `\`${job}\``).join(", ")}`,
+    );
   }
   lines.push("");
   return `${lines.join("\n")}\n`;

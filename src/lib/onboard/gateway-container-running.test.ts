@@ -40,7 +40,9 @@ describe("verifyGatewayContainerRunning", () => {
   });
 
   it("returns unknown for daemon or inspection failures", () => {
-    const dockerInspect = vi.fn(() => dockerInspectResult(1, "", "Cannot connect to Docker daemon"));
+    const dockerInspect = vi.fn(() =>
+      dockerInspectResult(1, "", "Cannot connect to Docker daemon"),
+    );
 
     expect(verifyGatewayContainerRunning("nemoclaw", { dockerInspect })).toBe("unknown");
   });

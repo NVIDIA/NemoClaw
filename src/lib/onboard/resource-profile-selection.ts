@@ -34,9 +34,7 @@ function applyResourceEnvOverrides(
   const nextProfile = selectedProfile ? { ...selectedProfile } : { cpu: "", memory: "" };
   if (env.NEMOCLAW_CPU) nextProfile.cpu = env.NEMOCLAW_CPU;
   if (env.NEMOCLAW_RAM) nextProfile.memory = env.NEMOCLAW_RAM;
-  deps.note(
-    `  Resource overrides (env): cpu=${nextProfile.cpu}, ram=${nextProfile.memory}`,
-  );
+  deps.note(`  Resource overrides (env): cpu=${nextProfile.cpu}, ram=${nextProfile.memory}`);
   return nextProfile;
 }
 
@@ -45,12 +43,14 @@ function exitWithResourceProfileError(message: string): never {
   process.exit(1);
 }
 
-function printResolvedResourceProfile(profile: ResourceProfile, cpuTotal: number, memTotal: number): void {
+function printResolvedResourceProfile(
+  profile: ResourceProfile,
+  cpuTotal: number,
+  memTotal: number,
+): void {
   const resolvedCpu = resolveResourceValue(profile.cpu, cpuTotal, "cpu");
   const resolvedMemory = resolveResourceValue(profile.memory, memTotal, "memory");
-  console.log(
-    `  Resolved: CPU=${resolvedCpu}, RAM=${resolvedMemory}`,
-  );
+  console.log(`  Resolved: CPU=${resolvedCpu}, RAM=${resolvedMemory}`);
 }
 
 export async function selectResourceProfileForSandbox(
@@ -80,9 +80,7 @@ export async function selectResourceProfileForSandbox(
     console.log("  Resource profiles:");
     profileNames.forEach((name: string, i: number) => {
       const p = availableProfiles[name];
-      console.log(
-        `    ${i + 1}) ${name} (cpu=${p.cpu}, ram=${p.memory})`,
-      );
+      console.log(`    ${i + 1}) ${name} (cpu=${p.cpu}, ram=${p.memory})`);
     });
     console.log(`    ${profileNames.length + 1}) custom (enter values manually)`);
     console.log(`    ${profileNames.length + 2}) No profile (OpenShell defaults)`);

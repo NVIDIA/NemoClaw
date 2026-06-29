@@ -57,6 +57,14 @@ function restoreExitCode(previousExitCode: typeof process.exitCode): void {
   process.exitCode = previousExitCode;
 }
 
+function expectTempSshConfigCleanedUp(configFile: string): void {
+  const configDir = path.dirname(configFile);
+  expect(configDir).not.toBe(os.tmpdir());
+  expect(path.basename(configDir)).toMatch(/^nemoclaw-ssh-skill-/);
+  expect(path.basename(configFile)).toBe("ssh_config");
+  expect(fs.existsSync(configDir)).toBe(false);
+}
+
 describe("sandbox skill action orchestration", () => {
   let previousExitCode: typeof process.exitCode;
 
@@ -181,6 +189,7 @@ describe("sandbox skill action orchestration", () => {
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' removed"));
     expect(fs.existsSync(tempConfig)).toBe(false);
+    expectTempSshConfigCleanedUp(tempConfig);
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -216,6 +225,7 @@ describe("sandbox skill action orchestration", () => {
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining("Skill 'demo-skill' installed"));
     expect(fs.existsSync(tempConfig)).toBe(false);
+    expectTempSshConfigCleanedUp(tempConfig);
     expect(process.exitCode).toBeUndefined();
   });
 });

@@ -12,10 +12,10 @@
  * shields are up (root-owned), startup must not weaken the lock.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
@@ -49,12 +49,12 @@ function withMockedDockerExecFileSync<T>(
   options: { symlinkedPaths?: ReadonlySet<string> } = {},
 ): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerExecModule = require("../dist/lib/adapters/docker/exec.js") as {
+  const dockerExecModule = require("../src/lib/adapters/docker/exec.js") as {
     dockerExecFileSync: (args: readonly string[]) => string;
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
-  const shieldsModulePath = require.resolve("../dist/lib/shields/index.js");
-  const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec.js");
+  const shieldsModulePath = require.resolve("../src/lib/shields/index.js");
+  const privilegedExecPath = require.resolve("../src/lib/sandbox/privileged-exec.js");
   const priorPrivilegedExec = require.cache[privilegedExecPath];
   delete require.cache[shieldsModulePath];
   require.cache[privilegedExecPath] = {
@@ -217,7 +217,7 @@ describe("mutable agent config permissions", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+      const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
         unlockAgentConfig: (
           sandboxName: string,
           target: {
@@ -258,18 +258,18 @@ describe("mutable agent config permissions", () => {
       (command) => command[0] === "sh" && command[1] === "-c",
     );
     expect(
-      shellInvocations.some((command) =>
-        command.includes("/sandbox/.openclaw") &&
-        command.includes("sandbox:sandbox") &&
-        command.includes("g+rwX,o-rwx") &&
-        command.includes("2770") &&
-        command.includes("workspace"),
+      shellInvocations.some(
+        (command) =>
+          command.includes("/sandbox/.openclaw") &&
+          command.includes("sandbox:sandbox") &&
+          command.includes("g+rwX,o-rwx") &&
+          command.includes("2770") &&
+          command.includes("workspace"),
       ),
     ).toBe(true);
     expect(
       shellInvocations.some(
-        (command) =>
-          typeof command[2] === "string" && command[2].includes('workspace-*'),
+        (command) => typeof command[2] === "string" && command[2].includes("workspace-*"),
       ),
     ).toBe(true);
   });
@@ -281,7 +281,7 @@ describe("mutable agent config permissions", () => {
         commands,
         () => {
           // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+          const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
             unlockAgentConfig: (
               sandboxName: string,
               target: {
@@ -337,7 +337,7 @@ describe("mutable agent config permissions", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+      const { unlockAgentConfig } = require("../src/lib/shields/index.js") as {
         unlockAgentConfig: (
           sandboxName: string,
           target: {
@@ -416,7 +416,7 @@ Module._load = function patchedLoad(request, parent, isMain) {
   }
   return originalLoad.call(this, request, parent, isMain);
 };
-const { lockAgentConfig } = require("./dist/lib/shields/index.js");
+const { lockAgentConfig } = require("./src/lib/shields/index.ts");
 lockAgentConfig("sandbox-pod", {
   agentName: "openclaw",
   configPath: "/sandbox/.openclaw/openclaw.json",
@@ -440,8 +440,8 @@ process.stdout.write(JSON.stringify(calls));
         command.includes("go-w") &&
         command.includes("755"),
     );
-    const stripSetgidIndex = commands.findIndex((command) =>
-      command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
+    const stripSetgidIndex = commands.findIndex(
+      (command) => command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
     );
     expect(stateDirLockIndex).toBeGreaterThan(-1);
     expect(stripSetgidIndex).toBeGreaterThan(stateDirLockIndex);

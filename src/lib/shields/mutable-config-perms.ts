@@ -93,9 +93,7 @@ export function fileSatisfiesMutableContract(mode: string): boolean {
   );
 }
 
-function postureBlocksMutableRepair(
-  mode: MutableConfigPostureMode,
-): string | null {
+function postureBlocksMutableRepair(mode: MutableConfigPostureMode): string | null {
   if (mode === "locked") {
     return "shields are up (config is locked); refusing to weaken permissions";
   }
@@ -149,9 +147,7 @@ export function inspectMutableConfigPerms(
     );
   }
   if (dir.owner !== MUTABLE_OPENCLAW_OWNER) {
-    issues.push(
-      `${target.configDir} owner ${dir.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
-    );
+    issues.push(`${target.configDir} owner ${dir.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`);
   }
   if (!fileSatisfiesMutableContract(file.mode)) {
     issues.push(
@@ -159,9 +155,7 @@ export function inspectMutableConfigPerms(
     );
   }
   if (file.owner !== MUTABLE_OPENCLAW_OWNER) {
-    issues.push(
-      `${target.configFile} owner ${file.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
-    );
+    issues.push(`${target.configFile} owner ${file.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`);
   }
   // Mirror the file contract over the sensitive-file set that unlockAgentConfig
   // touches. Missing files are tolerated (e.g. .config-hash is only created
@@ -179,9 +173,7 @@ export function inspectMutableConfigPerms(
       );
     }
     if (sensitive.owner !== MUTABLE_OPENCLAW_OWNER) {
-      issues.push(
-        `${sensitivePath} owner ${sensitive.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`,
-      );
+      issues.push(`${sensitivePath} owner ${sensitive.owner} (expected ${MUTABLE_OPENCLAW_OWNER})`);
     }
   }
   return {

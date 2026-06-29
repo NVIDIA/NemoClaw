@@ -80,6 +80,20 @@ const server = http.createServer((clientReq, clientRes) => {
   clientReq.pipe(proxyReq);
 });
 
+// The proxy binds 0.0.0.0, so an unhandled listen error (most commonly
+// EADDRINUSE when the port is already taken) would crash with an uncaught
+// exception. Exit cleanly with a non-zero code instead; the host-side
+// startOllamaAuthProxy() detects the missing process and reports the port
+// owner with remediation. See #4820.
+server.on("error", (/** @type {NodeJS.ErrnoException} */ err) => {
+  if (err && err.code === "EADDRINUSE") {
+    console.error(`Ollama auth proxy: port ${LISTEN_PORT} is already in use`);
+  } else {
+    console.error(`Ollama auth proxy failed to start: ${err && err.message ? err.message : err}`);
+  }
+  process.exit(1);
+});
+
 server.listen(LISTEN_PORT, "0.0.0.0", () => {
   console.log(`Ollama auth proxy listening on 0.0.0.0:${LISTEN_PORT} -> 127.0.0.1:${BACKEND_PORT}`);
 });

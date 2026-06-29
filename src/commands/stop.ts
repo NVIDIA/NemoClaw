@@ -18,8 +18,7 @@ export default class DeprecatedStopCommand extends NemoClawCommand {
   static deprecationOptions = {
     message: "Deprecated: 'nemoclaw stop' is now 'nemoclaw tunnel stop'. See 'nemoclaw help'.",
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     await this.parse(DeprecatedStopCommand);

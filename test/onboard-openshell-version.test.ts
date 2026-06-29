@@ -14,7 +14,7 @@ const {
   getInstalledOpenshellVersion,
   getStableGatewayImageRef,
   versionGte,
-} = require("../dist/lib/onboard") as {
+} = require("../src/lib/onboard") as {
   getBlueprintMaxOpenshellVersion: (rootDir?: string) => string | null;
   getBlueprintMinOpenshellVersion: (rootDir?: string) => string | null;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
@@ -22,7 +22,7 @@ const {
   versionGte: (left?: string | null, right?: string | null) => boolean;
 };
 
-const installModule = require("../dist/lib/onboard/openshell-install") as {
+const installModule = require("../src/lib/onboard/openshell-install") as {
   parseOpenshellReleaseTag: (tag: unknown) => string | null;
   resolveOpenshellInstallVersion: (
     available: readonly string[],
@@ -38,7 +38,7 @@ const installModule = require("../dist/lib/onboard/openshell-install") as {
   };
 };
 
-const pinModule = require("../dist/lib/onboard/openshell-pin") as {
+const pinModule = require("../src/lib/onboard/openshell-pin") as {
   resolveOpenshellInstallPin: (deps: {
     getBlueprintMaxOpenshellVersion: () => string | null;
     versionGte: (a: string, b: string) => boolean;
@@ -97,7 +97,10 @@ describe("OpenShell version helpers", () => {
 
     const noFieldDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-field-"));
     fs.mkdirSync(path.join(noFieldDir, "nemoclaw-blueprint"), { recursive: true });
-    fs.writeFileSync(path.join(noFieldDir, "nemoclaw-blueprint", "blueprint.yaml"), 'version: "0.1.0"\n');
+    fs.writeFileSync(
+      path.join(noFieldDir, "nemoclaw-blueprint", "blueprint.yaml"),
+      'version: "0.1.0"\n',
+    );
     try {
       expect(getBlueprintMinOpenshellVersion(noFieldDir)).toBe(null);
     } finally {
@@ -172,7 +175,9 @@ describe("OpenShell version helpers", () => {
   });
 
   it("rejects OpenShell blueprint version constraints with suffixes", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-openshell-version-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-blueprint-bad-openshell-version-"),
+    );
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
     fs.mkdirSync(blueprintDir, { recursive: true });
     fs.writeFileSync(
@@ -198,7 +203,10 @@ describe("OpenShell version helpers", () => {
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-no-max-field-"));
     fs.mkdirSync(path.join(tmpDir, "nemoclaw-blueprint"), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, "nemoclaw-blueprint", "blueprint.yaml"), 'version: "0.1.0"\n');
+    fs.writeFileSync(
+      path.join(tmpDir, "nemoclaw-blueprint", "blueprint.yaml"),
+      'version: "0.1.0"\n',
+    );
     try {
       expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
     } finally {

@@ -27,6 +27,20 @@ filesystem_policy:
     - /sandbox
     - /tmp
     - /dev/null
+    - /dev/pts                      # PTY multiplexer + slave devices (devpts).
+                                    # The Hermes TUI (prompt_toolkit), the web
+                                    # dashboard's interactive chat pty bridge,
+                                    # and terminal.backend: local all allocate a
+                                    # PTY via openpty()/forkpty(), opening
+                                    # /dev/ptmx (-> /dev/pts/ptmx) and a
+                                    # /dev/pts/<n> slave. Without this grant
+                                    # landlock denies the open with EACCES, which
+                                    # the dashboard surfaces as "Chat failed to
+                                    # start: out of pty devices" and which breaks
+                                    # any interactive shell tool. Grant the
+                                    # directory, not /dev/ptmx itself — it is a
+                                    # symlink the supervisor refuses to chown.
+                                    # Mirrors the OpenClaw policy grant (#4513).
     # Agent config/state root. Shields-up locks config.yaml/.env and the
     # parent directory, but intentionally leaves /sandbox/.hermes/.hermes_history
     # as sandbox:sandbox 0660 because prompt_toolkit FileHistory appends there
@@ -75,36 +89,17 @@ network_policies:
           - allow: { method: POST, path: "/v1/embeddings" }
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
-      - host: inference-api.nvidia.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: POST, path: "/v1/chat/completions" }
-          - allow: { method: POST, path: "/v1/completions" }
-          - allow: { method: POST, path: "/v1/embeddings" }
-          - allow: { method: GET, path: "/v1/models" }
-          - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  github:
-    name: github
-    endpoints:
-      - host: github.com
-        port: 443
-        access: full
-      - host: api.github.com
-        port: 443
-        access: full
-    binaries:
-      # `gh` was historically whitelisted here, but the Hermes sandbox base
-      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
-      # `gh`, so the entry was a phantom — see #2179.
-      - { path: /usr/bin/git }
-      - { path: /opt/hermes/.venv/bin/python }
+  # NOTE: github.com / api.github.com and the git binary used to
+  # live in this base policy and were therefore granted to every
+  # Hermes sandbox regardless of user opt-in. They have been moved
+  # into a discoverable preset (`presets/github.yaml`) so a sandbox
+  # only gets GitHub access when the user explicitly selects the
+  # `github` preset during onboard.
 
   # ── Nous Research — public metadata and agent updates ─────────
   # Nous Portal OAuth, managed inference, and managed tool gateway auth are
@@ -274,11 +269,93 @@ network_policies:
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
+  teams:
+    name: teams
+    endpoints:
+      - host: login.microsoftonline.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: login.botframework.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.botframework.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      # The SDK follows Bot Connector serviceUrl values from inbound Teams
+      # activities, so this host remains method-scoped while Graph/media hosts
+      # stay read-only.
+      - host: smba.trafficmanager.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+          - allow: { method: PUT, path: "/**" }
+          - allow: { method: DELETE, path: "/**" }
+      - host: graph.microsoft.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: teams.microsoft.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: teams.cdn.office.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: statics.teams.cdn.office.net
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: "*.sharepoint.com"
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: 1drv.ms
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
   # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
   # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
-  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
-  # agents/hermes/config/messaging-config.ts and
-  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) via
+  # manifest hook render outputs. See nemoclaw-blueprint/policies/presets/wechat.yaml
+  # for the shared host set.
   wechat_bridge:
     name: wechat_bridge
     endpoints:

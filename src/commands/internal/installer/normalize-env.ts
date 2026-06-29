@@ -11,7 +11,8 @@ export default class InternalInstallerNormalizeEnvCommand extends NemoClawComman
   static hidden = true;
   static strict = true;
   static summary = "Internal: normalize installer environment values";
-  static description = "Normalize installer ref and provider environment values without applying installation changes.";
+  static description =
+    "Normalize installer ref and provider environment values without applying installation changes.";
   static usage = ["internal installer normalize-env [--json]"];
   static examples = ["<%= config.bin %> internal installer normalize-env --provider cloud --json"];
   static flags = {
@@ -30,6 +31,7 @@ export default class InternalInstallerNormalizeEnvCommand extends NemoClawComman
     });
 
     if (flags.json) this.logJson(normalized);
-    else console.log(`ref=${normalized.installRef} provider=${normalized.provider.normalized ?? ""}`);
+    else
+      console.log(`ref=${normalized.installRef} provider=${normalized.provider.normalized ?? ""}`);
   }
 }

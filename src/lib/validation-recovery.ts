@@ -72,7 +72,10 @@ export function getProbeRecovery(
   if (transportFailure) {
     return { kind: "transport", retry: "retry", failure: transportFailure };
   }
-  if (allowModelRetry && failures.some((failure) => classifyValidationFailure(failure).kind === "model")) {
+  if (
+    allowModelRetry &&
+    failures.some((failure) => classifyValidationFailure(failure).kind === "model")
+  ) {
     return { kind: "model", retry: "model" };
   }
   if (failures.some((failure) => classifyValidationFailure(failure).kind === "endpoint")) {

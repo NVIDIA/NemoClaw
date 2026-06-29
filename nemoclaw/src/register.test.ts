@@ -117,7 +117,7 @@ describe("plugin registration", () => {
       ncpPartner: null,
       model: "nvidia/stale-model",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     });
     mockedReadFileSync.mockReset();
@@ -151,7 +151,7 @@ describe("plugin registration", () => {
       ncpPartner: null,
       model: "nvidia/custom-model",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     });
     mockedReadFileSync.mockReset();

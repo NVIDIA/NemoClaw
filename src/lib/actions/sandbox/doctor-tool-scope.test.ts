@@ -77,7 +77,13 @@ describe("parseToolScopeProbe (#4616)", () => {
       pendingUnknown: 1,
       watcherActive: false,
       dashboardPort: 18789,
-      signals: { gateway1006: true, scopePending: true, loopbackDenied: true, watcherDeadline: true, rejectedClients: 3 },
+      signals: {
+        gateway1006: true,
+        scopePending: true,
+        loopbackDenied: true,
+        watcherDeadline: true,
+        rejectedClients: 3,
+      },
     })}\ntrailing`;
     const parsed = parseToolScopeProbe(raw);
     expect(parsed).not.toBeNull();

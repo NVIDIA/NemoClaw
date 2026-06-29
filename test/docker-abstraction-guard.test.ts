@@ -23,14 +23,10 @@ type CommandUse = {
 };
 
 function listCommandUses(): CommandUse[] {
-  const result = spawnSync(
-    TSX,
-    [INVENTORY_SCRIPT, "--json", "--list-calls", "src"],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-    },
-  );
+  const result = spawnSync(TSX, [INVENTORY_SCRIPT, "--json", "--list-calls", "src"], {
+    cwd: REPO_ROOT,
+    encoding: "utf-8",
+  });
   expect(result.status).toBe(0);
   return JSON.parse(result.stdout) as CommandUse[];
 }

@@ -29,132 +29,132 @@ const FAKE = {
 };
 
 describe("scanForSecrets", () => {
-  describe("detects known secret patterns", () => {
-    it("NVIDIA API key", () => {
+  describe("known secret patterns", () => {
+    it("detects an NVIDIA API key", () => {
       const matches = scanForSecrets(`my key is ${FAKE.nvidia}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("NVIDIA API key");
     });
 
-    it("OpenAI API key", () => {
+    it("detects an OpenAI API key", () => {
       const matches = scanForSecrets(`export OPENAI_API_KEY=${FAKE.openai}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("OpenAI API key");
     });
 
-    it("OpenAI project API key", () => {
+    it("detects an OpenAI project API key", () => {
       const matches = scanForSecrets(`export OPENAI_API_KEY=${FAKE.openaiProject}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("OpenAI API key");
     });
 
-    it("GitHub personal access token", () => {
+    it("detects a GitHub personal access token", () => {
       const matches = scanForSecrets(`token: ${FAKE.github}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("GitHub token");
     });
 
-    it("AWS access key", () => {
+    it("detects an AWS access key", () => {
       const matches = scanForSecrets(`aws_access_key_id = ${FAKE.aws}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("AWS access key");
     });
 
-    it("Slack bot token", () => {
+    it("detects a Slack bot token", () => {
       const matches = scanForSecrets(`SLACK_TOKEN=${FAKE.slack}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Slack token");
     });
 
-    it("Slack app token", () => {
+    it("detects a Slack app token", () => {
       const matches = scanForSecrets(`SLACK_APP_TOKEN=${FAKE.slackApp}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Slack token");
     });
 
-    it("npm token", () => {
+    it("detects an npm token", () => {
       const matches = scanForSecrets(`//registry.npmjs.org/:_authToken=${FAKE.npm}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("npm token");
     });
 
-    it("private key (PEM RSA)", () => {
+    it("detects a PEM RSA private key", () => {
       const matches = scanForSecrets(FAKE.pemRsa);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Private key");
     });
 
-    it("private key (OpenSSH)", () => {
+    it("detects an OpenSSH private key", () => {
       const matches = scanForSecrets(FAKE.pemOpenssh);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Private key");
     });
 
-    it("Telegram bot token", () => {
+    it("detects a Telegram bot token", () => {
       const matches = scanForSecrets(`bot token: ${FAKE.telegram}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Telegram bot token");
     });
 
-    it("Google API key", () => {
+    it("detects a Google API key", () => {
       const matches = scanForSecrets(`GOOGLE_API_KEY=${FAKE.google}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Google API key");
     });
 
-    it("Anthropic API key", () => {
+    it("detects an Anthropic API key", () => {
       const matches = scanForSecrets(`key: ${FAKE.anthropic}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Anthropic API key");
     });
 
-    it("HuggingFace token", () => {
+    it("detects a HuggingFace token", () => {
       const matches = scanForSecrets(`HF_TOKEN=${FAKE.huggingface}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("HuggingFace token");
     });
 
-    it("Discord bot token", () => {
+    it("detects a Discord bot token", () => {
       const matches = scanForSecrets(`DISCORD_TOKEN=${FAKE.discord}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Discord bot token");
     });
 
-    it("AWS secret key", () => {
+    it("detects an AWS secret key", () => {
       const matches = scanForSecrets(`aws_secret_access_key = ${FAKE.awsSecret}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("AWS secret key");
     });
 
-    it("Authorization header", () => {
+    it("detects an Authorization header", () => {
       const matches = scanForSecrets(`Authorization: Bearer ${FAKE.authHeader}`);
       expect(matches).toHaveLength(1);
       expect(matches[0].pattern).toBe("Authorization header");
     });
   });
 
-  describe("does not false-positive on safe content", () => {
-    it("normal markdown text", () => {
+  describe("safe content", () => {
+    it("allows normal markdown text", () => {
       expect(scanForSecrets("# My Project\n\nThis is a regular markdown file.")).toHaveLength(0);
     });
 
-    it("code blocks without secrets", () => {
+    it("allows code blocks without secrets", () => {
       expect(scanForSecrets("```python\nprint('hello world')\n```")).toHaveLength(0);
     });
 
-    it("short tokens that don't meet minimum length", () => {
+    it("ignores short tokens below the minimum length", () => {
       expect(scanForSecrets("sk-short")).toHaveLength(0);
     });
 
-    it("URLs with path segments", () => {
+    it("allows URLs with path segments", () => {
       expect(scanForSecrets("https://github.com/NVIDIA/NemoClaw/pull/1121")).toHaveLength(0);
     });
 
-    it("UUIDs", () => {
+    it("allows UUIDs", () => {
       expect(scanForSecrets("id: 550e8400-e29b-41d4-a716-446655440000")).toHaveLength(0);
     });
 
-    it("git commit hashes", () => {
+    it("allows git commit hashes", () => {
       expect(scanForSecrets("commit 24a8b5a3f1e2d3c4b5a6f7e8d9c0b1a2")).toHaveLength(0);
     });
   });
@@ -168,7 +168,7 @@ describe("scanForSecrets", () => {
 
   describe("multiple secrets in one content", () => {
     it("detects multiple different secrets", () => {
-      const content = `NVIDIA_API_KEY=${FAKE.nvidia}\nOPENAI_KEY=${FAKE.openai}`;
+      const content = `NVIDIA_INFERENCE_API_KEY=${FAKE.nvidia}\nOPENAI_KEY=${FAKE.openai}`;
       const matches = scanForSecrets(content);
       expect(matches.length).toBeGreaterThanOrEqual(2);
     });

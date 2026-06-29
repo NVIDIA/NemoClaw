@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import {
   detectOpenShellStateRpcPreflightIssue,
@@ -74,7 +73,49 @@ export async function backupAll(): Promise<void> {
       continue;
     }
     console.log(`  Backing up '${sb.name}'...`);
-    const result = sandboxState.backupSandboxState(sb.name);
+    let result: sandboxState.BackupResult;
+    try {
+      result = sandboxState.backupSandboxState(sb.name);
+    } catch (err: unknown) {
+      // Source-of-truth review (#5734 / #5819):
+      //
+      // - Invalid state: a sandbox in the registry references an agent whose
+      //   manifest no longer exists on disk (orphan after a higher-version
+      //   install replaced the manifest tree). loadAgent() at
+      //   src/lib/agent/defs.ts:365-372 throws `Agent '<name>' not found:
+      //   <manifestPath>` when this happens.
+      // - Source boundary: the orphan is owned upstream by the install/upgrade
+      //   flow that mutates the agents/ directory without reconciling the
+      //   registry. The narrow skip here exists purely so the pre-upgrade
+      //   backup-all loop survives until the upgrade itself reinstalls the
+      //   missing manifest.
+      // - Source-fix constraint: the registry cannot be reconciled before the
+      //   backup runs because the backup IS what gates the upgrade that ships
+      //   the reconciled manifests. A registry-side fix at boot or post-install
+      //   would solve the root cause but is out of scope here.
+      // - Regression test: maintenance.test.ts covers the orphan-skip,
+      //   skipped-not-failed counter, non-orphan re-throw (EACCES), and the
+      //   `: <path>`-suffixed shape boundary so widening or eliminating the
+      //   matcher fails CI.
+      // - Removal condition: drop this catch when the registry is reconciled
+      //   on install/upgrade and orphan sandboxes can no longer reach
+      //   backup-all (or when backupSandboxState surfaces a typed
+      //   MissingAgentManifestError that the caller can identify without
+      //   string matching).
+      //
+      // Anchored to the exact loadAgent() throw shape. Requiring the
+      // `: <path>` suffix prevents accidentally catching unrelated
+      // "Agent '...' not found" messages from other layers that should still
+      // abort the backup batch (disk full, SSH timeout, permission denied,
+      // programming bugs all propagate).
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/^Agent '[^']+' not found: .+\/manifest\.yaml$/.test(msg)) {
+        throw err;
+      }
+      console.log(`  ${YW}⚠${R} Skipped '${sb.name}' (orphan manifest): ${msg}`);
+      skipped++;
+      continue;
+    }
     if (result.success) {
       console.log(
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,

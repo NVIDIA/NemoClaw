@@ -30,7 +30,10 @@ describe("findEnvVarReads", () => {
       "const { NEMOCLAW_FOO, NEMOCLAW_BAR: bar, PATH: NEMOCLAW_NOT_REAL } = process.env;",
       ["NEMOCLAW_BAR", "NEMOCLAW_FOO"],
     ],
-    ["const x = process.env.NEMOCLAW_FOO ?? process.env.NEMOCLAW_BAR;", ["NEMOCLAW_BAR", "NEMOCLAW_FOO"]],
+    [
+      "const x = process.env.NEMOCLAW_FOO ?? process.env.NEMOCLAW_BAR;",
+      ["NEMOCLAW_BAR", "NEMOCLAW_FOO"],
+    ],
   ])("extracts %s", (code, expected) => {
     expect([...findEnvVarReads(code)].sort()).toEqual(expected);
   });
@@ -46,7 +49,7 @@ describe("findEnvVarReads", () => {
   it.each([
     "const x = process.env.PATH;",
     "const x = process.env.HOME;",
-    "const x = process.env.NVIDIA_API_KEY;",
+    "const x = process.env.NVIDIA_INFERENCE_API_KEY;",
     "const x = process.env.BRAVE_API_KEY;",
     "const x = process.env.TELEGRAM_BOT_TOKEN;",
   ])("ignores non-NEMOCLAW var %s", (code) => {

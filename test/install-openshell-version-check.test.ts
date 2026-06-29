@@ -145,11 +145,15 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("accepts macOS openshell 0.0.44 when the gateway binary is installed", () => {
-    const result = runWithInstalledVersion("0.0.44", {}, {
-      driverBins: "gateway",
-      os: "Darwin",
-      arch: "arm64",
-    });
+    const result = runWithInstalledVersion(
+      "0.0.44",
+      {},
+      {
+        driverBins: "gateway",
+        os: "Darwin",
+        arch: "arm64",
+      },
+    );
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
   });
@@ -185,11 +189,15 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   });
 
   it("triggers reinstall on macOS when openshell 0.0.44 is missing required gateway binaries", () => {
-    const result = runWithInstalledVersion("0.0.44", {}, {
-      driverBins: false,
-      os: "Darwin",
-      arch: "arm64",
-    });
+    const result = runWithInstalledVersion(
+      "0.0.44",
+      {},
+      {
+        driverBins: false,
+        os: "Darwin",
+        arch: "arm64",
+      },
+    );
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/missing Docker-driver binaries/);
     expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);

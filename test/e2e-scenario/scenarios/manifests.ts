@@ -36,7 +36,11 @@ function asRecord(value: unknown, fieldPath: string, filePath: string): Record<s
   return value;
 }
 
-function assertString(value: unknown, fieldPath: string, filePath: string): asserts value is string {
+function assertString(
+  value: unknown,
+  fieldPath: string,
+  filePath: string,
+): asserts value is string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${filePath}: ${fieldPath} must be a non-empty string`);
   }
@@ -53,10 +57,19 @@ function scanProductOnly(value: unknown, filePath: string, fieldPath = "manifest
 
   for (const [key, child] of Object.entries(value)) {
     if (FORBIDDEN_PRODUCT_FIELDS.has(key)) {
-      throw new Error(`${filePath}: ${fieldPath}.${key} is test assertion/suite metadata; manifests are product-facing only`);
+      throw new Error(
+        `${filePath}: ${fieldPath}.${key} is test assertion/suite metadata; manifests are product-facing only`,
+      );
     }
-    if (SECRET_KEY_PATTERN.test(key) && key !== "credentialRefs" && typeof child === "string" && child.trim() !== "") {
-      throw new Error(`${filePath}: ${fieldPath}.${key} looks like a raw secret; use state.credentialRefs instead`);
+    if (
+      SECRET_KEY_PATTERN.test(key) &&
+      key !== "credentialRefs" &&
+      typeof child === "string" &&
+      child.trim() !== ""
+    ) {
+      throw new Error(
+        `${filePath}: ${fieldPath}.${key} looks like a raw secret; use state.credentialRefs instead`,
+      );
     }
     scanProductOnly(child, filePath, `${fieldPath}.${key}`);
   }
@@ -72,7 +85,10 @@ function validateCredentialRefs(state: Record<string, unknown> | undefined, file
   }
 }
 
-export function validateManifest(document: unknown, filePath = "manifest"): asserts document is NemoClawInstanceManifest {
+export function validateManifest(
+  document: unknown,
+  filePath = "manifest",
+): asserts document is NemoClawInstanceManifest {
   const root = asRecord(document, "manifest", filePath);
   if (root.apiVersion !== "nemoclaw.io/v1") {
     throw new Error(`${filePath}: apiVersion must be nemoclaw.io/v1`);

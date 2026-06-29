@@ -4,10 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { GpuDetection } from "../inference/nim";
-import {
-  getResumeSandboxGpuOverrides,
-  resolveSandboxGpuConfig,
-} from "./sandbox-gpu-mode";
+import { getResumeSandboxGpuOverrides, resolveSandboxGpuConfig } from "./sandbox-gpu-mode";
 
 function gpu(overrides: Partial<GpuDetection> = {}): GpuDetection {
   return {
@@ -119,17 +116,17 @@ describe("sandbox GPU mode helpers", () => {
       false,
     );
     expect(resumedAuto).toEqual({ flag: null, device: null });
-    expect(
-      resolveSandboxGpuConfig(gpu(), { ...resumedAuto, env: {} }).sandboxGpuEnabled,
-    ).toBe(true);
+    expect(resolveSandboxGpuConfig(gpu(), { ...resumedAuto, env: {} }).sandboxGpuEnabled).toBe(
+      true,
+    );
 
     const resumedDisabled = getResumeSandboxGpuOverrides(
       { sandboxGpuMode: "0", sandboxGpuDevice: null },
       false,
     );
-    expect(
-      resolveSandboxGpuConfig(gpu(), { ...resumedDisabled, env: {} }).sandboxGpuEnabled,
-    ).toBe(false);
+    expect(resolveSandboxGpuConfig(gpu(), { ...resumedDisabled, env: {} }).sandboxGpuEnabled).toBe(
+      false,
+    );
 
     const legacyGpuSession = getResumeSandboxGpuOverrides(null, true);
     expect(legacyGpuSession.flag).toBe("enable");

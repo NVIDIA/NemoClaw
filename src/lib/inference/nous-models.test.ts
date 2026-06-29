@@ -7,7 +7,7 @@ import {
   extractNousRecommendedModelOptions,
   getHermesProviderModelOptions,
   mergeModelOptions,
-} from "../../../dist/lib/inference/nous-models";
+} from "./nous-models";
 
 describe("Nous recommended model helpers", () => {
   it("prepends paid portal recommendations and keeps fallback models for the full list", () => {
@@ -25,30 +25,23 @@ describe("Nous recommended model helpers", () => {
       ["paid/model-b", "fallback/model-d"],
     );
 
-    expect(models).toEqual([
-      "paid/model-a",
-      "paid/model-b",
-      "free/model-c",
-      "fallback/model-d",
-    ]);
+    expect(models).toEqual(["paid/model-a", "paid/model-b", "free/model-c", "fallback/model-d"]);
   });
 
   it("falls back when the portal payload has no usable model ids", () => {
     expect(
-      extractNousRecommendedModelOptions(
-        { paidRecommendedModels: [{ modelName: "not safe" }] },
-        ["fallback/model-a", "fallback/model-b"],
-      ),
+      extractNousRecommendedModelOptions({ paidRecommendedModels: [{ modelName: "not safe" }] }, [
+        "fallback/model-a",
+        "fallback/model-b",
+      ]),
     ).toEqual(["fallback/model-a", "fallback/model-b"]);
   });
 
   it("deduplicates and filters model option groups", () => {
-    expect(
-      mergeModelOptions(
-        ["model/a", "model/a", "bad model"],
-        ["model/b", "model/a"],
-      ),
-    ).toEqual(["model/a", "model/b"]);
+    expect(mergeModelOptions(["model/a", "model/a", "bad model"], ["model/b", "model/a"])).toEqual([
+      "model/a",
+      "model/b",
+    ]);
   });
 
   it("fetches the portal catalog when available", async () => {

@@ -41,6 +41,11 @@ export interface OnboardMachineRunnerOptions<Context> {
    * handlers that deliberately own a later state boundary.
    */
   sequenceOwnership?: OnboardStateSequenceOwnership;
+  /**
+   * Non-terminal handoff states where the runner should pause without requiring
+   * a handler for the stop state.
+   */
+  stopStates?: readonly OnboardMachineState[];
   updateContext?(input: {
     context: Context;
     state: OnboardMachineState;
@@ -200,6 +205,7 @@ export async function runOnboardMachine<Context>({
   handlers,
   maxTransitions,
   sequenceOwnership: customSequenceOwnership = {},
+  stopStates = [],
   updateContext,
 }: OnboardMachineRunnerOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   let context = initialContext;
@@ -211,7 +217,10 @@ export async function runOnboardMachine<Context>({
     ...customSequenceOwnership,
   };
 
-  while (!isTerminalOnboardMachineState(session.machine.state)) {
+  while (
+    !isTerminalOnboardMachineState(session.machine.state) &&
+    !stopStates.includes(session.machine.state)
+  ) {
     if (transitions >= transitionLimit) {
       throw new OnboardMachineTransitionLimitError(transitionLimit);
     }
@@ -254,7 +263,12 @@ export async function runOnboardMachine<Context>({
       context = updateContext
         ? await updateContext({ context, state: resultState, result, session })
         : context;
-      if (isTerminalOnboardMachineState(session.machine.state)) break;
+      if (
+        isTerminalOnboardMachineState(session.machine.state) ||
+        stopStates.includes(session.machine.state)
+      ) {
+        break;
+      }
     }
   }
 

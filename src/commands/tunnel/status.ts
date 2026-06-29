@@ -9,7 +9,8 @@ export default class TunnelStatusCommand extends NemoClawCommand {
   static id = "tunnel:status";
   static strict = true;
   static summary = "Show cloudflared public-URL tunnel status";
-  static description = "Show the cloudflared public-URL tunnel status for the default sandbox dashboard.";
+  static description =
+    "Show the cloudflared public-URL tunnel status for the default sandbox dashboard.";
   static usage = ["tunnel status"];
   static examples = ["<%= config.bin %> tunnel status"];
   static flags = {};

@@ -18,9 +18,7 @@ function hasRecordedGpuMode(value: unknown): boolean {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-export function rebuildShouldOptOutGpu(
-  sb: RebuildGpuOptOutEntry | null | undefined,
-): boolean {
+export function rebuildShouldOptOutGpu(sb: RebuildGpuOptOutEntry | null | undefined): boolean {
   if (!sb) return false;
   const mode = normalizeSandboxGpuMode(sb.sandboxGpuMode);
   if (mode === "0") return true;

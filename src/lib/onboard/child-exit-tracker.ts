@@ -56,14 +56,11 @@ export function trackChildExit(child: ChildProcess): ChildExitState {
     code: null as number | null,
     signal: null as NodeJS.Signals | null,
   };
-  child.once(
-    "exit",
-    (code: number | null, signal: NodeJS.Signals | null) => {
-      state.exited = true;
-      state.code = code;
-      state.signal = signal;
-    },
-  );
+  child.once("exit", (code: number | null, signal: NodeJS.Signals | null) => {
+    state.exited = true;
+    state.code = code;
+    state.signal = signal;
+  });
   return {
     get exited() {
       return state.exited;

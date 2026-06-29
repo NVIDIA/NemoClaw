@@ -25,8 +25,7 @@ export default class ShareUnmountCommand extends NemoClawCommand {
       required: false,
     }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(ShareUnmountCommand);

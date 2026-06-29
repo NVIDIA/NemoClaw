@@ -5,10 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import {
-  type CaptureOpenshellResult,
-  stripAnsi,
-} from "../../adapters/openshell/client";
+import { type CaptureOpenshellResult, stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import type { SandboxEntry } from "../../state/registry";
 
@@ -74,7 +71,9 @@ function errorMessage(error: unknown): string {
 
 function isPathInside(childPath: string, parentPath: string): boolean {
   const relative = path.relative(parentPath, childPath);
-  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+  return (
+    relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 function realpathIfPresent(filePath: string): string | null {
@@ -224,9 +223,9 @@ function buildGvproxyDnsBlock(indent: string): string {
   ].join("\n");
 }
 
-function buildGuestInitPatch(initPath: string):
-  | { ok: true; changed: boolean; content?: string }
-  | { ok: false; reason: string } {
+function buildGuestInitPatch(
+  initPath: string,
+): { ok: true; changed: boolean; content?: string } | { ok: false; reason: string } {
   if (path.basename(initPath) !== INIT_SCRIPT_RELATIVE_PATH.at(-1)) {
     return {
       ok: false,
@@ -298,8 +297,7 @@ export function applyOpenShellVmDnsMonkeypatch(
     return fail("could not resolve OpenShell sandbox id");
   }
 
-  const stateDir =
-    deps.stateDir ?? dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir());
+  const stateDir = deps.stateDir ?? dockerDriverGatewayStateDir(env, deps.homeDir ?? os.homedir());
   const stateDirPath = path.resolve(stateDir);
   const stateDirReal = realpathIfPresent(stateDirPath);
   if (!stateDirReal) {

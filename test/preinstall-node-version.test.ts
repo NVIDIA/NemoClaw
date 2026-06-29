@@ -18,7 +18,6 @@ describe("preinstall node-version guard (#2399)", () => {
     expect(stat.mode & 0o111).toBeGreaterThan(0);
   });
 
-
   it("guard exits 0 on a Node version that satisfies the declared range", () => {
     // The current process is the same Node version that npm install uses, and
     // the repo is installable in this Node, so the guard must accept it.
@@ -34,23 +33,17 @@ describe("preinstall node-version guard (#2399)", () => {
     // Run the guard under Node, but trick it by overriding process.versions.node
     // before requiring the script. We use --require to inject the override
     // before any user code runs, so the script reads the patched value.
-    const tmpDir = fs.mkdtempSync(
-      path.join(os.tmpdir(), "preinstall-guard-"),
-    );
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "preinstall-guard-"));
     try {
       const overridePath = path.join(tmpDir, "fake-node-18.js");
       fs.writeFileSync(
         overridePath,
         "Object.defineProperty(process.versions, 'node', { value: '18.20.0', configurable: true });\n",
       );
-      const result = spawnSync(
-        process.execPath,
-        ["--require", overridePath, SCRIPT_PATH],
-        {
-          encoding: "utf-8",
-          timeout: 5000,
-        },
-      );
+      const result = spawnSync(process.execPath, ["--require", overridePath, SCRIPT_PATH], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).toBe(1);
       expect(result.stderr).toMatch(/NemoClaw requires Node \d+\.\d+\.\d+/);
       expect(result.stderr).toContain("Detected Node 18.20.0");
@@ -74,14 +67,10 @@ describe("preinstall node-version guard (#2399)", () => {
         path.join(tmpDir, "package.json"),
         JSON.stringify({ name: "fixture", version: "0.0.0" }, null, 2),
       );
-      const result = spawnSync(
-        process.execPath,
-        [path.join(scriptsDir, "check-node-version.js")],
-        {
-          encoding: "utf-8",
-          timeout: 5000,
-        },
-      );
+      const result = spawnSync(process.execPath, [path.join(scriptsDir, "check-node-version.js")], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
       expect(result.status).toBe(0);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

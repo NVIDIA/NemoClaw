@@ -40,7 +40,8 @@ export function ensureAgentFixedForward(
       deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
     ),
     () =>
-      (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
+      (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ??
+        "") as string,
     { port, sandboxName },
     () => {
       deps.sleep(1);
@@ -49,9 +50,7 @@ export function ensureAgentFixedForward(
     { onProgress: buildForwardStartProgressLogger(port) },
   );
   if (!ok) {
-    console.warn(
-      `! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`,
-    );
+    console.warn(`! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`);
     console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
     return false;
   }

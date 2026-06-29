@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-type MessagingChannel = { name: string; envKey: string };
-type SandboxEntry = { messagingChannels?: string[] | null } | null | undefined;
+import { listMessagingProviderNamesForChannel } from "../messaging/channels";
 
-export function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
-  if (channel === "discord") return [`${sandboxName}-discord-bridge`];
-  if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
-  if (channel === "wechat") return [`${sandboxName}-wechat-bridge`];
-  if (channel === "slack") return [`${sandboxName}-slack-bridge`, `${sandboxName}-slack-app`];
-  return [];
+type MessagingChannel = { name: string; envKey?: string };
+
+export function getMessagingProviderNamesForChannel(
+  sandboxName: string,
+  channel: string,
+): string[] {
+  return listMessagingProviderNamesForChannel(sandboxName, channel);
 }
 
 function getKnownMessagingChannels(
@@ -27,7 +27,7 @@ export function getNonInteractiveStoredMessagingChannels(
   sandboxName: string | null,
   messagingChannels: readonly MessagingChannel[],
   hasMessagingToken: (envKey: string) => boolean,
-  getSandbox: (sandboxName: string) => SandboxEntry,
+  getConfiguredChannels: (sandboxName: string) => string[],
   getDisabledChannels: (sandboxName: string) => string[],
   providerExists: (providerName: string) => boolean,
   nonInteractive: boolean,
@@ -37,12 +37,16 @@ export function getNonInteractiveStoredMessagingChannels(
     const knownSessionChannels = getKnownMessagingChannels(sessionChannels, messagingChannels);
     return knownSessionChannels;
   }
-  if (resume || !sandboxName || messagingChannels.some((channel) => hasMessagingToken(channel.envKey))) {
+  if (
+    resume ||
+    !sandboxName ||
+    messagingChannels.some((channel) => channel.envKey && hasMessagingToken(channel.envKey))
+  ) {
     return null;
   }
 
   const configuredChannels = getKnownMessagingChannels(
-    getSandbox(sandboxName)?.messagingChannels,
+    getConfiguredChannels(sandboxName),
     messagingChannels,
   );
   const disabledChannels = new Set(getDisabledChannels(sandboxName));

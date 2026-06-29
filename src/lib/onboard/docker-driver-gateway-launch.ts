@@ -36,14 +36,13 @@ export function openDockerDriverGatewayLog(
   options: { exitOnFailure?: boolean } = {},
 ): number {
   const appendNoFollow =
-    fs.constants.O_APPEND |
-    fs.constants.O_CREAT |
-    fs.constants.O_WRONLY |
-    fs.constants.O_NOFOLLOW;
+    fs.constants.O_APPEND | fs.constants.O_CREAT | fs.constants.O_WRONLY | fs.constants.O_NOFOLLOW;
   try {
     return fs.openSync(logPath, appendNoFollow, 0o600);
   } catch (error) {
-    console.error(`  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`);
+    console.error(
+      `  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`,
+    );
     if (options.exitOnFailure) process.exit(1);
     throw error;
   }
@@ -101,9 +100,7 @@ export function maxDottedVersion(versions: string[]): string | null {
 export function parseGlibcVersionsFromBinaryText(text: string): string[] {
   return [
     ...new Set(
-      [...text.matchAll(/GLIBC_([0-9]+(?:\.[0-9]+)+)/g)]
-        .map((match) => match[1])
-        .filter(Boolean),
+      [...text.matchAll(/GLIBC_([0-9]+(?:\.[0-9]+)+)/g)].map((match) => match[1]).filter(Boolean),
     ),
   ];
 }
@@ -117,9 +114,11 @@ export function requiredGlibcVersionsForBinary(binaryPath: string): string[] {
 }
 
 export function getHostGlibcVersion(): string | null {
-  const report = (process as unknown as {
-    report?: { getReport?: () => { header?: { glibcVersionRuntime?: string } } };
-  }).report?.getReport?.();
+  const report = (
+    process as unknown as {
+      report?: { getReport?: () => { header?: { glibcVersionRuntime?: string } } };
+    }
+  ).report?.getReport?.();
   const fromNode = report?.header?.glibcVersionRuntime;
   if (fromNode) return fromNode;
   try {
@@ -191,8 +190,7 @@ export function buildDockerDriverGatewayConfigToml(
   ];
   const dockerConfig = dockerEntries
     .filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === "string" && entry[1].trim() !== "",
+      (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim() !== "",
     )
     .map(([key, value]) => `${key} = ${tomlString(value)}`)
     .join("\n");
@@ -298,7 +296,10 @@ export function buildDockerDriverGatewayLaunch(
   // env override still applies when no per-port name is supplied.
   const containerName = safeDockerName(
     options.compatContainerName,
-    safeDockerName(env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME, DEFAULT_COMPAT_CONTAINER_NAME),
+    safeDockerName(
+      env.NEMOCLAW_OPENSHELL_GATEWAY_COMPAT_CONTAINER_NAME,
+      DEFAULT_COMPAT_CONTAINER_NAME,
+    ),
   );
   const dockerHost = safeDockerHost(env.DOCKER_HOST);
   if (dockerHost) {
@@ -307,17 +308,15 @@ export function buildDockerDriverGatewayLaunch(
     delete env.DOCKER_HOST;
   }
   const dockerSocket = getDockerSocketPath(env);
-  const args = [
-    "run",
-    "--rm",
-    "--name",
-    containerName,
-    "--network",
-    "host",
-  ];
+  const args = ["run", "--rm", "--name", containerName, "--network", "host"];
   addVolume(args, path.resolve(options.gatewayBin), GATEWAY_MOUNT_PATH, "ro");
   addVolume(args, path.resolve(options.stateDir), path.resolve(options.stateDir), "rw");
-  addVolume(args, path.resolve(path.dirname(sandboxBin)), path.resolve(path.dirname(sandboxBin)), "ro");
+  addVolume(
+    args,
+    path.resolve(path.dirname(sandboxBin)),
+    path.resolve(path.dirname(sandboxBin)),
+    "ro",
+  );
   if (fs.existsSync(dockerSocket)) addVolume(args, dockerSocket, dockerSocket, "rw");
   for (const key of Object.keys(gatewayEnv).sort()) {
     addEnv(args, key, gatewayEnv[key]);

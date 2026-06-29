@@ -2,11 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
-import {
-  promptOrDefault,
-  selectFromNumberedMenuOrExit,
-} from "../../../dist/lib/onboard/prompt-helpers";
+// Import source directly so tests cannot pass against a stale build.
+import { promptOrDefault, selectFromNumberedMenuOrExit } from "./prompt-helpers";
 
 function makeDeps(promptReply: string) {
   return {
@@ -52,22 +49,25 @@ describe("selectFromNumberedMenuOrExit (#4514)", () => {
     expect(selectFromNumberedMenuOrExit("99", 1, options)).toBe(options[0]);
   });
 
-  it.each(["exit", "EXIT", "quit", "Quit", "  exit  "])(
-    "cancels onboarding when the reply is %j",
-    (reply) => {
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-        throw new Error(`process.exit(${code})`);
-      }) as never);
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-      try {
-        expect(() => selectFromNumberedMenuOrExit(reply, 1, options)).toThrow("process.exit(1)");
-        expect(logSpy).toHaveBeenCalledWith("  Exiting onboarding.");
-      } finally {
-        exitSpy.mockRestore();
-        logSpy.mockRestore();
-      }
-    },
-  );
+  it.each([
+    "exit",
+    "EXIT",
+    "quit",
+    "Quit",
+    "  exit  ",
+  ])("cancels onboarding when the reply is %j", (reply) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(() => selectFromNumberedMenuOrExit(reply, 1, options)).toThrow("process.exit(1)");
+      expect(logSpy).toHaveBeenCalledWith("  Exiting onboarding.");
+    } finally {
+      exitSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
 
   it("does not treat non-navigation words as exit", () => {
     expect(selectFromNumberedMenuOrExit("3", 1, options)).toBe(options[2]);

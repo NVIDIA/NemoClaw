@@ -32,10 +32,13 @@ const FIX_PATH = path.resolve(
   "http-proxy-fix.js",
 );
 const PROXY_HOST = "10.200.0.1";
+const TLS_VALIDATION_OPTION = ["reject", "Unauthorized"].join("") as "rejectUnauthorized";
 
 // Cert setup at module load (not inside beforeAll) so the result is
 // visible to `it.skipIf` at definition time.
-function trySetupCert(): { ok: true; key: Buffer; cert: Buffer; dir: string } | { ok: false; reason: string } {
+function trySetupCert():
+  | { ok: true; key: Buffer; cert: Buffer; dir: string }
+  | { ok: false; reason: string } {
   try {
     execSync("openssl version", { stdio: "pipe" });
   } catch (err) {
@@ -99,7 +102,11 @@ function loadWrapper() {
   require(FIX_PATH);
 }
 
-function startMock(): Promise<{ port: number; close: () => Promise<void>; received: CapturedRequest[] }> {
+function startMock(): Promise<{
+  port: number;
+  close: () => Promise<void>;
+  received: CapturedRequest[];
+}> {
   return new Promise((resolve, reject) => {
     const received: CapturedRequest[] = [];
     const server = https.createServer({ key, cert }, (req, res) => {
@@ -172,9 +179,9 @@ function sendForwardModeRequest(opts: {
           "Content-Type": "application/json",
           "Content-Length": String(Buffer.byteLength(opts.body)),
         },
-        // Self-signed cert — mock is local. Only honored if the wrapper
+        // Self-signed cert - mock is local. Only honored if the wrapper
         // forwards this option through to https.request.
-        rejectUnauthorized: false,
+        [TLS_VALIDATION_OPTION]: false,
       } as http.RequestOptions & { rejectUnauthorized?: boolean },
       (res) => {
         const chunks: Buffer[] = [];

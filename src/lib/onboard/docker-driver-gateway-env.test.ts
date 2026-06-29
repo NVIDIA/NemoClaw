@@ -128,13 +128,18 @@ describe("writeDockerGatewayDebEnvOverride", () => {
 
     const existsSpy = vi
       .spyOn(fs, "existsSync")
-      .mockImplementation((candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service");
+      .mockImplementation(
+        (candidate) => candidate === "/usr/lib/systemd/user/openshell-gateway.service",
+      );
     const homedirSpy = vi.spyOn(os, "homedir").mockReturnValue(tempHome);
 
     try {
-      const wrote = writeDockerGatewayDebEnvOverride(() => ({
-        OPENSHELL_BIND_ADDRESS: "127.0.0.1",
-      }), { platform: "linux" });
+      const wrote = writeDockerGatewayDebEnvOverride(
+        () => ({
+          OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+        }),
+        { platform: "linux" },
+      );
 
       const envFileContent = fs.readFileSync(envFile, "utf-8");
       expect(wrote).toBe(true);
@@ -206,9 +211,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         }),
       ).resolves.toBe(true);
 
-      expect(fs.readFileSync(envFile, "utf-8")).toContain(
-        "OPENSHELL_BIND_ADDRESS=127.0.0.1\n",
-      );
+      expect(fs.readFileSync(envFile, "utf-8")).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
     } finally {
       existsSpy.mockRestore();
       homedirSpy.mockRestore();

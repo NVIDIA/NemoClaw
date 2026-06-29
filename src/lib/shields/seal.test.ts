@@ -2,17 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import path from "node:path";
 
-async function loadSeal(): Promise<typeof import("../../../dist/lib/shields/seal")> {
-  const distModulePath = path.join(
-    process.cwd(),
-    "dist",
-    "lib",
-    "shields",
-    "seal.js",
-  );
-  return import(distModulePath);
+async function loadSeal(): Promise<typeof import("./seal")> {
+  return import("./seal");
 }
 
 describe("parseSha256Output", () => {
@@ -37,18 +29,14 @@ describe("parseSha256Output", () => {
     expect(parseSha256Output("0123  /sandbox/.openclaw/openclaw.json")).toBeNull();
     // 65 chars
     expect(
-      parseSha256Output(
-        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefx  /file",
-      ),
+      parseSha256Output("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdefx  /file"),
     ).toBeNull();
   });
 
   it("normalises uppercase hex to lowercase", async () => {
     const { parseSha256Output } = await loadSeal();
     expect(
-      parseSha256Output(
-        "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789  /file",
-      ),
+      parseSha256Output("ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789  /file"),
     ).toBe("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
   });
 });
@@ -62,9 +50,7 @@ describe("isHashVerificationIssue", () => {
       ),
     ).toBe(true);
     expect(
-      isHashVerificationIssue(
-        "/sandbox/.openclaw/openclaw.json sha256sum failed: I/O error",
-      ),
+      isHashVerificationIssue("/sandbox/.openclaw/openclaw.json sha256sum failed: I/O error"),
     ).toBe(true);
     expect(
       isHashVerificationIssue(
@@ -81,9 +67,7 @@ describe("isHashVerificationIssue", () => {
   it("rejects unrelated perm-only entries so they remain launderable by re-lock", async () => {
     const { isHashVerificationIssue } = await loadSeal();
     expect(
-      isHashVerificationIssue(
-        "/sandbox/.openclaw/openclaw.json mode=660 (expected 444)",
-      ),
+      isHashVerificationIssue("/sandbox/.openclaw/openclaw.json mode=660 (expected 444)"),
     ).toBe(false);
     expect(
       isHashVerificationIssue(

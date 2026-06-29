@@ -33,7 +33,9 @@ export function dockerListVolumesByPrefix(
     ignoreError: true,
     ...opts,
   });
-  return splitNonEmptyLines(output).filter((name) => name.startsWith(normalized));
+  return splitNonEmptyLines(output).filter(
+    (name) => name === normalized || name.startsWith(`${normalized}-`),
+  );
 }
 
 export function dockerRemoveVolumes(

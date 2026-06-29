@@ -169,7 +169,9 @@ async function selectHermesToolGatewaysInteractive(
       output.write(`    [${index + 1}] ${marker} ${preset.label} — ${preset.description}\n`);
     });
     output.write("\n");
-    output.write(`  Press 1-${HERMES_TOOL_GATEWAY_PRESETS.length} to toggle, a for all/none, Enter when done: `);
+    output.write(
+      `  Press 1-${HERMES_TOOL_GATEWAY_PRESETS.length} to toggle, a for all/none, Enter when done: `,
+    );
   };
 
   showList();
@@ -295,7 +297,10 @@ export async function setupHermesToolGateways(
   }
   if (deps.isNonInteractive()) return [];
 
-  const selected = await selectHermesToolGatewaysInteractive(defaultHermesToolGatewaySelection(), deps);
+  const selected = await selectHermesToolGatewaysInteractive(
+    defaultHermesToolGatewaySelection(),
+    deps,
+  );
   if (selected.length === 0) {
     console.log("  Skipping Hermes managed tools.");
   }

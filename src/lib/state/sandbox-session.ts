@@ -124,9 +124,8 @@ export function parseSshProcesses(
     if (!pidMatch) continue;
 
     const pid = Number.parseInt(pidMatch[1], 10);
-    const cmdline = pidMatch[2];
 
-    if (hostPattern.test(cmdline)) {
+    if (hostPattern.test(pidMatch[2])) {
       sessions.push({ sandboxName, pid, sshHost });
     }
   }

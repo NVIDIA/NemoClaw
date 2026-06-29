@@ -11,7 +11,8 @@ export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static strict = true;
   static enableJsonFlag = true;
   static summary = "Diagnose sandbox and gateway health";
-  static description = "Run host, gateway, sandbox, inference, messaging, and local service diagnostics.";
+  static description =
+    "Run host, gateway, sandbox, inference, messaging, and local service diagnostics.";
   static usage = ["<name> [--json] [--fix]"];
   static examples = [
     "<%= config.bin %> sandbox doctor alpha",

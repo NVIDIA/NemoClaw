@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   buildGatewayLogScanScript,
   compareChannelSets,
   extractEnabledChannelsFromOpenclawConfig,
   parseGatewayLogScanOutput,
   probeChannelRuntimeStatus,
-} from "../../dist/lib/channel-runtime-status.js";
+} from "./channel-runtime-status.js";
 
 // Build an executeSandboxCommand mock that returns the config file body
 // on the `cat` call and a synthesized gateway-log-scan output on the
@@ -149,8 +149,11 @@ describe("buildGatewayLogScanScript", () => {
     // only the segment since the last launch reaches grep.
     const script = buildGatewayLogScanScript("/tmp/gateway.log");
     expect(script).toContain("(launched|respawning)");
-    expect(script).toContain("buf=\"\"");
-    expect(script).toContain("grep -iwoE 'telegram|discord|slack|whatsapp|wechat|openclaw-weixin'");
+    expect(script).toContain('buf=""');
+    expect(script).toContain("grep -iwoE '");
+    for (const token of ["telegram", "discord", "slack", "whatsapp", "wechat", "openclaw-weixin"]) {
+      expect(script).toContain(token);
+    }
     expect(script).not.toContain("tail -n");
     expect(script).not.toContain("grep -m 1 -iwF 'telegram'");
   });
@@ -308,14 +311,16 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("flags a configured channel as not-running when the gateway log never mentions it (#4156 reporter case)", () => {
+  it("flags a configured channel as not-running when the gateway log never mentions it in the reporter case (#4156)", () => {
     // Reporter symptom: openclaw.json had the telegram block but the
     // dashboard rendered "No channels found." This is the failure mode —
     // configured but the OpenClaw runtime never logged anything for it.
     const config = JSON.stringify({
       channels: {
         telegram: {
-          accounts: { default: { enabled: true, botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" } },
+          accounts: {
+            default: { enabled: true, botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN" },
+          },
         },
       },
     });
@@ -440,8 +445,9 @@ describe("compareChannelSets", () => {
   });
 
   it("sorts the missing/unexpected outputs", () => {
-    expect(
-      compareChannelSets(["telegram", "slack", "discord"], ["whatsapp"]),
-    ).toEqual({ missing: ["discord", "slack", "telegram"], unexpected: ["whatsapp"] });
+    expect(compareChannelSets(["telegram", "slack", "discord"], ["whatsapp"])).toEqual({
+      missing: ["discord", "slack", "telegram"],
+      unexpected: ["whatsapp"],
+    });
   });
 });

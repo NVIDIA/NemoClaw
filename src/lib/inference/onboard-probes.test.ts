@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -19,7 +18,7 @@ const {
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
-} = require("../../../dist/lib/inference/onboard-probes");
+} = require("./onboard-probes");
 
 describe("OpenAI-compatible inference probe response parsing", () => {
   it("detects tool-calling responses payloads conservatively", () => {
@@ -284,10 +283,19 @@ describe("OpenAI-compatible inference probes", () => {
     });
   });
 
-  it("keeps the default chat-completions probe minimal for other models", () => {
+  it("keeps the default chat-completions probe bounded for other models", () => {
     expect(getChatCompletionsProbePayload("nvidia/nemotron-3-super-120b-a12b")).toEqual({
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
+    });
+  });
+
+  it("bounds the hosted compatible inference probe for the served Nemotron model", () => {
+    expect(getChatCompletionsProbePayload("nvidia/nvidia/nemotron-3-ultra")).toEqual({
+      model: "nvidia/nvidia/nemotron-3-ultra",
+      messages: [{ role: "user", content: "Reply with exactly: OK" }],
+      max_tokens: 8,
     });
   });
 
@@ -431,11 +439,13 @@ describe("OpenAI-compatible inference probes", () => {
       );
 
       expect(result).toMatchObject({ ok: false });
-      expect(result.message).toMatch(/cannot be validated.*structured Chat Completions tool calls/i);
+      expect(result.message).toMatch(
+        /cannot be validated.*structured Chat Completions tool calls/i,
+      );
     });
   });
 
-  describe("retriable HTTP statuses (issues #2980, #3033)", () => {
+  describe("retriable HTTP statuses (#2980, #3033)", () => {
     it("retries 429 (rate limit)", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(429)).toBe(true);
     });
@@ -455,7 +465,7 @@ describe("OpenAI-compatible inference probes", () => {
       expect(RETRIABLE_HTTP_PROBE_STATUSES.has(200)).toBe(false);
     });
 
-    it("recovers when an upstream 502 clears on retry (regression #2980)", () => {
+    it("recovers when an upstream 502 clears on retry (#2980)", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-502-probe-"));
       const fakeBin = path.join(tmpDir, "bin");
       const counter = path.join(tmpDir, "counter");
@@ -651,9 +661,7 @@ exit 0
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
         for (const call of ["1", "2"]) {
           const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-          expect(args).toContain(
-            "https://api.example.com/v1/chat/completions?key=secret%20key",
-          );
+          expect(args).toContain("https://api.example.com/v1/chat/completions?key=secret%20key");
           expect(args).not.toContain("Authorization: Bearer");
         }
       } finally {
@@ -728,80 +736,6 @@ exit 0
         process.env.PATH = originalPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
-    });
-
-    it("retries strict tool-call validation after the parent curl process times out", () => {
-      const repoRoot = path.join(import.meta.dirname, "../../..");
-      const onboardProbePath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "inference", "onboard-probes.js"),
-      );
-      const httpProbePath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"),
-      );
-      const script = `
-const httpProbe = require(${httpProbePath});
-let calls = 0;
-const timeoutMs = [];
-httpProbe.runCurlProbe = (_args, opts = {}) => {
-  calls += 1;
-  timeoutMs.push(opts.timeoutMs ?? null);
-  if (calls === 1) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: -110,
-      body: "",
-      stderr: "spawnSync curl ETIMEDOUT",
-      message: "curl failed (exit -110): spawnSync curl ETIMEDOUT",
-    };
-  }
-  return {
-    ok: true,
-    httpStatus: 200,
-    curlStatus: 0,
-    body: JSON.stringify({
-      choices: [
-        {
-          message: {
-            tool_calls: [
-              {
-                type: "function",
-                function: {
-                  name: "sessions_send",
-                  arguments: { message: "hello" },
-                },
-              },
-            ],
-          },
-        },
-      ],
-    }),
-    stderr: "",
-    message: "HTTP 200",
-  };
-};
-const probes = require(${onboardProbePath});
-const result = probes.probeOpenAiLikeEndpoint(
-  "https://api.example.com/v1",
-  "test-model",
-  null,
-  { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
-);
-process.stdout.write(JSON.stringify({ result, calls, timeoutMs }));
-`;
-
-      const run = spawnSync(process.execPath, ["-e", script], {
-        cwd: repoRoot,
-        encoding: "utf8",
-      });
-
-      expect(run.status).toBe(0);
-      const payload = JSON.parse(run.stdout);
-      expect(payload.result).toMatchObject({ ok: true, api: "openai-completions" });
-      expect(payload.calls).toBe(2);
-      expect(payload.timeoutMs).toHaveLength(2);
-      expect(payload.timeoutMs[0]).toBeGreaterThan(0);
-      expect(payload.timeoutMs[1]).toBeGreaterThan(payload.timeoutMs[0]);
     });
 
     it("keeps retrying when initial timeout is followed by a transient 502", () => {

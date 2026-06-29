@@ -14,20 +14,20 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set (real key, starts with nvapi-)
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set (real key, starts with nvapi-)
+#   - Network access to inference-api.nvidia.com
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             — required
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 — required
-#   NVIDIA_API_KEY                         — required
+#   NVIDIA_INFERENCE_API_KEY                         — required
 #   NEMOCLAW_SANDBOX_NAME                  — sandbox name (default: e2e-rebuild)
 #   NEMOCLAW_E2E_TIMEOUT_SECONDS           — overall timeout (default: 1200)
 #
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 \
 #   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
-#   NVIDIA_API_KEY=nvapi-... \
+#   NVIDIA_INFERENCE_API_KEY=nvapi-... \
 #     bash test/e2e/test-sandbox-rebuild.sh
 
 set -euo pipefail
@@ -57,7 +57,7 @@ fail() {
 info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # ── Preflight ───────────────────────────────────────────────────────
-[ -n "${NVIDIA_API_KEY:-}" ] || fail "NVIDIA_API_KEY is required"
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || fail "NVIDIA_INFERENCE_API_KEY is required"
 [ "${NEMOCLAW_NON_INTERACTIVE:-}" = "1" ] || fail "NEMOCLAW_NON_INTERACTIVE=1 is required"
 
 info "Starting rebuild E2E test (sandbox: ${SANDBOX_NAME}, timeout: ${TIMEOUT}s)"

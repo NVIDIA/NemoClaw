@@ -11,8 +11,8 @@
 #
 # Prerequisites:
 #   - Docker running
-#   - NVIDIA_API_KEY set
-#   - Network access to integrate.api.nvidia.com
+#   - NVIDIA_INFERENCE_API_KEY set
+#   - Network access to inference-api.nvidia.com
 # =============================================================================
 
 set -euo pipefail
@@ -81,7 +81,7 @@ install_nemoclaw() {
   fi
   log "=== Installing NemoClaw via install.sh ==="
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
-    NVIDIA_API_KEY="${NVIDIA_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
+    NVIDIA_INFERENCE_API_KEY="${NVIDIA_INFERENCE_API_KEY:-nvapi-DUMMY-FOR-INSTALL}" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
     bash "$REPO_ROOT/install.sh" --non-interactive --yes-i-accept-third-party-software \
@@ -102,9 +102,9 @@ preflight() {
   fi
   log "Docker is running"
 
-  local api_key="${NVIDIA_API_KEY:-}"
+  local api_key="${NVIDIA_INFERENCE_API_KEY:-}"
   if [[ -z "$api_key" ]]; then
-    log "ERROR: NVIDIA_API_KEY not set"
+    log "ERROR: NVIDIA_INFERENCE_API_KEY not set"
     exit 1
   fi
 

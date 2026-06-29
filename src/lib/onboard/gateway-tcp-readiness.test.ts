@@ -29,9 +29,7 @@ function startDummyServer(): Promise<{ port: number; close: () => Promise<void> 
       resolve({
         port: addr.port,
         close: () =>
-          new Promise<void>((res, rej) =>
-            server.close((err) => (err ? rej(err) : res())),
-          ),
+          new Promise<void>((res, rej) => server.close((err) => (err ? rej(err) : res()))),
       });
     });
   });
@@ -54,6 +52,7 @@ describe("isGatewayTcpReady (#3111)", () => {
       teardown = null;
     }
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it("resolves true when something is accepting connections", async () => {
@@ -71,23 +70,39 @@ describe("isGatewayTcpReady (#3111)", () => {
     // 10.255.255.1 is a non-routable RFC 1918 address that SYN-drops on most
     // CI runners, forcing the timeout path rather than immediate ECONNREFUSED.
     const started = Date.now();
-    await expect(isGatewayTcpReady(9, 200, "10.255.255.1")).resolves.toBe(
-      false,
-    );
+    await expect(isGatewayTcpReady(9, 200, "10.255.255.1")).resolves.toBe(false);
     const elapsed = Date.now() - started;
     expect(elapsed).toBeLessThan(2000);
   });
 
   it("enforces a minimum timeout of 50ms even when caller passes 0", async () => {
-    // Use a non-routable host so the probe can't short-circuit via an
-    // immediate ECONNREFUSED. If timeout clamping regressed to 0 ms, the
-    // probe would return essentially instantly; the >=40 ms lower bound
-    // (generous 10 ms slack under the 50 ms floor) catches that regression.
-    const started = Date.now();
-    await expect(isGatewayTcpReady(9, 0, "10.255.255.1")).resolves.toBe(false);
-    const elapsed = Date.now() - started;
-    expect(elapsed).toBeGreaterThanOrEqual(40);
-    expect(elapsed).toBeLessThan(2000);
+    vi.useFakeTimers();
+    const listeners = new Map<string, () => void>();
+    const socket = {
+      destroy: vi.fn(),
+      once: vi.fn((event: string, callback: () => void) => {
+        listeners.set(event, callback);
+        return socket;
+      }),
+      setTimeout: vi.fn((timeoutMs: number) => {
+        setTimeout(() => listeners.get("timeout")?.(), timeoutMs);
+        return socket;
+      }),
+    };
+    vi.spyOn(net, "createConnection").mockReturnValue(socket as unknown as net.Socket);
+
+    const ready = isGatewayTcpReady(9, 0, "10.255.255.1");
+    let settled = false;
+    ready.then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(49);
+    expect(settled).toBe(false);
+    expect(socket.setTimeout).toHaveBeenCalledWith(50);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(ready).resolves.toBe(false);
   });
 
   it("never throws — always resolves with a boolean", async () => {
@@ -100,8 +115,6 @@ describe("isGatewayTcpReady (#3111)", () => {
     // default gateway port, so assert the probed argument instead of the result.
     const createConnection = vi.spyOn(net, "createConnection");
     await expect(isGatewayTcpReady(undefined, 200)).resolves.toBeTypeOf("boolean");
-    expect(createConnection).toHaveBeenCalledWith(
-      expect.objectContaining({ port: GATEWAY_PORT }),
-    );
+    expect(createConnection).toHaveBeenCalledWith(expect.objectContaining({ port: GATEWAY_PORT }));
   });
 });

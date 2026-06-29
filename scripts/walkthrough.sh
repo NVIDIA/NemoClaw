@@ -14,7 +14,7 @@
 #
 # Prerequisites:
 #   - NemoClaw setup complete (nemoclaw onboard)
-#   - NVIDIA_API_KEY in environment
+#   - NVIDIA_INFERENCE_API_KEY in environment
 #
 # Suggested prompts that trigger the approval flow:
 #
@@ -37,14 +37,14 @@
 #
 #   Terminal 2 (Agent):
 #     openshell sandbox connect nemoclaw
-#     export NVIDIA_API_KEY=nvapi-...
+#     export NVIDIA_INFERENCE_API_KEY=nvapi-...
 #     nemoclaw-start
 #     openclaw agent --agent main --local --session-id live
 
 set -euo pipefail
 
-[ -n "${NVIDIA_API_KEY:-}" ] || {
-  echo "NVIDIA_API_KEY required"
+[ -n "${NVIDIA_INFERENCE_API_KEY:-}" ] || {
+  echo "NVIDIA_INFERENCE_API_KEY required"
   exit 1
 }
 
@@ -85,7 +85,7 @@ tmux kill-session -t "$SESSION" 2>/dev/null || true
 tmux new-session -d -s "$SESSION" -x 200 -y 50 "openshell term"
 
 # Split right pane for the agent
-# NVIDIA_API_KEY is not needed inside the sandbox — inference is proxied
+# NVIDIA_INFERENCE_API_KEY is not needed inside the sandbox — inference is proxied
 # through the OpenShell gateway which injects credentials server-side.
 tmux split-window -h -t "$SESSION" \
   "openshell sandbox connect nemoclaw -- bash -c 'nemoclaw-start openclaw agent --agent main --local --session-id live'"

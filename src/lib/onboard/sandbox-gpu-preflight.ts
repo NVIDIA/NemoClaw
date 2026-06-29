@@ -13,6 +13,8 @@ import {
   wslDockerDesktopGpuCompatibilityRemediationLines,
 } from "./wsl-docker-desktop-gpu";
 
+export { formatSandboxGpuPassthroughNote } from "./sandbox-gpu-notes";
+
 const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
 export type SandboxGpuPreflightDeps = WslDockerDesktopDetectionDeps & {
@@ -86,25 +88,6 @@ export function exitOnSandboxGpuConfigErrors(config: SandboxGpuConfig): void {
   }
 }
 
-export function formatSandboxGpuPassthroughNote(options: {
-  hostGpuPlatform?: string | null;
-  resumeHasResolvedGpuIntent?: boolean;
-  recordedGpuPassthroughBeforePreflight?: boolean;
-  requestedGpuPassthrough?: boolean;
-  sandboxGpuMode?: string | null;
-}): string {
-  if (options.hostGpuPlatform === "jetson") {
-    return "  NVIDIA Jetson/Tegra GPU detected; enabling sandbox GPU through Docker NVIDIA runtime. Use --no-gpu to opt out.";
-  }
-  if (options.resumeHasResolvedGpuIntent && options.recordedGpuPassthroughBeforePreflight) {
-    return "  [resume] Continuing GPU passthrough from the saved onboarding session.";
-  }
-  if (options.requestedGpuPassthrough || options.sandboxGpuMode === "1") {
-    return "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation.";
-  }
-  return "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.";
-}
-
 export function parseDockerRuntimeNames(value: string | null | undefined): string[] {
   const raw = String(value || "").trim();
   if (!raw || raw === "<no value>") return [];
@@ -145,7 +128,9 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
     console.error("");
     console.error("  ✗ Docker NVIDIA runtime was not detected for Jetson/Tegra sandbox GPU.");
     console.error("    Jetson sandbox GPU uses NVIDIA Container Runtime semantics, not CDI.");
-    console.error("    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:");
+    console.error(
+      "    Install/configure NVIDIA Container Toolkit for Docker, then restart Docker:",
+    );
     console.error("      sudo nvidia-ctk runtime configure --runtime=docker");
     console.error("      sudo systemctl restart docker");
     console.error("    Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.");
@@ -252,7 +237,9 @@ export function createDirectSandboxGpuVerifier(
         }
         const statusText = String(result.status || 1);
         const diagnosticSuffix = diagnostic ? `: ${diagnostic}` : "";
-        throw new Error(`GPU proof failed: ${proof.label} (status ${statusText})${diagnosticSuffix}`);
+        throw new Error(
+          `GPU proof failed: ${proof.label} (status ${statusText})${diagnosticSuffix}`,
+        );
       }
       // Optional proof failure is non-fatal but is no longer swallowed: a
       // CUDA-usability proof that reached the driver and failed marks the GPU
@@ -276,12 +263,12 @@ export function createDirectSandboxGpuVerifier(
       const lines =
         resolvedPlatform === "jetson"
           ? jetsonGpuProofRemediationLines()
-          : sandboxGpuRemediationLines({ wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps) });
+          : sandboxGpuRemediationLines({
+              wslDockerDesktopStatus: detectWslDockerDesktopStatus(deps),
+            });
       for (const line of lines) console.warn(`    ${line}`);
     } else {
-      console.warn(
-        "  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).",
-      );
+      console.warn("  ⚠ Sandbox GPU enabled but CUDA usability is unverified (no CUDA proof ran).");
     }
     return {
       status,

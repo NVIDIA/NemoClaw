@@ -22,6 +22,20 @@ import {
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
 import { finalizeDockerGpuPatchBackup } from "./docker-gpu-patch-finalize";
+import { detectWslDockerDesktopStatus } from "./wsl-docker-desktop-gpu";
+
+let cachedDockerDesktopWslRuntime: boolean | null = null;
+
+export function isDockerDesktopWslRuntime(): boolean {
+  if (cachedDockerDesktopWslRuntime === null) {
+    cachedDockerDesktopWslRuntime = detectWslDockerDesktopStatus({}) === "docker-desktop";
+  }
+  return cachedDockerDesktopWslRuntime;
+}
+
+export function resetIsDockerDesktopWslRuntimeCache(): void {
+  cachedDockerDesktopWslRuntime = null;
+}
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
@@ -48,6 +62,12 @@ type DockerGpuSandboxCreatePatchOptions = {
   openshellSandboxCommand?: readonly string[] | null;
   timeoutSecs: number;
   backend?: DockerGpuPatchBackend;
+  /**
+   * Whether the host is Docker Desktop WSL. Defaults to the cached
+   * `isDockerDesktopWslRuntime()` probe. When true, the GPU patch skips the CDI
+   * mode (unusable on this runtime) and uses `--gpus` instead (#5512).
+   */
+  dockerDesktopWsl?: boolean;
   deps: DockerGpuSandboxCreateDeps;
   /**
    * Test seams. The production composition uses the canonical
@@ -122,6 +142,7 @@ export function createDockerGpuSandboxCreatePatch(
     openshellSandboxCommand: options.openshellSandboxCommand ?? null,
     timeoutSecs: options.timeoutSecs,
     backend: options.backend,
+    dockerDesktopWsl: options.dockerDesktopWsl ?? isDockerDesktopWslRuntime(),
   };
 
   return {
@@ -195,22 +216,18 @@ export function createDockerGpuSandboxCreatePatch(
           ? "OpenShell supervisor did not reconnect to the GPU-enabled container; pre-patch sandbox restored."
           : "OpenShell supervisor did not reconnect to the GPU-enabled container and rollback failed; pre-patch sandbox was NOT restored.";
       })();
-      onPatchFailureExit(
-        options.sandboxName,
-        new Error(failureMessage),
-        {
-          runCaptureOpenshell: options.deps.runCaptureOpenshell,
-          dockerCapture: options.deps.dockerCapture,
-          context: {
-            sandboxName: options.sandboxName,
-            oldContainerId: result?.oldContainerId,
-            newContainerId: result?.newContainerId,
-            backupContainerName: result?.backupContainerName,
-            selectedMode: result?.mode ?? null,
-            rolledBack: finalizeOutcome?.rolledBack ?? false,
-          },
+      onPatchFailureExit(options.sandboxName, new Error(failureMessage), {
+        runCaptureOpenshell: options.deps.runCaptureOpenshell,
+        dockerCapture: options.deps.dockerCapture,
+        context: {
+          sandboxName: options.sandboxName,
+          oldContainerId: result?.oldContainerId,
+          newContainerId: result?.newContainerId,
+          backupContainerName: result?.backupContainerName,
+          selectedMode: result?.mode ?? null,
+          rolledBack: finalizeOutcome?.rolledBack ?? false,
         },
-      );
+      });
     },
 
     selectedMode() {
@@ -292,10 +309,16 @@ function buildFailureContext(
 
 export function shouldUseDockerGpuPatchForCreate(
   config: DockerGpuSandboxConfig,
-  options: { dockerDriverGateway: boolean; log?: (message: string) => void },
+  options: {
+    dockerDriverGateway: boolean;
+    dockerDesktopWsl?: boolean;
+    log?: (message: string) => void;
+  },
 ): boolean {
   const enabled = shouldApplyDockerGpuPatch(config, {
     dockerDriverGateway: options.dockerDriverGateway,
+    dockerDesktopWsl: options.dockerDesktopWsl,
+    log: options.log,
   });
   if (enabled) {
     options.log?.(
@@ -309,9 +332,18 @@ export function shouldUseDockerGpuPatchForCreate(
 
 export function resolveDockerGpuSandboxCreatePlan(
   config: DockerGpuSandboxConfig,
-  options: { dockerDriverGateway: boolean },
+  options: {
+    dockerDriverGateway: boolean;
+    dockerDesktopWsl?: boolean;
+    detectDockerDesktopWsl?: () => boolean;
+  },
 ): DockerGpuSandboxCreatePlan {
-  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, options);
+  const dockerDesktopWsl =
+    options.dockerDesktopWsl ?? (options.detectDockerDesktopWsl ?? isDockerDesktopWslRuntime)();
+  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, {
+    dockerDriverGateway: options.dockerDriverGateway,
+    dockerDesktopWsl,
+  });
   const logMessage = config.sandboxGpuEnabled
     ? useDockerGpuPatch
       ? config.hostGpuPlatform === "jetson"

@@ -74,12 +74,7 @@ describe("runOclifArgv", () => {
 
     await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
 
-    expect(process.argv).toEqual([
-      "/usr/bin/node",
-      "/repo/bin/nemoclaw.js",
-      "alpha",
-      "status",
-    ]);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(executeMock).toHaveBeenCalledWith({
@@ -112,36 +107,39 @@ describe("runOclifArgv", () => {
       runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" }),
     ).rejects.toBe(error);
 
-    expect(process.argv).toEqual([
-      "/usr/bin/node",
-      "/repo/bin/nemoclaw.js",
-      "alpha",
-      "status",
-    ]);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
   });
 });
 
 describe("runOclifCommandById", () => {
+  let originalArgv: string[];
+
   beforeEach(() => {
     executeMock.mockReset();
     runCommandMock.mockReset();
     loadMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());
+    originalArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"];
     process.exitCode = undefined;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    process.argv = originalArgv;
     process.exitCode = undefined;
   });
 
   it("loads the oclif config, applies branded bin metadata, and runs the command", async () => {
     const config = makeConfig();
     loadMock.mockResolvedValue(config);
-    runCommandMock.mockResolvedValue(undefined);
+    runCommandMock.mockImplementation(async () => {
+      expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list", "--json"]);
+    });
 
     await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
 
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(runCommandMock).toHaveBeenCalledWith("list", ["--json"]);
     expect(config.bin).toBe("nemoclaw");
@@ -197,7 +195,7 @@ describe("runOclifCommandById", () => {
     expect(errorLine).not.toHaveBeenCalled();
   });
 
-  it("#2666: surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them", async () => {
+  it("surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them (#2666)", async () => {
     // Before #2666 this branch silently set exit 0 and produced no output.
     // The bug was an arbitrary error riding the same `oclif.exit === 0`
     // channel, e.g. propagated from inside a command's run(). Surface the
@@ -205,7 +203,9 @@ describe("runOclifCommandById", () => {
     class WeirdError extends Error {
       oclif = { exit: 0 };
     }
-    runCommandMock.mockRejectedValue(new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"));
+    runCommandMock.mockRejectedValue(
+      new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"),
+    );
     const errorLine = vi.fn();
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
@@ -216,7 +216,7 @@ describe("runOclifCommandById", () => {
     );
   });
 
-  it("#2666: falls back to a generic line when the error message is empty", async () => {
+  it("falls back to a generic line when the error message is empty (#2666)", async () => {
     // Closes the residual silent path: if a non-ExitError(0) carries an
     // empty message (or one that trims to empty), still emit *something*
     // so the user is never left looking at exit 0 + blank stdout/stderr.
@@ -236,9 +236,13 @@ describe("runOclifCommandById", () => {
 
   it("rethrows non-parse command failures", async () => {
     const error = new Error("boom");
-    runCommandMock.mockRejectedValue(error);
+    runCommandMock.mockImplementation(async () => {
+      expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "list"]);
+      throw error;
+    });
 
     await expect(runOclifCommandById("list", [], { rootDir: "/repo" })).rejects.toBe(error);
+    expect(process.argv).toEqual(["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"]);
   });
 
   it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {

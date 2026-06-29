@@ -1,5 +1,15 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Have a question?
+    url: https://github.com/NVIDIA/NemoClaw/discussions
+    about: >
+      Use GitHub Discussions for setup questions, usage questions, design
+      exploration, and ideas that are not ready for an issue.
+  - name: Need troubleshooting help?
+    url: https://github.com/NVIDIA/NemoClaw/blob/main/docs/reference/troubleshooting.mdx
+    about: >
+      Check the troubleshooting guide and point your coding agent at the repo
+      before opening a bug report.
   - name: Security vulnerability?
     url: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
     about: >

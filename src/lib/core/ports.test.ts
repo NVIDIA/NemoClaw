@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-// Import from compiled dist/ so coverage is attributed correctly.
-import { parseGatewayPort, parsePort } from "../../../dist/lib/core/ports";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+// Import source directly so tests cannot pass against a stale build.
+import { parseGatewayPort, parsePort } from "./ports";
 
 const GATEWAY_VALIDATION_OPTIONS = {
   dashboardPort: 18789,
@@ -116,9 +116,7 @@ describe("parseGatewayPort", () => {
     ["11436", "Bedrock Runtime adapter"],
   ])("rejects overlap with default port %s", (port, label) => {
     process.env[ENV_KEY] = port;
-    expect(() => parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toThrow(
-      label,
-    );
+    expect(() => parseGatewayPort(ENV_KEY, 8080, GATEWAY_VALIDATION_OPTIONS)).toThrow(label);
   });
 
   it("rejects overlap with a configured Bedrock Runtime adapter port", () => {

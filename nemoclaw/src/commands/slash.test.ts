@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { PluginCommandContext, OpenClawPluginApi } from "../index.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { NemoClawState } from "../blueprint/state.js";
+import type { OpenClawPluginApi, PluginCommandContext } from "../index.js";
 import type { NemoClawOnboardConfig } from "../onboard/config.js";
 
 vi.mock("../blueprint/state.js", () => ({
@@ -17,25 +17,27 @@ vi.mock("../onboard/config.js", () => ({
 }));
 
 vi.mock("./shields-status.js", () => ({
-  slashShieldsStatus: vi.fn(() => ({ text: "**Shields: UP**" })),
+  slashShieldsStatus: vi.fn(() => ({ text: "**Shields status unavailable**" })),
 }));
 
 vi.mock("./config-show.js", () => ({
   slashConfigShow: vi.fn(() => ({ text: "**NemoClaw Config**" })),
 }));
 
-import { handleSlashCommand } from "./slash.js";
 import { loadState } from "../blueprint/state.js";
 import {
-  loadOnboardConfig,
   describeOnboardEndpoint,
   describeOnboardProvider,
+  loadOnboardConfig,
 } from "../onboard/config.js";
+import { slashShieldsStatus } from "./shields-status.js";
+import { handleSlashCommand } from "./slash.js";
 
 const mockedLoadState = vi.mocked(loadState);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
 const mockedDescribeOnboardEndpoint = vi.mocked(describeOnboardEndpoint);
 const mockedDescribeOnboardProvider = vi.mocked(describeOnboardProvider);
+const mockedSlashShieldsStatus = vi.mocked(slashShieldsStatus);
 
 function makeCtx(args?: string): PluginCommandContext {
   return {
@@ -73,12 +75,6 @@ function blankState(): NemoClawState {
     updatedAt: new Date().toISOString(),
     lastRebuildAt: null,
     lastRebuildBackupPath: null,
-    shieldsDown: false,
-    shieldsDownAt: null,
-    shieldsDownTimeout: null,
-    shieldsDownReason: null,
-    shieldsDownPolicy: null,
-    shieldsPolicySnapshotPath: null,
   };
 }
 
@@ -100,6 +96,8 @@ describe("commands/slash", () => {
       expect(result.text).toContain("Subcommands:");
       expect(result.text).toContain("status");
       expect(result.text).toContain("shields");
+      expect(result.text).toContain("Show how to check shields status from the host");
+      expect(result.text).not.toContain("up/down, timeout, policy");
       expect(result.text).toContain("config");
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");
@@ -116,9 +114,36 @@ describe("commands/slash", () => {
   // -------------------------------------------------------------------------
 
   describe("shields", () => {
-    it("routes to shields status handler", () => {
+    it("routes to shields status handler with no argument when only `shields` is given", () => {
       const result = handleSlashCommand(makeCtx("shields"), makeApi());
       expect(result.text).toContain("Shields");
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledTimes(1);
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith(undefined);
+    });
+
+    it("forwards `status` as the sub-argument", () => {
+      handleSlashCommand(makeCtx("shields status"), makeApi());
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("status");
+    });
+
+    it("forwards `down` as the sub-argument", () => {
+      handleSlashCommand(makeCtx("shields down"), makeApi());
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("down");
+    });
+
+    it("forwards `up` as the sub-argument", () => {
+      handleSlashCommand(makeCtx("shields up"), makeApi());
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("up");
+    });
+
+    it("forwards an unknown sub-argument verbatim", () => {
+      handleSlashCommand(makeCtx("shields abcxyz"), makeApi());
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("abcxyz");
+    });
+
+    it("ignores tokens past the second one", () => {
+      handleSlashCommand(makeCtx("shields down   --timeout 5m"), makeApi());
+      expect(mockedSlashShieldsStatus).toHaveBeenCalledWith("down");
     });
   });
 
@@ -144,7 +169,7 @@ describe("commands/slash", () => {
       ncpPartner: null,
       model: "nvidia/nemotron-3-super-120b-a12b",
       profile: "default",
-      credentialEnv: "NVIDIA_API_KEY",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       onboardedAt: "2026-03-01T00:00:00.000Z",
     };
 
@@ -280,7 +305,7 @@ describe("commands/slash", () => {
         ncpPartner: null,
         model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_API_KEY",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);
@@ -290,7 +315,7 @@ describe("commands/slash", () => {
       expect(result.text).toContain("NemoClaw Onboard Status");
       expect(result.text).toContain("NVIDIA Endpoint API");
       expect(result.text).toContain("nvidia/nemotron-3-super-120b-a12b");
-      expect(result.text).toContain("NVIDIA_API_KEY");
+      expect(result.text).toContain("NVIDIA_INFERENCE_API_KEY");
     });
 
     it("includes NCP partner when set", () => {
@@ -300,7 +325,7 @@ describe("commands/slash", () => {
         ncpPartner: "PartnerCo",
         model: "nvidia/nemotron-3-super-120b-a12b",
         profile: "default",
-        credentialEnv: "NVIDIA_API_KEY",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
         onboardedAt: "2026-03-01T00:00:00.000Z",
       };
       mockedLoadOnboardConfig.mockReturnValue(config);

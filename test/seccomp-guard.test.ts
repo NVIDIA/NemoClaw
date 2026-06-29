@@ -18,7 +18,7 @@ const SECCOMP_GUARD_SOURCE = path.join(
 );
 
 function extractStartScriptHeredoc(src: string, marker: string): string {
-  const heredoc = src.match(new RegExp(`<<'${marker}'\n([\s\S]*?)\n${marker}`));
+  const heredoc = src.match(new RegExp(String.raw`<<'${marker}'\n([\s\S]*?)\n${marker}`));
   if (heredoc) return heredoc[1];
   if (marker === "SECCOMP_GUARD_EOF") return fs.readFileSync(SECCOMP_GUARD_SOURCE, "utf-8");
   throw new Error(`Expected ${marker} heredoc in scripts/nemoclaw-start.sh`);
@@ -60,14 +60,14 @@ describe("Seccomp guard preload", () => {
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `source ${JSON.stringify(path.join(import.meta.dirname, "..", "scripts", "lib", "sandbox-init.sh"))}`,
-      "emit_sandbox_sourced_file() { local target=\"$1\"; cat > \"$target\"; chmod 444 \"$target\"; }",
+      'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
       "NODE_OPTIONS='--require /already-loaded.js'",
       block,
       'PROXY_HOST="10.200.0.1"',
       'PROXY_PORT="3128"',
       '_PROXY_URL="http://${PROXY_HOST}:${PROXY_PORT}"',
       '_NO_PROXY_VAL="localhost,127.0.0.1,::1,${PROXY_HOST}"',
-      '_TOOL_REDIRECTS=()',
+      "_TOOL_REDIRECTS=()",
       '_PROXY_FIX_SCRIPT="/tmp/nemoclaw-http-proxy-fix.js"',
       '_NEMOTRON_FIX_SCRIPT="/tmp/nemoclaw-nemotron-inference-fix.js"',
       "set +u",

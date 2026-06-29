@@ -3,6 +3,8 @@
 
 import path from "node:path";
 
+import { preflightVllmModelEnvOrExit } from "./vllm-model-preflight";
+
 const onboardProviders = require("./providers");
 
 export interface ResumeSessionLike {
@@ -20,7 +22,9 @@ export interface ResumeConfigConflict {
   recorded: string | null;
 }
 
-export function getRequestedSandboxNameHint(opts: { sandboxName?: string | null } = {}): string | null {
+export function getRequestedSandboxNameHint(
+  opts: { sandboxName?: string | null } = {},
+): string | null {
   const raw =
     typeof opts.sandboxName === "string" && opts.sandboxName.length > 0
       ? opts.sandboxName
@@ -46,7 +50,7 @@ export function getResumeSandboxConflict(
   const raw = typeof opts.sandboxName === "string" ? opts.sandboxName.trim().toLowerCase() : "";
   const requestedSandboxName = raw || null;
   const recordedSandboxName =
-    session?.steps?.sandbox?.status === "complete" ? session?.sandboxName ?? null : null;
+    session?.steps?.sandbox?.status === "complete" ? (session?.sandboxName ?? null) : null;
   if (!requestedSandboxName || !recordedSandboxName) {
     return null;
   }
@@ -57,6 +61,18 @@ export function getResumeSandboxConflict(
 
 export function getRequestedProviderHint(nonInteractive = false): string | null {
   return onboardProviders.getRequestedProviderHint(nonInteractive);
+}
+
+/**
+ * Run the up-front, side-effect-free env validations onboarding performs before
+ * preflight: the NEMOCLAW_PROVIDER hint check and the NEMOCLAW_VLLM_MODEL
+ * preflight (#5207). Either may exit the process with a non-zero code on an
+ * invalid value.
+ */
+export function preflightEarlyOnboardEnv(nonInteractive = false): string | null {
+  const providerHint = getRequestedProviderHint(nonInteractive);
+  preflightVllmModelEnvOrExit();
+  return providerHint;
 }
 
 export function getRequestedModelHint(nonInteractive = false): string | null {

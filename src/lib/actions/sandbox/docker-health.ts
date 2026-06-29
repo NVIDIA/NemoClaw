@@ -6,12 +6,7 @@ import { dockerCapture } from "../../adapters/docker/run";
 import * as registry from "../../state/registry";
 import { resolveSandboxContainerOwner } from "./sandbox-container-owner";
 
-export type DockerHealthState =
-  | "healthy"
-  | "unhealthy"
-  | "starting"
-  | "none"
-  | "unknown";
+export type DockerHealthState = "healthy" | "unhealthy" | "starting" | "none" | "unknown";
 
 export interface SandboxDockerHealth {
   state: DockerHealthState;
@@ -42,8 +37,7 @@ interface ResolveDeps {
 const defaultDeps: ResolveDeps = {
   getSandbox: (name) => registry.getSandbox(name),
   listSandboxNames: () => registry.listSandboxes().sandboxes.map((entry) => entry.name),
-  dockerPsNames: () =>
-    dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
+  dockerPsNames: () => dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true }),
   dockerInspectHealth: (containerName) =>
     dockerContainerInspectFormat(
       "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}",
@@ -69,11 +63,7 @@ function resolveDockerDriverSandboxContainer(
   } catch {
     return null;
   }
-  return resolveSandboxContainerOwner(
-    deps.dockerPsNames(),
-    sandboxName,
-    deps.listSandboxNames(),
-  );
+  return resolveSandboxContainerOwner(deps.dockerPsNames(), sandboxName, deps.listSandboxNames());
 }
 
 function normalizeHealthState(raw: string): DockerHealthState {

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
 import {
   detectOpenShellStateRpcPreflightIssue,
   detectOpenShellStateRpcResultIssue,
@@ -9,6 +8,7 @@ import {
 } from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
 import { B, D, G, R, YW } from "../cli/terminal-style";
+import { getVersion } from "../core/version";
 import { prompt as askPrompt } from "../credentials/store";
 import {
   normalizeUpgradeSandboxesOptions,
@@ -18,6 +18,7 @@ import {
   classifyUpgradeableSandboxes,
   shouldSkipUpgradeConfirmation,
   splitRebuildableSandboxes,
+  type UpgradeSandboxCandidate,
 } from "../domain/maintenance/upgrade";
 import {
   captureSandboxListWithGatewayRecovery,
@@ -42,6 +43,39 @@ function checkAgentVersionForUpgrade(
     sandboxName,
     liveNames.has(sandboxName) ? { forceProbe: true } : undefined,
   );
+}
+
+/**
+ * Resolve the running NemoClaw build fingerprint used for image-drift
+ * detection. Returns null when the version cannot be read so classification
+ * falls back to agent-version-only (legacy) behavior (#5026).
+ */
+function resolveCurrentNemoclawVersion(): string | null {
+  try {
+    return getVersion();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build a human-readable description of why a sandbox needs rebuilding, covering
+ * an outdated agent version, NemoClaw image/build drift, or both (#5026).
+ */
+function describeStaleUpgrade(s: UpgradeSandboxCandidate): string {
+  const reasons = s.reasons ?? [];
+  const parts: string[] = [];
+  if (reasons.includes("agent-version")) {
+    parts.push(`v${s.current || "?"} → v${s.expected}`);
+  } else if (reasons.includes("image-drift") && s.current) {
+    // Agent version is current; make clear it is the NemoClaw image that drifted.
+    parts.push(`v${s.current} unchanged`);
+  }
+  if (reasons.includes("image-drift")) {
+    const from = s.imageCurrent ? `v${s.imageCurrent}` : "unknown build";
+    parts.push(`NemoClaw image ${from} → v${s.imageExpected}`);
+  }
+  return parts.join("; ");
 }
 
 export async function upgradeSandboxes(
@@ -83,11 +117,14 @@ export async function upgradeSandboxes(
   }
   const liveNames = parseReadySandboxNames(liveResult.output || "");
 
-  // Classify sandboxes as stale, unknown, or current
+  // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw
+  // build so a NemoClaw image/build change is detected even when the agent
+  // version is unchanged (#5026).
   const { stale, unknown } = classifyUpgradeableSandboxes(
     sandboxes,
     liveNames,
     (name) => checkAgentVersionForUpgrade(name, liveNames),
+    { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
   );
 
   if (stale.length === 0 && unknown.length === 0) {
@@ -99,7 +136,7 @@ export async function upgradeSandboxes(
     console.log(`\n  ${B}Stale sandboxes:${R}`);
     for (const s of stale) {
       const status = s.running ? `${G}running${R}` : `${D}stopped${R}`;
-      console.log(`    ${s.name}  v${s.current || "?"} → v${s.expected}  (${status})`);
+      console.log(`    ${s.name}  ${describeStaleUpgrade(s)}  (${status})`);
     }
   }
   if (unknown.length > 0) {

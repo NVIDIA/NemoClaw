@@ -72,8 +72,7 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   if (
     userChoseManagedVllm ||
     (opts.vllmProfile &&
-      (opts.experimental ||
-        (opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform))))
+      (opts.experimental || (opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform))))
   ) {
     const verb = opts.hasVllmImage ? "Start" : "Install";
     const profileLabel = opts.vllmProfile?.name ?? "no profile detected";

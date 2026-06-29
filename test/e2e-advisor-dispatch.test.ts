@@ -19,6 +19,23 @@ jobs:
   cloud-e2e:
     if: github.event_name != 'workflow_dispatch' || inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',cloud-e2e,')
     steps: []
+  cloud-onboard-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',cloud-onboard-e2e,')
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: \${{ inputs.target_ref || github.ref }}
+      nvidia_api_key: true
+    secrets: *nightly-e2e-default-secrets
+  launchable-smoke-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',launchable-smoke-e2e,')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run launchable install-flow smoke test
+        env:
+          NVIDIA_INFERENCE_API_KEY: \${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+          NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+          COMPATIBLE_API_KEY: \${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.NVIDIA_INFERENCE_API_KEY || '' }}
+        run: bash test/e2e/test-launchable-smoke.sh
   report-to-pr:
     steps: []
   notify-on-failure:
@@ -68,6 +85,8 @@ describe("E2E advisor auto-dispatch planning", () => {
 
     expect(jobs).toContain("network-policy-e2e");
     expect(jobs).toContain("cloud-e2e");
+    expect(jobs).toContain("cloud-onboard-e2e");
+    expect(jobs).toContain("launchable-smoke-e2e");
     expect(jobs).not.toContain("report-to-pr");
     expect(jobs).not.toContain("notify-on-failure");
     expect(jobs).not.toContain("scorecard");
@@ -120,6 +139,56 @@ describe("E2E advisor auto-dispatch planning", () => {
     expect(plan.status).toBe("ready");
     expect(plan.jobs).toEqual(["network-policy-e2e", "cloud-e2e"]);
     expect(plan.inputs?.jobs).toBe("network-policy-e2e,cloud-e2e");
+  });
+
+  it("filters hosted-inference jobs that cannot receive secrets on target-ref dispatches", () => {
+    const workflowText = nightlyWorkflowText();
+    const plan = planAutoDispatch({
+      result: {
+        confidence: "high",
+        requiredTests: [
+          { id: "network-policy-e2e", workflow: "nightly-e2e.yaml" },
+          { id: "cloud-onboard-e2e", workflow: "nightly-e2e.yaml" },
+          { id: "launchable-smoke-e2e", workflow: "nightly-e2e.yaml" },
+        ],
+      },
+      workflowText,
+      event: pullRequest("MEMBER"),
+      env: {
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.jobs).toEqual(["network-policy-e2e"]);
+    expect(plan.inputs?.jobs).toBe("network-policy-e2e");
+    expect(plan.ignoredJobs).toEqual(["cloud-onboard-e2e", "launchable-smoke-e2e"]);
+    expect(plan.targetRefSecretBlockedJobs).toEqual(["cloud-onboard-e2e", "launchable-smoke-e2e"]);
+  });
+
+  it("skips cleanly when every recommended target-ref job requires withheld secrets", () => {
+    const workflowText = nightlyWorkflowText();
+    const plan = planAutoDispatch({
+      result: {
+        confidence: "high",
+        requiredTests: [
+          { id: "cloud-onboard-e2e", workflow: "nightly-e2e.yaml" },
+          { id: "launchable-smoke-e2e", workflow: "nightly-e2e.yaml" },
+        ],
+      },
+      workflowText,
+      event: pullRequest("MEMBER"),
+      env: {
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+      },
+    });
+
+    expect(plan.status).toBe("skipped");
+    expect(plan.reason).toMatch(/hosted inference secrets are withheld/);
+    expect(plan.ignoredJobs).toEqual(["cloud-onboard-e2e", "launchable-smoke-e2e"]);
+    expect(plan.targetRefSecretBlockedJobs).toEqual(["cloud-onboard-e2e", "launchable-smoke-e2e"]);
   });
 
   it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {

@@ -27,8 +27,7 @@ export default class SkillInstallCliCommand extends NemoClawCommand {
       required: true,
     }),
   };
-  static flags = {
-  };
+  static flags = {};
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SkillInstallCliCommand);

@@ -42,28 +42,46 @@ describe("ChannelManifestRegistry", () => {
   });
 
   it("rejects duplicate channel ids", () => {
-    expect(
-      () => new ChannelManifestRegistry([TELEGRAM_MANIFEST, TELEGRAM_MANIFEST]),
-    ).toThrow("Duplicate channel manifest id 'telegram'");
+    expect(() => new ChannelManifestRegistry([TELEGRAM_MANIFEST, TELEGRAM_MANIFEST])).toThrow(
+      "Duplicate channel manifest id 'telegram'",
+    );
   });
 
-  it("filters available manifests by agent and non-empty platform support lists", () => {
+  it("filters available manifests by agent and explicit channel support lists", () => {
     const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
 
-    expect(registry.listAvailable().map((manifest) => manifest.id)).toEqual([
-      "telegram",
-      "wechat",
-    ]);
+    expect(registry.listAvailable().map((manifest) => manifest.id)).toEqual(["telegram", "wechat"]);
     expect(registry.listAvailable({ agent: "hermes" }).map((manifest) => manifest.id)).toEqual([
       "telegram",
     ]);
     expect(
-      registry.listAvailable({ agent: "openclaw", supportedChannelIds: ["wechat"] }).map(
-        (manifest) => manifest.id,
-      ),
+      registry
+        .listAvailable({ agent: "openclaw", supportedChannelIds: ["wechat"] })
+        .map((manifest) => manifest.id),
     ).toEqual(["wechat"]);
+  });
+
+  it("treats an explicit empty supportedChannelIds array as deny-all", () => {
+    const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
+
     expect(
       registry.listAvailable({ supportedChannelIds: [] }).map((manifest) => manifest.id),
+    ).toEqual([]);
+    expect(
+      registry
+        .listAvailable({ agent: "openclaw", supportedChannelIds: [] })
+        .map((manifest) => manifest.id),
+    ).toEqual([]);
+  });
+
+  it("treats null or undefined supportedChannelIds as no constraint", () => {
+    const registry = new ChannelManifestRegistry([TELEGRAM_MANIFEST, WECHAT_MANIFEST]);
+
+    expect(
+      registry.listAvailable({ supportedChannelIds: null }).map((manifest) => manifest.id),
+    ).toEqual(["telegram", "wechat"]);
+    expect(
+      registry.listAvailable({ supportedChannelIds: undefined }).map((manifest) => manifest.id),
     ).toEqual(["telegram", "wechat"]);
   });
 });

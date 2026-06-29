@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import YAML from "yaml";
 
+import { getMessagingPolicyKeysByChannel } from "../messaging/channels";
 import * as policies from "../policy";
 import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
 import { requiredOpenclawOtelPolicyPresets } from "./openclaw-otel-policy-presets";
@@ -16,12 +17,7 @@ export type InitialSandboxPolicy = {
   cleanup?: () => boolean;
 };
 
-const HERMES_MESSAGING_POLICY_KEYS: Record<string, string[]> = {
-  discord: ["discord"],
-  slack: ["slack"],
-  telegram: ["telegram"],
-  wechat: ["wechat_bridge"],
-};
+const HERMES_MESSAGING_POLICY_KEYS = getMessagingPolicyKeysByChannel({ agent: "hermes" });
 
 const PROC_PATH = "/proc";
 const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
@@ -154,11 +150,7 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   try {
     const parsed = YAML.parse(policyContent);
     const networkPolicies = parsed?.network_policies;
-    if (
-      !networkPolicies ||
-      typeof networkPolicies !== "object" ||
-      Array.isArray(networkPolicies)
-    ) {
+    if (!networkPolicies || typeof networkPolicies !== "object" || Array.isArray(networkPolicies)) {
       return new Set();
     }
     return new Set(Object.keys(networkPolicies));
@@ -221,17 +213,13 @@ export function prepareInitialSandboxCreatePolicy(
   let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const buildCleanup = () =>
-    cleanupFns.length > 0
-      ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean)
-      : undefined;
+    cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
   const requestedCreateTimePresets = [
-    ...new Set(
-      [
-        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
-        ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
-        ...(options.additionalPresets || []),
-      ],
-    ),
+    ...new Set([
+      ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+      ...requiredOpenclawOtelPolicyPresets(options.agentName ?? "openclaw"),
+      ...(options.additionalPresets || []),
+    ]),
   ];
   const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 

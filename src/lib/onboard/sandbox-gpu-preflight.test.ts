@@ -46,9 +46,7 @@ describe("sandbox GPU preflight", () => {
   });
 
   it("parses Docker runtime names from JSON and plain-text output", () => {
-    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain(
-      "nvidia",
-    );
+    expect(parseDockerRuntimeNames('{"io.containerd.runc.v2":{},"nvidia":{}}')).toContain("nvidia");
     expect(parseDockerRuntimeNames("runc nvidia io.containerd.runc.v2")).toContain("nvidia");
     expect(parseDockerRuntimeNames("<no value>")).toEqual([]);
   });
@@ -123,7 +121,9 @@ describe("sandbox GPU preflight", () => {
 
   it("prints neutral WSL remediation when Docker runtime cannot be determined", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: number | string | null,
+    ) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
@@ -164,8 +164,18 @@ describe("sandbox GPU preflight", () => {
       runOpenshell,
       detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { id: "nvidia-smi", args: ["sandbox", "exec", "demo", "--", "nvidia-smi"], label: "nvidia-smi", optional: true },
-        { id: "cuda-init", args: ["sandbox", "exec", "demo", "--", "false"], label: "cuda-init", optional: true },
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi",
+          optional: true,
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "false"],
+          label: "cuda-init",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
@@ -192,8 +202,17 @@ describe("sandbox GPU preflight", () => {
       }),
       detectNvidiaPlatform: () => "jetson",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { id: "nvidia-smi", args: ["sandbox", "exec", "demo", "--", "nvidia-smi"], label: "nvidia-smi" },
-        { id: "cuda-init", args: ["sandbox", "exec", "demo", "--", "cuda-init-cmd"], label: "cuInit(0)", optional: true },
+        {
+          id: "nvidia-smi",
+          args: ["sandbox", "exec", "demo", "--", "nvidia-smi"],
+          label: "nvidia-smi",
+        },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda-init-cmd"],
+          label: "cuInit(0)",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
@@ -217,7 +236,12 @@ describe("sandbox GPU preflight", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=0", stderr: "" })),
       detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { id: "cuda-init", args: ["sandbox", "exec", "demo", "--", "cuda"], label: "cuInit(0)", optional: true },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
@@ -235,7 +259,12 @@ describe("sandbox GPU preflight", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "", stderr: "" })),
       detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { id: "cuda-init", args: ["sandbox", "exec", "demo", "--", "cuda"], label: "cuInit(0)", optional: true },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
@@ -254,7 +283,12 @@ describe("sandbox GPU preflight", () => {
       runOpenshell: vi.fn(() => ({ status: 0, stdout: "cuInit(0)=999", stderr: "" })),
       detectNvidiaPlatform: () => "linux",
       buildDirectSandboxGpuProofCommands: vi.fn(() => [
-        { id: "cuda-init", args: ["sandbox", "exec", "demo", "--", "cuda"], label: "cuInit(0)", optional: true },
+        {
+          id: "cuda-init",
+          args: ["sandbox", "exec", "demo", "--", "cuda"],
+          label: "cuInit(0)",
+          optional: true,
+        },
       ]),
       compactText: (value) => value.trim(),
       redact: (value) => String(value),
@@ -308,7 +342,9 @@ describe("sandbox GPU preflight", () => {
 
   it("exits with an explicit Jetson NVIDIA runtime message when runtime support is missing", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((
+      code?: number | string | null,
+    ) => {
       throw new Error(`exit:${code}`);
     }) as never);
 
