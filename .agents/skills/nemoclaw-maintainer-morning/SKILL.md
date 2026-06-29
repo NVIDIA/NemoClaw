@@ -16,7 +16,7 @@ See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md
 node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/version-target.ts
 ```
 
-This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface them as carry-forward work. Keep open PR labels by default; remove an old label only when the maintainer explicitly decides the PR is deferred, superseded, closed, or leaving the daily release flow.
+This fetches tags, computes the next patch version, and finds open items still carrying older version labels. Surface stragglers first — they indicate post-tag housekeeping was interrupted or an item slipped across multiple cycles. Decide whether to relabel them to today's target or defer them out of the daily release flow.
 
 ## Step 2: Triage
 

@@ -51,8 +51,8 @@ Covers creating pull requests that follow the project template, monitoring CI an
 | `nemoclaw-maintainer-policies` | Read-only maintainer workflow policy reference for Issue Type, labels, Project fields, daily release labels, triage, duplicates, blocked items, and workflow decisions. |
 | `nemoclaw-maintainer-cross-issue-sweep` | Scan open issues for adjacent fixes or contradiction risks when reviewing a PR. |
 | `nemoclaw-maintainer-day` | Daytime loop: pick the highest-value version-targeted item and execute the right workflow (merge gate, salvage, security sweep, test gaps, hotspot cooling, or sequencing). Designed for `/loop`. |
-| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, record open carry-forward work without relabeling it, generate a QA handoff summary, cut the release tag, and hand off release notes. |
-| `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on a maintainer-confirmed `origin/main` commit; the GitHub workflow moves `latest`, and `lkg` stays manual. |
+| `nemoclaw-maintainer-evening` | End-of-day handoff: check version progress, identify stragglers, generate a QA handoff summary, cut the release tag, bump stragglers to the next patch, and hand off release notes. |
+| `nemoclaw-maintainer-cut-release-tag` | Cut an annotated semver tag on a maintainer-confirmed `origin/main` commit, wait for workflow-managed `latest`, and bump remaining open items to the next patch; `lkg` stays manual. |
 | `nemoclaw-maintainer-release-notes` | Draft release notes from live tag/compare data, with the three-paragraph narrative, categorized change list, and external-only contributor thanks. |
 | `nemoclaw-maintainer-find-review-pr` | Find open security PRs with Urgent or High Project Priority, link each to its issue, detect duplicates, and present a review summary. |
 | `nemoclaw-maintainer-pr-comparator` | Compare competing PRs for the same issue and recommend which one to merge. |

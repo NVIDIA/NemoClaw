@@ -57,25 +57,24 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(triage).not.toContain("priority: high");
   });
 
-  it("preserves open release labels as carry-forward work", () => {
+  it("moves post-tag stragglers to the next patch version", () => {
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
     const morning = read(".agents/skills/nemoclaw-maintainer-morning/SKILL.md");
     const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
+    const policy = read(".agents/skills/nemoclaw-maintainer-policies/references/release-train.md");
 
-    expect(evening).toContain("Keep their existing version label by default");
-    expect(release).toContain("do not bulk-swap labels");
-    expect(morning).toContain("Keep open PR labels by default");
-    expect(priorities).toContain("keep their existing label as carry-forward work");
-    expect(evening).not.toContain("bump-stragglers");
-    expect(release).not.toContain("bump-stragglers");
-    expect(morning).not.toContain("bump-stragglers");
-    expect(priorities).not.toContain("bump-stragglers");
+    expect(evening).toContain("automatically bump stragglers to the next patch");
+    expect(release).toContain("scripts/bump-stragglers.ts");
+    expect(release).toContain("Do not run it before Step 4");
+    expect(morning).toContain("post-tag housekeeping was interrupted");
+    expect(priorities).toContain("automatically bump stragglers to the next patch");
+    expect(policy).toContain("automatically move every open straggler to the next patch label");
     expect(
       fs.existsSync(
         path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts"),
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("keeps cross-issue sweeping separate from comparator scoring", () => {

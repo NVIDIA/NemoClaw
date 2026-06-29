@@ -11,7 +11,7 @@ user_invocable: true
 
 Use the release scripts for normal release operations. Do not run raw `git tag`, `git push`, `gh api`, or version-bump commands by hand for the normal release flow.
 
-The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag is cut, record remaining open issues/PRs as carry-forward work without automatically relabeling them, then draft release notes for the maintainer to post.
+The release is one annotated semver tag on an already-merged `origin/main` commit. The GitHub workflow moves `latest`; release admins promote `lkg` manually after validation. After the tag and `latest` are verified, automatically move remaining open issues/PRs from the released version label to the next patch label, then draft release notes for the maintainer to post.
 
 ## Hard Rules
 
@@ -33,7 +33,7 @@ Release Progress:
 - [ ] Step 2: Show plan and exact confirmation phrase
 - [ ] Step 3: Cut the semver tag from the confirmed plan
 - [ ] Step 4: Wait for workflow-managed latest
-- [ ] Step 5: Record remaining open issues/PRs
+- [ ] Step 5: Bump remaining open issues/PRs
 - [ ] Step 6: Generate release-note data and draft Markdown
 - [ ] Step 7: Hand off announcement steps
 ```
@@ -108,22 +108,26 @@ The script waits until `vX.Y.Z^{}` and `latest^{}` both peel to the planned comm
 
 If it fails, report the failed workflow/status. Do not manually move `latest`.
 
-### Step 5: Record Remaining Open Issues/PRs
+### Step 5: Bump Remaining Open Issues/PRs
 
-List remaining open issues and PRs carrying the released version:
+Move every remaining open issue or PR carrying the released version to the next patch label:
+
+```bash
+node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <released-version> <next-version>
+```
+
+This is automatic post-tag housekeeping covered by the release plan and exact confirmation in Step 2. The script creates the next patch label when needed, removes the released-version label, and adds the next-version label to every open straggler. Do not run it before Step 4 verifies both the semver tag and workflow-managed `latest`.
+
+Then verify the released version has no open stragglers:
 
 ```bash
 gh issue list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
 gh pr list --repo NVIDIA/NemoClaw --state open --label <released-version> --limit 100
 ```
 
-Open PRs remain active carry-forward work with their existing label by default. Do not replace the label merely because the tag was cut. Open issues use the label only for tracking or "needs PR" coordination and may keep or lose it through an explicit maintainer decision.
-
-Remove the released-version label only when the maintainer decides an item is deferred, superseded, closed, or leaving the daily release flow. Activation under a newer daily label is a separate decision; do not bulk-swap labels.
-
 Summarize:
 
-- open issues/PRs retained as carry-forward work;
+- open issues/PRs bumped to `<next-version>`;
 - any items that need manual maintainer attention.
 
 ### Step 6: Generate Release-Note Data and Draft Markdown
@@ -171,4 +175,4 @@ Return:
 - `latest` workflow fails or times out: report the workflow/status; do not move `latest` manually.
 - `latest` workflow rejects a rollback: keep `latest` unchanged, inspect the plan target commit, and regenerate the plan for the current `origin/main` tip if appropriate.
 - `lkg` changed: stop and escalate to a release admin.
-- Carry-forward review finds an item that should leave the daily release flow: ask the maintainer before removing its label.
+- Post-tag housekeeping fails: report the error and list items still carrying the released label. After the failure is fixed, rerun the same bump command; already-moved items no longer match the source label.
