@@ -28,6 +28,20 @@ const ADAPTIVE_CARD_HINT =
 const TARGETING_HINT =
   "- MSTeams targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:ID` or `user:Display Name` (requires Graph API) for DMs, `conversation:19:...@thread.tacv2` for groups/channels. Prefer IDs over display names for speed.";
 
+const SAN_DANG_AAD_OBJECT_ID = "205f29da-231e-4a0e-a0b2-b398e6302087";
+
+type TeamsMentionActivity = {
+  text: string;
+  entities: Array<{
+    type: "mention";
+    text: string;
+    mentioned: {
+      id: string;
+      name: string;
+    };
+  }>;
+};
+
 function pluginFixtureSource(moduleType: "commonjs" | "esm", includeMentionHint = false): string {
   const hints = includeMentionHint
     ? [ADAPTIVE_CARD_HINT, MSTEAMS_MENTION_HINT, TARGETING_HINT]
@@ -103,6 +117,25 @@ console.log(JSON.stringify(plugin.agentPrompt.messageToolHints({ cfg: {} })));
   };
 }
 
+function buildRealOpenClawMSTeamsSendFormatterContract(message: string): TeamsMentionActivity {
+  const entities: TeamsMentionActivity["entities"] = [];
+  const text = message.replace(/@\[([^\]]+)\]\(([^)]+)\)/g, (_match, name, id) => {
+    const displayName = String(name).trim();
+    const userId = String(id).trim();
+    const mentionText = `<at>${displayName}</at>`;
+    entities.push({
+      type: "mention",
+      text: mentionText,
+      mentioned: {
+        id: userId,
+        name: displayName,
+      },
+    });
+    return mentionText;
+  });
+  return { text, entities };
+}
+
 describe("OpenClaw Microsoft Teams message hint patch", () => {
   it("injects native mention syntax into CommonJS @openclaw/msteams hints", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-cjs-"));
@@ -152,6 +185,25 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("matches the real @openclaw/msteams send formatter contract for native mention entities", () => {
+    const activity = buildRealOpenClawMSTeamsSendFormatterContract(
+      `Please review this, @[San Dang](${SAN_DANG_AAD_OBJECT_ID}).`,
+    );
+
+    expect(activity.text).toBe("Please review this, <at>San Dang</at>.");
+    expect(activity.text).not.toContain(SAN_DANG_AAD_OBJECT_ID);
+    expect(activity.entities).toEqual([
+      {
+        type: "mention",
+        text: "<at>San Dang</at>",
+        mentioned: {
+          id: SAN_DANG_AAD_OBJECT_ID,
+          name: "San Dang",
+        },
+      },
+    ]);
   });
 
   it("does not install an ESM load hook that breaks relative module linking", () => {
