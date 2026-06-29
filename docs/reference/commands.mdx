@@ -577,7 +577,11 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
 The exit code is the remote command's exit code.
 
-The OpenShell exec endpoint rejects any argument that contains a newline or carriage return, so multi-line commands (for example a `bash` heredoc) cannot be passed through `exec`. NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` rather than surfacing the lower-level OpenShell `InvalidArgument` error. Join the statements with semicolons (`exec -- bash -lc "cmd1; cmd2"`) or run a script file inside the sandbox (`exec -- bash <script-path>`) instead.
+The OpenShell exec endpoint rejects any command argument (the values after `--`) that contains a newline or carriage return, so multi-line commands such as a `bash` heredoc cannot be passed through `exec`.
+NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` instead of surfacing the lower-level OpenShell `InvalidArgument` error.
+Join the statements with semicolons (`$$nemoclaw <name> exec -- bash -lc "cmd1; cmd2"`).
+Pipe the script into the sandbox shell over stdin (`printf 'cmd1\ncmd2\n' | $$nemoclaw <name> exec -- bash`).
+Or write the script to a file in the sandbox and run it (`$$nemoclaw <name> exec -- bash <script-path>`).
 
 | Flag | Description |
 |------|-------------|

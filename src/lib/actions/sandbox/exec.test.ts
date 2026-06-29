@@ -3,6 +3,16 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// execSandbox dynamically requires the OpenShell runtime adapter and spawns the
+// binary; stub both so the dispatch-path tests stay hermetic (no real binary).
+vi.mock("../../adapters/openshell/runtime", () => ({
+  getOpenshellBinary: () => "openshell",
+}));
+vi.mock("node:child_process", () => ({
+  spawnSync: vi.fn(() => ({ status: 0 })),
+}));
+
+import { spawnSync } from "node:child_process";
 import {
   buildOpenshellExecArgs,
   buildWorkdirProbeArgs,
@@ -114,36 +124,47 @@ describe("findMultilineExecArg", () => {
 });
 
 describe("multilineExecMessage", () => {
-  it("names the 1-based argument position and offers semicolon and script workarounds", () => {
+  it("names the 1-based argument position and offers the semicolon, pipe, and script workarounds", () => {
     const message = multilineExecMessage(
       "nemoclaw",
       "bug5980test",
       ["bash", "-lc", "cat <<EOF\nline1\nEOF"],
       2,
     );
-    expect(message).toContain("command argument 3 contains a newline or carriage return");
+    expect(message).toContain("command argument 3");
+    expect(message).toContain("contains a newline or carriage return");
     expect(message).toContain('nemoclaw bug5980test exec -- bash -lc "cmd1; cmd2"');
+    expect(message).toContain("| nemoclaw bug5980test exec -- bash");
     expect(message).toContain("nemoclaw bug5980test exec -- bash <script-path>");
   });
 
-  it("renders the offending argument on a single line with escaped newlines", () => {
-    const message = multilineExecMessage("nemoclaw", "alpha", ["bash", "-lc", "a\nb\r"], 2);
-    const lines = message.split("\n");
-    const preview = lines.find((line) => line.includes("a\\nb\\r"));
-    expect(preview).toBeDefined();
-    // The preview itself must not reintroduce a real newline/carriage return.
-    expect(preview).not.toMatch(/[\r\n]/);
+  it("uses the active CLI name so the Hermes surface gets nemohermes guidance", () => {
+    const message = multilineExecMessage("nemohermes", "alpha", ["bash", "-lc", "a\nb"], 2);
+    expect(message).toContain("nemohermes alpha exec -- bash");
+    expect(message).not.toContain("nemoclaw");
   });
 
-  it("truncates a very long offending argument", () => {
-    const long = `${"x".repeat(200)}\ny`;
-    const message = multilineExecMessage("nemoclaw", "alpha", ["echo", long], 1);
-    expect(message).toContain("…");
+  it("describes the argument by size without echoing its contents (avoids leaking secrets)", () => {
+    const secret = "-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhk\n-----END PRIVATE KEY-----";
+    const message = multilineExecMessage("nemoclaw", "alpha", ["bash", "-lc", secret], 2);
+    // The neutral size description appears...
+    expect(message).toContain(`${secret.length} characters spanning 3 lines`);
+    // ...but no fragment of the secret payload is ever printed.
+    expect(message).not.toContain("BEGIN PRIVATE KEY");
+    expect(message).not.toContain("MIIBVgIBADANBgkqhk");
+    // And the message itself stays free of the offending control characters.
+    expect(message).not.toMatch(/[\r\n]\s*-----/);
+  });
+
+  it("uses singular units for a single-character single-line argument", () => {
+    const message = multilineExecMessage("nemoclaw", "alpha", ["printf", "\r"], 1);
+    expect(message).toContain("1 character spanning 2 lines");
   });
 });
 
 describe("execSandbox multi-line guard (#5980)", () => {
   afterEach(() => {
+    vi.mocked(spawnSync).mockClear();
     vi.restoreAllMocks();
   });
 
@@ -158,9 +179,37 @@ describe("execSandbox multi-line guard (#5980)", () => {
     ).rejects.toThrow("exit:2");
 
     expect(exitSpy).toHaveBeenCalledWith(2);
+    // The guard short-circuits before OpenShell is ever spawned.
+    expect(spawnSync).not.toHaveBeenCalled();
     const printed = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
     expect(printed).toContain("contains a newline or carriage return");
     expect(printed).toContain('bash -lc "cmd1; cmd2"');
+  });
+
+  it("forwards a normal single-line command to OpenShell unchanged (semicolon workaround still works)", async () => {
+    vi.mocked(spawnSync).mockReturnValue({ status: 0 } as ReturnType<typeof spawnSync>);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error(`exit:${_code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      execSandbox("bug5980test", ["bash", "-lc", "echo line1; echo line2"]),
+    ).rejects.toThrow("exit:0");
+
+    // The single-line command reaches dispatch and is forwarded verbatim.
+    expect(spawnSync).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(spawnSync).mock.calls[0][1]).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "bug5980test",
+      "--",
+      "bash",
+      "-lc",
+      "echo line1; echo line2",
+    ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
   });
 });
 

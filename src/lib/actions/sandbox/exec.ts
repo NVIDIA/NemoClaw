@@ -60,13 +60,16 @@ export function findMultilineExecArg(command: readonly string[]): number {
   return -1;
 }
 
-// Render the offending argument on a single line so the error message stays
-// readable: real newlines/carriage returns become visible \n / \r escapes and
-// long arguments are truncated.
-function previewMultilineArg(arg: string): string {
-  const escaped = arg.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
-  const MAX = 120;
-  return escaped.length > MAX ? `${escaped.slice(0, MAX)}…` : escaped;
+// Describe the offending argument WITHOUT echoing its contents: a multi-line
+// value can carry pasted secrets, env files, or private-key material, and
+// printing even a truncated preview risks persisting it in terminal or CI logs.
+// The 1-based position plus a neutral size description is enough for the user
+// to find the argument they typed.
+function describeMultilineArg(arg: string): string {
+  const lineCount = arg.split(/\r\n|\r|\n/).length;
+  const charLabel = arg.length === 1 ? "character" : "characters";
+  const lineLabel = lineCount === 1 ? "line" : "lines";
+  return `${arg.length} ${charLabel} spanning ${lineCount} ${lineLabel}`;
 }
 
 export function multilineExecMessage(
@@ -78,10 +81,10 @@ export function multilineExecMessage(
   // Report a 1-based position within the user command (the args after `--`).
   const position = index + 1;
   return [
-    `error: command argument ${position} contains a newline or carriage return, which OpenShell exec does not accept:`,
-    `  ${previewMultilineArg(command[index])}`,
+    `error: command argument ${position} (${describeMultilineArg(command[index])}) contains a newline or carriage return, which OpenShell exec does not accept.`,
     "Multi-line commands (for example heredocs) cannot be passed through exec argv. Instead:",
     `  - join statements with semicolons: ${cliName} ${sandboxName} exec -- bash -lc "cmd1; cmd2"`,
+    `  - pipe the script into the sandbox shell over stdin: printf 'cmd1\\ncmd2\\n' | ${cliName} ${sandboxName} exec -- bash`,
     `  - or write the script to a file in the sandbox and run it: ${cliName} ${sandboxName} exec -- bash <script-path>`,
   ].join("\n");
 }
