@@ -72,6 +72,7 @@ const trace = require("../../../scripts/scorecard/analyze-trace-timing.ts") as {
   selectOnboardTrace: (texts: string[]) => { totalMs: number } | null;
 };
 const scorecardJobs = require("../../../scripts/scorecard/summarize-jobs.ts") as {
+  isSelectiveDispatch: (eventName: string, rawJobs?: string, rawTargets?: string) => boolean;
   loadWorkflowRunJobs: (deps: {
     context: { repo: { owner: string; repo: string }; runId: number };
     core: { warning: (message: string) => void };
@@ -173,6 +174,13 @@ function scorecardData(overrides: Partial<ScorecardData> = {}): ScorecardData {
 }
 
 describe("E2E scorecard", () => {
+  it("classifies malformed non-empty dispatch selectors as selective", () => {
+    expect(scorecardJobs.isSelectiveDispatch("schedule", "cloud-onboard")).toBe(false);
+    expect(scorecardJobs.isSelectiveDispatch("workflow_dispatch", "  ", "")).toBe(false);
+    expect(scorecardJobs.isSelectiveDispatch("workflow_dispatch", "bad selector!", "")).toBe(true);
+    expect(scorecardJobs.isSelectiveDispatch("workflow_dispatch", "", "cloud-onboard")).toBe(true);
+  });
+
   it("loads typed scorecard helpers through the native github-script require boundary", () => {
     const script = `
       const path = require('node:path');

@@ -6456,11 +6456,16 @@ jobs:
             const safeSelector = /^[A-Za-z0-9_-]+$/;
             const parseSelectors = (value) =>
               value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
-            const requestedJobs = parseSelectors(process.env.JOBS || '');
-            const requestedTargets = parseSelectors(process.env.TARGETS || '');
+            const rawRequestedJobs = process.env.JOBS || '';
+            const rawRequestedTargets = process.env.TARGETS || '';
+            const requestedJobs = parseSelectors(rawRequestedJobs);
+            const requestedTargets = parseSelectors(rawRequestedTargets);
             const isDispatch = context.eventName === 'workflow_dispatch';
-            const isSelectiveDispatch =
-              isDispatch && (requestedJobs.length > 0 || requestedTargets.length > 0);
+            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
+              context.eventName,
+              rawRequestedJobs,
+              rawRequestedTargets,
+            );
             const runMode = isSelectiveDispatch
               ? 'Selective dispatch'
               : isDispatch

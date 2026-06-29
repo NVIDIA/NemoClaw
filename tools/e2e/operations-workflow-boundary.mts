@@ -163,6 +163,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/analyze-trace-timing.ts",
     "traceTiming.buildTraceTimingResult",
     "scripts/scorecard/summarize-jobs.ts",
+    "scorecardJobs.isSelectiveDispatch",
     "scorecardJobs.loadWorkflowRunJobs",
     "scorecardJobs.summarizeJobs",
     "scripts/scorecard/build-slack-blocks.ts",

@@ -46,6 +46,10 @@ export type WorkflowRunJobsDeps = {
 
 type CountedResult = "cancelled" | "failure" | "skipped" | "success";
 
+function isSelectiveDispatch(eventName: string, rawJobs = "", rawTargets = ""): boolean {
+  return eventName === "workflow_dispatch" && (rawJobs.trim() !== "" || rawTargets.trim() !== "");
+}
+
 function classifyApiJob(job: ApiJob): CountedResult {
   if (job.conclusion === "success") return "success";
   if (job.conclusion === "failure") return "failure";
@@ -158,4 +162,4 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   };
 }
 
-module.exports = { loadWorkflowRunJobs, summarizeJobs };
+module.exports = { isSelectiveDispatch, loadWorkflowRunJobs, summarizeJobs };
