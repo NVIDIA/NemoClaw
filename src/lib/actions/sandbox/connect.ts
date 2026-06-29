@@ -62,6 +62,21 @@ export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
 
+// Host-side companion to the in-sandbox policy-denial breadcrumb (#5978). The
+// in-sandbox hint can only print a `<name>` placeholder on OpenShell builds that
+// set OPENSHELL_SANDBOX=1 (not the sandbox name); here on the host we know the
+// real name, so the reporter's `connect` flow gets a directly runnable command.
+export function buildPolicyDenialConnectHint(sandboxName: string): string {
+  return (
+    "If a request is blocked by network policy ('CONNECT tunnel failed, response 403'), " +
+    `see why with \`${CLI_NAME} ${sandboxName} logs --tail 50\`.`
+  );
+}
+
+function isPolicyDenialHintSuppressed(env: NodeJS.ProcessEnv = process.env): boolean {
+  return ["1", "true"].includes(String(env.NEMOCLAW_NO_POLICY_HINT || ""));
+}
+
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -1074,6 +1089,9 @@ export async function connectSandbox(
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
+    if (!isPolicyDenialHintSuppressed()) {
+      console.log(`  ${D}${buildPolicyDenialConnectHint(sandboxName)}${R}`);
+    }
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {

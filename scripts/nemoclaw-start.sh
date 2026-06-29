@@ -3031,6 +3031,69 @@ PYAPPROVEAFTER
   return "$_nemoclaw_oc_status"
 }
 # nemoclaw-configure-guard end
+# nemoclaw-policy-denial-hint begin
+# #5978: outbound network is denied-by-default and enforced by the OpenShell L7
+# proxy. From inside the sandbox, generic CLIs (curl, git, wget, python, …) see
+# a policy denial only as the opaque protocol error
+# "CONNECT tunnel failed, response 403" — with no pointer to the detailed
+# allow/deny reason, which lives in the NemoClaw logs. Surface a one-line
+# breadcrumb when a human first lands in an interactive connect shell so a later
+# 403 is recognisable and actionable.
+#
+# This deliberately does NOT wrap or alter curl/git/wget: wrapping them to scan
+# stderr turns their stderr into a pipe, which makes the tools treat it as a
+# non-TTY and silently drop progress meters and colour — a worse regression than
+# the missing breadcrumb. The hint is therefore tool-agnostic informational
+# output that leaves every tool's stdout/stderr/TTY behaviour and exit code
+# byte-for-byte unchanged, and covers every connect path that sources this file.
+# Shown once per top-level interactive TTY session; suppress with
+# NEMOCLAW_NO_POLICY_HINT=1.
+_nemoclaw_policy_denial_hint_label() {
+  # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
+  # versions set the boolean "1". Use the name when it looks like one, else a
+  # placeholder the user resolves with `nemoclaw list`.
+  case "${OPENSHELL_SANDBOX:-}" in
+    "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    *)
+      # OPENSHELL_SANDBOX is untrusted input printed into a TTY: strip control
+      # characters (newlines, ESC, …) so a crafted sandbox name cannot spoof
+      # output or inject terminal escape sequences. Fall back to the placeholder
+      # if nothing printable remains.
+      _nemoclaw_policy_hint_label="$(printf '%s' "$OPENSHELL_SANDBOX" | LC_ALL=C tr -d '[:cntrl:]')"
+      [ -n "$_nemoclaw_policy_hint_label" ] || _nemoclaw_policy_hint_label='<name>'
+      printf '%s' "$_nemoclaw_policy_hint_label"
+      ;;
+  esac
+}
+_nemoclaw_policy_denial_hint_text() {
+  {
+    printf '  Note: this sandbox restricts outbound network access by policy.\n'
+    printf "  Blocked requests fail with 'CONNECT tunnel failed, response 403'.\n"
+    printf '  See which rule denied a request:  nemoclaw %s logs --tail 50\n' \
+      "$(_nemoclaw_policy_denial_hint_label)"
+  } >&2
+}
+_nemoclaw_maybe_policy_denial_hint() {
+  # Once per shell process: a login shell can source this file through more than
+  # one system-wide hook (the login-profile hook and the interactive-bash hook;
+  # #2704), so guard against printing twice. Not exported, so it neither leaks
+  # into child processes nor suppresses sibling connect sessions.
+  [ -n "${_NEMOCLAW_POLICY_HINT_SHOWN:-}" ] && return 0
+  # Suppressed by the user.
+  case "${NEMOCLAW_NO_POLICY_HINT:-}" in 1 | true | TRUE | yes | YES) return 0 ;; esac
+  # Interactive human shells only — never automation (`bash -c`, scripts).
+  case $- in *i*) ;; *) return 0 ;; esac
+  # Real terminal on stderr (where the hint is written).
+  [ -t 2 ] || return 0
+  # Top-level connect shell only — don't repeat in every subshell/pane.
+  [ "${SHLVL:-1}" -le 1 ] || return 0
+  # Nothing is proxied (no egress restriction) ⇒ nothing to explain.
+  [ -n "${HTTPS_PROXY:-${https_proxy:-}}" ] || return 0
+  _NEMOCLAW_POLICY_HINT_SHOWN=1
+  _nemoclaw_policy_denial_hint_text
+}
+_nemoclaw_maybe_policy_denial_hint
+# nemoclaw-policy-denial-hint end
 GUARDENVEOF
     # Global sandbox safety net for connect sessions — must be first.
     echo "export NODE_OPTIONS=\"\${NODE_OPTIONS:+\$NODE_OPTIONS }--require $_SANDBOX_SAFETY_NET\""

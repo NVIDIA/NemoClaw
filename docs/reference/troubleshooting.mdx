@@ -678,6 +678,31 @@ If they are missing on an older sandbox, upgrade NemoClaw and run:
 $$nemoclaw <name> rebuild
 ```
 
+### A request inside the sandbox fails with `CONNECT tunnel failed, response 403`
+
+Sandbox outbound network access is denied by default and enforced by the OpenShell proxy.
+When a request targets a host that no applied policy preset allows, the proxy refuses the tunnel and tools surface only the protocol-level error:
+
+```text
+fatal: unable to access 'https://example.com/foo/bar/': CONNECT tunnel failed, response 403
+curl: (56) CONNECT tunnel failed, response 403
+```
+
+This is a network-policy denial, not a tool or certificate problem.
+The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this; suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+
+To see which rule denied the request, read the merged logs from the host:
+
+```bash
+$$nemoclaw <name> logs --tail 50
+```
+
+If the host should be reachable, allow it with a preset or a [custom preset](../network-policy/customize-network-policy#custom-preset-files):
+
+```bash
+$$nemoclaw <name> policy-add <preset>
+```
+
 ### Sandbox creation reports a TLS certificate mismatch
 
 If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway certificate may have changed since the CLI last registered it.

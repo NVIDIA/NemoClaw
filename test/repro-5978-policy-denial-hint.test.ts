@@ -1,0 +1,291 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Behavioral regression coverage for #5978.
+ *
+ * Sandbox outbound network access is denied-by-default and enforced by the
+ * OpenShell L7 proxy. From inside the sandbox, generic CLIs (curl, git, wget,
+ * python, …) see a policy denial only as the opaque protocol error
+ * `CONNECT tunnel failed, response 403`. The detailed allow/deny reason is in
+ * the NemoClaw logs, but nothing pointed the user there.
+ *
+ * The fix emits a tool-agnostic breadcrumb into the interactive connect shell
+ * via the same `/tmp/nemoclaw-proxy-env.sh` stanza that already hosts the
+ * `openclaw()` guard (sourced by every interactive/login sandbox shell through
+ * /etc/bash.bashrc and /etc/profile.d). It does NOT wrap or alter curl/git/wget
+ * — their stdout/stderr/TTY behaviour and exit codes are untouched — so it
+ * covers every tool and every connect path without regressing tool output.
+ *
+ * These tests execute the actual emitted stanza shell rather than asserting on
+ * source text, mirroring test/repro-4538-raw-doctor-perms.test.ts.
+ */
+
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+const REPO_ROOT = path.join(import.meta.dirname, "..");
+const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
+
+// Opt-in container E2E: drives the EXACT reporter workflow against the real
+// sandbox base image — the image's own /etc/profile.d + /etc/bash.bashrc hooks
+// source /tmp/nemoclaw-proxy-env.sh, and a real curl is denied by a 403-on-
+// CONNECT proxy (the OpenShell L7 signature). Gated like the docker E2E in
+// test/repro-4538-raw-doctor-perms.test.ts because it needs Docker and the
+// pulled base image. Run with:
+//   NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E=1 vitest run \
+//     test/repro-5978-policy-denial-hint.test.ts --project integration
+const DOCKER_E2E = process.env.NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E === "1";
+const SANDBOX_BASE_IMAGE =
+  process.env.NEMOCLAW_SANDBOX_BASE_IMAGE ?? "ghcr.io/nvidia/nemoclaw/sandbox-base:latest";
+
+/**
+ * Extract the literal `# nemoclaw-policy-denial-hint begin/end` stanza emitted
+ * into /tmp/nemoclaw-proxy-env.sh. It lives inside a single-quoted heredoc, so
+ * what the test sources is byte-identical to what a connect shell sources.
+ */
+function extractHintStanza(src: string): string {
+  const begin = src.indexOf("# nemoclaw-policy-denial-hint begin");
+  const end = src.indexOf("# nemoclaw-policy-denial-hint end");
+  // Assert presence/order branch-free (test files must not add branches):
+  // short-circuit to a throwing helper when the markers are missing/reordered.
+  const fail = (): never => {
+    throw new Error(
+      "Expected nemoclaw-policy-denial-hint begin/end markers in scripts/nemoclaw-start.sh",
+    );
+  };
+  const markersPresent = begin >= 0 && end > begin;
+  markersPresent || fail();
+  return src.slice(begin, src.indexOf("\n", end) + 1);
+}
+
+// Run a snippet under a pseudo-terminal so `[ -t 2 ]` is true and the shell is
+// interactive (`bash -ic`) — the exact conditions of a human in a connect
+// shell. `--noprofile --norc` keeps the host's rc files out of the captured
+// output. `script` is part of util-linux and present on CI and the sandbox
+// image. Each snippet sets SHLVL itself to model a specific shell depth; we
+// force a high inherited SHLVL here so the stanza's source-time auto-call is
+// always gated out (regardless of the runner's own SHLVL) and only the snippet's
+// explicit invocation decides the outcome. This keeps the tests deterministic
+// even under `env -u SHLVL vitest`.
+function runInPty(snippet: string, env: NodeJS.ProcessEnv): { stdout: string; status: number } {
+  // Write the snippet to a file so its shell quoting survives the
+  // script(1) → sh -c → bash layering intact (only the file path crosses it).
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nc-5978-")), "snippet.sh");
+  fs.writeFileSync(file, snippet);
+  try {
+    const result = spawnSync(
+      "script",
+      ["-qec", `bash --noprofile --norc -i ${file}`, "/dev/null"],
+      {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { ...process.env, ...env, SHLVL: "9" },
+      },
+    );
+    return { stdout: result.stdout ?? "", status: result.status ?? -1 };
+  } finally {
+    fs.rmSync(path.dirname(file), { recursive: true, force: true });
+  }
+}
+
+function runPlain(snippet: string, env: NodeJS.ProcessEnv): { stdout: string; status: number } {
+  const result = spawnSync("bash", ["-c", snippet], {
+    encoding: "utf-8",
+    timeout: 10_000,
+    env: { ...process.env, ...env },
+  });
+  // The stanza prints to stderr; capture both streams together for assertions.
+  return { stdout: `${result.stdout ?? ""}${result.stderr ?? ""}`, status: result.status ?? -1 };
+}
+
+describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const stanza = extractHintStanza(src);
+
+  it("auto-invokes the gate at source time so connect shells get it for free", () => {
+    // Behavioral wiring check: just SOURCING the stanza (no explicit call) in a
+    // qualifying connect shell must print the breadcrumb. Pin SHLVL=1 before the
+    // stanza so its own trailing invocation runs at top-level depth.
+    const { stdout, status } = runInPty(["SHLVL=1", stanza].join("\n"), {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+    });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
+  });
+
+  // All breadcrumb scenarios drive the public gate `_nemoclaw_maybe_policy_denial_hint`
+  // and assert the user-visible breadcrumb, not the shell-private sub-helpers —
+  // observable outcomes through the boundary rather than internal shape.
+  const gate = (env: NodeJS.ProcessEnv) =>
+    runInPty([stanza, "SHLVL=1; _nemoclaw_maybe_policy_denial_hint"].join("\n"), {
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      ...env,
+    });
+
+  it("names the sandbox from OPENSHELL_SANDBOX in the emitted breadcrumb", () => {
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa-5978" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
+  });
+
+  it("falls back to <name> when OPENSHELL_SANDBOX is unusable (older OpenShell)", () => {
+    for (const value of ["", "1", "true"]) {
+      const { stdout, status } = gate({ OPENSHELL_SANDBOX: value });
+      expect(status).toBe(0);
+      expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    }
+  });
+
+  it("strips control characters so a crafted OPENSHELL_SANDBOX cannot inject TTY escapes", () => {
+    // ESC + newline in the name must not reach the terminal (security-boundary script).
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa\u001b[31m-5978\nINJECTED" });
+    const normalized = stdout.replace(/\r/g, "");
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("\u001b");
+    // The newline must be stripped too — INJECTED must not land on its own line.
+    expect(normalized).not.toContain("\nINJECTED");
+    expect(stdout).toContain("logs --tail 50");
+  });
+
+  it("falls back to <name> when OPENSHELL_SANDBOX is only control characters", () => {
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "\t" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+  });
+
+  it("emits a tool-agnostic breadcrumb naming the 403 signature and `logs --tail 50`", () => {
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa-5978" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("CONNECT tunnel failed, response 403");
+    expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
+  });
+
+  it("stays silent when the user suppresses it with NEMOCLAW_NO_POLICY_HINT=1", () => {
+    const snippet = [stanza, "SHLVL=1; _nemoclaw_maybe_policy_denial_hint"].join("\n");
+    const { stdout, status } = runInPty(snippet, {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      NEMOCLAW_NO_POLICY_HINT: "1",
+    });
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("logs --tail 50");
+  });
+
+  it("stays silent when no proxy is configured (nothing to deny)", () => {
+    const snippet = [stanza, "SHLVL=1; _nemoclaw_maybe_policy_denial_hint"].join("\n");
+    const { stdout, status } = runInPty(snippet, {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "",
+      https_proxy: "",
+    });
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("logs --tail 50");
+  });
+
+  it("prints only once when the file is sourced twice in one login shell", () => {
+    // A login shell sources both the system profile and bashrc hooks, each of
+    // which sources this file and runs its trailing auto-invocation — the
+    // breadcrumb must not double up. Sourcing the stanza twice models that and
+    // proves the once-per-session sentinel survives a re-source.
+    const snippet = ["SHLVL=1", stanza, stanza].join("\n");
+    const { stdout, status } = runInPty(snippet, {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+    });
+    expect(status).toBe(0);
+    const occurrences = stdout.split("nemoclaw qa-5978 logs --tail 50").length - 1;
+    expect(occurrences).toBe(1);
+  });
+
+  it("stays silent in a deeper subshell so it is shown once per session", () => {
+    // SHLVL > 1 models a nested shell/pane; the top-level connect shell already
+    // showed it.
+    const snippet = [stanza, "SHLVL=3; _nemoclaw_maybe_policy_denial_hint"].join("\n");
+    const { stdout, status } = runInPty(snippet, {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+    });
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("logs --tail 50");
+  });
+
+  it("stays silent in a non-interactive / non-TTY shell (scripts, pipelines)", () => {
+    const snippet = [stanza, "true"].join("\n");
+    const { stdout, status } = runPlain(snippet, {
+      OPENSHELL_SANDBOX: "qa-5978",
+      HTTPS_PROXY: "http://127.0.0.1:3128",
+      SHLVL: "0",
+    });
+    expect(status).toBe(0);
+    expect(stdout).not.toContain("logs --tail 50");
+  });
+
+  // Reporter-workflow E2E in the real sandbox base image (opt-in).
+  it.skipIf(!DOCKER_E2E)(
+    "real base image: connect shell shows the breadcrumb once and curl is denied with 403",
+    () => {
+      // A 403-on-CONNECT proxy reproduces the OpenShell L7 denial. The connect
+      // shell starts at SHLVL=0→1 (a fresh login shell), so the stanza's
+      // source-time gate fires exactly as it does for a real `connect`.
+      const inside = [
+        "#!/bin/bash",
+        "set -u",
+        "cat > /tmp/deny-proxy.py <<'PY'",
+        "import socket, threading",
+        "def handle(c):",
+        "    try:",
+        "        c.recv(65535)",
+        '        c.sendall(b"HTTP/1.1 403 Forbidden\\r\\nContent-Length: 0\\r\\n\\r\\n")',
+        "    finally:",
+        "        c.close()",
+        "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+        's.bind(("127.0.0.1", 8888)); s.listen(16)',
+        "while True:",
+        "    c, _ = s.accept(); threading.Thread(target=handle, args=(c,), daemon=True).start()",
+        "PY",
+        "python3 /tmp/deny-proxy.py & sleep 1",
+        "awk '/# nemoclaw-policy-denial-hint begin/{f=1} f{print} /# nemoclaw-policy-denial-hint end/{f=0}' /work/scripts/nemoclaw-start.sh > /tmp/stanza.sh",
+        "{ echo 'export OPENSHELL_SANDBOX=qa-5978'; echo 'export HTTPS_PROXY=http://127.0.0.1:8888'; cat /tmp/stanza.sh; } > /tmp/nemoclaw-proxy-env.sh",
+        "chmod 444 /tmp/nemoclaw-proxy-env.sh",
+        "SHLVL=0 bash -lic 'curl -sS https://example.com/'",
+        "",
+      ].join("\n");
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-5978-e2e-"));
+      const insideFile = path.join(dir, "inside.sh");
+      fs.writeFileSync(insideFile, inside);
+      try {
+        const result = spawnSync(
+          "docker",
+          [
+            "run",
+            "--rm",
+            "-t",
+            "-v",
+            `${REPO_ROOT}:/work:ro`,
+            "-v",
+            `${insideFile}:/inside.sh:ro`,
+            SANDBOX_BASE_IMAGE,
+            "bash",
+            "/inside.sh",
+          ],
+          { encoding: "utf-8", timeout: 180_000 },
+        );
+        const out = (result.stdout ?? "").replace(/\r/g, "");
+        // Breadcrumb shown by the real image hooks, naming the logs command…
+        expect(out).toContain("nemoclaw qa-5978 logs --tail 50");
+        // …exactly once (both /etc/profile.d and /etc/bash.bashrc source it)…
+        expect(out.split("nemoclaw qa-5978 logs --tail 50").length - 1).toBe(1);
+        // …and a real curl surfaces the exact signature the breadcrumb names.
+        expect(out).toContain("CONNECT tunnel failed, response 403");
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    180_000,
+  );
+});
