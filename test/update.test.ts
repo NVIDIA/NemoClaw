@@ -31,7 +31,7 @@ describe("nemoclaw update command", () => {
 
   it("prints oclif help for update-specific flags", () => {
     const output = execSync(`node "${CLI}" update --help`, { encoding: "utf-8" });
-    expect(output).toContain("update [--check] [--yes|-y]");
+    expect(output).toContain("update [--check] [--fresh] [--yes|-y]");
     expect(output).toContain("--check");
     expect(output).toContain("--yes");
   });
@@ -43,7 +43,7 @@ describe("nemoclaw update command", () => {
     );
 
     const updateHelp = execSync(`node "${HERMES_CLI}" update --help`, { encoding: "utf-8" });
-    expect(updateHelp).toContain("$ nemohermes update [--check] [--yes|-y]");
+    expect(updateHelp).toContain("$ nemohermes update [--check] [--fresh] [--yes|-y]");
     expect(updateHelp).toContain("Run the maintained NemoHermes installer update flow");
     expect(updateHelp).toContain("Check for a NemoHermes CLI update");
     expect(updateHelp).not.toContain("NemoClaw CLI update");
@@ -58,7 +58,7 @@ describe("nemoclaw update command", () => {
     const updateHelp = execSync(`"${DEEPAGENTS_CLI}" update --help`, {
       encoding: "utf-8",
     });
-    expect(updateHelp).toContain("$ nemo-deepagents update [--check] [--yes|-y]");
+    expect(updateHelp).toContain("$ nemo-deepagents update [--check] [--fresh] [--yes|-y]");
     expect(updateHelp).toContain("Run the maintained NemoDeepAgents installer update flow");
     expect(updateHelp).toContain("Check for a NemoDeepAgents CLI update");
     expect(updateHelp).not.toContain("NemoClaw CLI update");
