@@ -41,10 +41,11 @@ function pluginFixtureSource(moduleType: "commonjs" | "esm", includeMentionHint 
     "  },",
     "};",
   ];
-  if (moduleType === "esm") {
-    return [...pluginSource, "export { msteamsPlugin };", ""].join("\n");
-  }
-  return [...pluginSource, "module.exports = { msteamsPlugin };", ""].join("\n");
+  return [
+    ...pluginSource,
+    moduleType === "esm" ? "export { msteamsPlugin };" : "module.exports = { msteamsPlugin };",
+    "",
+  ].join("\n");
 }
 
 function writeMSTeamsPackage(
@@ -90,9 +91,7 @@ console.log(JSON.stringify(plugin.agentPrompt.messageToolHints({ cfg: {} })));
   return {
     result,
     hints:
-      result.status === 0 && result.stdout.trim()
-        ? (JSON.parse(result.stdout) as string[])
-        : [],
+      result.status === 0 && result.stdout.trim() ? (JSON.parse(result.stdout) as string[]) : [],
   };
 }
 
