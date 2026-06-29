@@ -47,6 +47,25 @@ type MSTeamsModuleLike = {
   var MSTEAMS_MENTION_HINT =
     "- MSTeams mentions: use `@[Display Name](Teams user id or AAD object id)` in `message`; plain `@name` text is not a native mention and will not notify.";
 
+  function basename(value: unknown): string {
+    return (
+      String(value || "")
+        .split(/[\\/]/)
+        .pop() || ""
+    );
+  }
+
+  function gatewayProcessFlavor(): string {
+    if (basename(process.argv0) === "openclaw-gateway") return "openclaw-gateway";
+    if (basename(process.title) === "openclaw-gateway") return "openclaw-gateway";
+    if (process.argv[2] === "gateway") return "launcher";
+    if (basename(process.argv[1]) === "openclaw-gateway") return "openclaw-gateway";
+    if (basename(process.argv[0]) === "openclaw-gateway") return "openclaw-gateway";
+    return "";
+  }
+
+  if (!gatewayProcessFlavor()) return;
+
   var hintsProcess = process as MSTeamsMessageHintsProcess;
   if (hintsProcess.__nemoclawMSTeamsMessageHintsInstalled) return;
   try {
@@ -106,13 +125,14 @@ type MSTeamsModuleLike = {
     return isObject(value) ? (value as MSTeamsPlugin) : null;
   }
 
-  function patchPlugin(value: unknown): void {
+  function patchPlugin(value: unknown): boolean {
     var plugin = asPlugin(value);
-    if (!plugin || plugin.__nemoclawMSTeamsMessageHintsPatched) return;
+    if (!plugin) return false;
+    if (plugin.__nemoclawMSTeamsMessageHintsPatched) return true;
     var agentPrompt = asAgentPrompt(plugin.agentPrompt);
-    if (!agentPrompt) return;
+    if (!agentPrompt) return false;
     var original = agentPrompt.messageToolHints;
-    if (typeof original !== "function") return;
+    if (typeof original !== "function") return false;
     var originalMessageToolHints: MSTeamsMessageToolHints = original;
 
     var patchedPrompt = Object.assign({}, agentPrompt, {
@@ -127,25 +147,33 @@ type MSTeamsModuleLike = {
     try {
       plugin.agentPrompt = patchedPrompt;
       Object.defineProperty(plugin, "__nemoclawMSTeamsMessageHintsPatched", { value: true });
+      return true;
     } catch (_e) {
       // If the plugin object is unexpectedly immutable, fail open so Teams can
       // still start; the hint patch is compatibility guidance, not auth logic.
+      return true;
     }
   }
 
-  function patchLoadedModule(loaded: unknown): unknown {
-    if (!isObject(loaded)) return loaded;
-    patchPlugin(loaded.msteamsPlugin);
+  function patchLoadedModule(loaded: unknown): boolean {
+    if (!isObject(loaded)) return false;
+    var handled = patchPlugin(loaded.msteamsPlugin);
     var defaultExport = loaded.default;
-    patchPlugin(isObject(defaultExport) ? defaultExport.msteamsPlugin : undefined);
-    patchPlugin(defaultExport);
-    patchPlugin(loaded);
-    return loaded;
+    handled =
+      patchPlugin(isObject(defaultExport) ? defaultExport.msteamsPlugin : undefined) || handled;
+    handled = patchPlugin(defaultExport) || handled;
+    handled = patchPlugin(loaded) || handled;
+    return handled;
   }
 
   var Module = require("module") as MSTeamsModuleLike;
   var originalLoad = Module._load;
-  Module._load = function nemoclawMSTeamsLoad(
+  function restoreLoadHook(): void {
+    if (Module._load === nemoclawMSTeamsLoad) {
+      Module._load = originalLoad;
+    }
+  }
+  function nemoclawMSTeamsLoad(
     this: unknown,
     request: string,
     parent?: MSTeamsModuleLoadParent,
@@ -153,8 +181,9 @@ type MSTeamsModuleLike = {
   ): unknown {
     var loaded = originalLoad.call(this, request, parent, isMain);
     if (isOpenClawMSTeamsLoad(request, parent)) {
-      return patchLoadedModule(loaded);
+      if (patchLoadedModule(loaded)) restoreLoadHook();
     }
     return loaded;
-  };
+  }
+  Module._load = nemoclawMSTeamsLoad;
 })();

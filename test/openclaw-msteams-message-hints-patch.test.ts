@@ -94,9 +94,13 @@ function writeUnrelatedMSTeamsLikeModule(root: string): string {
   return moduleFile;
 }
 
-function runHintsProbe(fixtureFile: string, options: { requirePreloadTwice?: boolean } = {}) {
+function runHintsProbe(
+  fixtureFile: string,
+  options: { gatewayProcess?: boolean; requirePreloadTwice?: boolean } = {},
+) {
   const script = `
 const preload = ${JSON.stringify(MSTEAMS_HINT_PRELOAD)};
+${options.gatewayProcess === false ? "" : "process.title = 'openclaw-gateway';"}
 require(preload);
 ${options.requirePreloadTwice ? "require(preload);" : ""}
 const plugin = require(process.env.MSTEAMS_FILE).msteamsPlugin;
@@ -187,6 +191,56 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     }
   });
 
+  it("stays inert in non-gateway Node children that inherit NODE_OPTIONS", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-nongateway-"));
+    const fixtureFile = writeMSTeamsPackage(tmp);
+    try {
+      const { result, hints } = runHintsProbe(fixtureFile, { gatewayProcess: false });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(hints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the CommonJS load hook after patching @openclaw/msteams", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-restore-"));
+    const fixtureFile = writeMSTeamsPackage(tmp);
+    try {
+      const script = `
+process.title = 'openclaw-gateway';
+const Module = require("module");
+const originalLoad = Module._load;
+require(${JSON.stringify(MSTEAMS_HINT_PRELOAD)});
+const installedName = Module._load.name;
+const plugin = require(${JSON.stringify(fixtureFile)}).msteamsPlugin;
+console.log(JSON.stringify({
+  installedName,
+  restored: Module._load === originalLoad,
+  hints: plugin.agentPrompt.messageToolHints({ cfg: {} }),
+}));
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+      const parsed =
+        result.status === 0 && result.stdout.trim()
+          ? (JSON.parse(result.stdout) as {
+              installedName: string;
+              restored: boolean;
+              hints: string[];
+            })
+          : null;
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(parsed?.installedName).toBe("nemoclawMSTeamsLoad");
+      expect(parsed?.restored).toBe(true);
+      expect(parsed?.hints).toEqual([ADAPTIVE_CARD_HINT, MSTEAMS_MENTION_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("matches the real @openclaw/msteams send formatter contract for native mention entities", () => {
     const activity = buildRealOpenClawMSTeamsSendFormatterContract(
       `Please review this, @[San Dang](${SAN_DANG_AAD_OBJECT_ID}).`,
@@ -213,6 +267,7 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     fs.writeFileSync(indexFile, 'export { max } from "./max.js";\n');
     try {
       const script = `
+process.title = 'openclaw-gateway';
 require(${JSON.stringify(MSTEAMS_HINT_PRELOAD)});
 import(${JSON.stringify(path.toNamespacedPath(indexFile))}).then((mod) => {
   console.log(String(mod.max));
