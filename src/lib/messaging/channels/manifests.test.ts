@@ -47,8 +47,8 @@ function findInput(manifest: ChannelManifest, inputId: string): ChannelInputSpec
 
 function findConfigInput(manifest: ChannelManifest, inputId: string): ChannelConfigInputSpec {
   const input = findInput(manifest, inputId);
-  if (input.kind !== "config") throw new Error(`${manifest.id}.${inputId} is not config input`);
-  return input;
+  expect(input.kind).toBe("config");
+  return input as ChannelConfigInputSpec;
 }
 
 function findRender(manifest: ChannelManifest, renderId: string): ChannelRenderSpec {
