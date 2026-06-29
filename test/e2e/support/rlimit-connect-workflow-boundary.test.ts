@@ -11,6 +11,7 @@ describe("rlimit connect workflow boundary", () => {
   it("maps the rlimit connect acceptance selector to its explicit Vitest job", () => {
     const inventory = readFreeStandingJobsInventory();
     expect(inventory.allowedJobs).toContain("sandbox-rlimits-connect");
+    expect(inventory.explicitOnlyJobs).toContain("sandbox-rlimits-connect");
     expect(inventory.targetToJob.get("sandbox-rlimits-connect")).toBe("sandbox-rlimits-connect");
 
     expect(

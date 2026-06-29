@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { ScorecardData } from "../../../scripts/scorecard/build-slack-blocks.ts";
 import type { JobSummary, SummarizeJobsInput } from "../../../scripts/scorecard/summarize-jobs.ts";
@@ -43,25 +43,79 @@ const trace = require("../../../scripts/scorecard/analyze-trace-timing.ts") as {
     tag: { name: string },
     rows: Array<{ label: string }>,
   ) => string[];
+  buildTraceTimingResult: (
+    deps: { context: { runId: number }; github: unknown },
+    services?: {
+      findLatestCompletedE2eRunForReleaseTag: (
+        deps: unknown,
+        tag: { name: string; sha: string },
+      ) => Promise<{ id: number } | null>;
+      readTraceSummaryFromRun: (deps: unknown, runId: number) => Promise<TraceSummary | null>;
+      resolvePriorReleaseTag: (deps: unknown) => Promise<{
+        major: number;
+        minor: number;
+        name: string;
+        patch: number;
+        sha: string;
+      } | null>;
+    },
+  ) => Promise<{ traceSummaryLines: string[]; traceTimingLine: string }>;
+  findLatestCompletedE2eRunForReleaseTag: (
+    deps: GitHubTraceDeps,
+    tag: { major: number; minor: number; name: string; patch: number; sha: string },
+  ) => Promise<{ id: number } | null>;
   formatTopPhaseChanges: (rows: Array<{ label: string }>) => string;
+  readTraceSummaryFromRun: (deps: GitHubTraceDeps, runId: number) => Promise<TraceSummary | null>;
+  resolvePriorReleaseTag: (
+    deps: GitHubTraceDeps,
+  ) => Promise<{ major: number; minor: number; name: string; patch: number; sha: string } | null>;
   selectOnboardTrace: (texts: string[]) => { totalMs: number } | null;
 };
 const scorecardJobs = require("../../../scripts/scorecard/summarize-jobs.ts") as {
+  loadWorkflowRunJobs: (deps: {
+    context: { repo: { owner: string; repo: string }; runId: number };
+    core: { warning: (message: string) => void };
+    github: {
+      paginate: (method: unknown, parameters: Record<string, unknown>) => Promise<unknown[]>;
+      rest: { actions: { listJobsForWorkflowRun: unknown } };
+    };
+  }) => Promise<SummarizeJobsInput["apiJobs"]>;
   summarizeJobs: (input: SummarizeJobsInput) => JobSummary;
 };
 const SANITIZER = "scripts/e2e/sanitize-trace-timing.py";
 
-function makeRawTrace(): Record<string, unknown> {
+type TraceSummary = {
+  artifact: Record<string, unknown>;
+  phases: Record<string, number>;
+  totalMs: number;
+};
+
+type GitHubTraceDeps = {
+  context: { ref?: string; repo: { owner: string; repo: string }; runId: number };
+  github: {
+    paginate: (method: unknown, parameters: Record<string, unknown>) => Promise<any[]>;
+    rest: {
+      actions: {
+        downloadArtifact?: unknown;
+        listWorkflowRunArtifacts: unknown;
+        listWorkflowRuns: (...args: any[]) => Promise<any>;
+      };
+      repos: { listTags: unknown };
+    };
+  };
+};
+
+function makeRawTrace(totalMs = 1200, preflightMs = 500): Record<string, unknown> {
   return {
     resource_spans: [
       {
         scope_spans: [
           {
             spans: [
-              { name: "nemoclaw.onboard", duration_ms: 1200 },
+              { name: "nemoclaw.onboard", duration_ms: totalMs },
               {
                 name: "nemoclaw.onboard.phase.preflight",
-                duration_ms: 500,
+                duration_ms: preflightMs,
                 attributes: { api_key: "nvapi-should-never-appear" },
                 events: [{ name: "prompt", attributes: { value: "secret" } }],
               },
@@ -76,12 +130,12 @@ function makeRawTrace(): Record<string, unknown> {
     ],
     summary: {
       trace_id: "0123456789abcdef0123456789abcdef",
-      total_duration_ms: 1200,
+      total_duration_ms: totalMs,
       output_path: "/tmp/raw-trace.json",
       slowest_spans: [
         {
           name: "nemoclaw.onboard.phase.preflight",
-          duration_ms: 500,
+          duration_ms: preflightMs,
           status: "OK",
         },
       ],
@@ -119,6 +173,23 @@ function scorecardData(overrides: Partial<ScorecardData> = {}): ScorecardData {
 }
 
 describe("E2E scorecard", () => {
+  it("loads typed scorecard helpers through the native github-script require boundary", () => {
+    const script = `
+      const path = require('node:path');
+      for (const file of ['analyze-trace-timing.ts', 'summarize-jobs.ts', 'build-slack-blocks.ts']) {
+        const loaded = require(path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard', file));
+        if (Object.keys(loaded).length === 0) process.exit(2);
+      }
+    `;
+    const result = spawnSync(process.execPath, ["--experimental-strip-types", "-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_WORKSPACE: process.cwd() },
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+  });
+
   it("routes scheduled, full, and opt-in selective summaries to distinct Slack channels", () => {
     expect(slack.getSlackChannel(scorecardData())).toBe("daily");
     expect(slack.getSlackChannel(scorecardData({ runMode: "Manual full run" }))).toBe("fullrun");
@@ -188,6 +259,144 @@ describe("E2E scorecard", () => {
     });
     expect(trace.selectOnboardTrace([rawTrace])).toBeNull();
     expect(trace.selectOnboardTrace([good])?.totalMs).toBe(1000);
+    expect(
+      trace.selectOnboardTrace([
+        good,
+        JSON.stringify({
+          schema_version: "nemoclaw.trace_timing.v1",
+          total_duration_ms: 2000,
+          phases: { "nemoclaw.onboard.phase.preflight": 1000 },
+        }),
+      ])?.totalMs,
+    ).toBe(2000);
+  });
+
+  it("keeps trace comparison fallbacks explicit and non-fatal", async () => {
+    const current: TraceSummary = {
+      artifact: {},
+      phases: { "nemoclaw.onboard.phase.preflight": 1_000 },
+      totalMs: 2_000,
+    };
+    const prior: TraceSummary = {
+      artifact: {},
+      phases: { "nemoclaw.onboard.phase.preflight": 500 },
+      totalMs: 1_000,
+    };
+    const tag = { major: 0, minor: 0, name: "v0.0.69", patch: 69, sha: "abc" };
+    const deps = { context: { runId: 123 }, github: {} };
+    const baseServices = {
+      findLatestCompletedE2eRunForReleaseTag: vi.fn().mockResolvedValue({ id: 99 }),
+      readTraceSummaryFromRun: vi.fn().mockResolvedValue(current),
+      resolvePriorReleaseTag: vi.fn().mockResolvedValue(tag),
+    };
+
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        readTraceSummaryFromRun: vi.fn().mockResolvedValue(null),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: ⊘ e2e-cloud-onboard timing summary not found",
+    });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        resolvePriorReleaseTag: vi.fn().mockResolvedValue(null),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 2.0s (no prior release tag found)",
+    });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        findLatestCompletedE2eRunForReleaseTag: vi.fn().mockResolvedValue(null),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 2.0s (no e2e.yaml run found for v0.0.69)",
+    });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        readTraceSummaryFromRun: vi.fn().mockResolvedValueOnce(current).mockResolvedValueOnce(null),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: "Trace: cloud-onboard total 2.0s (no timing summary found for v0.0.69)",
+    });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        readTraceSummaryFromRun: vi.fn().mockRejectedValue(new Error("artifact unavailable")),
+      }),
+    ).resolves.toMatchObject({ traceTimingLine: "Trace: ⊘ comparison unavailable" });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        readTraceSummaryFromRun: vi
+          .fn()
+          .mockResolvedValueOnce(current)
+          .mockResolvedValueOnce(prior),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: expect.stringContaining("increased +1.0s (+100.0%) vs v0.0.69"),
+      traceSummaryLines: expect.arrayContaining(["## Cloud Onboard Trace Timing"]),
+    });
+  });
+
+  it("returns null at missing release-run and trace-artifact boundaries", async () => {
+    const listWorkflowRuns = vi.fn().mockResolvedValue({ data: { workflow_runs: [] } });
+    const deps: GitHubTraceDeps = {
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
+      github: {
+        paginate: vi.fn().mockResolvedValue([]),
+        rest: {
+          actions: { listWorkflowRunArtifacts: {}, listWorkflowRuns },
+          repos: { listTags: {} },
+        },
+      },
+    };
+
+    await expect(trace.resolvePriorReleaseTag(deps)).resolves.toBeNull();
+    await expect(
+      trace.findLatestCompletedE2eRunForReleaseTag(deps, {
+        major: 0,
+        minor: 0,
+        name: "v0.0.69",
+        patch: 69,
+        sha: "abc",
+      }),
+    ).resolves.toBeNull();
+    await expect(trace.readTraceSummaryFromRun(deps, 99)).resolves.toBeNull();
+  });
+
+  it("falls back to needs when the GitHub jobs API is unavailable", async () => {
+    const warning = vi.fn();
+    const apiJobs = await scorecardJobs.loadWorkflowRunJobs({
+      context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 123 },
+      core: { warning },
+      github: {
+        paginate: vi
+          .fn()
+          .mockRejectedValue(Object.assign(new Error("temporary outage"), { status: 503 })),
+        rest: { actions: { listJobsForWorkflowRun: {} } },
+      },
+    });
+
+    expect(apiJobs).toBeNull();
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("status 503); falling back to needs context"),
+    );
+    expect(
+      scorecardJobs.summarizeJobs({
+        apiJobs,
+        explicitOnlyJobNames: [],
+        explicitlySelected: [],
+        metaJobNames: ["generate-matrix"],
+        needs: {
+          "generate-matrix": { result: "success" },
+          live: { result: "success" },
+        },
+      }),
+    ).toMatchObject({ failure: 0, ran: 1, success: 1, total: 1 });
   });
 
   it("uses canonical API jobs, latest reruns, and direct failure links", () => {
@@ -318,6 +527,39 @@ describe("E2E scorecard", () => {
       );
       const result = runSanitizer(source, output);
       expect(result.status, result.stderr).toBe(0);
+      expect(readdirSync(output)).toEqual([]);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  it("bounds trace input count and file size before parsing", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-trace-bounds-"));
+    const source = join(directory, "raw");
+    const output = join(directory, "trusted");
+    try {
+      mkdirSync(source);
+      writeFileSync(join(source, "000-valid.json"), JSON.stringify(makeRawTrace(1_200)));
+      for (let index = 1; index < 100; index += 1) {
+        writeFileSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`), "{}");
+      }
+      writeFileSync(join(source, "100-ignored.json"), JSON.stringify(makeRawTrace(9_999)));
+      writeFileSync(join(source, "101-oversized.json"), " ".repeat(2 * 1024 * 1024 + 1));
+
+      const result = runSanitizer(source, output);
+      expect(result.status, result.stderr).toBe(0);
+      expect(
+        JSON.parse(readFileSync(join(output, "cloud-onboard-trace-timing-summary.json"), "utf8")),
+      ).toMatchObject({ total_duration_ms: 1_200 });
+
+      rmSync(output, { force: true, recursive: true });
+      rmSync(join(source, "000-valid.json"));
+      for (let index = 1; index < 100; index += 1) {
+        rmSync(join(source, `${String(index).padStart(3, "0")}-invalid.json`));
+      }
+      rmSync(join(source, "100-ignored.json"));
+      const oversizedOnly = runSanitizer(source, output);
+      expect(oversizedOnly.status, oversizedOnly.stderr).toBe(0);
       expect(readdirSync(output)).toEqual([]);
     } finally {
       rmSync(directory, { force: true, recursive: true });

@@ -12,6 +12,8 @@ const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml"
 const DEFAULT_ADVISOR_PATH = join(REPO_ROOT, ".github", "workflows", "e2e-advisor.yaml");
 const META_JOBS = new Set(["notify-on-failure", "report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
+const GITHUB_SCRIPT_NODE24_ACTION =
+  "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -66,6 +68,13 @@ function findStep(job: WorkflowJob, name: string): WorkflowStep {
 function requirePinnedAction(errors: string[], step: WorkflowStep, owner: string): void {
   if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
     errors.push(`${owner} must pin its action to a full SHA`);
+  }
+}
+
+function requireNode24GithubScript(errors: string[], step: WorkflowStep, owner: string): void {
+  requirePinnedAction(errors, step, owner);
+  if (step.uses !== GITHUB_SCRIPT_NODE24_ACTION) {
+    errors.push(`${owner} must use the pinned Node 24 github-script runtime`);
   }
 }
 
@@ -143,26 +152,28 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   }
 
   const generate = findStep(job, "Generate E2E scorecard");
-  requirePinnedAction(errors, generate, "scorecard generator");
+  requireNode24GithubScript(errors, generate, "scorecard generator");
   const generateScript = String(generate.with?.script ?? "");
   for (const fragment of [
     "scripts/scorecard/analyze-trace-timing.ts",
     "traceTiming.buildTraceTimingResult",
     "scripts/scorecard/summarize-jobs.ts",
+    "scorecardJobs.loadWorkflowRunJobs",
     "scorecardJobs.summarizeJobs",
-    "github.rest.actions.listJobsForWorkflowRun",
-    "falling back to needs context",
-    "jetson-nvmap-gpu",
-    "sandbox-rlimits-connect",
     "core.summary",
     "scorecardData",
   ]) {
     if (!generateScript.includes(fragment))
       errors.push(`scorecard generator must retain ${fragment}`);
   }
+  if (
+    generate.env?.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
+  ) {
+    errors.push("scorecard generator must derive explicit-only jobs from workflow inventory");
+  }
 
   const slack = findStep(job, "Post scorecard to Slack");
-  requirePinnedAction(errors, slack, "scorecard Slack publisher");
+  requireNode24GithubScript(errors, slack, "scorecard Slack publisher");
   const expectedSlackEnv = [
     "SLACK_WEBHOOK_URL_DAILY",
     "SLACK_WEBHOOK_URL_FULLRUN",
@@ -201,7 +212,6 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
     "scripts/e2e/sanitize-trace-timing.py",
     '"${NEMOCLAW_TRACE_DIR}"',
     '"${E2E_ARTIFACT_DIR}"',
-    "rm -rf",
   ]) {
     if (!script.includes(fragment))
       errors.push(`cloud-onboard trace sanitizer must retain ${fragment}`);
@@ -211,9 +221,32 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   const sanitizeIndex = steps.findIndex(
     (step) => step.name === "Build trusted cloud-onboard timing summary",
   );
+  const cleanup = findStep(job, "Delete raw cloud-onboard traces");
+  const cleanupIndex = steps.findIndex((step) => step.name === "Delete raw cloud-onboard traces");
   const uploadIndex = steps.findIndex((step) => step.name === "Upload cloud-onboard artifacts");
-  if (!(runIndex >= 0 && runIndex < sanitizeIndex && sanitizeIndex < uploadIndex)) {
-    errors.push("cloud-onboard must test, sanitize raw traces, then upload trusted artifacts");
+  if (cleanup.if !== "always()") {
+    errors.push("cloud-onboard raw trace cleanup must always run");
+  }
+  for (const fragment of [
+    'expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"',
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+    'rm -rf -- "${NEMOCLAW_TRACE_DIR}"',
+  ]) {
+    if (!String(cleanup.run ?? "").includes(fragment)) {
+      errors.push(`cloud-onboard raw trace cleanup must retain ${fragment}`);
+    }
+  }
+  if (
+    !(
+      runIndex >= 0 &&
+      runIndex < sanitizeIndex &&
+      sanitizeIndex < cleanupIndex &&
+      cleanupIndex < uploadIndex
+    )
+  ) {
+    errors.push(
+      "cloud-onboard must test, sanitize raw traces, delete raw traces, then upload trusted artifacts",
+    );
   }
 }
 

@@ -25,6 +25,7 @@ type WorkflowStep = WorkflowRecord & {
 
 export interface FreeStandingJobsInventory {
   allowedJobs: string[];
+  explicitOnlyJobs: string[];
   freeStandingTargets: string[];
   targetToJob: Map<string, string>;
 }
@@ -39,6 +40,7 @@ const SELECTOR_PATTERN = /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/;
 const SELECTOR_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const FREE_STANDING_JOB_MARKER = "E2E_JOB";
 const FREE_STANDING_TARGET_MARKER = "E2E_TARGET_ID";
+const FREE_STANDING_DEFAULT_ENABLED_MARKER = "E2E_DEFAULT_ENABLED";
 const COMMON_SECRET_ENV_NAMES = [
   "NVIDIA_API_KEY",
   "NVIDIA_INFERENCE_API_KEY",
@@ -50,13 +52,7 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "full-e2e",
   "hermes-e2e",
   "hermes-root-entrypoint-smoke",
-  "jetson-nvmap-gpu",
   "openclaw-tui-chat-correlation",
-  "sandbox-rlimits-connect",
-]);
-const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set([
-  "jetson-nvmap-gpu",
-  "sandbox-rlimits-connect",
 ]);
 const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
   "device-auth-health",
@@ -85,6 +81,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
 } {
   const errors: string[] = [];
   const allowedJobs: string[] = [];
+  const explicitOnlyJobs: string[] = [];
   const freeStandingTargets: string[] = [];
   const targetToJob = new Map<string, string>();
 
@@ -110,6 +107,13 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     }
 
     allowedJobs.push(jobId);
+    if (Object.hasOwn(env, FREE_STANDING_DEFAULT_ENABLED_MARKER)) {
+      if (env[FREE_STANDING_DEFAULT_ENABLED_MARKER] !== "0") {
+        errors.push(`${jobId} job ${FREE_STANDING_DEFAULT_ENABLED_MARKER} must be "0" when set`);
+      } else {
+        explicitOnlyJobs.push(jobId);
+      }
+    }
     if (!hasTargetMarker) continue;
 
     const target = env[FREE_STANDING_TARGET_MARKER];
@@ -135,6 +139,7 @@ function deriveFreeStandingJobsInventoryFromJobs(jobs: WorkflowRecord): {
     errors,
     inventory: {
       allowedJobs,
+      explicitOnlyJobs,
       freeStandingTargets,
       targetToJob,
     },
@@ -152,6 +157,7 @@ function cloneFreeStandingJobsInventory(
 ): FreeStandingJobsInventory {
   return {
     allowedJobs: [...inventory.allowedJobs],
+    explicitOnlyJobs: [...inventory.explicitOnlyJobs],
     freeStandingTargets: [...inventory.freeStandingTargets],
     targetToJob: new Map(inventory.targetToJob),
   };
@@ -192,6 +198,7 @@ export function formatFreeStandingJobsInventoryForShell(
   const targetJobMappings = [...inventory.targetToJob].map(([target, job]) => `${target}:${job}`);
   return [
     `allowed_jobs=${inventory.allowedJobs.join(",")}`,
+    `explicit_only_jobs_csv=${inventory.explicitOnlyJobs.join(",")}`,
     `free_standing_targets_csv=${inventory.freeStandingTargets.join(",")}`,
     `free_standing_target_jobs_csv=${targetJobMappings.join(",")}`,
     "",
@@ -266,7 +273,7 @@ export function evaluateE2eWorkflowDispatchSelectors(input: {
       valid: true,
       errors: [],
       selectedFreeStandingJobs: freeStandingJobIds
-        .filter((job) => !FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.has(job))
+        .filter((job) => !inventory.explicitOnlyJobs.includes(job))
         .sort(),
       registryTargets: [],
       liveTargetsRun: true,
@@ -485,12 +492,16 @@ function validateFreeStandingJobSelector(
   jobs: WorkflowRecord,
   jobName: string,
   targetName?: string,
+  explicitOnly = false,
 ): void {
   const job = asRecord(jobs[jobName]);
   if (job.needs !== "generate-matrix") {
     errors.push(`${jobName} job must depend on generate-matrix`);
   }
-  if (job.if !== freeStandingJobIf(jobName, targetName)) {
+  const expected = explicitOnly
+    ? explicitOnlyFreeStandingJobIf(jobName, targetName)
+    : freeStandingJobIf(jobName, targetName);
+  if (job.if !== expected) {
     errors.push(`${jobName} job must use the shared jobs selector condition`);
   }
 }
@@ -566,7 +577,13 @@ function validateFreeStandingInventoryBoundary(
     if (Object.keys(job).length === 0) continue;
 
     if (!FREE_STANDING_SELECTOR_SPECIAL_CASES.has(jobName)) {
-      validateFreeStandingJobSelector(errors, jobs, jobName, targetByJob.get(jobName));
+      validateFreeStandingJobSelector(
+        errors,
+        jobs,
+        jobName,
+        targetByJob.get(jobName),
+        inventory.explicitOnlyJobs.includes(jobName),
+      );
     }
 
     const jobEnv = asRecord(job.env);
@@ -4965,6 +4982,9 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (generateOutputs.hermes_selected !== "${{ steps.matrix.outputs.hermes_selected }}") {
     errors.push("generate-matrix job must expose hermes_selected output");
   }
+  if (generateOutputs.explicit_only_jobs !== "${{ steps.matrix.outputs.explicit_only_jobs }}") {
+    errors.push("generate-matrix job must expose explicit_only_jobs output");
+  }
   const generateSteps = asSteps(generateMatrix.steps);
   requireNoDispatchInputInterpolation(errors, generateSteps);
   const generateCheckout = generateSteps.find((step) =>
@@ -5012,6 +5032,11 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     errors,
     generate,
     'echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"',
+  );
+  requireRunContains(
+    errors,
+    generate,
+    'echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"',
   );
   requireRunContains(errors, generate, "## E2E Target Matrix");
   requireRunContains(errors, generate, "| Target | Runner | Label |");
@@ -5306,6 +5331,11 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     }
     if (reportEnv.JOB_TARGETS !== "${{ inputs.targets }}") {
       errors.push("report-to-pr step must pass targets through JOB_TARGETS env");
+    }
+    if (
+      reportEnv.EXPLICIT_ONLY_JOBS !== "${{ needs.generate-matrix.outputs.explicit_only_jobs }}"
+    ) {
+      errors.push("report-to-pr must derive explicit-only jobs from workflow inventory");
     }
     const reportScript = stringValue(asRecord(report?.with).script ?? report?.run);
     if (!reportScript.includes("process.env.JOBS")) {

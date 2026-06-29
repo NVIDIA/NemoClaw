@@ -32,6 +32,18 @@ export type SummarizeJobsInput = {
   needs: Record<string, NeedResult>;
 };
 
+export type WorkflowRunJobsDeps = {
+  context: {
+    repo: { owner: string; repo: string };
+    runId: number;
+  };
+  core: { warning: (message: string) => void };
+  github: {
+    paginate: (method: unknown, parameters: Record<string, unknown>) => Promise<ApiJob[]>;
+    rest: { actions: { listJobsForWorkflowRun: unknown } };
+  };
+};
+
 type CountedResult = "cancelled" | "failure" | "skipped" | "success";
 
 function classifyApiJob(job: ApiJob): CountedResult {
@@ -86,6 +98,31 @@ function normalizeApiJobs(
   return [...dedupedByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
+async function loadWorkflowRunJobs({
+  context,
+  core,
+  github,
+}: WorkflowRunJobsDeps): Promise<ApiJob[] | null> {
+  try {
+    return await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      run_id: context.runId,
+      per_page: 100,
+    });
+  } catch (error) {
+    const status =
+      error !== null && typeof error === "object" && "status" in error
+        ? String(error.status)
+        : "unknown";
+    const message = error instanceof Error ? error.message : String(error);
+    core.warning(
+      `Could not fetch jobs from API (status ${status}); falling back to needs context. Reason: ${message.slice(0, 200)}`,
+    );
+    return null;
+  }
+}
+
 function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   const metaJobs = new Set(input.metaJobNames);
   const explicitOnly = new Set(input.explicitOnlyJobNames);
@@ -121,4 +158,4 @@ function summarizeJobs(input: SummarizeJobsInput): JobSummary {
   };
 }
 
-module.exports = { summarizeJobs };
+module.exports = { loadWorkflowRunJobs, summarizeJobs };

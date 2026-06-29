@@ -51,6 +51,7 @@ try {
       `${JSON.stringify(
         {
           allowedJobs: inventory.allowedJobs,
+          explicitOnlyJobs: inventory.explicitOnlyJobs,
           freeStandingTargets: inventory.freeStandingTargets,
           targetJobs: Object.fromEntries(inventory.targetToJob),
         },

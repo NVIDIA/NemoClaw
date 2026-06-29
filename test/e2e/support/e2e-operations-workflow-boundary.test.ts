@@ -2,16 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   readE2eOperationsWorkflow,
   validateE2eOperationsWorkflow,
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
+
+const require = createRequire(import.meta.url);
+const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
+  ...parameters: string[]
+) => (...args: unknown[]) => Promise<unknown>;
+
+function workflowScript(jobName: string, stepName: string): string {
+  const workflow = readE2eOperationsWorkflow();
+  const step = workflow.jobs[jobName]?.steps?.find((candidate) => candidate.name === stepName);
+  expect(step?.with?.script).toEqual(expect.any(String));
+  return step?.with?.script as string;
+}
 
 describe("E2E operations workflow boundary", () => {
   it("keeps scheduled routing and scorecards aggregated over the report job set", () => {
@@ -38,6 +51,88 @@ describe("E2E operations workflow boundary", () => {
         "scorecard must not expose credentials at job scope",
       ]),
     );
+  });
+
+  it("pins the Node 24 helper runtime and separate always-on raw trace cleanup", () => {
+    const workflow = readE2eOperationsWorkflow();
+    const scorecard = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Generate E2E scorecard",
+    )!;
+    scorecard.uses = "actions/github-script@0000000000000000000000000000000000000000";
+    const cleanup = workflow.jobs["cloud-onboard"].steps!.find(
+      (step) => step.name === "Delete raw cloud-onboard traces",
+    )!;
+    cleanup.if = "success()";
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "scorecard generator must use the pinned Node 24 github-script runtime",
+        "cloud-onboard raw trace cleanup must always run",
+      ]),
+    );
+  });
+
+  it("creates the scheduled failure issue when no historical thread exists", async () => {
+    const script = workflowScript(
+      "notify-on-failure",
+      "Create or update scheduled E2E failure issue",
+    ).replace(
+      "${{ toJSON(needs) }}",
+      JSON.stringify({ cloud: { result: "failure" }, hermes: { result: "cancelled" } }),
+    );
+    const create = vi.fn().mockResolvedValue({ data: { number: 123 } });
+    const createComment = vi.fn();
+    const github = {
+      rest: {
+        issues: {
+          create,
+          createComment,
+          listForRepo: vi.fn().mockResolvedValue({ data: [] }),
+        },
+      },
+    };
+    const context = {
+      repo: { owner: "NVIDIA", repo: "NemoClaw" },
+      runId: 456,
+      serverUrl: "https://github.com",
+    };
+
+    await new AsyncFunction("github", "context", script)(github, context);
+
+    expect(createComment).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: expect.stringContaining("**Failed:** cloud\n**Cancelled:** hermes"),
+        labels: ["bug", "CI/CD"],
+        owner: "NVIDIA",
+        repo: "NemoClaw",
+        title: expect.stringMatching(/^Nightly E2E failed — \d{4}-\d{2}-\d{2}$/u),
+      }),
+    );
+  });
+
+  it("keeps selective scorecards silent unless Slack posting is explicitly enabled", async () => {
+    const script = workflowScript("scorecard", "Post scorecard to Slack");
+    const info = vi.fn();
+    const fetchMock = vi.fn();
+    vi.stubEnv(
+      "SCORECARD_DATA",
+      JSON.stringify({ isSelectiveDispatch: true, runMode: "Selective dispatch" }),
+    );
+    vi.stubEnv("GITHUB_WORKSPACE", process.cwd());
+    vi.stubEnv("POST_TO_SLACK", "false");
+    try {
+      await new AsyncFunction("require", "process", "core", "fetch", script)(
+        require,
+        process,
+        { info, setFailed: vi.fn() },
+        fetchMock,
+      );
+      expect(info).toHaveBeenCalledWith("Selective dispatch without post_to_slack — skipping");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("rejects raw trace upload ordering and advisor auto-dispatch restoration", () => {

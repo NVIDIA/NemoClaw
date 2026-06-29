@@ -59,6 +59,15 @@ type TraceTimingResult = {
   traceTimingLine: string;
 };
 
+type TraceTimingServices = {
+  findLatestCompletedE2eRunForReleaseTag: (
+    deps: GitHubDeps,
+    tag: ReleaseTag,
+  ) => Promise<{ id: number } | null>;
+  readTraceSummaryFromRun: (deps: GitHubDeps, runId: number) => Promise<OnboardTraceSummary | null>;
+  resolvePriorReleaseTag: (deps: GitHubDeps) => Promise<ReleaseTag | null>;
+};
+
 function parseSemverTag(name: string): SemverTag | null {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(name);
   if (!match) return null;
@@ -284,26 +293,33 @@ async function readTraceSummaryFromRun(
   }
 }
 
-async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResult> {
+async function buildTraceTimingResult(
+  deps: GitHubDeps,
+  services: TraceTimingServices = {
+    findLatestCompletedE2eRunForReleaseTag,
+    readTraceSummaryFromRun,
+    resolvePriorReleaseTag,
+  },
+): Promise<TraceTimingResult> {
   const { context } = deps;
   try {
-    const currentTrace = await readTraceSummaryFromRun(deps, context.runId);
+    const currentTrace = await services.readTraceSummaryFromRun(deps, context.runId);
     if (currentTrace === null) {
       return traceTimingResult(`Trace: ⊘ ${TRACE_ARTIFACT_NAME} timing summary not found`);
     }
-    const priorTag = await resolvePriorReleaseTag(deps);
+    const priorTag = await services.resolvePriorReleaseTag(deps);
     if (!priorTag) {
       return traceTimingResult(
         `Trace: cloud-onboard total ${formatDuration(currentTrace.totalMs)} (no prior release tag found)`,
       );
     }
-    const priorRun = await findLatestCompletedE2eRunForReleaseTag(deps, priorTag);
+    const priorRun = await services.findLatestCompletedE2eRunForReleaseTag(deps, priorTag);
     if (!priorRun) {
       return traceTimingResult(
         `Trace: cloud-onboard total ${formatDuration(currentTrace.totalMs)} (no e2e.yaml run found for ${priorTag.name})`,
       );
     }
-    const priorTrace = await readTraceSummaryFromRun(deps, priorRun.id);
+    const priorTrace = await services.readTraceSummaryFromRun(deps, priorRun.id);
     if (priorTrace === null) {
       return traceTimingResult(
         `Trace: cloud-onboard total ${formatDuration(currentTrace.totalMs)} (no timing summary found for ${priorTag.name})`,
@@ -332,6 +348,7 @@ module.exports = {
   buildPhaseRows,
   buildTraceTimingResult,
   buildTraceSummaryLines,
+  findLatestCompletedE2eRunForReleaseTag,
   formatTopPhaseChanges,
   readTraceSummaryFromRun,
   resolvePriorReleaseTag,

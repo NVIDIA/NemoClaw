@@ -42,6 +42,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
+      explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -65,6 +66,7 @@ jobs:
           set -euo pipefail
           inventory_output="$(npx tsx tools/e2e/workflow-inventory.mts --shell)"
           allowed_jobs=""
+          explicit_only_jobs_csv=""
           free_standing_targets_csv=""
           free_standing_target_jobs_csv=""
           seen_inventory_keys=","
@@ -74,7 +76,7 @@ jobs:
             if [[ -z "${line}" || "${line}" == \#* ]]; then
               continue
             fi
-            if [[ ! "${line}" =~ ^(allowed_jobs|free_standing_targets_csv|free_standing_target_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)$ ]]; then
+            if [[ ! "${line}" =~ ^(allowed_jobs|explicit_only_jobs_csv|free_standing_targets_csv|free_standing_target_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)?$ ]]; then
               echo "::error::free-standing workflow inventory must be data-only key=value" >&2
               exit 1
             fi
@@ -87,10 +89,17 @@ jobs:
             seen_inventory_keys="${seen_inventory_keys}${inventory_key},"
             case "${inventory_key}" in
               allowed_jobs) allowed_jobs="${inventory_value}" ;;
+              explicit_only_jobs_csv) explicit_only_jobs_csv="${inventory_value}" ;;
               free_standing_targets_csv) free_standing_targets_csv="${inventory_value}" ;;
               free_standing_target_jobs_csv) free_standing_target_jobs_csv="${inventory_value}" ;;
             esac
           done <<< "${inventory_output}"
+          for required_inventory_key in allowed_jobs explicit_only_jobs_csv free_standing_targets_csv free_standing_target_jobs_csv; do
+            if [[ "${seen_inventory_keys}" != *",${required_inventory_key},"* ]]; then
+              echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
+              exit 1
+            fi
+          done
           for required_inventory_key in allowed_jobs free_standing_targets_csv free_standing_target_jobs_csv; do
             if [[ -z "${!required_inventory_key:-}" ]]; then
               echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
@@ -110,6 +119,21 @@ jobs:
             fi
             seen_allowed_jobs="${seen_allowed_jobs}${job},"
           done
+          seen_explicit_only_jobs=","
+          if [ -n "${explicit_only_jobs_csv}" ]; then
+            IFS=',' read -r -a explicit_only_job_entries <<< "${explicit_only_jobs_csv}"
+            for job in "${explicit_only_job_entries[@]}"; do
+              if [[ "${seen_allowed_jobs}" != *",${job},"* ]]; then
+                echo "::error::Explicit-only job is not in allowed jobs" >&2
+                exit 1
+              fi
+              if [[ "${seen_explicit_only_jobs}" == *",${job},"* ]]; then
+                echo "::error::free-standing workflow inventory repeats explicit-only job" >&2
+                exit 1
+              fi
+              seen_explicit_only_jobs="${seen_explicit_only_jobs}${job},"
+            done
+          fi
           seen_free_standing_targets=","
           IFS=',' read -r -a free_standing_target_entries <<< "${free_standing_targets_csv}"
           for target in "${free_standing_target_entries[@]}"; do
@@ -209,6 +233,7 @@ jobs:
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
+          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -2536,6 +2561,7 @@ jobs:
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "sandbox-rlimits-connect"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -3012,12 +3038,13 @@ jobs:
     needs: generate-matrix
     # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
     # Required validation path: dispatch with jobs=jetson-nvmap-gpu or targets=jetson-nvmap-gpu.
-    # Re-enable default dispatch only after a stable Jetson runner exists, then remove this job from FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.
+    # Re-enable default dispatch only after a stable Jetson runner exists, then remove E2E_DEFAULT_ENABLED.
     if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,') }}
     runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "jetson-nvmap-gpu"
       DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
@@ -3395,10 +3422,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          trap 'rm -rf -- "${NEMOCLAW_TRACE_DIR}"' EXIT
           python3 scripts/e2e/sanitize-trace-timing.py \
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}"
+
+      # The target process must emit full local traces for diagnosis, but those
+      # traces may contain prompts, environment data, and credential material.
+      # Keep cleanup as a separate always() step so a sanitizer failure cannot
+      # bypass it. A runner-level termination is contained by the ephemeral
+      # GitHub-hosted runner.temp boundary. Remove this step only when the trace
+      # producer itself emits the allowlisted timing-only schema.
+      - name: Delete raw cloud-onboard traces
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            exit 1
+          fi
+          rm -rf -- "${NEMOCLAW_TRACE_DIR}"
 
       - name: Upload cloud-onboard artifacts
         if: always()
@@ -6115,6 +6159,7 @@ jobs:
       - name: Post E2E target results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
@@ -6129,18 +6174,26 @@ jobs:
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
-            const explicitOnlySkippedJobs = [
-              {
+            const explicitOnlyReasons = {
+              'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
                 target: 'jetson-nvmap-gpu',
                 reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
               },
-              {
+              'sandbox-rlimits-connect': {
                 job: 'sandbox-rlimits-connect',
                 target: 'sandbox-rlimits-connect',
                 reason: 'default dispatch excludes the destructive rlimit fork/connect probe unless selected',
               },
-            ];
+            };
+            const explicitOnlySkippedJobs = (process.env.EXPLICIT_ONLY_JOBS || '')
+              .split(',')
+              .filter(Boolean)
+              .map((job) => explicitOnlyReasons[job] ?? {
+                job,
+                target: job,
+                reason: 'default dispatch excludes this explicit-only job unless selected',
+              });
             const targetsRejected = rawRequestedTargets && !selectorValidationPassed;
             const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
@@ -6379,6 +6432,7 @@ jobs:
         id: scorecard
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOBS: ${{ inputs.jobs }}
           TARGETS: ${{ inputs.targets }}
         with:
@@ -6410,29 +6464,13 @@ jobs:
               'report-to-pr',
               'scorecard',
             ];
-            const explicitOnly = ['jetson-nvmap-gpu', 'sandbox-rlimits-connect'];
+            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
             const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
-            // Fall back to `needs` if the API is temporarily unavailable.
-            let apiJobs = null;
-            try {
-              apiJobs = await github.paginate(
-                github.rest.actions.listJobsForWorkflowRun,
-                {
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  run_id: context.runId,
-                  per_page: 100,
-                },
-              );
-            } catch (error) {
-              const safeMessage = String(error.message ?? 'unknown').slice(0, 200);
-              core.warning(
-                `Could not fetch jobs from API (status ${error.status ?? 'unknown'}); falling back to needs context. Reason: ${safeMessage}`,
-              );
-            }
+            // The typed helper owns and tests the degraded `needs` fallback.
+            const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
 
             const { cancelled, failedJobs, failure, ran, skipped, success, total } =
               scorecardJobs.summarizeJobs({
