@@ -72,7 +72,16 @@ export interface ShieldsAutoRestoreEvent {
  * `withinMs` milliseconds of now. Also reads the preceding `shields_down`
  * entry to recover the original timeout so callers can echo it back.
  *
- * Returns null when no matching entry is found or the file is unreadable.
+ * Returns null when no matching entry is found OR when the file is unreadable.
+ * Fail-open is intentional: blocking agent dispatch on audit I/O errors (e.g.
+ * EACCES, EIO) would be a DoS vector — callers must treat null as "no warning"
+ * rather than "no event." Future-dated entries are rejected as a clock-skew
+ * defense so a crafted entry cannot pin the warning permanently.
+ *
+ * File-size note: the audit file is user-owned and written only by NemoClaw at
+ * ~200 bytes per entry. An unbounded readFileSync is acceptable for this
+ * warning-only path; add a size cap if the audit log gains a rotation policy.
+ *
  * The optional `auditFile` parameter overrides the default path; used in tests.
  */
 export function readRecentShieldsAutoRestore(
@@ -98,7 +107,9 @@ export function readRecentShieldsAutoRestore(
         return parsed as Record<string, unknown>;
       }
     } catch {
-      // malformed line — skip
+      // Intentional resilient skip: a malformed or truncated JSONL line (e.g.
+      // from a partial write or manual edit) must not prevent finding valid
+      // surrounding entries. The reverse scan continues past it.
     }
     return null;
   }

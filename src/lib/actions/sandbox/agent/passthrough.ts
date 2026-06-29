@@ -91,6 +91,7 @@
 //     directly (e.g., a distinct exit code or structured error field for
 //     missing-scope-after-relock), or when NemoClaw implements
 //     extend-on-activity so the scope never lapses mid-session.
+//     (The shields_auto_restore audit entry is appended by timer.ts:295–302.)
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
@@ -352,6 +353,23 @@ function hasTargetSelector(args: readonly string[]): boolean {
   return false;
 }
 
+function emitShieldsRelockWarning(
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+  relock: ShieldsAutoRestoreEvent,
+  sandboxName: string,
+): void {
+  const afterPart =
+    relock.timeoutSeconds !== null ? ` after ${String(relock.timeoutSeconds)}s` : "";
+  // timeoutSeconds is pre-validated by readRecentShieldsAutoRestore (finite integer, 1–1800).
+  const timeoutSuggestion =
+    relock.timeoutSeconds !== null
+      ? `--timeout ${String(relock.timeoutSeconds)}s`
+      : "--timeout 60s";
+  proc.stderr.write(
+    `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${sandboxName} shields down ${timeoutSuggestion}\` to extend.\n`,
+  );
+}
+
 function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"]>): never {
   proc.stderr.write(
     "  No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.\n",
@@ -421,20 +439,15 @@ export async function runAgentPassthrough(
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
   }
+  // 10-min window: shields timeouts range 1–1800s; 10 min covers even the max
+  // 30-min timeout with a 2× buffer. A longer window risks false-positive warnings
+  // on a relock from a prior session. Adjust if the upstream max changes.
   const checkShields =
     deps.getRecentShieldsAutoRestore ??
     ((name: string) => readRecentShieldsAutoRestore(name, 10 * 60 * 1000));
   const relock = checkShields(sandboxName);
   if (relock) {
-    const afterPart =
-      relock.timeoutSeconds !== null ? ` after ${String(relock.timeoutSeconds)}s` : "";
-    const timeoutSuggestion =
-      relock.timeoutSeconds !== null
-        ? `--timeout ${String(relock.timeoutSeconds)}s`
-        : "--timeout 60s";
-    proc.stderr.write(
-      `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${sandboxName} shields down ${timeoutSuggestion}\` to extend.\n`,
-    );
+    emitShieldsRelockWarning(proc, relock, sandboxName);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;

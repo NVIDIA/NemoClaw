@@ -208,6 +208,56 @@ describe("readRecentShieldsAutoRestore", () => {
     }
   });
 
+  it("returns correct timeoutSeconds when a malformed JSONL line sits between shields_down and shields_auto_restore (#5922)", () => {
+    const now = new Date().toISOString();
+    const downLine = JSON.stringify({
+      action: "shields_down",
+      sandbox: "alpha",
+      timestamp: new Date(Date.now() - 25 * 1000).toISOString(),
+      timeout_seconds: 30,
+    });
+    // Malformed line between the two valid entries; parseEntry must skip it and
+    // continue to find the preceding shields_down.
+    fs.writeFileSync(
+      auditPath,
+      downLine +
+        "\n{not valid json\n" +
+        JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: now }) +
+        "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result?.timestamp).toBe(now);
+    expect(result?.timeoutSeconds).toBe(30);
+  });
+
+  it("uses the immediately-preceding shields_down when multiple exist (#5922)", () => {
+    const now = new Date().toISOString();
+    // Two shields_down entries with different timeout_seconds. The second (most
+    // recent) should be used because it immediately precedes the auto-restore.
+    fs.writeFileSync(
+      auditPath,
+      JSON.stringify({
+        action: "shields_down",
+        sandbox: "alpha",
+        timestamp: new Date(Date.now() - 60 * 1000).toISOString(),
+        timeout_seconds: 120,
+      }) +
+        "\n" +
+        JSON.stringify({
+          action: "shields_down",
+          sandbox: "alpha",
+          timestamp: new Date(Date.now() - 25 * 1000).toISOString(),
+          timeout_seconds: 45,
+        }) +
+        "\n" +
+        JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: now }) +
+        "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result?.timestamp).toBe(now);
+    expect(result?.timeoutSeconds).toBe(45);
+  });
+
   it("returns null timeoutSeconds when shields_down has NaN or Infinity as a raw string payload (#5922)", () => {
     // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
     // so write the JSONL line manually to exercise the non-finite path.
