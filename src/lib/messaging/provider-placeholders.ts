@@ -3,11 +3,13 @@
 
 const OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
 const OPENSHELL_SCOPED_PLACEHOLDER_RE = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/;
+const PLACEHOLDER_CONTROL_CHAR_RE = /[\u0000\r\n\t]/;
 
 export function normalizeProviderPlaceholderForEnvKey(
   value: string,
   envKey: string,
 ): string | null {
+  if (PLACEHOLDER_CONTROL_CHAR_RE.test(value)) return null;
   if (value.startsWith(OPENSHELL_ENV_PLACEHOLDER_PREFIX)) {
     return placeholderSuffixMatchesEnvKey(
       value.slice(OPENSHELL_ENV_PLACEHOLDER_PREFIX.length),

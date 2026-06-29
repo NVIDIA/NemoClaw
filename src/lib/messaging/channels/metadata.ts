@@ -25,11 +25,23 @@ const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   MSTEAMS_PORT: ["TEAMS_PORT"],
 };
 
-const CONFIG_COMPAT_ENV_KEY_REMOVAL_GATE = {
-  releaseWindow: "one-full-release",
-  sourceBoundaries: ["QA automation", "public templates"],
+const CONFIG_COMPAT_ENV_KEY_REMOVAL_POLICY = {
+  enforcement: "manual",
+  reviewCadence: "release",
+  releaseWindow: "one-full-release-after-sources-clear",
+  sourceBoundaries: [
+    "test/e2e/test-messaging-providers.sh",
+    "test/e2e/test-hermes-discord-e2e.sh",
+    "test/e2e-scenario/live/messaging-providers-helpers.ts",
+    "test/e2e-scenario/live/hermes-discord.test.ts",
+    ".github/workflows/e2e-vitest-scenarios.yaml",
+    ".github/workflows/nightly-e2e.yaml",
+    "docs/manage-sandboxes/messaging-channels.mdx",
+    "docs/reference/troubleshooting.mdx",
+    "NVIDIA internal QA automation that exports legacy messaging env names",
+  ],
   removalCondition:
-    "Remove after the source boundaries stop exporting these legacy names for at least one full release.",
+    "Remove manually after every source boundary stops exporting these legacy names for at least one full release.",
 } as const;
 
 export interface MessagingCredentialMetadata {
@@ -201,16 +213,18 @@ export function getMessagingConfigCompatEnvKeys(
   );
 }
 
-export function getMessagingConfigCompatEnvKeyRemovalGate(
+export function getMessagingConfigCompatEnvKeyRemovalPolicy(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<{
+  enforcement: string;
+  reviewCadence: string;
   releaseWindow: string;
   sourceBoundaries: readonly string[];
   removalCondition: string;
   canonicalKeys: readonly string[];
 }> {
   return {
-    ...CONFIG_COMPAT_ENV_KEY_REMOVAL_GATE,
+    ...CONFIG_COMPAT_ENV_KEY_REMOVAL_POLICY,
     canonicalKeys: Object.keys(getMessagingConfigCompatEnvKeys(options)),
   };
 }

@@ -27,15 +27,15 @@ SCOPED_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
 SCOPED_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 PLACEHOLDER_CONTROL_CHARS = "\x00\r\n\t"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
-LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_GATE = (
-    "minimum-supported-hermes-sandbox-base-tag>=v0.1.0"
+LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_CONDITION = (
+    "all-supported-hermes-sandboxes-include-runtime-plan-credentialBindings"
 )
 # Restrictive compatibility fallback for provider placeholders persisted before
 # Hermes messaging runtime-plan metadata existed. New channels must flow through
 # runtime-plan credentialBindings; do not broaden this set without a
 # migration plan and source-of-truth review.
-# TODO: Remove when LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_GATE is satisfied; that
-# base tag guarantees the messaging runtime plan artifact with credentialBindings.
+# TODO: Remove manually when LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_CONDITION is
+# satisfied across supported Hermes sandbox images.
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
     {
         "TELEGRAM_BOT_TOKEN",

@@ -500,6 +500,43 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
+  it("refreshes existing legacy provider placeholders when no runtime plan is available", () => {
+    const envFile = [
+      "TELEGRAM_BOT_TOKEN=",
+      "DISCORD_BOT_TOKEN=",
+      "SLACK_BOT_TOKEN=",
+      "SLACK_APP_TOKEN=",
+      "WECHAT_BOT_TOKEN=",
+      "MSTEAMS_APP_PASSWORD=",
+      "",
+    ].join("\n");
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile,
+      envOverrides: {
+        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v222_TELEGRAM_BOT_TOKEN",
+        DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v222_SLACK_APP_TOKEN",
+        WECHAT_BOT_TOKEN: "openshell:resolve:env:v222_WECHAT_BOT_TOKEN",
+        MSTEAMS_APP_PASSWORD: "openshell:resolve:env:v222_MSTEAMS_APP_PASSWORD",
+      },
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(
+      [
+        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
+        "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
+        "SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN",
+        "WECHAT_BOT_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
+        "MSTEAMS_APP_PASSWORD=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        "",
+      ].join("\n"),
+    );
+    expect(run.strictHashValid).toBe(true);
+  });
+
   it("does not normalize new-channel ambient placeholders without a runtime plan", () => {
     const originalEnv = "WECOM_BOT_TOKEN=openshell:resolve:env:v1_WECOM_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({

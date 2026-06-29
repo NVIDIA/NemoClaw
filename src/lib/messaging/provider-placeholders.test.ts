@@ -35,4 +35,24 @@ describe("provider placeholder normalization", () => {
       ),
     ).toBeNull();
   });
+
+  it.each([
+    "\u0000",
+    "\r",
+    "\n",
+    "\t",
+  ])("rejects provider placeholders containing control character %#", (controlCharacter) => {
+    expect(
+      normalizeProviderPlaceholderForEnvKey(
+        `openshell:resolve:env:SLACK_BOT_TOKEN${controlCharacter}`,
+        "SLACK_BOT_TOKEN",
+      ),
+    ).toBeNull();
+    expect(
+      normalizeProviderPlaceholderForEnvKey(
+        `xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN${controlCharacter}`,
+        "SLACK_BOT_TOKEN",
+      ),
+    ).toBeNull();
+  });
 });

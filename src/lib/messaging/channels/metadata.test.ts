@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
-  getMessagingConfigCompatEnvKeyRemovalGate,
+  getMessagingConfigCompatEnvKeyRemovalPolicy,
   getMessagingConfigCompatEnvKeys,
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
@@ -98,11 +98,23 @@ describe("built-in messaging channel metadata", () => {
       TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
       MSTEAMS_PORT: ["TEAMS_PORT"],
     });
-    expect(getMessagingConfigCompatEnvKeyRemovalGate()).toEqual({
-      releaseWindow: "one-full-release",
-      sourceBoundaries: ["QA automation", "public templates"],
+    expect(getMessagingConfigCompatEnvKeyRemovalPolicy()).toEqual({
+      enforcement: "manual",
+      reviewCadence: "release",
+      releaseWindow: "one-full-release-after-sources-clear",
+      sourceBoundaries: [
+        "test/e2e/test-messaging-providers.sh",
+        "test/e2e/test-hermes-discord-e2e.sh",
+        "test/e2e-scenario/live/messaging-providers-helpers.ts",
+        "test/e2e-scenario/live/hermes-discord.test.ts",
+        ".github/workflows/e2e-vitest-scenarios.yaml",
+        ".github/workflows/nightly-e2e.yaml",
+        "docs/manage-sandboxes/messaging-channels.mdx",
+        "docs/reference/troubleshooting.mdx",
+        "NVIDIA internal QA automation that exports legacy messaging env names",
+      ],
       removalCondition:
-        "Remove after the source boundaries stop exporting these legacy names for at least one full release.",
+        "Remove manually after every source boundary stops exporting these legacy names for at least one full release.",
       canonicalKeys: [
         "TELEGRAM_ALLOWED_IDS",
         "DISCORD_SERVER_ID",
