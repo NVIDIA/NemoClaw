@@ -1,0 +1,165 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  runInferenceGet: vi.fn(),
+  runInferenceSet: vi.fn(),
+}));
+
+vi.mock("../../../lib/actions/inference-set", () => ({
+  InferenceSetError: class InferenceSetError extends Error {
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.name = "InferenceSetError";
+      this.exitCode = exitCode;
+    }
+  },
+  runInferenceSet: mocks.runInferenceSet,
+}));
+
+vi.mock("../../../lib/actions/inference-get", () => ({
+  InferenceGetError: class InferenceGetError extends Error {
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.name = "InferenceGetError";
+      this.exitCode = exitCode;
+    }
+  },
+  runInferenceGet: mocks.runInferenceGet,
+}));
+
+import { InferenceGetError } from "../../../lib/actions/inference-get";
+import { InferenceSetError } from "../../../lib/actions/inference-set";
+import SandboxInferenceGetCommand from "./get";
+import SandboxInferenceSetCommand from "./set";
+
+const rootDir = process.cwd();
+
+describe("sandbox inference oclif command adapters (#5977)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.runInferenceSet.mockResolvedValue({
+      sandboxName: "alpha",
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+      primaryModelRef: "inference/nvidia/model-a",
+      providerKey: "inference",
+      configChanged: true,
+      sessionUpdated: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("forwards the positional sandbox name and custom-provider flags to runInferenceSet", async () => {
+    await SandboxInferenceSetCommand.run(
+      [
+        "alpha",
+        "--provider",
+        "compatible-endpoint",
+        "--model",
+        "nvidia/nemotron-3-super-120b-a12b",
+        "--no-verify",
+        "--endpoint-url",
+        "https://example.test/v1",
+        "--credential-env",
+        "COMPATIBLE_API_KEY",
+        "--inference-api",
+        "openai-completions",
+      ],
+      rootDir,
+    );
+
+    expect(mocks.runInferenceSet).toHaveBeenCalledWith({
+      provider: "compatible-endpoint",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      sandboxName: "alpha",
+      noVerify: true,
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      inferenceApi: "openai-completions",
+    });
+  });
+
+  it("prints the missing-flags redirect without calling runInferenceSet", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await expect(SandboxInferenceSetCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+
+      expect(mocks.runInferenceSet).not.toHaveBeenCalled();
+      expect(process.exitCode).toBe(1);
+      expect(error).toHaveBeenCalledWith(
+        expect.stringContaining("inference set requires --provider and --model"),
+      );
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("rejects an empty --provider before runInferenceSet is called", async () => {
+    await expect(
+      SandboxInferenceSetCommand.run(
+        ["alpha", "--provider", "   ", "--model", "nvidia/model-a"],
+        rootDir,
+      ),
+    ).rejects.toThrow(/provider name cannot be empty/i);
+
+    expect(mocks.runInferenceSet).not.toHaveBeenCalled();
+  });
+
+  it("maps the sandbox inference get --json output into oclif JSON handling", async () => {
+    mocks.runInferenceGet.mockResolvedValueOnce({
+      provider: "nvidia-prod",
+      model: "nvidia/model-a",
+    });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await SandboxInferenceGetCommand.run(["alpha", "--json"], rootDir);
+
+      expect(mocks.runInferenceGet).toHaveBeenCalledWith({ quiet: true });
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      });
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("records typed inference action failures without throwing oclif ExitError", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceGet.mockRejectedValueOnce(new InferenceGetError("route missing", 3));
+      mocks.runInferenceSet.mockRejectedValueOnce(new InferenceSetError("route rejected", 4));
+
+      await expect(SandboxInferenceGetCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(3);
+      expect(error).toHaveBeenCalledWith("route missing");
+
+      await expect(
+        SandboxInferenceSetCommand.run(
+          ["alpha", "--provider", "nvidia-prod", "--model", "nvidia/model-a"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(4);
+      expect(error).toHaveBeenCalledWith("route rejected");
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+});
