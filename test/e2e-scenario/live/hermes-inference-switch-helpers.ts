@@ -16,6 +16,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
+import {
+  inferenceSetAttemptCount,
+  runInferenceSetWithRetry,
+} from "../fixtures/inference-switch-retry.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -313,6 +317,38 @@ export async function installHermes(
   }
   if (!install) throw new Error("install command did not run");
   return install;
+}
+
+export async function runHermesInferenceSetWithRetry(
+  host: HostCliClient,
+  apiKey: string,
+  compatibleMetadataArgs: string[],
+  options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
+): Promise<ShellProbeResult> {
+  const args = [
+    CLI,
+    "inference",
+    "set",
+    "--provider",
+    SWITCH_PROVIDER,
+    "--model",
+    SWITCH_MODEL,
+    ...compatibleMetadataArgs,
+  ];
+  return runInferenceSetWithRetry({
+    attempts:
+      options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
+    delay: options.delay,
+    run: (attempt, verify) =>
+      host.command("node", verify ? args : [...args, "--no-verify"], {
+        artifactName: verify
+          ? `hermes-inference-set-${attempt}`
+          : "hermes-inference-set-no-verify-after-transient-failures",
+        env: env(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 180_000,
+      }),
+  });
 }
 
 export async function hermesGatewayPid(

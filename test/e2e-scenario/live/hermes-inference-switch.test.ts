@@ -10,7 +10,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
   apiKeyShape,
-  CLI,
   chatContent,
   cleanupHermesSwitch,
   ensureCompatibleAnthropicSwitchProvider,
@@ -27,6 +26,7 @@ import {
   maybeAssertPidStable,
   parseHermesModelBlock,
   registryState,
+  runHermesInferenceSetWithRetry,
   SANDBOX_NAME,
   SWITCH_API,
   SWITCH_MODEL,
@@ -80,25 +80,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           SWITCH_API,
         ]
       : [];
-    const switched = await host.command(
-      "node",
-      [
-        CLI,
-        "inference",
-        "set",
-        "--provider",
-        SWITCH_PROVIDER,
-        "--model",
-        SWITCH_MODEL,
-        ...compatibleMetadataArgs,
-      ],
-      {
-        artifactName: "hermes-inference-set",
-        env: env(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 180_000,
-      },
-    );
+    const switched = await runHermesInferenceSetWithRetry(host, apiKey, compatibleMetadataArgs);
     expect(switched.exitCode, resultText(switched)).toBe(0);
 
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");

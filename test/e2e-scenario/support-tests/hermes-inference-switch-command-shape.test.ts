@@ -14,6 +14,7 @@ import {
   cleanupHermesSwitch,
   hostedInstallModel,
   installHermes,
+  runHermesInferenceSetWithRetry,
   SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
 
@@ -87,5 +88,28 @@ describe("Hermes inference switch command shape", () => {
       ["sandbox", "delete", SANDBOX_NAME],
       ["gateway", "destroy", "-g", "nemoclaw"],
     ]);
+  });
+
+  it("falls back to no-verify only after transient route verification fails", async () => {
+    const command = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 1,
+        stderr: "failed to verify inference endpoint: failed to connect",
+        stdout: "",
+      })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: "", stdout: "" });
+
+    await expect(
+      runHermesInferenceSetWithRetry(
+        { command } as unknown as HostCliClient,
+        "hosted-key",
+        ["--inference-api", "anthropic-messages"],
+        { attempts: 1, delay: async () => {} },
+      ),
+    ).resolves.toMatchObject({ exitCode: 0 });
+
+    expect(command.mock.calls[0]?.[1]).not.toContain("--no-verify");
+    expect(command.mock.calls[1]?.[1]).toContain("--no-verify");
   });
 });
