@@ -11,10 +11,20 @@
  * an isolated HOME and asserts each surface returns a non-zero exit code while
  * still surfacing its error text.
  *
- * Surfaces are kept hermetic on purpose: the fakes report no reachable gateway
- * and no sandbox, so registry recovery finds nothing and the dispatcher's
- * "unknown command / sandbox does not exist / missing argument" boundaries are
- * exercised without contacting a live OpenShell gateway.
+ * The registry is seeded with one sandbox (`bug5974-alpha`) so the rows that
+ * target the issue's *command-specific* branches (missing required `skill
+ * install` path on an existing sandbox, unknown action on an existing sandbox)
+ * resolve the sandbox and reach those exact branches rather than stopping at
+ * the dispatcher's "sandbox does not exist" boundary. Rows that target a
+ * non-existent sandbox keep the reporter's literal nonexistent-sandbox surfaces
+ * (e.g. `nonexistent-sb upload file.txt`). All rows stay hermetic: the fakes
+ * report no reachable gateway, so nothing contacts a live OpenShell gateway.
+ *
+ * The `share mount` *bad remote path* diagnostic (#3414) needs both a live
+ * sandbox and a host `sshfs` binary to reach, so it cannot run hermetically
+ * here; that branch is covered by the unit tests in
+ * `src/lib/share-command.test.ts` and `test/share-command-remote-path.test.ts`.
+ * This matrix locks the nonexistent-sandbox share/upload surfaces instead.
  */
 
 import { spawnSync } from "node:child_process";
@@ -26,6 +36,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
+const REGISTERED = "bug5974-alpha";
 
 describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
   let home: string;
@@ -68,12 +79,25 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       { mode: 0o755 },
     );
 
-    // Empty registry: no sandboxes are known on disk.
+    // Seed a single registered sandbox so the command-specific rows can resolve
+    // it and reach their own validation branches.
     const registryDir = path.join(home, ".nemoclaw");
     fs.mkdirSync(registryDir, { recursive: true });
     fs.writeFileSync(
       path.join(registryDir, "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: null }),
+      JSON.stringify({
+        sandboxes: {
+          [REGISTERED]: {
+            name: REGISTERED,
+            model: "test-model",
+            provider: "test-provider",
+            gpuEnabled: false,
+            policies: [],
+            agent: "openclaw",
+          },
+        },
+        defaultSandbox: REGISTERED,
+      }),
       { mode: 0o600 },
     );
   });
@@ -101,15 +125,26 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
   }
 
   // Each row is [label, argv, expectedSubstring]. The substring is a stable
-  // fragment of the existing user-facing error text; the hard invariant is the
-  // non-zero exit code.
+  // fragment of the branch-specific error text, so a row that regresses to a
+  // different boundary (e.g. sandbox resolution) fails the substring check as
+  // well as the exit-code invariant. The hard invariant is the non-zero exit.
   const cases: ReadonlyArray<[string, string[], string]> = [
-    ["credentials reset with no provider", ["credentials", "reset"], "required arg"],
-    ["skill install with no path", ["bug5974-sb", "skill", "install"], "does not exist"],
-    ["unknown sandbox action", ["bug5974-da-sb", "dcode", "--help"], "Unknown command"],
+    // Missing required arg — oclif parse error, exits before any gateway probe.
+    ["credentials reset without a provider", ["credentials", "reset"], "required arg"],
+    // Missing required path on an EXISTING sandbox: resolves the seeded sandbox
+    // and reaches `skill install`'s own required-arg parser (issue instance 1).
+    [
+      `${REGISTERED} skill install without a path`,
+      [REGISTERED, "skill", "install"],
+      "required arg",
+    ],
+    // Unknown action on an EXISTING sandbox: resolves the seeded sandbox and
+    // reaches the dispatcher's unknown-action branch (issue instance 2).
+    [`${REGISTERED} unknown action`, [REGISTERED, "dcode", "--help"], "Unknown action: dcode"],
+    // Nonexistent-sandbox surfaces (issue instance 4, literal reporter commands).
     [
       "share mount on a nonexistent sandbox",
-      ["bug5974-sb", "share", "mount", "/sandbox/bad-typo-path"],
+      ["bug5974-missing-sb", "share", "mount", "/sandbox/bad-typo-path"],
       "does not exist",
     ],
     [
