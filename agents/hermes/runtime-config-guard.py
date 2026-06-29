@@ -4013,13 +4013,14 @@ def provider_placeholders(
             )
             return
         raise
-    refreshed_messages = {
-        message
-        for key, (_replacement, message) in replacements.items()
-        if key in changed_keys and message
-    }
-    for message in sorted(refreshed_messages):
-        print(message, file=sys.stderr)
+    refreshed_keys = sorted(key for key in replacements if key in changed_keys)
+    for key in refreshed_keys:
+        # Runtime-plan diagnostics are data, not trusted format strings. Emit
+        # only the validated environment key so a crafted plan cannot copy
+        # secret-shaped message content into startup logs.
+        print(
+            f"[config] Refreshed Hermes provider placeholder for {key}", file=sys.stderr
+        )
     print(
         "[config] Refreshed Hermes provider placeholders from OpenShell runtime env",
         file=sys.stderr,

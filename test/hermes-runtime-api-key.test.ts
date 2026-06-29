@@ -768,8 +768,12 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
     );
     expect(run.envFileContent).not.toContain("openshell:resolve:env");
-    expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN");
-    expect(run.result.stderr).toContain("Normalized SLACK_APP_TOKEN");
+    expect(run.result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
+    );
+    expect(run.result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for SLACK_APP_TOKEN",
+    );
     expect(run.strictHashValid).toBe(true);
   });
 

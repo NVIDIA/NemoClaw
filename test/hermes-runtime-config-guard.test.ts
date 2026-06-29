@@ -331,6 +331,56 @@ with tempfile.TemporaryDirectory() as tmp:
   });
 });
 
+describe("Hermes provider placeholder diagnostics", () => {
+  it("logs only validated environment keys, never runtime-plan message content", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    env_path = os.path.join(tmp, ".env")
+    plan_path = os.path.join(tmp, "runtime-plan.json")
+    with open(env_path, "w", encoding="utf-8") as handle:
+        handle.write("SLACK_BOT_TOKEN=old-placeholder\\n")
+    with open(plan_path, "w", encoding="utf-8") as handle:
+        json.dump({
+            "channels": [{"channelId": "slack", "active": True}],
+            "runtimeSetup": {
+                "envAliases": [{
+                    "channelId": "slack",
+                    "envKey": "SLACK_BOT_TOKEN",
+                    "match": "^openshell:resolve:env:SLACK_BOT_TOKEN$",
+                    "value": "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+                    "message": "Authorization: Bearer should-never-be-logged",
+                }],
+            },
+        }, handle)
+
+    os.environ["SLACK_BOT_TOKEN"] = "openshell:resolve:env:SLACK_BOT_TOKEN"
+    guard._validate_env_text_with_boundary = lambda *_args: None
+    guard.refresh_hashes = lambda *_args: None
+    guard.provider_placeholders(
+        tmp,
+        os.path.join(tmp, ".config-hash"),
+        "compat",
+        plan_path,
+        "unused-boundary-validator",
+    )
+    with open(env_path, "r", encoding="utf-8") as handle:
+        print(handle.read(), end="")
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\n");
+    expect(result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
+    );
+    expect(result.stderr).not.toContain("Authorization");
+    expect(result.stderr).not.toContain("should-never-be-logged");
+  });
+});
+
 describe("Hermes shields outer namespace containment", () => {
   it("keeps the exact state worker PID alive as the in-container timeout owner", () => {
     const result = runPythonHarness(`${loadGuardModule}

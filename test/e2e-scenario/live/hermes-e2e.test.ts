@@ -702,6 +702,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         ).toBe(true);
       }
 
+      // Deliberately terminate the exact tracked PID instead of invoking
+      // `hermes gateway stop`: upstream's graceful command writes a planned-stop
+      // marker and can return while a split-UID gateway is still alive. This
+      // injects the stronger stopped-process state that recovery must repair.
       const stopGatewayForRecover = await sandbox.execShell(
         SANDBOX_NAME,
         trustedSandboxShellScript(

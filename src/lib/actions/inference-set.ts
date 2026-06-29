@@ -20,6 +20,7 @@ import {
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
+  rewriteConfigUrlsWithDnsPinning,
   writeSandboxConfig,
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
@@ -82,6 +83,7 @@ export interface InferenceSetDeps {
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
   isSandboxConfigMutable: (sandboxName: string) => boolean;
+  rewriteConfigUrlsWithDnsPinning: (value: ConfigValue) => Promise<ConfigValue>;
 }
 
 export class InferenceSetError extends Error {
@@ -132,6 +134,7 @@ function defaultDeps(): InferenceSetDeps {
     validateLocalProvider,
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
+    rewriteConfigUrlsWithDnsPinning,
     isSandboxConfigMutable: (sandboxName) => {
       const { isShieldsDown }: typeof import("../shields") = require("../shields");
       return isShieldsDown(sandboxName, true);
@@ -402,25 +405,63 @@ function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
   return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
 }
 
-function normalizeCustomEndpointUrl(value: string | null | undefined): string {
+const ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS = new Set(["host.openshell.internal"]);
+
+function normalizeEndpointUrlShape(value: string): { url: URL; normalized: string } {
+  const url = new URL(value);
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
+    throw new Error("unsupported URL shape");
+  }
+  url.search = "";
+  url.hash = "";
+  const pathname = url.pathname.replace(/\/+$/, "");
+  url.pathname = pathname || "/";
+  return {
+    url,
+    normalized: url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`,
+  };
+}
+
+export async function normalizeCustomEndpointUrl(
+  value: string | null | undefined,
+  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
+): Promise<string> {
   const raw = typeof value === "string" ? value.trim() : "";
   if (!raw)
     throw new InferenceSetError("endpoint-url is required for custom-compatible metadata.", 2);
+  let shaped: { url: URL; normalized: string };
   try {
-    const url = new URL(raw);
-    if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password) {
-      throw new Error("unsupported URL shape");
-    }
-    url.search = "";
-    url.hash = "";
-    const pathname = url.pathname.replace(/\/+$/, "");
-    url.pathname = pathname || "/";
-    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+    shaped = normalizeEndpointUrlShape(raw);
   } catch {
     throw new InferenceSetError(
       "endpoint-url must be a valid http(s) URL without embedded credentials.",
       2,
     );
+  }
+
+  const hostname = shaped.url.hostname.replace(/\.$/, "").toLowerCase();
+  const port = Number(shaped.url.port);
+  if (
+    ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS.has(hostname) &&
+    shaped.url.protocol === "http:" &&
+    Number.isInteger(port) &&
+    port >= 1024
+  ) {
+    // This is the single sandbox-to-host bridge name that NemoClaw itself
+    // provisions for local inference. Its supported routes are explicit
+    // unprivileged HTTP listeners; do not generalize this exemption to HTTPS,
+    // default/privileged ports, localhost, RFC1918 addresses, or arbitrary
+    // internal DNS names.
+    return shaped.normalized;
+  }
+
+  try {
+    const validated = await rewriteUrlWithDnsPinning(shaped.normalized);
+    if (typeof validated !== "string") throw new Error("URL validator returned a non-string value");
+    return normalizeEndpointUrlShape(validated).normalized;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new InferenceSetError(`endpoint-url is not allowed: ${message}`, 2);
   }
 }
 
@@ -461,10 +502,11 @@ function normalizeExplicitInferenceApi(
   return normalized;
 }
 
-function explicitCustomProviderMetadata(
+async function explicitCustomProviderMetadata(
   provider: string,
   options: InferenceSetOptions,
-): RegistryInferenceMetadata | null {
+  rewriteUrlWithDnsPinning: InferenceSetDeps["rewriteConfigUrlsWithDnsPinning"],
+): Promise<RegistryInferenceMetadata | null> {
   if (!hasExplicitCustomMetadata(options)) return null;
   if (!isCustomCompatibleProvider(provider)) {
     throw new InferenceSetError(
@@ -479,7 +521,7 @@ function explicitCustomProviderMetadata(
   // for this switch, after URL and credential-env validation, instead of
   // borrowing from an unrelated onboard session or global OpenShell provider.
   return {
-    endpointUrl: normalizeCustomEndpointUrl(options.endpointUrl),
+    endpointUrl: await normalizeCustomEndpointUrl(options.endpointUrl, rewriteUrlWithDnsPinning),
     credentialEnv: normalizeExplicitCredentialEnv(provider, options.credentialEnv),
     preferredInferenceApi: normalizeExplicitInferenceApi(provider, options.inferenceApi),
     nimContainer: null,
@@ -580,7 +622,11 @@ async function runInferenceSetWithoutHostLock(
     );
   }
   const session = deps.loadSession();
-  const explicitMetadata = explicitCustomProviderMetadata(provider, options);
+  const explicitMetadata = await explicitCustomProviderMetadata(
+    provider,
+    options,
+    deps.rewriteConfigUrlsWithDnsPinning,
+  );
   const explicitPreferredInferenceApi = explicitMetadata?.preferredInferenceApi ?? null;
   const registryMetadata = registryMetadataForProviderSwitch({
     entry,
