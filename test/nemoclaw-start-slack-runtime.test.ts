@@ -256,4 +256,24 @@ describe("Slack runtime env normalization (#4274)", () => {
       "credentialBindings[0].placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
     );
   });
+
+  it("rejects crafted dual-marker scoped placeholder strings", () => {
+    const run = runNormalize(
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+      [
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-FAKE-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(
+      "credentialBindings[0].placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
+    );
+  });
 });

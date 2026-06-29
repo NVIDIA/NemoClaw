@@ -915,6 +915,77 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("does not preserve non-allowlisted scoped Slack placeholders during render", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-placeholder-"));
+    const fakeOpenclaw = path.join(tmp, "openclaw");
+
+    fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    try {
+      const generatorEnv = withLegacyMessagingPlanEnv(
+        {
+          PATH: `${tmp}:${TEST_PATH}`,
+          HOME: tmp,
+          ...BASE_GENERATOR_ENV,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
+          NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+        },
+        "openclaw",
+      );
+      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: generatorEnv,
+        timeout: 10_000,
+      });
+      expect(generatorResult.status, generatorResult.stderr).toBe(0);
+
+      const configPath = path.join(tmp, ".openclaw", "openclaw.json");
+      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      config.channels = {
+        ...config.channels,
+        slack: {
+          accounts: {
+            default: {
+              botToken: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+            },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+      const postInstallResult = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: `${tmp}:${TEST_PATH}`,
+            HOME: tmp,
+            NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+          },
+          timeout: 10_000,
+        },
+      );
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
+
+      const rendered = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+      expect(rendered.channels.slack.accounts.default.botToken).toBe(
+        "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("applies post-agent-install WeChat build files from the compiled messaging plan", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-post-agent-install-"));
     const channels = channelsB64(["wechat"]);

@@ -115,6 +115,55 @@ describe("built-in channel derived runtime metadata", () => {
   });
 
   it("derives state updates from config input state paths", () => {
+    expectStateUpdates(telegramManifest, [
+      {
+        kind: "persist-inputs",
+        stateKey: "allowedIds",
+        inputIds: ["allowedIds"],
+      },
+      {
+        kind: "persist-inputs",
+        stateKey: "telegramConfig",
+        inputIds: ["requireMention", "groupPolicy"],
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "allowedIds.telegram",
+        env: "TELEGRAM_ALLOWED_IDS",
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "telegramConfig.requireMention",
+        env: "TELEGRAM_REQUIRE_MENTION",
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "telegramConfig.groupPolicy",
+        env: "TELEGRAM_GROUP_POLICY",
+      },
+    ]);
+    expectStateUpdates(discordManifest, [
+      {
+        kind: "persist-inputs",
+        stateKey: "discordGuilds",
+        inputIds: ["serverId", "requireMention", "userId"],
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "discordGuilds.serverId",
+        env: "DISCORD_SERVER_ID",
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "discordGuilds.requireMention",
+        env: "DISCORD_REQUIRE_MENTION",
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "discordGuilds.userIds",
+        env: "DISCORD_USER_ID",
+      },
+    ]);
     expectStateUpdates(slackManifest, [
       {
         kind: "persist-inputs",
@@ -167,6 +216,18 @@ describe("built-in channel derived runtime metadata", () => {
         kind: "rebuild-hydration",
         statePath: "allowedIds.wechat",
         env: "WECHAT_ALLOWED_IDS",
+      },
+    ]);
+    expectStateUpdates(whatsappManifest, [
+      {
+        kind: "persist-inputs",
+        stateKey: "allowedIds",
+        inputIds: ["allowedIds"],
+      },
+      {
+        kind: "rebuild-hydration",
+        statePath: "allowedIds.whatsapp",
+        env: "WHATSAPP_ALLOWED_IDS",
       },
     ]);
     expectStateUpdates(teamsManifest, [

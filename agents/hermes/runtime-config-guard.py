@@ -31,8 +31,8 @@ BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 # Hermes messaging runtime-plan metadata existed. New channels must flow through
 # runtime-plan credentialBindings; do not broaden this set without a
 # migration plan and source-of-truth review.
-# TODO: Remove when the minimum supported Hermes sandbox base tag guarantees
-# the messaging runtime plan artifact for at least one full release.
+# TODO: Remove when the minimum supported Hermes sandbox base tag is >= v0.1.0,
+# which guarantees the messaging runtime plan artifact with credentialBindings.
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
     {
         "TELEGRAM_BOT_TOKEN",

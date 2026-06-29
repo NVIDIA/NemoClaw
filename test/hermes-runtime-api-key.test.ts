@@ -661,6 +661,22 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashContent).toBe(hashFileContent);
   });
 
+  it("does not use legacy provider fallback when runtime plan credential bindings are empty", () => {
+    const originalEnv = "API_SERVER_PORT=18642\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+        SLACK_APP_TOKEN: "openshell:resolve:env:v222_SLACK_APP_TOKEN",
+      },
+      runtimePlan: baseMessagingRuntimePlan({ credentialBindings: [] }),
+    });
+
+    expect(run.result.status, run.result.stderr).toBe(0);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
   it("uses credential binding placeholders for Hermes Slack provider placeholders", () => {
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: [
@@ -703,6 +719,11 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     {
       name: "non-Slack scoped prefixes",
       placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      error: "credentialBindings.placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
+    },
+    {
+      name: "crafted dual-marker strings",
+      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-FAKE-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       error: "credentialBindings.placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
     },
   ])("rejects runtime plan placeholders with $name before refreshing .env", ({

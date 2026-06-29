@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MessagingHookRegistry, runMessagingHook } from "../../../hooks";
 import type { ChannelHookSpec } from "../../../manifest";
 import {
   createTelegramAllowlistAliasesHook,
+  mergeTelegramAllowlistAliases,
   TELEGRAM_ALLOWLIST_ALIASES_HOOK_ID,
 } from "./allowlist-aliases";
 
@@ -52,6 +53,30 @@ describe("Telegram allowlist aliases hook implementation", () => {
       },
     });
     expect(env.TELEGRAM_ALLOWED_IDS).toBe("111,222,333,444");
+  });
+
+  it("keeps canonical Telegram IDs first and warns when compatibility aliases are used", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const env: NodeJS.ProcessEnv = {
+      TELEGRAM_ALLOWED_IDS: "111, 222",
+      TELEGRAM_AUTHORIZED_CHAT_IDS: "333,111",
+      TELEGRAM_CHAT_ID: "444",
+    };
+
+    try {
+      expect(mergeTelegramAllowlistAliases(env)).toBe("111,222,333,444");
+      expect(env.TELEGRAM_ALLOWED_IDS).toBe("111,222,333,444");
+      expect(warn).toHaveBeenCalledWith(
+        "[channels] TELEGRAM_AUTHORIZED_CHAT_IDS is a legacy Telegram allowlist environment variable; use TELEGRAM_ALLOWED_IDS instead.",
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[channels] TELEGRAM_CHAT_ID is a legacy Telegram allowlist environment variable; use TELEGRAM_ALLOWED_IDS instead.",
+      );
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("333");
+      expect(warn.mock.calls.flat().join("\n")).not.toContain("444");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does nothing when no canonical or alias allowlist values are present", async () => {

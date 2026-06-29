@@ -48,6 +48,9 @@ export function createTelegramAllowlistAliasesHookRegistration(
 export function mergeTelegramAllowlistAliases(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): string | null {
+  for (const key of TELEGRAM_ALLOWED_IDS_ALIAS_ENVS) {
+    if (normalizeAllowlistValue(env[key])) warnTelegramAllowlistAliasEnv(key);
+  }
   const values = [
     env[TELEGRAM_ALLOWED_IDS_ENV],
     ...TELEGRAM_ALLOWED_IDS_ALIAS_ENVS.map((key) => env[key]),
@@ -58,12 +61,17 @@ export function mergeTelegramAllowlistAliases(
   return merged;
 }
 
+function warnTelegramAllowlistAliasEnv(sourceKey: string): void {
+  console.warn(
+    `[channels] ${sourceKey} is a legacy Telegram allowlist environment variable; use ${TELEGRAM_ALLOWED_IDS_ENV} instead.`,
+  );
+}
+
 function mergeAllowlistValues(values: readonly unknown[]): string | null {
   const ids: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
-    if (typeof value !== "string") continue;
-    const normalized = value.replace(/[\r\n]/g, "").trim();
+    const normalized = normalizeAllowlistValue(value);
     if (!normalized) continue;
     for (const entry of normalized.split(",")) {
       const id = entry.trim();
@@ -73,4 +81,9 @@ function mergeAllowlistValues(values: readonly unknown[]): string | null {
     }
   }
   return ids.length > 0 ? ids.join(",") : null;
+}
+
+function normalizeAllowlistValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  return value.replace(/[\r\n]/g, "").trim() || null;
 }

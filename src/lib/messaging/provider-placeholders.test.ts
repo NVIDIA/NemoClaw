@@ -28,5 +28,11 @@ describe("provider placeholder normalization", () => {
         "SLACK_BOT_TOKEN",
       ),
     ).toBeNull();
+    expect(
+      normalizeProviderPlaceholderForEnvKey(
+        "xoxb-OPENSHELL-RESOLVE-ENV-FAKE-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        "SLACK_BOT_TOKEN",
+      ),
+    ).toBeNull();
   });
 });

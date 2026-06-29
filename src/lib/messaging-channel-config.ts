@@ -39,6 +39,7 @@ const compatEnvToCanonical = new Map(
     compatEnvKeys.map((compatEnvKey) => [compatEnvKey, canonical] as const),
   ),
 );
+const warnedCompatEnvKeys = new Set<string>();
 
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
   ...new Set(
@@ -131,10 +132,19 @@ export function resolveMessagingChannelConfigEnvValue(
   for (const candidate of getMessagingChannelConfigEnvKeys(canonical)) {
     const normalized = normalizeMessagingChannelConfigValue(canonical, env[candidate]);
     if (normalized) {
+      if (candidate !== canonical) warnCompatConfigEnvKey(candidate, canonical);
       return { canonicalKey: canonical, sourceKey: candidate, value: normalized };
     }
   }
   return { canonicalKey: canonical, sourceKey: null, value: null };
+}
+
+function warnCompatConfigEnvKey(sourceKey: string, canonicalKey: string): void {
+  if (warnedCompatEnvKeys.has(sourceKey)) return;
+  warnedCompatEnvKeys.add(sourceKey);
+  console.warn(
+    `[channels] ${sourceKey} is a legacy messaging channel config environment variable; use ${canonicalKey} instead.`,
+  );
 }
 
 export function sanitizeMessagingChannelConfig(value: unknown): MessagingChannelConfig | null {

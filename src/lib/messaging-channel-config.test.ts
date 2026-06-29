@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   hydrateMessagingChannelConfig,
@@ -103,20 +103,46 @@ describe("messaging channel config", () => {
     expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
   });
 
-  it("prefers canonical config env values over compatibility aliases", () => {
+  it.each([
+    ["DISCORD_SERVER_ID", "DISCORD_SERVER_IDS"],
+    ["DISCORD_USER_ID", "DISCORD_ALLOWED_IDS"],
+    ["MSTEAMS_APP_ID", "TEAMS_CLIENT_ID"],
+    ["MSTEAMS_TENANT_ID", "TEAMS_TENANT_ID"],
+    ["TEAMS_ALLOWED_USERS", "MSTEAMS_ALLOWED_USERS"],
+    ["MSTEAMS_PORT", "TEAMS_PORT"],
+  ])("prefers canonical %s values over compatibility alias %s", (canonical, compat) => {
     const env: NodeJS.ProcessEnv = {
-      DISCORD_SERVER_ID: "canonical-server",
-      DISCORD_SERVER_IDS: "compat-server",
+      [canonical]: `canonical-${canonical}`,
+      [compat]: `compat-${compat}`,
     };
 
-    expect(resolveMessagingChannelConfigEnvValue("DISCORD_SERVER_IDS", env)).toEqual({
-      canonicalKey: "DISCORD_SERVER_ID",
-      sourceKey: "DISCORD_SERVER_ID",
-      value: "canonical-server",
+    expect(resolveMessagingChannelConfigEnvValue(compat, env)).toEqual({
+      canonicalKey: canonical,
+      sourceKey: canonical,
+      value: `canonical-${canonical}`,
     });
     expect(readMessagingChannelConfigFromEnv(env)).toMatchObject({
-      DISCORD_SERVER_ID: "canonical-server",
+      [canonical]: `canonical-${canonical}`,
     });
+  });
+
+  it("warns when a compatibility alias provides the effective config value", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      expect(
+        resolveMessagingChannelConfigEnvValue("TEAMS_CLIENT_ID", { TEAMS_CLIENT_ID: "app" }),
+      ).toEqual({
+        canonicalKey: "MSTEAMS_APP_ID",
+        sourceKey: "TEAMS_CLIENT_ID",
+        value: "app",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        "[channels] TEAMS_CLIENT_ID is a legacy messaging channel config environment variable; use MSTEAMS_APP_ID instead.",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("normalizes Teams port compatibility aliases to canonical channel config", () => {
