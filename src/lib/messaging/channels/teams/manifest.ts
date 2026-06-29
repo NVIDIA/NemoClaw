@@ -293,5 +293,19 @@ export const teamsManifest = {
         },
       ],
     },
+    {
+      id: "teams-install-openclaw-skill",
+      phase: "post-agent-install",
+      handler: "teams.installOpenClawSkill",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "msteamsSkill",
+          kind: "build-file",
+          required: true,
+        },
+      ],
+      onFailure: "abort",
+    },
   ],
 } as const satisfies ChannelManifest;

@@ -1009,6 +1009,67 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
+  it("applies the Teams OpenClaw skill during post-agent-install", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-teams-skill-"));
+    const channels = channelsB64(["teams"]);
+
+    try {
+      const generatorEnv = withLegacyMessagingPlanEnv(
+        {
+          PATH: TEST_PATH,
+          HOME: tmp,
+          ...BASE_GENERATOR_ENV,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+          NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
+          NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+        },
+        "openclaw",
+      );
+      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: generatorEnv,
+        timeout: 10_000,
+      });
+      expect(generatorResult.status, generatorResult.stderr).toBe(0);
+
+      const fakeOpenclaw = path.join(tmp, "openclaw");
+      fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const postInstallResult = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "post-agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: `${tmp}:${TEST_PATH}`,
+            HOME: tmp,
+            NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
+          },
+          timeout: 10_000,
+        },
+      );
+      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
+
+      const skill = fs.readFileSync(
+        path.join(tmp, ".openclaw", "skills", "msteams", "SKILL.md"),
+        "utf-8",
+      );
+      expect(skill).toContain("name: msteams");
+      expect(skill).toContain('channel "msteams"');
+      expect(skill).toContain("@[Display Name](AAD_OBJECT_ID)");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("rejects post-agent-install render targets that escape the agent root", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-render-target-escape-"));
     const plan = {

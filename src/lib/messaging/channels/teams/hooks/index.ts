@@ -8,8 +8,10 @@ import {
   type TeamsHostForwardPortConflictHookOptions,
   type TeamsHostForwardPortStatusHookOptions,
 } from "./host-forward-port-conflict";
+import { createTeamsInstallOpenClawSkillHookRegistration } from "./install-openclaw-skill";
 
 export * from "./host-forward-port-conflict";
+export * from "./install-openclaw-skill";
 
 export interface TeamsHookOptions {
   readonly hostForwardPortConflict?: TeamsHostForwardPortConflictHookOptions;
@@ -26,6 +28,7 @@ export function createTeamsHookRegistrations(
     createTeamsHostForwardPortStatusHookRegistration(
       withoutUndefinedValues(options.hostForwardPortStatus),
     ),
+    createTeamsInstallOpenClawSkillHookRegistration(),
   ] as const;
 }
 

@@ -44,6 +44,7 @@ describe("MessagingHookRegistry", () => {
       "slack.validateCredentials",
       "teams.hostForwardPortConflict",
       "teams.hostForwardPortStatus",
+      "teams.installOpenClawSkill",
       "telegram.allowlistAliases",
       "telegram.openclawBridgeHealth",
       "telegram.gatewayConflictStatus",

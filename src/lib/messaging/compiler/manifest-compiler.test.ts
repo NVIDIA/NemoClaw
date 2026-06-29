@@ -276,6 +276,14 @@ describe("ManifestCompiler", () => {
         outputId: "openclawPluginPackage",
         required: true,
       },
+      {
+        channelId: "teams",
+        kind: "build-file",
+        hookId: "teams-install-openclaw-skill",
+        handler: "teams.installOpenClawSkill",
+        outputId: "msteamsSkill",
+        required: true,
+      },
     ]);
     expect(plan.buildSteps).toEqual(
       expect.arrayContaining([
@@ -304,6 +312,14 @@ describe("ManifestCompiler", () => {
             spec: "npm:@openclaw/msteams@{{openclaw.version}}",
             pin: true,
           },
+        }),
+        expect.objectContaining({
+          channelId: "teams",
+          kind: "build-file",
+          value: expect.objectContaining({
+            path: "skills/msteams/SKILL.md",
+            content: expect.stringContaining("@[Display Name](AAD_OBJECT_ID)"),
+          }),
         }),
       ]),
     );
