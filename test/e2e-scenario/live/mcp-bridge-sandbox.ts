@@ -31,6 +31,35 @@ async function waitForSandboxAfterRestart(
   throw new Error(`OpenShell sandbox '${sandboxName}' did not recover after installing test CA`);
 }
 
+async function collectHermesRecoveryDiagnostics(
+  sandbox: SandboxClient,
+  sandboxName: string,
+  artifactPrefix: string,
+): Promise<string> {
+  const diagnostics = await sandbox.execShell(
+    sandboxName,
+    trustedSandboxShellScript(
+      [
+        "set +e",
+        "echo '=== identity ==='",
+        "id",
+        "echo '=== lifecycle files ==='",
+        "stat -c '%U %G %a %h %n' /usr/local/bin/nemoclaw-start /run/nemoclaw/hermes-root-lifecycle 2>&1",
+        "cat /run/nemoclaw/hermes-root-lifecycle 2>/dev/null || true",
+        "echo '=== lifecycle processes ==='",
+        "ps -eo user=,pid=,ppid=,stat=,args= | grep -E '[n]emoclaw-start|[h]ermes|[s]ocat' || true",
+        'for log in /tmp/nemoclaw-start.log /tmp/gateway-recovery.log /tmp/gateway.log /tmp/hermes-dashboard.log; do echo "=== ${log} ==="; if [ -f "$log" ] && [ ! -L "$log" ]; then tail -n 200 "$log"; else echo missing-or-unsafe; fi; done',
+      ].join("\n"),
+    ),
+    {
+      artifactName: `${artifactPrefix}-recover-after-mcp-ca-restart-diagnostics`,
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 30_000,
+    },
+  );
+  return `diagnostic exit: ${diagnostics.exitCode}\ndiagnostic stdout:\n${diagnostics.stdout}\ndiagnostic stderr:\n${diagnostics.stderr}`;
+}
+
 export async function installMcpTestCaInSandbox(
   host: HostCliClient,
   sandbox: SandboxClient,
@@ -77,8 +106,13 @@ export async function installMcpTestCaInSandbox(
       timeoutMs: 3 * 60_000,
     });
     if (recover.exitCode !== 0) {
+      const diagnostics = await collectHermesRecoveryDiagnostics(
+        sandbox,
+        sandboxName,
+        artifactPrefix,
+      );
       throw new Error(
-        `${artifactPrefix} recover agent runtime after installing MCP test CA\nstdout:\n${recover.stdout}\nstderr:\n${recover.stderr}`,
+        `${artifactPrefix} recover agent runtime after installing MCP test CA\nstdout:\n${recover.stdout}\nstderr:\n${recover.stderr}\n${diagnostics}`,
       );
     }
     const managedLifecycle = await sandbox.exec(

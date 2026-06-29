@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import { buildAvailabilityProbeEnv } from "../availability-env.ts";
 import type { ShellProbeResult, ShellProbeRunOptions } from "../shell-probe.ts";
 import { trustedShellCommand } from "../shell-probe.ts";
 import {
   artifactLabel,
   assertExitZero,
-  outputContainsSandbox,
   type CommandRunner,
+  outputContainsSandbox,
 } from "./command.ts";
 
 /**
@@ -104,7 +105,9 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", script], {
+    const encodedScript = Buffer.from(script, "utf8").toString("base64");
+    const singleLineScript = `eval "$(printf '%s' '${encodedScript}' | base64 -d)"`;
+    return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", singleLineScript], {
       artifactName: `sandbox-exec-shell-${name}`,
       ...options,
     });

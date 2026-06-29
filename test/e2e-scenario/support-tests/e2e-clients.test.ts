@@ -1,22 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, expectTypeOf, it } from "vitest";
-
-import { assertExitZero, type CommandRunner } from "../fixtures/clients/index.ts";
 import {
+  assertExitZero,
+  type CommandRunner,
   GatewayClient,
   HostCliClient,
   ProviderClient,
   SandboxClient,
   StateClient,
-  trustedSandboxShellScript,
-  trustedProviderEndpoint,
   type TrustedSandboxShellScript,
+  trustedProviderEndpoint,
+  trustedSandboxShellScript,
 } from "../fixtures/clients/index.ts";
 import type {
   ShellProbeResult,
@@ -280,6 +281,7 @@ describe("E2E fixture clients", () => {
     const runner = new FakeRunner();
     const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
     const script = trustedSandboxShellScript("echo ready");
+    const encodedScript = Buffer.from(script, "utf8").toString("base64");
 
     expectTypeOf<
       Parameters<SandboxClient["execShell"]>[1]
@@ -292,12 +294,34 @@ describe("E2E fixture clients", () => {
 
     expect(runner.calls[0]).toEqual({
       command: "openshell",
-      args: ["sandbox", "exec", "-n", "assistant", "--", "sh", "-lc", "echo ready"],
+      args: [
+        "sandbox",
+        "exec",
+        "-n",
+        "assistant",
+        "--",
+        "sh",
+        "-lc",
+        `eval "$(printf '%s' '${encodedScript}' | base64 -d)"`,
+      ],
       options: {
         artifactName: "custom-exec-shell",
         timeoutMs: 123,
       },
     });
+  });
+
+  it("sandbox client keeps multiline shell scripts out of OpenShell argv", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    const script = trustedSandboxShellScript("set -eu\nprintf '%s\\n' ready\r\n");
+
+    await sandbox.execShell("assistant", script);
+
+    const payload = runner.calls[0]?.args.at(-1) ?? "";
+    expect(payload).not.toMatch(/[\r\n]/);
+    const encodedScript = payload.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? "";
+    expect(Buffer.from(encodedScript, "base64").toString("utf8")).toBe(script);
   });
 
   it("sandbox client requires trusted non-empty shell scripts", () => {
