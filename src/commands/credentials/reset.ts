@@ -73,8 +73,20 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       return;
     }
 
+    const rawStderr = String(result.stderr || "").trim();
+    const looksLikeEnvName = /^[A-Z][A-Z0-9_]+$/.test(key);
+    const alreadyAbsent = /not found|does not exist|already absent/i.test(rawStderr);
+    if (alreadyAbsent && !looksLikeEnvName) {
+      forgetExtraProvider(key);
+      this.log(
+        `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`,
+      );
+      this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
+      return;
+    }
+
     const lines = [`  Could not remove provider '${key}'.`];
-    if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
+    if (looksLikeEnvName) {
       lines.push(
         "",
         `  '${key}' looks like a credential env variable name.`,
@@ -83,7 +95,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
         "  registered providers, then retry with one of those names.",
       );
     }
-    const stderr = redact(String(result.stderr || "").trim());
+    const stderr = redact(rawStderr);
     if (stderr) lines.push(`  ${stderr}`);
     this.failWithLines(lines);
   }

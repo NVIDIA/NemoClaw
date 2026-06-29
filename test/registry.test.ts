@@ -524,6 +524,8 @@ describe("registry", () => {
       registry.addExtraProvider("tavily-search");
       expect(registry.removeExtraProvider("tavily-search")).toBe(true);
       expect(registry.listExtraProviders()).toEqual([]);
+      const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect("extraProviders" in raw).toBe(false);
       expect(registry.removeExtraProvider("tavily-search")).toBe(false);
     });
 
@@ -531,6 +533,48 @@ describe("registry", () => {
       registry.addExtraProvider("tavily-search");
       const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
       expect(raw.extraProviders).toEqual(["tavily-search"]);
+    });
+
+    it("flows persisted providers into sandbox-create-plan when invoked through the published helper", async () => {
+      registry.addExtraProvider("tavily-search");
+      registry.addExtraProvider("custom-provider");
+
+      const { prepareSandboxCreatePlan } = await import(
+        "../src/lib/onboard/sandbox-create-plan.js"
+      );
+      const plan = prepareSandboxCreatePlan({
+        basePolicyPath: "/repo/policy.yaml",
+        buildCtx: "/tmp/nemoclaw-build-extra",
+        sandboxName: "demo",
+        channels: [],
+        enabledChannels: [],
+        disabledChannelNames: new Set(),
+        messagingTokenDefs: [],
+        reusableMessagingChannels: [],
+        reusableMessagingProviders: [],
+        extraProviders: registry.listExtraProviders(),
+        hermesToolGateways: [],
+        sandboxGpuConfig: { sandboxGpuEnabled: false },
+        dockerDriverGateway: false,
+        appendResourceFlags: () => undefined,
+        runProviderPreDeleteCleanup: () => undefined,
+        upsertMessagingProviders: () => [],
+        getMessagingChannelForEnvKey: () => null,
+        getHermesToolGatewayProviderName: () => "ignored",
+        deps: {
+          resolveDockerGpuSandboxCreatePlan: () => ({ useDockerGpuPatch: false, logMessage: null }),
+          prepareInitialSandboxCreatePolicy: () => ({
+            policyPath: "/tmp/policy.yaml",
+            appliedPresets: [],
+          }),
+          buildSandboxGpuCreateArgs: () => [],
+        },
+      });
+
+      const providerArgs = plan.createArgs
+        .map((arg, index) => (arg === "--provider" ? plan.createArgs[index + 1] : null))
+        .filter((value): value is string => value !== null);
+      expect(providerArgs).toEqual(["custom-provider", "tavily-search"]);
     });
   });
 });

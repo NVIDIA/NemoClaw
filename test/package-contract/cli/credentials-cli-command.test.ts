@@ -40,6 +40,7 @@ type RuntimeBridge = {
   recoverNamedGatewayRuntime: () => Promise<RuntimeRecovery>;
   runOpenshell: (args: string[], opts?: RuntimeBridgeRunOptions) => SpawnLikeResult;
   recordExtraProvider: (name: string) => boolean;
+  forgetExtraProvider: (name: string) => boolean;
 };
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
@@ -64,6 +65,7 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
       return { status: 0, stdout: "", stderr: "" };
     },
     recordExtraProvider: () => true,
+    forgetExtraProvider: () => true,
     ...bridge,
   };
   const globalActions = require(GLOBAL_ACTIONS_PATH) as {
@@ -631,5 +633,23 @@ describe("credentials oclif commands", () => {
 
     expect(output.stderr).not.toContain("nvapi-abcdefghijklmnopqrstuv");
     expect(output.stderr).toContain("delete failed");
+  });
+
+  it("credentials reset cleans local state when the gateway provider is already absent", async () => {
+    const forgetCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: () => ({ status: 1, stderr: "provider not found" }),
+      forgetExtraProvider: (name) => {
+        forgetCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() => CredentialsResetCommand.run(["tavily-search", "--yes"]));
+
+    expect(forgetCalls).toEqual(["tavily-search"]);
+    expect(output.stdout).toContain("already absent");
+    expect(output.stdout).toContain("Local state was cleaned up");
   });
 });
