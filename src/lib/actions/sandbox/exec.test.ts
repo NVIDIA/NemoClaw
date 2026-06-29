@@ -8,6 +8,9 @@ import {
   buildWorkdirProbeArgs,
   computeExitCode,
   evaluateWorkdirProbe,
+  execSandbox,
+  findMultilineExecArg,
+  multilineExecMessage,
   validateWorkdirOrFail,
   workdirMissingMessage,
 } from "./exec";
@@ -89,6 +92,75 @@ describe("buildOpenshellExecArgs", () => {
     const argv = buildOpenshellExecArgs("name; rm -rf /", ["echo", "ok"]);
     expect(argv).toContain("name; rm -rf /");
     expect(argv).toEqual(["sandbox", "exec", "--name", "name; rm -rf /", "--", "echo", "ok"]);
+  });
+});
+
+describe("findMultilineExecArg", () => {
+  it("returns -1 when every argument is single-line", () => {
+    expect(findMultilineExecArg(["bash", "-lc", "echo line1; echo line2"])).toBe(-1);
+  });
+
+  it("returns the index of the first argument containing a newline", () => {
+    expect(findMultilineExecArg(["bash", "-lc", "cat <<EOF\nline1\nline2\nEOF"])).toBe(2);
+  });
+
+  it("detects a bare carriage return as well as a newline", () => {
+    expect(findMultilineExecArg(["printf", "a\rb"])).toBe(1);
+  });
+
+  it("reports the earliest offending argument when several are multi-line", () => {
+    expect(findMultilineExecArg(["a", "b\nc", "d\ne"])).toBe(1);
+  });
+});
+
+describe("multilineExecMessage", () => {
+  it("names the 1-based argument position and offers semicolon and script workarounds", () => {
+    const message = multilineExecMessage(
+      "nemoclaw",
+      "bug5980test",
+      ["bash", "-lc", "cat <<EOF\nline1\nEOF"],
+      2,
+    );
+    expect(message).toContain("command argument 3 contains a newline or carriage return");
+    expect(message).toContain('nemoclaw bug5980test exec -- bash -lc "cmd1; cmd2"');
+    expect(message).toContain("nemoclaw bug5980test exec -- bash <script-path>");
+  });
+
+  it("renders the offending argument on a single line with escaped newlines", () => {
+    const message = multilineExecMessage("nemoclaw", "alpha", ["bash", "-lc", "a\nb\r"], 2);
+    const lines = message.split("\n");
+    const preview = lines.find((line) => line.includes("a\\nb\\r"));
+    expect(preview).toBeDefined();
+    // The preview itself must not reintroduce a real newline/carriage return.
+    expect(preview).not.toMatch(/[\r\n]/);
+  });
+
+  it("truncates a very long offending argument", () => {
+    const long = `${"x".repeat(200)}\ny`;
+    const message = multilineExecMessage("nemoclaw", "alpha", ["echo", long], 1);
+    expect(message).toContain("…");
+  });
+});
+
+describe("execSandbox multi-line guard (#5980)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("rejects a multi-line command argument before dispatch with actionable guidance", async () => {
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+      throw new Error(`exit:${_code}`);
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      execSandbox("bug5980test", ["bash", "-lc", "cat <<EOF\nline1\nline2\nEOF"]),
+    ).rejects.toThrow("exit:2");
+
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    const printed = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(printed).toContain("contains a newline or carriage return");
+    expect(printed).toContain('bash -lc "cmd1; cmd2"');
   });
 });
 

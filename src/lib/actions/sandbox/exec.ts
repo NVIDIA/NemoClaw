@@ -45,6 +45,47 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
   return ["sandbox", "exec", "--name", sandboxName, "--", "test", "-d", workdir];
 }
 
+// OpenShell's `sandbox exec` rejects any argv element that contains a newline
+// or carriage return ("command argument N contains newline or carriage return
+// characters"). Multi-line commands such as heredocs therefore fail with a
+// low-level InvalidArgument error that gives the reporter no NemoClaw-specific
+// recovery path (#5980). We detect the offending argument before dispatch and
+// fail with actionable guidance instead.
+const MULTILINE_ARG_PATTERN = /[\r\n]/;
+
+export function findMultilineExecArg(command: readonly string[]): number {
+  for (let index = 0; index < command.length; index += 1) {
+    if (MULTILINE_ARG_PATTERN.test(command[index])) return index;
+  }
+  return -1;
+}
+
+// Render the offending argument on a single line so the error message stays
+// readable: real newlines/carriage returns become visible \n / \r escapes and
+// long arguments are truncated.
+function previewMultilineArg(arg: string): string {
+  const escaped = arg.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  const MAX = 120;
+  return escaped.length > MAX ? `${escaped.slice(0, MAX)}…` : escaped;
+}
+
+export function multilineExecMessage(
+  cliName: string,
+  sandboxName: string,
+  command: readonly string[],
+  index: number,
+): string {
+  // Report a 1-based position within the user command (the args after `--`).
+  const position = index + 1;
+  return [
+    `error: command argument ${position} contains a newline or carriage return, which OpenShell exec does not accept:`,
+    `  ${previewMultilineArg(command[index])}`,
+    "Multi-line commands (for example heredocs) cannot be passed through exec argv. Instead:",
+    `  - join statements with semicolons: ${cliName} ${sandboxName} exec -- bash -lc "cmd1; cmd2"`,
+    `  - or write the script to a file in the sandbox and run it: ${cliName} ${sandboxName} exec -- bash <script-path>`,
+  ].join("\n");
+}
+
 export function workdirMissingMessage(workdir: string): string {
   return `error: --workdir: ${workdir} does not exist inside the sandbox`;
 }
@@ -95,6 +136,11 @@ export async function execSandbox(
     console.error(
       `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]`,
     );
+    process.exit(2);
+  }
+  const multilineIndex = findMultilineExecArg(command);
+  if (multilineIndex !== -1) {
+    console.error(multilineExecMessage(CLI_NAME, sandboxName, command, multilineIndex));
     process.exit(2);
   }
   const binary = getOpenshellBinary();
