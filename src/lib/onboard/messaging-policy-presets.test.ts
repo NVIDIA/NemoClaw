@@ -78,17 +78,10 @@ describe("messaging policy presets", () => {
   });
 
   it("recovers presets for enabled channels absent from sb.policies after a prior stop+rebuild (#5596)", () => {
-    // After stop+rebuild, sb.policies only contains non-channel presets because
-    // channel presets were pruned (not applied, so never added back to sb.policies).
-    // allMessagingChannelPolicyPresets for the now-enabled channels provides the
-    // recovery list that rebuild step 5.5 merges in.
     const afterStopRebuildPolicies = ["npm", "pypi"];
     const enabledChannels = ["telegram", "discord", "whatsapp", "wechat", "slack"];
     const channelPresets = allMessagingChannelPolicyPresets(enabledChannels);
-    const recovered = [...afterStopRebuildPolicies];
-    for (const preset of channelPresets) {
-      if (!recovered.includes(preset)) recovered.push(preset);
-    }
+    const recovered = [...new Set([...afterStopRebuildPolicies, ...channelPresets])];
     expect(recovered).toContain("telegram");
     expect(recovered).toContain("discord");
     expect(recovered).toContain("whatsapp");
