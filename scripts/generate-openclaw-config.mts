@@ -1158,7 +1158,6 @@ export function buildConfig(env: Env = process.env): JsonObject {
   const pluginEntries: JsonObject = {
     acpx: { enabled: false },
     bonjour: { enabled: false },
-    qqbot: { enabled: false },
   };
   const bundledProviderPlugins: Record<string, Set<string>> = {
     "amazon-bedrock": new Set(["amazon-bedrock", "bedrock"]),
