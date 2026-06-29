@@ -38,6 +38,7 @@ function context(patch: Partial<Context> = {}): Context {
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,

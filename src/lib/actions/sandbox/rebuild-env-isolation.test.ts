@@ -47,6 +47,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
       "NEMOCLAW_PROVIDER_KEY",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_REASONING",
     ]);
   });
 });
@@ -97,6 +98,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
       NEMOCLAW_MODEL: "some-model",
+      NEMOCLAW_REASONING: "false",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
     };
@@ -113,6 +115,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus");
     expect(env.NEMOCLAW_MODEL).toBe("some-model");
+    expect(env.NEMOCLAW_REASONING).toBe("false");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.
     expect("NEMOCLAW_PROVIDER" in env).toBe(false);

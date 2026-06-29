@@ -428,6 +428,15 @@ print(block)
     }
   });
 
+  it("Option 3 docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+    const body = readFileSync(
+      path.join(import.meta.dirname, "..", "docs", "inference", "inference-options.mdx"),
+      "utf-8",
+    );
+    expect(body).toContain("| `NEMOCLAW_REASONING` |");
+    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the compatible endpoint");
+  });
+
   // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the
   // repo but never appears in docs/index.yml is invisible on the published
   // site. Pin the registration so removing the nav entry fails CI before

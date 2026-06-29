@@ -67,6 +67,9 @@ export function selection(
     endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
     credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
     preferredInferenceApi,
+    compatibleEndpointReasoning: sessionMatches
+      ? (session.compatibleEndpointReasoning ?? null)
+      : null,
     nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
   });
 }

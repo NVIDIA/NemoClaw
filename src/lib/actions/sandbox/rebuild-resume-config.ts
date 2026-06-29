@@ -187,6 +187,7 @@ export interface RebuildResumeConfig {
   readonly nimContainer: string | null;
   readonly credentialEnv: string | null;
   readonly preferredInferenceApi: string | null;
+  readonly compatibleEndpointReasoning: "true" | "false" | null;
   /**
    * Whether this endpoint was derived without trusting the matching onboard
    * session. Kept for preflight/tests; rebuild writes `endpointUrl`
@@ -243,6 +244,16 @@ export function prepareRebuildResumeConfig(
   const session = onboardSession.loadSession();
   const sessionMatchesSandbox = session?.sandboxName === sandboxName;
   const registrySelection = normalizeInferenceSelection(sb);
+  const matchingSessionSelection = sessionMatchesSandbox
+    ? normalizeInferenceSelection({
+        provider: registrySelection.provider,
+        compatibleEndpointReasoning: session?.compatibleEndpointReasoning,
+      })
+    : null;
+  const compatibleEndpointReasoning =
+    registrySelection.compatibleEndpointReasoning ??
+    matchingSessionSelection?.compatibleEndpointReasoning ??
+    null;
   const rebuildEndpoint = getRebuildEndpointFromRegistry(
     registrySelection.provider,
     registrySelection.endpointUrl,
@@ -330,6 +341,7 @@ export function prepareRebuildResumeConfig(
       registrySelection.credentialEnv,
     ),
     preferredInferenceApi: registrySelection.preferredInferenceApi,
+    compatibleEndpointReasoning,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
     ambient,

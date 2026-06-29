@@ -593,6 +593,58 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("pins compatible-endpoint reasoning for an MCP-bearing rebuild", async () => {
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY", "NEMOCLAW_REASONING"]);
+    process.env.COMPATIBLE_API_KEY = "compat-key";
+    process.env.NEMOCLAW_REASONING = "false";
+    const mcpEntry = {
+      server: "github",
+      agent: "openclaw",
+      adapter: "mcporter",
+      url: "https://mcp.example.test/mcp",
+      env: ["GITHUB_TOKEN"],
+      providerName: "alpha-mcp-github",
+      policyName: "mcp-bridge-github",
+      addedAt: "2026-06-01T00:00:00.000Z",
+    };
+    let reasoningSeenInsideOnboard: string | undefined;
+    try {
+      const harness = createRebuildFlowHarness({
+        applyPreset: () => true,
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: "reasoning-model",
+          endpointUrl: "https://compatible.example.test/v1",
+          compatibleEndpointReasoning: "true",
+          mcp: { bridges: { github: mcpEntry } },
+        },
+        sessionSandboxName: "other",
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+        },
+        onboard: (session) => {
+          reasoningSeenInsideOnboard = process.env.NEMOCLAW_REASONING;
+          expect(session.compatibleEndpointReasoning).toBe("true");
+        },
+      });
+      // The unrelated session and ambient env both disagree with the target's
+      // durable registry selection; neither may steer the recreate.
+      harness.session.compatibleEndpointReasoning = "false";
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).resolves.toBeUndefined();
+
+      expect(reasoningSeenInsideOnboard).toBeUndefined();
+      expect(harness.session.compatibleEndpointReasoning).toBe("true");
+      expect(process.env.NEMOCLAW_REASONING).toBe("false");
+      expect(harness.restoreMcpBridgesAfterRebuildSpy).toHaveBeenCalledWith("alpha", [mcpEntry]);
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("prunes disabled messaging channel presets from the final registry policies", async () => {
     const disabledSlackPlan = {
       schemaVersion: 1,

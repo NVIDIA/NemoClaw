@@ -403,6 +403,7 @@ describe("prepareRebuildResumeConfig", () => {
         endpointUrl: "http://127.0.0.1:19999/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: "true",
       }),
       null,
       noopLog,
@@ -413,9 +414,48 @@ describe("prepareRebuildResumeConfig", () => {
       model: "m",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       pinEndpoint: true,
       endpointUrl: "http://127.0.0.1:19999/v1",
     });
+  });
+
+  it("does not borrow compatible-endpoint reasoning from an unrelated session", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "other",
+      compatibleEndpointReasoning: "true",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config?.compatibleEndpointReasoning).toBeNull();
+  });
+
+  it("uses the target session as a legacy reasoning fallback", () => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      compatibleEndpointReasoning: "false",
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config?.compatibleEndpointReasoning).toBe("false");
   });
 
   it("fails closed for invalid durable custom endpoint metadata before delete", () => {

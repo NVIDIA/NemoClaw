@@ -17,6 +17,7 @@
 //   - NEMOCLAW_PROVIDER_KEY → src/lib/onboard/provider-key-bridge.ts / providers.ts
 //   - NEMOCLAW_ENDPOINT_URL → src/lib/onboard.ts (remote endpoint override)
 //   - NEMOCLAW_MODEL        → src/lib/onboard.ts (model override)
+//   - NEMOCLAW_REASONING    → src/lib/onboard/reasoning-mode.ts
 // This list MUST stay in sync with those reads; a contract test in
 // rebuild-env-isolation.test.ts pins the exact set so adding a new
 // onboard-selection env var forces a conscious update here.
@@ -30,6 +31,7 @@ export const AMBIENT_RECREATE_ENV_VARS = [
   "NEMOCLAW_PROVIDER_KEY",
   "NEMOCLAW_ENDPOINT_URL",
   "NEMOCLAW_MODEL",
+  "NEMOCLAW_REASONING",
 ] as const;
 
 /**

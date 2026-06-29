@@ -35,6 +35,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "openai-completions",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -91,6 +92,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "",
         credentialEnv: "",
         preferredInferenceApi: "",
+        compatibleEndpointReasoning: null,
         nimContainer: "",
       },
       runtimeFields,
@@ -146,10 +148,11 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       sandboxName: "demo",
       inferenceSelection: {
         model: "llama",
-        provider: "openai-compatible",
+        provider: "compatible-endpoint",
         endpointUrl: null,
         credentialEnv: null,
         preferredInferenceApi: null,
+        compatibleEndpointReasoning: "true",
         nimContainer: null,
       },
       runtimeFields,
@@ -168,9 +171,10 @@ describe("buildCreatedSandboxRegistryEntry", () => {
 
     expect(entry.mcp).toBe(preservedMcpState);
     expect(entry.mcp?.bridges.github?.providerName).toBe("demo-mcp-github");
+    expect(entry.compatibleEndpointReasoning).toBe("true");
   });
 
-  it("normalizes invalid preferred inference API values", () => {
+  it("normalizes invalid preferred API and reasoning values", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
       inferenceSelection: {
@@ -179,6 +183,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: "invalid",
         nimContainer: null,
       },
       runtimeFields,
@@ -195,6 +200,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     });
 
     expect(entry.preferredInferenceApi).toBeNull();
+    expect(entry.compatibleEndpointReasoning).toBeNull();
   });
 });
 
@@ -210,6 +216,7 @@ describe("selection", () => {
       model: "llama",
       endpointUrl: "https://wrong.test/v1",
       credentialEnv: "WRONG_KEY",
+      compatibleEndpointReasoning: "true",
       nimContainer: "wrong",
     });
 
@@ -219,6 +226,7 @@ describe("selection", () => {
       endpointUrl: null,
       credentialEnv: null,
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     });
   });
@@ -230,6 +238,7 @@ describe("selection", () => {
       model: "llama",
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-right",
     });
 
@@ -239,6 +248,7 @@ describe("selection", () => {
       endpointUrl: "https://right.test/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-right",
     });
   });
@@ -256,6 +266,7 @@ describe("registerCreatedSandbox", () => {
         endpointUrl: null,
         credentialEnv: null,
         preferredInferenceApi: null,
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,

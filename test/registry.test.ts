@@ -89,6 +89,19 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
+  it("stores normalized compatible-endpoint reasoning state", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: "reasoning-model",
+      endpointUrl: "https://example.test/v1",
+      compatibleEndpointReasoning: "true",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.alpha.compatibleEndpointReasoning).toBe("true");
+    expect(registry.getSandbox("alpha").compatibleEndpointReasoning).toBe("true");
+  });
+
   it("persists distinct gateway bindings for two sandboxes on different ports (#4422)", () => {
     registry.registerSandbox({
       name: "first",
