@@ -49,3 +49,25 @@ export type CompositeAction = {
 export function readYaml<T>(path: string): T {
   return YAML.parse(readFileSync(join(REPO_ROOT, path), "utf-8")) as T;
 }
+
+export function readWorkflow(): Record<string, unknown> {
+  return readYaml(".github/workflows/e2e.yaml");
+}
+
+export function removeJobNeed(source: string, ownerJob: string, dependency: string): string {
+  const ownerHeader = `  ${ownerJob}:\n`;
+  const ownerStart = source.indexOf(ownerHeader);
+  if (ownerStart < 0) {
+    throw new Error(`workflow is missing job ${ownerJob}`);
+  }
+  const prefix = source.slice(0, ownerStart);
+  const afterOwnerHeader = ownerStart + ownerHeader.length;
+  const nextJobOffset = source.slice(afterOwnerHeader).search(/^  [\w-]+:\n/mu);
+  const ownerEnd = nextJobOffset < 0 ? source.length : afterOwnerHeader + nextJobOffset;
+  const ownerBlock = source.slice(ownerStart, ownerEnd);
+  const needle = `        ${dependency},\n`;
+  if (!ownerBlock.includes(needle)) {
+    throw new Error(`${ownerJob} does not need ${dependency}`);
+  }
+  return prefix + ownerBlock.replace(needle, "") + source.slice(ownerEnd);
+}

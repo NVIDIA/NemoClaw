@@ -23,6 +23,11 @@ on:
         required: false
         type: string
         default: ""
+      post_to_slack:
+        description: Post a selective-dispatch scorecard to the preview Slack route.
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -37,6 +42,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       hermes_selected: ${{ steps.matrix.outputs.hermes_selected }}
+      explicit_only_jobs: ${{ steps.matrix.outputs.explicit_only_jobs }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
@@ -60,6 +66,7 @@ jobs:
           set -euo pipefail
           inventory_output="$(npx tsx tools/e2e/workflow-inventory.mts --shell)"
           allowed_jobs=""
+          explicit_only_jobs_csv=""
           free_standing_targets_csv=""
           free_standing_target_jobs_csv=""
           seen_inventory_keys=","
@@ -69,7 +76,7 @@ jobs:
             if [[ -z "${line}" || "${line}" == \#* ]]; then
               continue
             fi
-            if [[ ! "${line}" =~ ^(allowed_jobs|free_standing_targets_csv|free_standing_target_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)$ ]]; then
+            if [[ ! "${line}" =~ ^(allowed_jobs|explicit_only_jobs_csv|free_standing_targets_csv|free_standing_target_jobs_csv)=([A-Za-z0-9_:-]+(,[A-Za-z0-9_:-]+)*)?$ ]]; then
               echo "::error::free-standing workflow inventory must be data-only key=value" >&2
               exit 1
             fi
@@ -82,10 +89,17 @@ jobs:
             seen_inventory_keys="${seen_inventory_keys}${inventory_key},"
             case "${inventory_key}" in
               allowed_jobs) allowed_jobs="${inventory_value}" ;;
+              explicit_only_jobs_csv) explicit_only_jobs_csv="${inventory_value}" ;;
               free_standing_targets_csv) free_standing_targets_csv="${inventory_value}" ;;
               free_standing_target_jobs_csv) free_standing_target_jobs_csv="${inventory_value}" ;;
             esac
           done <<< "${inventory_output}"
+          for required_inventory_key in allowed_jobs explicit_only_jobs_csv free_standing_targets_csv free_standing_target_jobs_csv; do
+            if [[ "${seen_inventory_keys}" != *",${required_inventory_key},"* ]]; then
+              echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
+              exit 1
+            fi
+          done
           for required_inventory_key in allowed_jobs free_standing_targets_csv free_standing_target_jobs_csv; do
             if [[ -z "${!required_inventory_key:-}" ]]; then
               echo "::error::free-standing workflow inventory missing ${required_inventory_key}" >&2
@@ -105,6 +119,21 @@ jobs:
             fi
             seen_allowed_jobs="${seen_allowed_jobs}${job},"
           done
+          seen_explicit_only_jobs=","
+          if [ -n "${explicit_only_jobs_csv}" ]; then
+            IFS=',' read -r -a explicit_only_job_entries <<< "${explicit_only_jobs_csv}"
+            for job in "${explicit_only_job_entries[@]}"; do
+              if [[ "${seen_allowed_jobs}" != *",${job},"* ]]; then
+                echo "::error::Explicit-only job is not in allowed jobs" >&2
+                exit 1
+              fi
+              if [[ "${seen_explicit_only_jobs}" == *",${job},"* ]]; then
+                echo "::error::free-standing workflow inventory repeats explicit-only job" >&2
+                exit 1
+              fi
+              seen_explicit_only_jobs="${seen_explicit_only_jobs}${job},"
+            done
+          fi
           seen_free_standing_targets=","
           IFS=',' read -r -a free_standing_target_entries <<< "${free_standing_targets_csv}"
           for target in "${free_standing_target_entries[@]}"; do
@@ -204,6 +233,7 @@ jobs:
           fi
           echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
           echo "hermes_selected=${hermes_selected}" >> "$GITHUB_OUTPUT"
+          echo "explicit_only_jobs=${explicit_only_jobs_csv}" >> "$GITHUB_OUTPUT"
           MATRIX_JSON="${matrix}" python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
           import json
           import os
@@ -2531,6 +2561,7 @@ jobs:
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "sandbox-rlimits-connect"
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/sandbox-rlimits-connect
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
@@ -3007,12 +3038,13 @@ jobs:
     needs: generate-matrix
     # Explicit-only until a stable Jetson runner is available; otherwise full-suite dispatches remain queued forever.
     # Required validation path: dispatch with jobs=jetson-nvmap-gpu or targets=jetson-nvmap-gpu.
-    # Re-enable default dispatch only after a stable Jetson runner exists, then remove this job from FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS.
+    # Re-enable default dispatch only after a stable Jetson runner exists, then remove E2E_DEFAULT_ENABLED.
     if: ${{ contains(format(',{0},', inputs.jobs), ',jetson-nvmap-gpu,') || contains(format(',{0},', inputs.targets), ',jetson-nvmap-gpu,') }}
     runs-on: ${{ vars.JETSON_E2E_RUNNER_LABEL || 'linux-arm64-gpu-jetson-orin-latest-1' }}
     timeout-minutes: 60
     env:
       E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
       E2E_TARGET_ID: "jetson-nvmap-gpu"
       DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-jetson-nvmap-gpu
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/jetson-nvmap-gpu
@@ -3349,6 +3381,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Configure cloud-onboard trace directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'NEMOCLAW_TRACE_DIR=%s\n' "${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces" >> "${GITHUB_ENV}"
+
       - name: Set up Node
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -3383,6 +3421,33 @@ jobs:
           npx vitest run --project e2e-live \
             test/e2e/live/cloud-onboard.test.ts \
             --silent=false --reporter=default
+
+      - name: Build trusted cloud-onboard timing summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/e2e/sanitize-trace-timing.py \
+            "${NEMOCLAW_TRACE_DIR}" \
+            "${E2E_ARTIFACT_DIR}"
+
+      # The target process must emit full local traces for diagnosis, but those
+      # traces may contain prompts, environment data, and credential material.
+      # Keep cleanup as a separate always() step so a sanitizer failure cannot
+      # bypass it. A runner-level termination is contained by the ephemeral
+      # GitHub-hosted runner.temp boundary. Remove this step only when the trace
+      # producer itself emits the allowlisted timing-only schema.
+      - name: Delete raw cloud-onboard traces
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to delete unexpected raw trace path" >&2
+            exit 1
+          fi
+          rm -rf -- "${NEMOCLAW_TRACE_DIR}"
 
       - name: Upload cloud-onboard artifacts
         if: always()
@@ -5879,6 +5944,134 @@ jobs:
             rm -rf -- "${DOCKER_CONFIG}"
           fi
 
+  # ── Scheduled failure routing ──────────────────────────────────────────────
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        generate-matrix,
+        live,
+        openshell-version-pin,
+        onboard-negative-paths,
+        skill-agent,
+        openclaw-skill-cli,
+        inference-routing,
+        cloud-inference,
+        gpu-e2e,
+        agent-turn-latency,
+        kimi-inference-compat,
+        hermes-inference-switch,
+        brave-search,
+        ollama-auth-proxy,
+        cron-preflight-inference-local,
+        credential-sanitization,
+        credential-migration,
+        sessions-agents-cli,
+        runtime-overrides,
+        hermes-e2e,
+        hermes-dashboard,
+        hermes-slack,
+        hermes-discord,
+        hermes-root-entrypoint-smoke,
+        hermes-sandbox-secret-boundary,
+        network-policy,
+        common-egress-agent,
+        shields-config,
+        rebuild-openclaw,
+        rebuild-hermes,
+        rebuild-hermes-stale-base,
+        sandbox-rebuild,
+        sandbox-rlimits-connect,
+        overlayfs-autofix,
+        state-backup-restore,
+        upgrade-stale-sandbox,
+        openshell-gateway-upgrade,
+        token-rotation,
+        messaging-compatible-endpoint,
+        messaging-providers,
+        launchable-smoke,
+        double-onboard,
+        jetson-nvmap-gpu,
+        concurrent-gateway-ports,
+        full-e2e,
+        cloud-onboard,
+        gpu-double-onboard,
+        onboard-repair,
+        issue-4462-scope-upgrade-approval,
+        onboard-resume,
+        model-router-provider-routed-inference,
+        sandbox-operations,
+        sandbox-survival,
+        diagnostics,
+        snapshot-commands,
+        gateway-drift-preflight,
+        openclaw-tui-chat-correlation,
+        gateway-guard-recovery,
+        issue-4434-tui-unreachable-inference,
+        openclaw-inference-switch,
+        bedrock-runtime-compatible-anthropic,
+        issue-2478-crash-loop-recovery,
+        gateway-health-honest,
+        device-auth-health,
+        channels-add-remove,
+        tunnel-lifecycle,
+        telegram-injection,
+        openclaw-discord-pairing,
+        openclaw-slack-pairing,
+        channels-stop-start,
+        spark-install,
+      ]
+    if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    permissions:
+      issues: write
+    steps:
+      - name: Create or update scheduled E2E failure issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            // Preserve the existing issue thread and its historical title.
+            const title = 'Nightly E2E failed';
+            const needs = ${{ toJSON(needs) }};
+            const failed = Object.entries(needs)
+              .filter(([, value]) => value.result === 'failure')
+              .map(([name]) => name);
+            const cancelled = Object.entries(needs)
+              .filter(([, value]) => value.result === 'cancelled')
+              .map(([name]) => name);
+            const summary = [
+              failed.length ? `**Failed:** ${failed.join(', ')}` : '',
+              cancelled.length ? `**Cancelled:** ${cancelled.join(', ')}` : '',
+            ].filter(Boolean).join('\n');
+            const body = `**Run:** ${runUrl}\n${summary}\n**Artifacts:** Check the run artifacts for target logs and structured evidence.`;
+
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'CI/CD',
+              per_page: 100,
+            });
+            const match = existing.find(
+              (issue) => !issue.pull_request && issue.title.startsWith(title),
+            );
+            if (match) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: match.number,
+                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `${title} — ${new Date().toISOString().split('T')[0]}`,
+                body: `The scheduled E2E pipeline failed.\n\n${body}`,
+                labels: ['bug', 'CI/CD'],
+              });
+            }
+
   # ── PR result comment ─────────────────────────────────────────────────────
   # Posts a results table on the open PR for the dispatching branch (or the
   # PR identified by `inputs.pr_number`). `if: always()` so the comment lands
@@ -5971,6 +6164,7 @@ jobs:
       - name: Post E2E target results to PR
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
+          EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
           JOB_PR_NUMBER: ${{ inputs.pr_number }}
           JOB_TARGETS: ${{ inputs.targets }}
           JOBS: ${{ inputs.jobs }}
@@ -5985,18 +6179,26 @@ jobs:
             const selectorValidationPassed = needs['generate-matrix']?.result === 'success';
             const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
-            const explicitOnlySkippedJobs = [
-              {
+            const explicitOnlyReasons = {
+              'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
                 target: 'jetson-nvmap-gpu',
                 reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
               },
-              {
+              'sandbox-rlimits-connect': {
                 job: 'sandbox-rlimits-connect',
                 target: 'sandbox-rlimits-connect',
                 reason: 'default dispatch excludes the destructive rlimit fork/connect probe unless selected',
               },
-            ];
+            };
+            const explicitOnlySkippedJobs = (process.env.EXPLICIT_ONLY_JOBS || '')
+              .split(',')
+              .filter(Boolean)
+              .map((job) => explicitOnlyReasons[job] ?? {
+                job,
+                target: job,
+                reason: 'default dispatch excludes this explicit-only job unless selected',
+              });
             const targetsRejected = rawRequestedTargets && !selectorValidationPassed;
             const jobsRejected = rawRequestedJobs && !selectorValidationPassed;
 
@@ -6141,3 +6343,260 @@ jobs:
               issue_number: prNumber,
               body: lines.join('\n'),
             });
+
+  # ── Scheduled/manual scorecard ────────────────────────────────────────────
+  scorecard:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        generate-matrix,
+        live,
+        openshell-version-pin,
+        onboard-negative-paths,
+        skill-agent,
+        openclaw-skill-cli,
+        inference-routing,
+        cloud-inference,
+        gpu-e2e,
+        agent-turn-latency,
+        kimi-inference-compat,
+        hermes-inference-switch,
+        brave-search,
+        ollama-auth-proxy,
+        cron-preflight-inference-local,
+        credential-sanitization,
+        credential-migration,
+        sessions-agents-cli,
+        runtime-overrides,
+        hermes-e2e,
+        hermes-dashboard,
+        hermes-slack,
+        hermes-discord,
+        hermes-root-entrypoint-smoke,
+        hermes-sandbox-secret-boundary,
+        network-policy,
+        common-egress-agent,
+        shields-config,
+        rebuild-openclaw,
+        rebuild-hermes,
+        rebuild-hermes-stale-base,
+        sandbox-rebuild,
+        sandbox-rlimits-connect,
+        overlayfs-autofix,
+        state-backup-restore,
+        upgrade-stale-sandbox,
+        openshell-gateway-upgrade,
+        token-rotation,
+        messaging-compatible-endpoint,
+        messaging-providers,
+        launchable-smoke,
+        double-onboard,
+        jetson-nvmap-gpu,
+        concurrent-gateway-ports,
+        full-e2e,
+        cloud-onboard,
+        gpu-double-onboard,
+        onboard-repair,
+        issue-4462-scope-upgrade-approval,
+        onboard-resume,
+        model-router-provider-routed-inference,
+        sandbox-operations,
+        sandbox-survival,
+        diagnostics,
+        snapshot-commands,
+        gateway-drift-preflight,
+        openclaw-tui-chat-correlation,
+        gateway-guard-recovery,
+        issue-4434-tui-unreachable-inference,
+        openclaw-inference-switch,
+        bedrock-runtime-compatible-anthropic,
+        issue-2478-crash-loop-recovery,
+        gateway-health-honest,
+        device-auth-health,
+        channels-add-remove,
+        tunnel-lifecycle,
+        telegram-injection,
+        openclaw-discord-pairing,
+        openclaw-slack-pairing,
+        channels-stop-start,
+        spark-install,
+      ]
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout scorecard builders
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/scorecard
+          sparse-checkout-cone-mode: false
+
+      - name: Generate E2E scorecard
+        id: scorecard
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          EXPLICIT_ONLY_JOBS: ${{ needs.generate-matrix.outputs.explicit_only_jobs }}
+          JOBS: ${{ inputs.jobs }}
+          TARGETS: ${{ inputs.targets }}
+        with:
+          script: |
+            const path = require('path');
+            const traceTiming = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
+            );
+            const scorecardJobs = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+            );
+            const slackBlocks = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+            );
+            const needs = ${{ toJSON(needs) }};
+            const safeSelector = /^[A-Za-z0-9_-]+$/;
+            const parseSelectors = (value) =>
+              value.split(',').map((name) => name.trim()).filter((name) => safeSelector.test(name));
+            const rawRequestedJobs = process.env.JOBS || '';
+            const rawRequestedTargets = process.env.TARGETS || '';
+            const requestedJobs = parseSelectors(rawRequestedJobs);
+            const requestedTargets = parseSelectors(rawRequestedTargets);
+            const isDispatch = context.eventName === 'workflow_dispatch';
+            const isSelectiveDispatch = scorecardJobs.isSelectiveDispatch(
+              context.eventName,
+              rawRequestedJobs,
+              rawRequestedTargets,
+            );
+            const runMode = isSelectiveDispatch
+              ? 'Selective dispatch'
+              : isDispatch
+                ? 'Manual full run'
+                : 'Scheduled E2E';
+            const metaJobs = [
+              'generate-matrix',
+              'notify-on-failure',
+              'report-to-pr',
+              'scorecard',
+            ];
+            const explicitOnly = parseSelectors(process.env.EXPLICIT_ONLY_JOBS || '');
+            const explicitlySelected = [...requestedJobs, ...requestedTargets];
+
+            // GitHub's jobs API is the canonical source because `needs.live`
+            // collapses every matrix target into one result and has no job URL.
+            // The typed helper owns and tests the degraded `needs` fallback.
+            const apiJobs = await scorecardJobs.loadWorkflowRunJobs({ github, context, core });
+
+            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
+              scorecardJobs.summarizeJobs({
+                apiJobs,
+                explicitOnlyJobNames: explicitOnly,
+                explicitlySelected,
+                metaJobNames: metaJobs,
+                needs,
+              });
+            const perfect = ran > 0 && failure === 0 && cancelled === 0;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const today = new Date().toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+            });
+            const { traceTimingLine, traceSummaryLines } =
+              await traceTiming.buildTraceTimingResult({ github, context });
+            const lines = [
+              `## 🌅 NemoClaw E2E Scorecard — ${today}`,
+              '',
+              `**Run mode:** ${runMode}`,
+            ];
+            if (requestedJobs.length > 0) {
+              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
+            }
+            if (requestedTargets.length > 0) {
+              lines.push(`**Requested targets:** ${requestedTargets.map((name) => `\`${name}\``).join(', ')}`);
+            }
+            lines.push(
+              `**Jobs run:** ${ran} of ${total}`,
+              `  ✅ ${success} passed`,
+              `  ❌ ${failure} failed`,
+              `  🚫 ${cancelled} cancelled`,
+              `  ⏭️ ${skipped} skipped`,
+            );
+            if (failedJobs.length > 0) {
+              lines.push('', '**Failed jobs:**');
+              for (const job of failedJobs) {
+                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
+              }
+            }
+            if (perfect) lines.push('', '🎉 **All jobs passed!**');
+            lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
+            await core.summary.addRaw(lines.join('\n')).write();
+            const scorecardData = {
+              today,
+              runMode,
+              actor: context.actor || '',
+              isSelectiveDispatch,
+              requestedJobs,
+              requestedTargets,
+              total,
+              ran,
+              success,
+              failure,
+              cancelled,
+              skipped,
+              perfect,
+              failedJobs,
+              traceTimingLine,
+              runUrl,
+            };
+            core.setOutput('scorecardData', JSON.stringify(scorecardData));
+            core.setOutput('slackData', JSON.stringify({
+              channel: slackBlocks.getSlackChannel(scorecardData),
+              payload: {
+                text: slackBlocks.buildFallbackText(scorecardData),
+                attachments: [{
+                  color: slackBlocks.getStatusColor(scorecardData),
+                  blocks: slackBlocks.buildBlocks(scorecardData),
+                }],
+              },
+            }));
+
+      - name: Post scorecard to Slack
+        # Webhook secrets never enter branch-dispatched runs. The payload is
+        # computed in the preceding no-secret step; this fixed publisher does
+        # not load code from the checked-out workflow ref.
+        if: ${{ steps.scorecard.outputs.slackData != '' && github.ref == 'refs/heads/main' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SLACK_WEBHOOK_URL_DAILY: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
+          SLACK_WEBHOOK_URL_FULLRUN: ${{ secrets.SLACK_WEBHOOK_URL_FULLRUN }}
+          SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
+          SLACK_DATA: ${{ steps.scorecard.outputs.slackData }}
+          POST_TO_SLACK: ${{ inputs.post_to_slack }}
+        with:
+          script: |
+            const data = JSON.parse(process.env.SLACK_DATA);
+            const envByChannel = {
+              daily: 'SLACK_WEBHOOK_URL_DAILY',
+              fullrun: 'SLACK_WEBHOOK_URL_FULLRUN',
+              preview: 'SLACK_WEBHOOK_URL_PREVIEW',
+            };
+            const channel = data?.channel;
+            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+              core.setFailed('Invalid precomputed Slack payload');
+              return;
+            }
+            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
+              core.info('Selective dispatch without post_to_slack — skipping');
+              return;
+            }
+            const webhookUrl = process.env[envByChannel[channel]];
+            if (!webhookUrl) {
+              core.info(`Slack webhook for "${channel}" not configured — skipping`);
+              return;
+            }
+            const response = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(data.payload),
+            });
+            if (!response.ok) {
+              core.setFailed(`Slack webhook returned ${response.status}`);
+            }
