@@ -10,7 +10,6 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
   apiKeyShape,
-  CLI,
   chatContent,
   cleanupHermesSwitch,
   ensureCompatibleAnthropicSwitchProvider,
@@ -22,11 +21,14 @@ import {
   hermesApiCommand,
   hermesGatewayPid,
   inferenceLocalCommand,
+  inferenceLocalMaxTokens,
   installHermes,
   maybeAssertEnvHashStable,
   maybeAssertPidStable,
   parseHermesModelBlock,
   registryState,
+  runHermesInferenceSetWithRetry,
+  runHermesPongWithRetry,
   SANDBOX_NAME,
   SWITCH_API,
   SWITCH_MODEL,
@@ -80,25 +82,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           SWITCH_API,
         ]
       : [];
-    const switched = await host.command(
-      "node",
-      [
-        CLI,
-        "inference",
-        "set",
-        "--provider",
-        SWITCH_PROVIDER,
-        "--model",
-        SWITCH_MODEL,
-        ...compatibleMetadataArgs,
-      ],
-      {
-        artifactName: "hermes-inference-set",
-        env: env(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: 180_000,
-      },
-    );
+    const switched = await runHermesInferenceSetWithRetry(host, apiKey, compatibleMetadataArgs);
     expect(switched.exitCode, resultText(switched)).toBe(0);
 
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
@@ -164,31 +148,42 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const inferenceLocalPayload = JSON.stringify({
       model: SWITCH_MODEL,
       messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
-      max_tokens: 100,
+      max_tokens: inferenceLocalMaxTokens(),
     });
-    const inferenceLocal = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(inferenceLocalCommand(inferenceLocalPayload)),
-      {
-        artifactName: "hermes-inference-local-chat-after-switch",
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 120_000,
-      },
-    );
+    const inferenceLocal = await runHermesPongWithRetry({
+      run: (attempt) =>
+        sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(inferenceLocalCommand(inferenceLocalPayload)),
+          {
+            artifactName: `hermes-inference-local-chat-after-switch-${attempt}`,
+            env: env(),
+            redactionValues: [apiKey],
+            timeoutMs: 120_000,
+          },
+        ),
+    });
     expect(inferenceLocal.exitCode, resultText(inferenceLocal)).toBe(0);
     expect(chatContent(inferenceLocal.stdout)).toMatch(/PONG/i);
 
-    const chat = await sandbox.execShell(
-      SANDBOX_NAME,
-      trustedSandboxShellScript(hermesApiCommand(inferenceLocalPayload)),
-      {
-        artifactName: "hermes-api-chat-after-switch",
-        env: env(),
-        redactionValues: [apiKey],
-        timeoutMs: 150_000,
-      },
-    );
+    const hermesApiPayload = JSON.stringify({
+      model: SWITCH_MODEL,
+      messages: [{ role: "user", content: "Reply with exactly one word: PONG" }],
+      max_tokens: 100,
+    });
+    const chat = await runHermesPongWithRetry({
+      run: (attempt) =>
+        sandbox.execShell(
+          SANDBOX_NAME,
+          trustedSandboxShellScript(hermesApiCommand(hermesApiPayload)),
+          {
+            artifactName: `hermes-api-chat-after-switch-${attempt}`,
+            env: env(),
+            redactionValues: [apiKey],
+            timeoutMs: 150_000,
+          },
+        ),
+    });
     expect(chat.exitCode, resultText(chat)).toBe(0);
     expect(chatContent(chat.stdout)).toMatch(/PONG/i);
   },
