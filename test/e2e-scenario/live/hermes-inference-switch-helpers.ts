@@ -45,6 +45,18 @@ interface MockAnthropicProvider {
   close(): Promise<void>;
 }
 
+export function mockAnthropicEndpointUrl(
+  port: number,
+  runtimeEnv: NodeJS.ProcessEnv = process.env,
+): string {
+  // OpenShell's current gateway runs either directly on the host or in a
+  // --network host compatibility container. Advertising loopback avoids the
+  // host-bridge/UFW path while the sandbox still reaches the mock exclusively
+  // through inference.local.
+  const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "127.0.0.1";
+  return `http://${host}:${port}`;
+}
+
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
   return (
     runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
@@ -243,7 +255,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   return {
-    endpointUrl: `http://host.openshell.internal:${(address as AddressInfo).port}`,
+    endpointUrl: mockAnthropicEndpointUrl((address as AddressInfo).port),
     close: () => closeServer(server),
   };
 }

@@ -14,6 +14,7 @@ import {
   cleanupHermesSwitch,
   hostedInstallModel,
   installHermes,
+  mockAnthropicEndpointUrl,
   openshellGatewayName,
   runHermesInferenceSetWithRetry,
   SANDBOX_NAME,
@@ -64,6 +65,15 @@ describe("Hermes inference switch command shape", () => {
         NEMOCLAW_SWITCH_MODEL: "target-switch-model",
       }),
     ).toBe("initial-hosted-model");
+  });
+
+  it("advertises the host-network mock over loopback by default", () => {
+    expect(mockAnthropicEndpointUrl(18_766, {})).toBe("http://127.0.0.1:18766");
+    expect(
+      mockAnthropicEndpointUrl(18_766, {
+        NEMOCLAW_SWITCH_MOCK_HOST: "host.openshell.internal",
+      }),
+    ).toBe("http://host.openshell.internal:18766");
   });
 
   it("discards failed onboarding state before an install attempt", async () => {
