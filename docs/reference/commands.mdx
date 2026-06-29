@@ -1904,7 +1904,8 @@ By default, the command syncs the default registered sandbox.
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
 ```
 
-You can also name the sandbox in sandbox-first position instead of passing `--sandbox`; `$$nemoclaw <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>`.
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`.
+`$$nemoclaw <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>`.
 
 ```bash
 $$nemoclaw my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b

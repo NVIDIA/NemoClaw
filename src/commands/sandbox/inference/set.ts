@@ -82,11 +82,11 @@ export default class SandboxInferenceSetCommand extends NemoClawCommand {
   private printOpenShellRedirect(): void {
     this.failWithLines(
       [
-        `  Unknown ${CLI_NAME} command: inference set`,
+        `  ${CLI_NAME} <name> inference set requires --provider and --model.`,
         "",
-        "  This operation belongs to OpenShell.",
-        "  Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
-        `  To also sync the named sandbox config, pass --provider and --model to ${CLI_NAME} <name> inference set.`,
+        "  To change only the OpenShell route, run:",
+        "  openshell inference set -g nemoclaw --model <model> --provider <provider>",
+        `  To also sync the sandbox config, pass --provider and --model to ${CLI_NAME} <name> inference set.`,
         "",
         `  Run '${CLI_NAME} help' for NemoClaw commands.`,
       ],
