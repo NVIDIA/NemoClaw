@@ -1577,12 +1577,13 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```bash
-$$nemoclaw update [--check] [--yes|-y]
+$$nemoclaw update [--check] [--fresh] [--yes|-y]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--check` | Show the current version, latest maintained version, install type, and maintained update command without changing anything |
+| `--fresh` | Reinstall the maintained build even when already up to date (clean re-clone of `~/.nemoclaw/source`); useful to repair a broken-but-current install. Does not reset onboarding state |
 | `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
 
 `$$nemoclaw update` updates the host-side NemoClaw installation.
