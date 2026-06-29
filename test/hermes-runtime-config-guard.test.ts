@@ -149,6 +149,48 @@ print(json.dumps(errors))
     });
   });
 
+  it("warns once for unsupported directory fsync and propagates real I/O failures", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import contextlib
+import errno
+import io
+import json
+
+def unsupported_fsync(_fd):
+    raise OSError(errno.EOPNOTSUPP, "directory fsync unsupported")
+
+guard.os.fsync = unsupported_fsync
+warnings = io.StringIO()
+with contextlib.redirect_stderr(warnings):
+    guard._fsync_directory_after_replace(10)
+    guard._fsync_directory_after_replace(10)
+
+def failed_fsync(_fd):
+    raise OSError(errno.EIO, "storage I/O failed")
+
+guard.os.fsync = failed_fsync
+try:
+    guard._fsync_directory_after_replace(10)
+except OSError as exc:
+    failure_errno = exc.errno
+else:
+    failure_errno = None
+
+print(json.dumps({
+    "warning_lines": warnings.getvalue().strip().splitlines(),
+    "failure_errno": failure_errno,
+}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      failure_errno: 5,
+      warning_lines: [
+        "[security] directory fsync is unsupported; the atomic Hermes config rename completed without a directory durability barrier",
+      ],
+    });
+  });
+
   it("streams SHA-256 without materializing the entire file", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json

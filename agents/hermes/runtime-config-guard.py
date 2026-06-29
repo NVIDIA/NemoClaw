@@ -56,6 +56,10 @@ NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
 NEMOCLAW_RUNTIME_DIR_MODE = 0o711
 HERMES_RESTART_STATE_FILE = "/run/nemoclaw/hermes-restart-seal.json"
 HERMES_MUTATION_LOCK_FILE = "/run/nemoclaw/hermes-config-mutation.lock"
+DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS = frozenset(
+    {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}
+)
+_DIRECTORY_FSYNC_WARNING_EMITTED = False
 INSTALLED_RUNTIME_CONFIG_GUARD = (
     "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 )
@@ -939,12 +943,7 @@ def _atomic_replace(
         if expected is not None:
             _assert_current_snapshot(dir_fd, basename, path, expected)
         os.replace(tmp_name, basename, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        try:
-            os.fsync(dir_fd)
-        except OSError:
-            # Directory fsync is best-effort; some container filesystems reject
-            # it even after the atomic replace has succeeded.
-            pass
+        _fsync_directory_after_replace(dir_fd)
     except Exception:
         try:
             os.unlink(tmp_name, dir_fd=dir_fd)
@@ -960,6 +959,22 @@ def _atomic_replace(
         if tmp_fd is not None:
             os.close(tmp_fd)
         os.close(dir_fd)
+
+
+def _fsync_directory_after_replace(dir_fd: int) -> None:
+    global _DIRECTORY_FSYNC_WARNING_EMITTED
+
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        if exc.errno not in DIRECTORY_FSYNC_UNSUPPORTED_ERRNOS:
+            raise
+        if not _DIRECTORY_FSYNC_WARNING_EMITTED:
+            print(
+                "[security] directory fsync is unsupported; the atomic Hermes config rename completed without a directory durability barrier",
+                file=sys.stderr,
+            )
+            _DIRECTORY_FSYNC_WARNING_EMITTED = True
 
 
 def _atomic_replace_preserving_flags(
