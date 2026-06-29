@@ -104,6 +104,7 @@ else
 fi
 
 commits_fetch_failed=false
+commit_parse_failed=false
 commits_raw=$(gh api "repos/$repo_name/pulls/$pr/commits" --paginate \
   --jq '.[] | {sha, verified: (.commit.verification.verified // false), reason: (.commit.verification.reason // "unknown")}' \
   2>/dev/null) || commits_fetch_failed=true
@@ -112,13 +113,18 @@ if [ "$commits_fetch_failed" = "true" ] || [ -z "$commits_raw" ]; then
   commit_count=0
   unverified_commits='[]'
   gate_contributor_compliance=false
-else
-  commit_count=$(printf '%s\n' "$commits_raw" | jq -s 'length')
-  unverified_commits=$(printf '%s\n' "$commits_raw" | jq -s '[.[] | select(.verified != true) | {sha, reason}]')
+elif commits_json=$(printf '%s\n' "$commits_raw" | jq -s '.' 2>/dev/null); then
+  commit_count=$(printf '%s' "$commits_json" | jq 'length')
+  unverified_commits=$(printf '%s' "$commits_json" | jq '[.[] | select(.verified != true) | {sha, reason}]')
   unverified_count=$(printf '%s' "$unverified_commits" | jq 'length')
   gate_contributor_compliance=$(
     [ "$dco_declaration_present" = "true" ] && [ "$unverified_count" = "0" ] && echo true || echo false
   )
+else
+  commit_count=0
+  unverified_commits='[]'
+  commit_parse_failed=true
+  gate_contributor_compliance=false
 fi
 
 # Gate 5: branch protection (proxy via reviewDecision = APPROVED)
@@ -158,6 +164,8 @@ jq -n \
   --argjson dco_declaration_present "$dco_declaration_present" \
   --argjson commit_count "$commit_count" \
   --argjson unverified_commits "$unverified_commits" \
+  --argjson commit_fetch_failed "$commits_fetch_failed" \
+  --argjson commit_parse_failed "$commit_parse_failed" \
   --arg review_decision "$review_decision" \
   --argjson failures "$failures_json" \
   '{
@@ -182,6 +190,8 @@ jq -n \
       dco_declaration_present: $dco_declaration_present,
       commit_count: $commit_count,
       unverified_commits: $unverified_commits,
+      commit_fetch_failed: $commit_fetch_failed,
+      commit_parse_failed: $commit_parse_failed,
       review_decision: $review_decision
     },
     failures: $failures

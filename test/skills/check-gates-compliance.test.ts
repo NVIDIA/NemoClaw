@@ -17,6 +17,7 @@ interface ComplianceFixture {
 interface ComparatorFixture extends ComplianceFixture {
   checkNames?: string[];
   checkConclusions?: Record<string, string>;
+  commitOutput?: string;
   headRefOid?: string;
   state?: string;
   mergeable?: string;
@@ -117,6 +118,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
     verified: fixture.verified,
     reason: fixture.reason ?? (fixture.verified ? "valid" : "unsigned"),
   };
+  const commitOutput = fixture.commitOutput ?? JSON.stringify(commit);
 
   fs.writeFileSync(
     ghPath,
@@ -124,7 +126,7 @@ function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
 set -euo pipefail
 case "$1 $2" in
   "pr view") printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
-  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(JSON.stringify(commit))} ;;
+  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(commitOutput)} ;;
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
 `,
@@ -225,6 +227,25 @@ describe("maintainer PR comparator contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output.gates.contributor_compliance).toBe(false);
     expect(output.details.unverified_commits).toEqual([{ sha: "abc123", reason: "unsigned" }]);
+    expect(output.failures).toContain("ineligible:contributor_compliance");
+  });
+
+  it("emits fail-closed JSON when commit API output is malformed", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      commitOutput: "not-json",
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.contributor_compliance).toBe(false);
+    expect(output.details).toMatchObject({
+      commit_count: 0,
+      unverified_commits: [],
+      commit_fetch_failed: false,
+      commit_parse_failed: true,
+    });
     expect(output.failures).toContain("ineligible:contributor_compliance");
   });
 

@@ -57,6 +57,15 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(triage).not.toContain("priority: high");
   });
 
+  it("describes the current morning-triage data sources", () => {
+    const morning = read(".agents/skills/nemoclaw-maintainer-morning/SKILL.md");
+
+    expect(morning).not.toContain("gh-pr-merge-now --json");
+    expect(morning).toContain("fetches open PRs through `gh`");
+    expect(morning).toContain("reads Project 199 Priority");
+    expect(morning).toContain("review, CI, file, and risky-area data");
+  });
+
   it("moves post-tag stragglers to the next patch version", () => {
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
