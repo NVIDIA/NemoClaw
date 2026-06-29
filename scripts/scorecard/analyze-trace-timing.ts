@@ -95,10 +95,13 @@ function formatDuration(ms: number): string {
 
 function formatTraceDelta(currentMs: number, priorMs: number): string {
   const deltaMs = currentMs - priorMs;
-  const pct = priorMs > 0 ? (deltaMs / priorMs) * 100 : 0;
   if (Math.abs(deltaMs) < 1) return "unchanged";
   const direction = deltaMs > 0 ? "increased" : "decreased";
   const sign = deltaMs > 0 ? "+" : "-";
+  if (priorMs <= 0) {
+    return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (n/a)`;
+  }
+  const pct = (deltaMs / priorMs) * 100;
   return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (${sign}${Math.abs(pct).toFixed(1)}%)`;
 }
 

@@ -34,6 +34,7 @@ type WorkflowJob = {
 
 export type OperationsWorkflow = {
   jobs: Record<string, WorkflowJob>;
+  permissions?: Record<string, unknown>;
   on?: {
     workflow_dispatch?: {
       inputs?: Record<string, Record<string, unknown>>;
@@ -135,7 +136,11 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   ) {
     errors.push("scorecard must run after scheduled and manual E2E executions");
   }
-  if (job.permissions?.actions !== "read" || job.permissions?.contents !== "read") {
+  if (
+    job.permissions?.actions !== "read" ||
+    job.permissions?.contents !== "read" ||
+    Object.keys(job.permissions ?? {}).length !== 2
+  ) {
     errors.push("scorecard permissions must be actions: read and contents: read");
   }
   if (job.env && Object.keys(job.env).length > 0) {
@@ -217,8 +222,14 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
 
 function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): void {
   const job = workflow.jobs["cloud-onboard"] ?? {};
-  if (job.env?.NEMOCLAW_TRACE_DIR !== "${{ runner.temp }}/nemoclaw-cloud-onboard-traces") {
-    errors.push("cloud-onboard raw traces must stay under runner.temp");
+  if (job.env?.NEMOCLAW_TRACE_DIR !== undefined) {
+    errors.push("cloud-onboard trace directory must not use unavailable job-level contexts");
+  }
+  const configure = findStep(job, "Configure cloud-onboard trace directory");
+  for (const fragment of ['"${RUNNER_TEMP}/nemoclaw-cloud-onboard-traces"', '>> "${GITHUB_ENV}"']) {
+    if (!String(configure.run ?? "").includes(fragment)) {
+      errors.push(`cloud-onboard trace directory setup must retain ${fragment}`);
+    }
   }
   const sanitize = findStep(job, "Build trusted cloud-onboard timing summary");
   if (sanitize.if !== "always()") {
@@ -234,6 +245,9 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
       errors.push(`cloud-onboard trace sanitizer must retain ${fragment}`);
   }
   const steps = job.steps ?? [];
+  const configureIndex = steps.findIndex(
+    (step) => step.name === "Configure cloud-onboard trace directory",
+  );
   const runIndex = steps.findIndex((step) => step.name === "Run cloud-onboard live Vitest test");
   const sanitizeIndex = steps.findIndex(
     (step) => step.name === "Build trusted cloud-onboard timing summary",
@@ -255,7 +269,8 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
   }
   if (
     !(
-      runIndex >= 0 &&
+      configureIndex >= 0 &&
+      configureIndex < runIndex &&
       runIndex < sanitizeIndex &&
       sanitizeIndex < cleanupIndex &&
       cleanupIndex < uploadIndex
@@ -269,7 +284,12 @@ function validateTraceTiming(errors: string[], workflow: OperationsWorkflow): vo
 
 function validateAdvisorRetirement(errors: string[], advisorPath: string): void {
   const source = readFileSync(advisorPath, "utf8");
-  if (/actions:\s*write/u.test(source)) {
+  const advisor = YAML.parse(source) as OperationsWorkflow;
+  const permissionBlocks = [
+    advisor.permissions,
+    ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
+  ];
+  if (permissionBlocks.some((permissions) => permissions?.actions === "write")) {
     errors.push("E2E advisor must not hold actions: write");
   }
   if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {

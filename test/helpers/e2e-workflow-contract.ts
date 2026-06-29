@@ -55,15 +55,19 @@ export function readWorkflow(): Record<string, unknown> {
 }
 
 export function removeJobNeed(source: string, ownerJob: string, dependency: string): string {
-  const ownerStart = source.indexOf(`  ${ownerJob}:\n`);
+  const ownerHeader = `  ${ownerJob}:\n`;
+  const ownerStart = source.indexOf(ownerHeader);
   if (ownerStart < 0) {
     throw new Error(`workflow is missing job ${ownerJob}`);
   }
   const prefix = source.slice(0, ownerStart);
-  const ownerAndFollowingJobs = source.slice(ownerStart);
+  const afterOwnerHeader = ownerStart + ownerHeader.length;
+  const nextJobOffset = source.slice(afterOwnerHeader).search(/^  [\w-]+:\n/mu);
+  const ownerEnd = nextJobOffset < 0 ? source.length : afterOwnerHeader + nextJobOffset;
+  const ownerBlock = source.slice(ownerStart, ownerEnd);
   const needle = `        ${dependency},\n`;
-  if (!ownerAndFollowingJobs.includes(needle)) {
+  if (!ownerBlock.includes(needle)) {
     throw new Error(`${ownerJob} does not need ${dependency}`);
   }
-  return prefix + ownerAndFollowingJobs.replace(needle, "");
+  return prefix + ownerBlock.replace(needle, "") + source.slice(ownerEnd);
 }

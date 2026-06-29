@@ -38,6 +38,11 @@ describe("E2E operations workflow boundary", () => {
     const workflow = readE2eOperationsWorkflow();
     (workflow.jobs["notify-on-failure"].needs as string[]).pop();
     workflow.jobs["notify-on-failure"].permissions = { contents: "write", issues: "write" };
+    workflow.jobs.scorecard.permissions = {
+      actions: "read",
+      contents: "read",
+      issues: "write",
+    };
     workflow.jobs.scorecard.env = {
       SLACK_WEBHOOK_URL_DAILY: "${{ secrets.SLACK_WEBHOOK_URL_DAILY }}",
     };
@@ -46,6 +51,7 @@ describe("E2E operations workflow boundary", () => {
       expect.arrayContaining([
         "notify-on-failure needs must exactly match report-to-pr needs",
         "notify-on-failure must hold only issues: write",
+        "scorecard permissions must be actions: read and contents: read",
         "scorecard must not expose credentials at job scope",
       ]),
     );
@@ -53,6 +59,8 @@ describe("E2E operations workflow boundary", () => {
 
   it("pins the Node 24 helper runtime and separate always-on raw trace cleanup", () => {
     const workflow = readE2eOperationsWorkflow();
+    workflow.jobs["cloud-onboard"].env!.NEMOCLAW_TRACE_DIR =
+      "${{ runner.temp }}/nemoclaw-cloud-onboard-traces";
     const scorecard = workflow.jobs.scorecard.steps!.find(
       (step) => step.name === "Generate E2E scorecard",
     )!;
@@ -69,6 +77,7 @@ describe("E2E operations workflow boundary", () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
+        "cloud-onboard trace directory must not use unavailable job-level contexts",
         "scorecard generator must use the pinned Node 24 github-script runtime",
         "cloud-onboard raw trace cleanup must always run",
         "scorecard Slack publisher must expose webhook secrets only on main",
@@ -152,7 +161,7 @@ describe("E2E operations workflow boundary", () => {
     try {
       writeFileSync(
         advisorPath,
-        "permissions:\n  actions: write\njobs:\n  advisor:\n    steps:\n      - run: createWorkflowDispatch()\n",
+        'permissions:\n  actions: "write"\njobs:\n  advisor:\n    steps:\n      - run: createWorkflowDispatch()\n',
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([

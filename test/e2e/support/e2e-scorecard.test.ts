@@ -340,6 +340,17 @@ describe("E2E scorecard", () => {
       traceTimingLine: expect.stringContaining("increased +1.0s (+100.0%) vs v0.0.69"),
       traceSummaryLines: expect.arrayContaining(["## Cloud Onboard Trace Timing"]),
     });
+    await expect(
+      trace.buildTraceTimingResult(deps, {
+        ...baseServices,
+        readTraceSummaryFromRun: vi
+          .fn()
+          .mockResolvedValueOnce(current)
+          .mockResolvedValueOnce({ ...prior, totalMs: 0 }),
+      }),
+    ).resolves.toMatchObject({
+      traceTimingLine: expect.stringContaining("increased +2.0s (n/a) vs v0.0.69"),
+    });
   });
 
   it("returns null at missing release-run and trace-artifact boundaries", async () => {
