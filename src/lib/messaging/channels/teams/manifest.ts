@@ -3,6 +3,36 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+export const TEAMS_OPENCLAW_SKILL_PATH = "skills/msteams/SKILL.md";
+
+export const MSTEAMS_OPENCLAW_SKILL_MD = `---
+name: msteams
+description: "Microsoft Teams/msteams message-tool ops: send/reply/read and tag users. Use for Teams channel context; mention users as @[Display Name](AAD_OBJECT_ID), never plain @Name."
+metadata: { "openclaw": { "requires": { "config": ["channels.msteams"] } } }
+allowed-tools: ["message"]
+---
+
+# Microsoft Teams Messaging
+
+Use this skill automatically for any conversation whose Provider, Surface, OriginatingChannel, or SessionKey contains "msteams" or "Microsoft Teams".
+
+Use the message tool with channel "msteams".
+
+When mentioning a Teams user, write the mention as:
+
+\`\`\`text
+@[Display Name](AAD_OBJECT_ID)
+\`\`\`
+
+Do not write plain @Name, raw <at>Name</at>, or a standalone @ line. The Teams extension converts the bracket syntax into the Teams mention entity.
+
+If the requester asks you to tag or mention themselves and the context includes SenderName and SenderId, use:
+
+\`\`\`text
+@[SenderName](SenderId)
+\`\`\`
+`;
+
 export const teamsManifest = {
   schemaVersion: 1,
   id: "teams",
@@ -296,13 +326,18 @@ export const teamsManifest = {
     {
       id: "teams-install-openclaw-skill",
       phase: "post-agent-install",
-      handler: "teams.installOpenClawSkill",
+      handler: "common.staticOutputs",
       agents: ["openclaw"],
       outputs: [
         {
           id: "msteamsSkill",
           kind: "build-file",
           required: true,
+          value: {
+            path: TEAMS_OPENCLAW_SKILL_PATH,
+            mode: "0644",
+            content: MSTEAMS_OPENCLAW_SKILL_MD,
+          },
         },
       ],
       onFailure: "abort",

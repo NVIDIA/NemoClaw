@@ -31,7 +31,7 @@ import {
   SLACK_SOCKET_MODE_GATEWAY_STATUS_HOOK_HANDLER_ID,
   SLACK_VALIDATE_CREDENTIALS_HOOK_HANDLER_ID,
 } from "./slack/hooks";
-import { TEAMS_INSTALL_OPENCLAW_SKILL_HOOK_HANDLER_ID } from "./teams/hooks/install-openclaw-skill";
+import { MSTEAMS_OPENCLAW_SKILL_MD, TEAMS_OPENCLAW_SKILL_PATH } from "./teams/manifest";
 import {
   TELEGRAM_ALLOWLIST_ALIASES_HOOK_ID,
   TELEGRAM_GATEWAY_CONFLICT_STATUS_HOOK_HANDLER_ID,
@@ -761,13 +761,18 @@ describe("built-in channel manifests", () => {
     });
     expect(findHook(teamsManifest, "teams-install-openclaw-skill")).toMatchObject({
       phase: "post-agent-install",
-      handler: TEAMS_INSTALL_OPENCLAW_SKILL_HOOK_HANDLER_ID,
+      handler: "common.staticOutputs",
       agents: ["openclaw"],
       outputs: [
         {
           id: "msteamsSkill",
           kind: "build-file",
           required: true,
+          value: {
+            path: TEAMS_OPENCLAW_SKILL_PATH,
+            mode: "0644",
+            content: MSTEAMS_OPENCLAW_SKILL_MD,
+          },
         },
       ],
       onFailure: "abort",

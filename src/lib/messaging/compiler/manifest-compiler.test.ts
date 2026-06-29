@@ -280,7 +280,7 @@ describe("ManifestCompiler", () => {
         channelId: "teams",
         kind: "build-file",
         hookId: "teams-install-openclaw-skill",
-        handler: "teams.installOpenClawSkill",
+        handler: "common.staticOutputs",
         outputId: "msteamsSkill",
         required: true,
       },
