@@ -65,15 +65,10 @@ function runWrapper(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-    if (opts.validatorScript) {
-      fs.writeFileSync(
-        path.join(dir, "validate-env-secret-boundary.py"),
-        opts.validatorScript,
-        { mode: 0o755 },
-      );
-    } else {
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-    }
+    const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
+    fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
+      mode: 0o755,
+    });
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
 
     const marker = path.join(dir, "real-invoked.txt");
@@ -293,11 +288,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       "{'api-key': 'sk-OPENSHELL-PROXY-REWRITE'}",
       '{"access-token": "leaked-access-token-12345"}',
     ].join("\n");
-    const run = runWrapper(
-      ["config", "show"],
-      {},
-      { stub: { stdout: fixture, exitCode: 0 } },
-    );
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
