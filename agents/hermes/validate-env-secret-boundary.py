@@ -231,6 +231,15 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
     # secret-shaped key (key: | or key: >). Every continuation line — indented
     # past the header or blank — is replaced with the placeholder so multi-line
     # secrets cannot leak.
+    #
+    # Trade-off: continuation lines are emitted with a fixed two-space indent
+    # below the header and any blank lines inside the block are also masked
+    # (rather than preserved). Both choices favour masking over structural
+    # fidelity: the resulting text remains valid YAML and reveals nothing about
+    # the secret's length or layout. Downstream callers consuming `config show`
+    # for human display can absorb the cosmetic difference; programmatic
+    # callers should query the gateway provider list instead of parsing this
+    # output.
     block_indent: int | None = None
     for line in stream_in:
         stripped = line.lstrip()
