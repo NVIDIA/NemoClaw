@@ -5,6 +5,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import YAML from "yaml";
+
 import {
   buildDeepAgentsMcpStatusCommand,
   buildHermesMcpStatusCommand,
@@ -12,6 +14,7 @@ import {
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
 import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
+import { parseCurrentPolicy } from "../../../src/lib/policy";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { CleanupRegistry } from "../fixtures/cleanup.ts";
@@ -19,15 +22,27 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { installMcpTestCaInSandbox, isExpectedMcpCurlPolicyDenial } from "./mcp-bridge-sandbox.ts";
+import {
+  installMcpTestCaInSandbox,
+  isExpectedMcpCurlPolicyDenial,
+  remapDnsRebindingHostname,
+  restoreDnsRebindingHostsFixture,
+  setupDnsRebindingHostsFixture,
+} from "./mcp-bridge-sandbox.ts";
 import { startCompatibleMock, startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
 const HERMES_SANDBOX_NAME = process.env.NEMOCLAW_MCP_HERMES_SANDBOX_NAME ?? "e2e-mcp-hermes";
 const DEEPAGENTS_SANDBOX_NAME = process.env.NEMOCLAW_MCP_DEEPAGENTS_SANDBOX_NAME ?? "e2e-mcp-dcode";
 const SERVER_NAME = "fake";
+const CONCURRENT_SERVER_NAME = "concurrent";
+const REBIND_SERVER_NAME = "rebind";
+const REBIND_HOSTNAME = "mcp-rebind.example.test";
+const REBIND_PUBLIC_IP = "1.1.1.1";
+const REBIND_CREDENTIAL_KEY = "REBIND_MCP_SECRET";
 const HOST_SECRET = "fake-host-mcp-secret-value";
 const ROTATED_HOST_SECRET = "fake-rotated-mcp-secret-value";
+const REBIND_HOST_SECRET = "fake-rebind-mcp-secret-value";
 const COMPATIBLE_KEY = "fake-compatible-mcp-bridge-key";
 const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
@@ -575,11 +590,16 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
   cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());
   const fakeMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
   cleanup.add("stop fake MCP HTTPS server", () => fakeMcp.close());
+  const rebindMcp = await startFakeMcpHttpsServer({
+    secret: REBIND_HOST_SECRET,
+  });
+  cleanup.add("stop DNS rebinding fake MCP HTTPS server", () => rebindMcp.close());
   const decoyMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
   cleanup.add("stop unconfigured decoy MCP HTTPS server", () => decoyMcp.close());
   const hostAddress = await hostAddressForSandbox(host);
   const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
   const mcpUrl = `https://host.openshell.internal:${fakeMcp.port}/mcp`;
+  const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${rebindMcp.port}/mcp`;
   const decoyMcpUrl = `https://host.openshell.internal:${decoyMcp.port}/mcp`;
   await onboardAgent(host, cleanup, endpointUrl, {
     agent: "openclaw",
@@ -590,6 +610,12 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
   cleanup.add("remove MCP bridge", () => bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME));
   cleanup.add("remove unexpected missing-secret MCP state", () =>
     bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, "missingsecret"),
+  );
+  cleanup.add("remove concurrent MCP bridge", () =>
+    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, CONCURRENT_SERVER_NAME),
+  );
+  cleanup.add("remove DNS rebinding MCP bridge", () =>
+    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, REBIND_SERVER_NAME),
   );
 
   await expectMcpCliFailure(
@@ -627,6 +653,84 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
     /Host environment variable 'MISSING_MCP_SECRET' is required/,
     "mcp-negative-missing-secret",
   );
+
+  const concurrentAddArgs = [
+    OPENCLAW_SANDBOX_NAME,
+    "mcp",
+    "add",
+    CONCURRENT_SERVER_NAME,
+    "--url",
+    mcpUrl,
+    "--env",
+    "FAKE_MCP_SECRET",
+  ];
+  const concurrentAddEnv = {
+    ...buildAvailabilityProbeEnv(),
+    FAKE_MCP_SECRET: HOST_SECRET,
+  };
+  const concurrentAdds = await Promise.all(
+    ["first", "second"].map((attempt) =>
+      host.nemoclaw(concurrentAddArgs, {
+        artifactName: `mcp-concurrent-add-${attempt}`,
+        env: concurrentAddEnv,
+        redactionValues: [HOST_SECRET],
+        timeoutMs: 3 * 60_000,
+      }),
+    ),
+  );
+  const successfulConcurrentAdds = concurrentAdds.filter((result) => result.exitCode === 0);
+  const rejectedConcurrentAdds = concurrentAdds.filter((result) => result.exitCode !== 0);
+  expect(successfulConcurrentAdds).toHaveLength(1);
+  expect(rejectedConcurrentAdds).toHaveLength(1);
+  expectExitNonZero(
+    rejectedConcurrentAdds[0]!,
+    "same-sandbox concurrent MCP add rejects the serialized duplicate",
+    /already exists/,
+  );
+
+  const concurrentStatus = await host.nemoclaw(
+    [OPENCLAW_SANDBOX_NAME, "mcp", "status", CONCURRENT_SERVER_NAME, "--json"],
+    {
+      artifactName: "mcp-concurrent-add-coherent-status",
+      env: concurrentAddEnv,
+      redactionValues: [HOST_SECRET],
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(concurrentStatus, "same-sandbox concurrent MCP add leaves one coherent bridge");
+  expect(JSON.parse(concurrentStatus.stdout)).toMatchObject({
+    server: CONCURRENT_SERVER_NAME,
+    url: mcpUrl,
+    env: { names: ["FAKE_MCP_SECRET"], ready: true, missing: [] },
+    provider: {
+      registryPresent: true,
+      gatewayPresent: true,
+      attached: true,
+      credentialReady: true,
+    },
+    policy: { registryPresent: true, gatewayPresent: true },
+    adapter: { registered: true },
+  });
+
+  const concurrentRemove = await host.nemoclaw(
+    [OPENCLAW_SANDBOX_NAME, "mcp", "remove", CONCURRENT_SERVER_NAME],
+    {
+      artifactName: "mcp-concurrent-add-remove",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(concurrentRemove, "remove same-sandbox concurrent MCP bridge");
+  const concurrentListAfterRemove = await host.nemoclaw(
+    [OPENCLAW_SANDBOX_NAME, "mcp", "list", "--json"],
+    {
+      artifactName: "mcp-concurrent-add-list-after-remove",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(concurrentListAfterRemove, "list after concurrent MCP bridge removal");
+  expect(JSON.parse(concurrentListAfterRemove.stdout).bridges).toEqual([]);
 
   const providerName = await addBridgeAndReadStatus(host, {
     sandboxName: OPENCLAW_SANDBOX_NAME,
@@ -673,6 +777,7 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
 const url = new URL(process.argv[2]);
 const method = process.argv[3];
 const expectation = process.argv[4];
+const credentialKey = process.argv[5] || "FAKE_MCP_SECRET";
 const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method });
 const req = https.request({
   hostname: url.hostname,
@@ -682,7 +787,7 @@ const req = https.request({
   headers: {
     "content-type": "application/json",
     "content-length": Buffer.byteLength(body),
-    "authorization": "Bearer openshell:resolve:env:FAKE_MCP_SECRET"
+    "authorization": "Bearer openshell:resolve:env:" + credentialKey
   }
 }, (res) => {
   let data = "";
@@ -706,8 +811,9 @@ req.end(body);
   const runNodeMcpProbe = async (
     targetUrl: string,
     method: string,
-    expectation: "allow" | "deny",
+    expectation: "allow" | "deny" | "deny-strict",
     artifactName: string,
+    credentialKey = "FAKE_MCP_SECRET",
   ): Promise<ShellProbeResult> =>
     sandbox.execShell(
       OPENCLAW_SANDBOX_NAME,
@@ -715,7 +821,7 @@ req.end(body);
         [
           "set -eu",
           `printf '%s' ${JSON.stringify(mcpCallScriptB64)} | base64 -d > /tmp/nemoclaw-mcp-provider-rewrite-proof.cjs`,
-          `nemoclaw-start node /tmp/nemoclaw-mcp-provider-rewrite-proof.cjs ${JSON.stringify(targetUrl)} ${JSON.stringify(method)} ${expectation}`,
+          `nemoclaw-start node /tmp/nemoclaw-mcp-provider-rewrite-proof.cjs ${JSON.stringify(targetUrl)} ${JSON.stringify(method)} ${expectation} ${JSON.stringify(credentialKey)}`,
         ].join("\n"),
       ),
       {
@@ -724,6 +830,126 @@ req.end(body);
         timeoutMs: 90_000,
       },
     );
+
+  const dnsRebindingHostsFixture = await setupDnsRebindingHostsFixture(
+    host,
+    OPENCLAW_SANDBOX_NAME,
+    REBIND_HOSTNAME,
+  );
+  cleanup.add("restore DNS rebinding hosts fixture", () =>
+    restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture),
+  );
+  await remapDnsRebindingHostname(
+    host,
+    OPENCLAW_SANDBOX_NAME,
+    dnsRebindingHostsFixture,
+    REBIND_PUBLIC_IP,
+    "mcp-dns-rebinding-map-public-before-add",
+  );
+  const rebindAdd = await host.nemoclaw(
+    [
+      OPENCLAW_SANDBOX_NAME,
+      "mcp",
+      "add",
+      REBIND_SERVER_NAME,
+      "--url",
+      rebindMcpUrl,
+      "--env",
+      REBIND_CREDENTIAL_KEY,
+    ],
+    {
+      artifactName: "mcp-dns-rebinding-add-with-public-resolution",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
+      },
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 2 * 60_000,
+    },
+  );
+  expectExitZero(rebindAdd, "register MCP route while its dedicated hostname resolves publicly");
+
+  const rebindStatus = await host.nemoclaw(
+    [OPENCLAW_SANDBOX_NAME, "mcp", "status", REBIND_SERVER_NAME, "--json"],
+    {
+      artifactName: "mcp-dns-rebinding-status-after-add",
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
+      },
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(rebindStatus, "inspect DNS rebinding MCP route after registration");
+  expect(JSON.parse(rebindStatus.stdout)).toMatchObject({
+    server: REBIND_SERVER_NAME,
+    url: rebindMcpUrl,
+    env: { names: [REBIND_CREDENTIAL_KEY], ready: true, missing: [] },
+    provider: { attached: true, credentialReady: true },
+    policy: { gatewayPresent: true },
+    adapter: { registered: true },
+  });
+
+  const rebindPolicy = await sandbox.openshell(["policy", "get", "--full", OPENCLAW_SANDBOX_NAME], {
+    artifactName: "mcp-dns-rebinding-policy-pinned-public-ip",
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expectExitZero(rebindPolicy, "inspect add-time DNS pin for rebinding MCP route");
+  const rebindPolicyJson = YAML.parse(parseCurrentPolicy(resultText(rebindPolicy))) as {
+    network_policies?: Record<
+      string,
+      { endpoints?: Array<{ host?: string; allowed_ips?: string[] }> }
+    >;
+  };
+  expect(
+    rebindPolicyJson.network_policies?.[buildMcpBridgePolicyKey(REBIND_SERVER_NAME)]
+      ?.endpoints?.[0],
+  ).toMatchObject({ host: REBIND_HOSTNAME, allowed_ips: [REBIND_PUBLIC_IP] });
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    OPENCLAW_SANDBOX_NAME,
+    ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
+    [REBIND_HOST_SECRET],
+    "openclaw-dns-rebinding-secret-absent-from-sandbox",
+  );
+
+  // The supervisor's loopback belongs to the sandbox container. Rebind to the
+  // runner address already used by the sandbox-compatible endpoint instead,
+  // so a missing allowed_ips denial would reach this fake HTTPS server.
+  expect(hostAddress).not.toBe(REBIND_PUBLIC_IP);
+  await remapDnsRebindingHostname(
+    host,
+    OPENCLAW_SANDBOX_NAME,
+    dnsRebindingHostsFixture,
+    hostAddress,
+    "mcp-dns-rebinding-map-private-unpinned-after-add",
+  );
+  const strictRebindDenial = await runNodeMcpProbe(
+    rebindMcpUrl,
+    "tools/list",
+    "deny-strict",
+    "mcp-dns-rebinding-openclaw-node-denied",
+    REBIND_CREDENTIAL_KEY,
+  );
+  expectExitZero(
+    strictRebindDenial,
+    "OpenShell returns HTTP 403 when an add-time public MCP hostname rebinds to a reachable unpinned host address",
+  );
+  expect(resultText(strictRebindDenial)).toContain('"status":403');
+  expect(rebindMcp.requests).toHaveLength(0);
+
+  const rebindRemove = await host.nemoclaw(
+    [OPENCLAW_SANDBOX_NAME, "mcp", "remove", REBIND_SERVER_NAME],
+    {
+      artifactName: "mcp-dns-rebinding-remove",
+      env: buildAvailabilityProbeEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(rebindRemove, "remove DNS rebinding MCP route after denial proof");
+  await restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture);
 
   const requestCountBeforeAllowedNodeProof = fakeMcp.requests.length;
   const allowedNodeCall = await runNodeMcpProbe(

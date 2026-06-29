@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
+import { MCP_BRIDGE_ALLOWED_METHODS } from "../src/lib/actions/sandbox/mcp-bridge-policy";
 import {
   type StartedHttpServer,
   startCompatibleMock,
@@ -73,7 +74,7 @@ describe("authenticated MCP live fixtures", () => {
     const request = async (
       method: string,
       body?: Record<string, unknown>,
-    ): Promise<{ status: number; json(): unknown }> =>
+    ): Promise<{ status: number; body: string; json(): unknown }> =>
       await new Promise((resolve, reject) => {
         const encoded = body ? JSON.stringify(body) : "";
         const req = https.request(
@@ -94,6 +95,7 @@ describe("authenticated MCP live fixtures", () => {
             response.on("end", () =>
               resolve({
                 status: response.statusCode ?? 0,
+                body: responseBody,
                 json: () => JSON.parse(responseBody),
               }),
             );
@@ -147,6 +149,61 @@ describe("authenticated MCP live fixtures", () => {
         isError: false,
       },
     });
+    const paramsByMethod: Partial<Record<(typeof MCP_BRIDGE_ALLOWED_METHODS)[number], unknown>> = {
+      initialize: {
+        protocolVersion: "2025-11-25",
+        capabilities: {},
+        clientInfo: { name: "fixture", version: "1.0.0" },
+      },
+      "tools/call": { name: "fake_echo", arguments: { challenge } },
+      "resources/read": { uri: "file:///empty" },
+      "resources/subscribe": { uri: "file:///empty" },
+      "resources/unsubscribe": { uri: "file:///empty" },
+      "prompts/get": { name: "empty", arguments: {} },
+      "tasks/get": { taskId: "fake-task" },
+      "tasks/update": { taskId: "fake-task", inputResponses: {} },
+      "tasks/result": { taskId: "fake-task" },
+      "tasks/cancel": { taskId: "fake-task" },
+      "completion/complete": {
+        ref: { type: "ref/prompt", name: "empty" },
+        argument: { name: "value", value: "" },
+      },
+      "logging/setLevel": { level: "info" },
+      "notifications/cancelled": { requestId: 1 },
+      "notifications/progress": { progressToken: 1, progress: 1 },
+      "notifications/elicitation/complete": {
+        elicitationId: "fake-elicitation",
+      },
+    };
+
+    for (const [index, rpcMethod] of MCP_BRIDGE_ALLOWED_METHODS.entries()) {
+      const notification = rpcMethod.startsWith("notifications/");
+      const id = index + 1;
+      const params = paramsByMethod[rpcMethod];
+      const payload = {
+        jsonrpc: "2.0",
+        ...(!notification ? { id } : {}),
+        method: rpcMethod,
+        ...(params !== undefined ? { params } : {}),
+      };
+      const response = await request("POST", payload);
+
+      if (notification) {
+        expect({ status: response.status, body: response.body }, rpcMethod).toEqual({
+          status: 202,
+          body: "",
+        });
+      } else {
+        expect(response.status, rpcMethod).toBe(200);
+        expect(JSON.parse(response.body), rpcMethod).toMatchObject({
+          jsonrpc: "2.0",
+          id,
+        });
+        expect(JSON.parse(response.body), rpcMethod).not.toHaveProperty("error");
+        expect(JSON.parse(response.body), rpcMethod).toHaveProperty("result");
+      }
+    }
+
     expect(
       server.requests.every(
         (request) => request.auth !== "Bearer openshell:resolve:env:FAKE_TOKEN",

@@ -27,7 +27,7 @@ openssl req \
   -sha256 \
   -nodes \
   -subj "/CN=host.openshell.internal" \
-  -addext "subjectAltName=DNS:host.openshell.internal" \
+  -addext "subjectAltName=DNS:host.openshell.internal,DNS:mcp-rebind.example.test" \
   -keyout "${tls_dir}/server.key" \
   -out "${tls_dir}/server.csr"
 
@@ -43,7 +43,7 @@ openssl x509 \
     "basicConstraints=critical,CA:FALSE" \
     "keyUsage=critical,digitalSignature,keyEncipherment" \
     "extendedKeyUsage=serverAuth" \
-    "subjectAltName=DNS:host.openshell.internal") \
+    "subjectAltName=DNS:host.openshell.internal,DNS:mcp-rebind.example.test") \
   -out "${tls_dir}/server.crt"
 
 # The live test installs this per-run CA into each ephemeral sandbox image and

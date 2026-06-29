@@ -30,6 +30,46 @@ interface McpRequestPayload {
   params?: { name?: unknown; arguments?: { challenge?: unknown } };
 }
 
+const MCP_NOTIFICATION_METHODS = new Set([
+  "notifications/initialized",
+  "notifications/cancelled",
+  "notifications/progress",
+  "notifications/roots/list_changed",
+  "notifications/elicitation/complete",
+]);
+
+const EMPTY_TASK = {
+  taskId: "fake-task",
+  status: "completed",
+  createdAt: "2026-01-01T00:00:00.000Z",
+  lastUpdatedAt: "2026-01-01T00:00:00.000Z",
+  ttl: null,
+};
+
+const MCP_EMPTY_RESULT_BY_METHOD: Record<string, unknown> = {
+  ping: {},
+  "resources/list": { resources: [] },
+  "resources/read": { contents: [] },
+  "resources/templates/list": { resourceTemplates: [] },
+  "resources/subscribe": {},
+  "resources/unsubscribe": {},
+  "prompts/list": { prompts: [] },
+  "prompts/get": { messages: [] },
+  "tasks/list": { tasks: [] },
+  "tasks/get": EMPTY_TASK,
+  "tasks/update": {},
+  "tasks/result": { content: [], isError: false },
+  "tasks/cancel": EMPTY_TASK,
+  "completion/complete": { completion: { values: [] } },
+  "logging/setLevel": {},
+  "server/discover": {
+    supportedVersions: ["2025-11-25", "2025-03-26"],
+    capabilities: { tools: {} },
+    serverInfo: { name: "fake", version: "1.0.0" },
+  },
+  "messages/listen": {},
+};
+
 function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -295,7 +335,10 @@ export async function startFakeMcpHttpsServer(options: {
       jsonResponse(res, 400, { error: { message: "invalid json" } });
       return;
     }
-    if (parsedPayload.method === "notifications/initialized") {
+    if (
+      typeof parsedPayload.method === "string" &&
+      MCP_NOTIFICATION_METHODS.has(parsedPayload.method)
+    ) {
       res.writeHead(202);
       res.end();
       return;
@@ -347,8 +390,11 @@ export async function startFakeMcpHttpsServer(options: {
         ],
         isError: false,
       };
-    } else if (parsedPayload.method === "ping") {
-      result = {};
+    } else if (
+      typeof parsedPayload.method === "string" &&
+      Object.prototype.hasOwnProperty.call(MCP_EMPTY_RESULT_BY_METHOD, parsedPayload.method)
+    ) {
+      result = MCP_EMPTY_RESULT_BY_METHOD[parsedPayload.method];
     } else {
       jsonResponse(res, 200, {
         jsonrpc: "2.0",
