@@ -299,6 +299,9 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     createdAt: new Date().toISOString(),
     model: HOSTED_MODEL,
     provider: "compatible-endpoint",
+    endpointUrl: HOSTED_ENDPOINT_URL,
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
     gpuEnabled: false,
     policies: [],
     policyTier: null,
@@ -322,6 +325,9 @@ function seedRegistryAndSession(): SessionArtifactSummary {
     status: "complete" as const,
     provider: "compatible-endpoint" as const,
     model: HOSTED_MODEL,
+    endpointUrl: HOSTED_ENDPOINT_URL,
+    credentialEnv: "COMPATIBLE_API_KEY",
+    preferredInferenceApi: "openai-completions",
     messagingPlan,
   };
   writeJsonFile(SESSION_FILE, session);
@@ -609,7 +615,16 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const sessionSummary = seedRegistryAndSession();
     await artifacts.writeJson("phase-4-registry-session-summary.json", {
       registryVersion: registryVersion(),
-      provider: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]?.provider,
+      registryInference: {
+        provider: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]?.provider,
+        endpointUrl: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
+          ?.endpointUrl,
+        credentialEnv: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME]
+          ?.credentialEnv,
+        preferredInferenceApi: readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[
+          SANDBOX_NAME
+        ]?.preferredInferenceApi,
+      },
       session: sessionSummary,
     });
 

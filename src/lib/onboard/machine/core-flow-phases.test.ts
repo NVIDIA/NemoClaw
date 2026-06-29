@@ -40,6 +40,7 @@ function context(
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -91,6 +92,7 @@ function createPhases(
         hermesAuthMethod: null,
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: null,
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -107,6 +109,8 @@ function createPhases(
       recordStateSkipped: vi.fn(async () => createSession()),
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
+      configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
+      clearCompatibleEndpointReasoning: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
@@ -185,12 +189,12 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("runs provider selection and carries inference output into the flow context", async () => {
-    const [providerPhase] = createPhases();
+  it("carries provider selection output into sandbox setup", async () => {
+    const [providerPhase, sandboxPhase] = createPhases();
 
-    const result = await providerPhase.run(context());
+    const providerResult = await providerPhase.run(context());
 
-    expect(result.context).toMatchObject({
+    expect(providerResult.context).toMatchObject({
       sandboxName: "my-sandbox",
       model: "nvidia/test",
       provider: "nim",
@@ -200,7 +204,26 @@ describe("core onboard flow phases", () => {
       preferredInferenceApi: "chat",
       nimContainer: "nim-test",
     });
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(Array.isArray(providerResult.result)).toBe(true);
+
+    const sandboxResult = await sandboxPhase.run(providerResult.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: null,
+      gpu: { platform: "linux" },
+      sandboxGpuConfig: { mode: "cdi" },
+      gpuPassthrough: true,
+      hermesToolGateways: ["local"],
+      preferredInferenceApi: "chat",
+      nimContainer: "nim-test",
+      selectedMessagingChannels: ["slack", "discord"],
+      webSearchSupported: true,
+    });
   });
 
   it("passes fresh context through to provider setup recovery policy", async () => {
@@ -212,6 +235,7 @@ describe("core onboard flow phases", () => {
       hermesAuthMethod: null,
       hermesToolGateways: [],
       preferredInferenceApi: "chat",
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     }));
     const [providerPhase] = createPhases({ providerDeps: { setupNim } });
@@ -228,7 +252,7 @@ describe("core onboard flow phases", () => {
 
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
-    const [providerPhase] = createPhases({
+    const [providerPhase, sandboxPhase] = createPhases({
       providerDeps: {
         ensureResumeProviderReady: vi.fn(async () => ({
           forceInferenceSetup: false,
@@ -272,29 +296,16 @@ describe("core onboard flow phases", () => {
       { allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
-  });
 
-  it("runs sandbox setup only after provider state is complete", async () => {
-    const [, sandboxPhase] = createPhases();
+    const sandboxResult = await sandboxPhase.run(result.context);
 
-    await expect(sandboxPhase.run(context())).rejects.toThrow(
-      "Onboarding state is incomplete before sandbox setup.",
-    );
-
-    const result = await sandboxPhase.run(
-      context({
-        model: "nvidia/test",
-        provider: "nim",
-        hermesToolGateways: ["local"],
-        preferredInferenceApi: "chat",
-        nimContainer: "nim-test",
-      }),
-    );
-
-    expect(result.context).toMatchObject({
+    expect(sandboxResult.context).toMatchObject({
       sandboxName: "created-sandbox",
-      selectedMessagingChannels: ["slack", "discord"],
-      webSearchSupported: true,
+      model: "nvidia/test",
+      provider: "hermes",
+      credentialEnv: "HERMES_API_KEY",
+      hermesToolGateways: ["nous-web"],
+      sandboxGpuConfig: { mode: "cdi" },
     });
   });
 

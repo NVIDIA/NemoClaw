@@ -498,6 +498,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       description: "Run uninstall.sh (local only; no remote fallback)",
     },
   ],
+  use: [
+    {
+      group: "Sandbox Management",
+      order: 2.5,
+      usage: "nemoclaw use <name>",
+      flags: "[--json]",
+    },
+  ],
   update: [
     {
       group: "Upgrade",

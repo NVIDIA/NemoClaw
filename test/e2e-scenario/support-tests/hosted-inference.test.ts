@@ -7,6 +7,13 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
+import type {
+  ShellProbeResult,
+  ShellProbeRunOptions,
+  TrustedShellCommand,
+} from "../fixtures/shell-probe.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
@@ -95,6 +102,29 @@ function parseKeyValueLines(stdout: string): Record<string, string> {
   );
 }
 
+function shellResult(command: TrustedShellCommand): ShellProbeResult {
+  return {
+    artifacts: { result: "", stderr: "", stdout: "" },
+    command: [command.command, ...command.args],
+    exitCode: 0,
+    signal: null,
+    stderr: "",
+    stdout: "204",
+    timedOut: false,
+  };
+}
+
+function providerClientWithCalls(
+  calls: Array<{ command: TrustedShellCommand; options?: ShellProbeRunOptions }>,
+) {
+  return new ProviderClient({
+    run: async (command, options) => {
+      calls.push({ command, options });
+      return shellResult(command);
+    },
+  });
+}
+
 function runCompatibleConfigure(env: Record<string, string> = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-compatible-config-"));
   const scriptPath = path.join(tmpDir, "configure.sh");
@@ -158,6 +188,57 @@ describe("hosted inference E2E config", () => {
 
     expect(cfg.apiKey).toBe("sk-compatible-key");
     expect(cfg.credentialEnv).toBe("COMPATIBLE_API_KEY");
+  });
+
+  it("preserves the hosted-compatible mode flag without passing source secrets by default", () => {
+    const env = buildAvailabilityProbeEnv({
+      HOME: "/tmp/home",
+      PATH: "/usr/bin",
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
+      RANDOM_NON_SECRET: "not-allowlisted",
+    });
+
+    expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
+    expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
+    expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
+  });
+
+  it("builds provider reachability probes only from trusted endpoints", async () => {
+    const calls: Array<{ command: TrustedShellCommand; options?: ShellProbeRunOptions }> = [];
+    const provider = providerClientWithCalls(calls);
+
+    const result = await provider.probeReachability(
+      trustedProviderEndpoint("https://inference-api.nvidia.com/v1", {
+        allowedHosts: ["inference-api.nvidia.com"],
+      }),
+      { artifactName: "probe" },
+    );
+
+    expect(result.stdout).toBe("204");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.command.command).toBe("curl");
+    expect(calls[0]?.command.args).toEqual([
+      "-sS",
+      "--connect-timeout",
+      "10",
+      "--max-time",
+      "20",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "https://inference-api.nvidia.com/v1",
+    ]);
+  });
+
+  it("rejects provider reachability endpoints with SSRF-shaped hosts", () => {
+    expect(() => trustedProviderEndpoint("http://169.254.169.254/latest/meta-data")).toThrow(
+      /private or link-local|blocked/,
+    );
+    expect(() =>
+      trustedProviderEndpoint("https://metadata.google.internal/computeMetadata/v1"),
+    ).toThrow(/blocked/);
   });
 
   it("uses a lightweight compatible reachability probe without API or auth requests", () => {

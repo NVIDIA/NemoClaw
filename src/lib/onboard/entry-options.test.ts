@@ -3,10 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import {
-  type OnboardEntryOptionsDeps,
-  resolveOnboardEntryOptions,
-} from "../../../dist/lib/onboard/entry-options";
+import { type OnboardEntryOptionsDeps, resolveOnboardEntryOptions } from "./entry-options";
 
 class ExitError extends Error {
   constructor(readonly code: number) {

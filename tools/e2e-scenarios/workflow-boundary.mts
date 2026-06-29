@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_VITEST_WORKFLOW_PATH = join(
   REPO_ROOT,
@@ -51,8 +53,16 @@ const FREE_STANDING_SELECTOR_SPECIAL_CASES = new Set([
   "hermes-e2e-vitest",
   "hermes-root-entrypoint-smoke-vitest",
   "jetson-nvmap-gpu-vitest",
+  "sandbox-rlimits-connect-vitest",
 ]);
-const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set(["jetson-nvmap-gpu-vitest"]);
+const FULL_SUITE_EXCLUDED_FREE_STANDING_JOBS = new Set([
+  "jetson-nvmap-gpu-vitest",
+  "sandbox-rlimits-connect-vitest",
+]);
+const PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS = new Set([
+  "device-auth-health-vitest",
+  "model-router-provider-routed-inference-vitest",
+]);
 
 function asRecord(value: unknown): WorkflowRecord {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -480,6 +490,32 @@ function validateFreeStandingJobSelector(
   }
 }
 
+function validateGatewayGuardRecoveryVitestJob(errors: string[], jobs: WorkflowRecord): void {
+  const job = asRecord(jobs["gateway-guard-recovery"]);
+  if (Object.keys(job).length === 0) return;
+  const jobEnv = asRecord(job.env);
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push("gateway-guard-recovery job must enable hosted-compatible inference mode");
+  }
+}
+
+function jobPassesNvidiaInferenceSecret(job: WorkflowRecord): boolean {
+  return asSteps(job.steps).some(
+    (step) => asRecord(step.env).NVIDIA_INFERENCE_API_KEY !== undefined,
+  );
+}
+
+function validateHostedCompatibleInferenceFlag(
+  errors: string[],
+  jobName: string,
+  jobEnv: WorkflowRecord,
+): void {
+  if (PUBLIC_NVIDIA_ENDPOINT_KEY_JOBS.has(jobName)) return;
+  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
+    errors.push(`${jobName} job must enable hosted-compatible inference mode`);
+  }
+}
+
 function validateFreeStandingInventoryBoundary(
   errors: string[],
   jobs: WorkflowRecord,
@@ -503,6 +539,12 @@ function validateFreeStandingInventoryBoundary(
     }
 
     const jobEnv = asRecord(job.env);
+    if (
+      jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS === "1" &&
+      jobPassesNvidiaInferenceSecret(job)
+    ) {
+      validateHostedCompatibleInferenceFlag(errors, jobName, jobEnv);
+    }
     for (const secret of COMMON_SECRET_ENV_NAMES) {
       requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
     }
@@ -992,6 +1034,28 @@ function validateNetworkPolicyVitestJob(
     errors.push(
       "network-policy-vitest checkout step must set persist-credentials=false",
     );
+  }
+
+  const installHostDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install network-policy host dependencies",
+  );
+  if (installHostDependencies?.uses) {
+    errors.push(
+      "network-policy-vitest host dependency setup must stay inline in trusted workflow YAML",
+    );
+  }
+  for (const fragment of [
+    "for attempt in 1 2 3",
+    "sudo apt-get update",
+    'if [ "$attempt" -eq 3 ]; then',
+    "apt-get update failed after 3 attempts",
+    "sleep $((attempt * 5))",
+    "sudo apt-get install -y --no-install-recommends expect",
+  ]) {
+    requireRunContains(errors, installHostDependencies, fragment);
   }
 
   const setupNode = namedStep(steps, "Set up Node");
@@ -3834,8 +3898,8 @@ function validateHermesE2EVitestJob(
   if (jobEnv.NEMOCLAW_AGENT !== "hermes") {
     errors.push("hermes-e2e-vitest job must set NEMOCLAW_AGENT=hermes");
   }
-  if (jobEnv.NEMOCLAW_MODEL !== "minimaxai/minimax-m2.7") {
-    errors.push("hermes-e2e-vitest job must pin the CI-safe Hermes model");
+  if (jobEnv.NEMOCLAW_MODEL !== undefined) {
+    errors.push("hermes-e2e-vitest job must use the shared hosted-compatible model default");
   }
   if (jobEnv.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS !== "60") {
     errors.push(
@@ -4957,6 +5021,7 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
     );
   }
   for (const secret of [
+    "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
@@ -4980,9 +5045,15 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
         errors,
         stepName,
         stepEnv,
-        "NVIDIA_INFERENCE_API_KEY",
+        "NVIDIA_API_KEY",
       );
     }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      stepName,
+      stepEnv,
+      "NVIDIA_INFERENCE_API_KEY",
+    );
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(
         errors,
@@ -5092,12 +5163,9 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
     "Run Model Router provider-routed inference live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (
-    runVitestEnv.NVIDIA_INFERENCE_API_KEY !==
-    "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-  ) {
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push(
-      "model-router-provider-routed-inference-vitest Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+      "model-router-provider-routed-inference-vitest Vitest step must receive NVIDIA_API_KEY from secrets",
     );
   }
   requireRunContains(
@@ -5166,6 +5234,35 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   }
   requireRunContains(errors, cleanup, "docker logout docker.io");
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+function validateGatewayDriftPreflightVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "gateway-drift-preflight-vitest";
+  const job = asRecord(jobs[jobName]);
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    jobName,
+    "gateway-drift-preflight",
+  );
+  if (Object.keys(job).length === 0) return;
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    "Run gateway drift preflight Vitest test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project integration");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/gateway-drift-preflight.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "--project cli");
 }
 
 function runContainsCloudflaredAptInstall(run: string): boolean {
@@ -7544,6 +7641,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (jobEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
     errors.push("live-scenarios job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
   }
+  validateHostedCompatibleInferenceFlag(errors, "live-scenarios", jobEnv);
   if (!stringValue(jobEnv.E2E_ARTIFACT_DIR).includes("e2e-artifacts/vitest")) {
     errors.push(
       "live-scenarios job must write artifacts under e2e-artifacts/vitest",
@@ -7753,6 +7851,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     "openclaw-tui-chat-correlation",
   );
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery");
+  validateGatewayGuardRecoveryVitestJob(errors, jobs);
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7762,13 +7861,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateDiagnosticsVitestJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
   validateSnapshotCommandsVitestJob(errors, jobs);
+  errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateSparkInstallVitestJob(errors, jobs);
-  validateFreeStandingJobSelector(
-    errors,
-    jobs,
-    "gateway-drift-preflight-vitest",
-    "gateway-drift-preflight",
-  );
+  validateGatewayDriftPreflightVitestJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,
@@ -7797,6 +7892,50 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (jetsonJob.if !== explicitOnlyFreeStandingJobIf("jetson-nvmap-gpu-vitest", "jetson-nvmap-gpu")) {
     errors.push("jetson-nvmap-gpu-vitest job must run only when explicitly selected");
   }
+
+  const sandboxRlimitConnectJob = asRecord(jobs["sandbox-rlimits-connect-vitest"]);
+  if (sandboxRlimitConnectJob.needs !== "generate-matrix") {
+    errors.push("sandbox-rlimits-connect-vitest job must depend on generate-matrix");
+  }
+  if (
+    sandboxRlimitConnectJob.if !==
+    explicitOnlyFreeStandingJobIf(
+      "sandbox-rlimits-connect-vitest",
+      "sandbox-rlimits-connect",
+    )
+  ) {
+    errors.push("sandbox-rlimits-connect-vitest job must run only when explicitly selected");
+  }
+  const sandboxRlimitConnectEnv = asRecord(sandboxRlimitConnectJob.env);
+  if (sandboxRlimitConnectEnv.NEMOCLAW_RUN_E2E_SCENARIOS !== "1") {
+    errors.push("sandbox-rlimits-connect-vitest job must set NEMOCLAW_RUN_E2E_SCENARIOS=1");
+  }
+  if (sandboxRlimitConnectEnv.NEMOCLAW_E2E_CONNECT_RLIMITS !== "1") {
+    errors.push("sandbox-rlimits-connect-vitest job must opt in with NEMOCLAW_E2E_CONNECT_RLIMITS=1");
+  }
+  if (
+    sandboxRlimitConnectEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/vitest/sandbox-rlimits-connect"
+  ) {
+    errors.push("sandbox-rlimits-connect-vitest job must write artifacts under e2e-artifacts/vitest/sandbox-rlimits-connect");
+  }
+  const sandboxRlimitConnectSteps = asSteps(sandboxRlimitConnectJob.steps);
+  const sandboxRlimitConnectRun = namedStep(
+    sandboxRlimitConnectSteps,
+    "Run sandbox rlimit connect live test",
+  );
+  if (!sandboxRlimitConnectRun) {
+    errors.push("sandbox-rlimits-connect-vitest job missing step: Run sandbox rlimit connect live test");
+  } else {
+    const runScript = stringValue(sandboxRlimitConnectRun.run);
+    if (!runScript.includes("test/e2e-scenario/live/sandbox-rlimits-connect.test.ts")) {
+      errors.push("sandbox-rlimits-connect-vitest job must run sandbox-rlimits-connect.test.ts");
+    }
+    if (asRecord(sandboxRlimitConnectRun.env).NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
+      errors.push("sandbox-rlimits-connect-vitest step must receive NVIDIA_API_KEY from secrets");
+    }
+  }
+
   validateFreeStandingJobSelector(
     errors,
     jobs,
@@ -7922,6 +8061,16 @@ export function validateE2eVitestScenariosWorkflowBoundary(
     if (!reportScript.includes("scenarios=${scenario}") || !reportScript.includes("jetson-nvmap-gpu")) {
       errors.push(
         "step 'Post Vitest scenario results to PR' run script must document the explicit Jetson scenario selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect-vitest")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit rlimit jobs selector",
+      );
+    }
+    if (!reportScript.includes("sandbox-rlimits-connect")) {
+      errors.push(
+        "step 'Post Vitest scenario results to PR' run script must document the explicit rlimit scenario selector",
       );
     }
     for (const forbidden of [

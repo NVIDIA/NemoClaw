@@ -59,7 +59,7 @@ function runRcFile(
   }
 }
 
-describe("Issue #2376: Hermes rc files source HERMES_HOME from proxy-env", () => {
+describe("Hermes rc files source HERMES_HOME from proxy-env (#2376)", () => {
   for (const rcFileName of [".bashrc", ".profile"] as const) {
     it(`${rcFileName} exports HERMES_HOME when proxy-env exists`, () => {
       const out = runRcFile(rcFileName, "export HERMES_HOME=/sandbox/.hermes\n");

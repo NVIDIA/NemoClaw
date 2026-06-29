@@ -14,7 +14,7 @@ import {
   getVersionedBaseImageTags,
   parseGlibcVersion,
   versionGte,
-} from "../../dist/lib/sandbox-base-image";
+} from "./sandbox-base-image";
 
 const tmpRoots: string[] = [];
 const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
@@ -162,7 +162,7 @@ describe("sandbox base image helpers", () => {
     expect(output).toContain("the --mount option requires BuildKit");
   });
 
-  it("surfaces stdout-only build diagnostics — BuildKit can land errors there (Codex review on #3584)", () => {
+  it("surfaces stdout-only build diagnostics because BuildKit can put errors there per Codex review (#3584)", () => {
     const output = formatBuildFailureDiagnostics({
       stderr: "",
       stdout:

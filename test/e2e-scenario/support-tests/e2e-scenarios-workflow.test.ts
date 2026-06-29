@@ -974,6 +974,7 @@ jobs:
           "workflow_dispatch must not expose legacy test_filter input",
           "workflow missing generate-matrix job",
           "live-scenarios job must run on the matrix runner",
+          "live-scenarios job must enable hosted-compatible inference mode",
           "live-scenarios job env must not include NVIDIA_INFERENCE_API_KEY",
           "step 'Run Vitest live E2E scenarios' run script must not interpolate dispatch inputs directly",
           "Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveAgentNameAlias } from "../agent/aliases";
 import { versionGte } from "../domain/installer/version";
 
 export const NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh";
@@ -57,12 +58,23 @@ function trimOutput(value: string | Buffer | null | undefined): string {
   return String(value ?? "").trim();
 }
 
+const UPDATE_BRANDING_AGENTS = ["openclaw", "hermes", "langchain-deepagents-code"] as const;
+
 function updateBranding(env: NodeJS.ProcessEnv): UpdateBranding {
-  if (env.NEMOCLAW_AGENT === "hermes") {
+  const agent =
+    resolveAgentNameAlias(env.NEMOCLAW_AGENT, UPDATE_BRANDING_AGENTS) ?? env.NEMOCLAW_AGENT;
+  if (agent === "hermes") {
     return {
       cliName: "nemohermes",
       displayName: "NemoHermes",
       maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=hermes bash`,
+    };
+  }
+  if (agent === "langchain-deepagents-code") {
+    return {
+      cliName: "nemo-deepagents",
+      displayName: "NemoDeepAgents",
+      maintainedUpdateCommand: `curl -fsSL ${NEMOCLAW_INSTALLER_URL} | NEMOCLAW_AGENT=langchain-deepagents-code bash`,
     };
   }
   return {

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, it, vi } from "vitest";
 
-import { promptForInferenceProviderSelection } from "../../../dist/lib/onboard/provider-selection-prompt";
+import { promptForInferenceProviderSelection } from "./provider-selection-prompt";
 
 const options = [
   { key: "build", label: "NVIDIA Endpoints" },

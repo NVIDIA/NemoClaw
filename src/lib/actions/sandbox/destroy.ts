@@ -19,12 +19,12 @@ import {
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
 import {
-  SANDBOX_PROVIDER_SUFFIXES,
   emitProviderDetachResidualHint,
   runSandboxProviderPreDeleteCleanup,
+  SANDBOX_PROVIDER_SUFFIXES,
 } from "../../onboard/sandbox-provider-cleanup";
-import { redact } from "../../security/redact";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { redact } from "../../security/redact";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -40,6 +40,7 @@ import {
   selectGatewayForSandboxDestroy,
 } from "./destroy-gateway";
 import { getSandboxTargetGatewayName } from "./gateway-target";
+import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -291,6 +292,11 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
+// Re-export so existing callers (tests, downstream code) keep working after
+// the wipe was extracted out of the destroy monolith (#5455 PRA-2).
+export { wipeSandboxState };
+export type { WipeSandboxStateDeps };
+
 export async function destroySandbox(
   sandboxName: string,
   options: string[] | DestroySandboxOptions = {},
@@ -366,6 +372,15 @@ export async function destroySandbox(
   // recorded for this sandbox, not whichever gateway happens to be active.
   const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
+
+  // Wipe persistent state AFTER the gateway is selected so the exec targets
+  // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
+  // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
+  // PRA-2's later ask to defer past delete is physically impossible and
+  // contradicts PRA-5; the wipe-state docstring covers the full source-
+  // boundary justification.
+  wipeSandboxState(sandboxName);
+
   const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
     runOpenshell,
     redact,

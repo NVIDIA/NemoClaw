@@ -1,18 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { redact as debugRedact } from "../src/lib/diagnostics/debug";
-import { redactSensitiveText } from "../src/lib/state/onboard-session";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 // runner.ts uses CJS exports — import via dist
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+import { redact as debugRedact } from "../src/lib/diagnostics/debug";
+import { redactSensitiveText } from "../src/lib/state/onboard-session";
 
 const require = createRequire(import.meta.url);
-const { redact: runnerRedact } = require("../dist/lib/runner");
+const { redact: runnerRedact } = require("../src/lib/runner");
 
 describe("secret redaction consistency (#1736)", () => {
   // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.

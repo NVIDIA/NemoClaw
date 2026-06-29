@@ -4,9 +4,7 @@
 import { Flags } from "@oclif/core";
 
 import { describeAgentFlag } from "./agent-flag-help";
-import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
-
-const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
+import { NOTICE_ACCEPT_FLAG, NOTICE_ACCEPT_FLAG_NAME } from "./usage-notice";
 
 type AgentRegistryReader = () => readonly string[];
 
@@ -79,7 +77,7 @@ export type OnboardFlags = {
   "control-ui-port"?: number;
   yes?: boolean;
   "no-ollama-autostart"?: boolean;
-  [acceptFlagName]?: boolean;
+  [NOTICE_ACCEPT_FLAG_NAME]?: boolean;
 };
 
 export function buildOnboardFlags(): Record<string, any> {
@@ -96,24 +94,27 @@ export function buildOnboardFlags(): Record<string, any> {
     "recreate-sandbox": Flags.boolean({ description: "Delete and recreate an existing sandbox" }),
     gpu: Flags.boolean({
       description: "Require OpenShell GPU passthrough for the gateway and sandbox",
-      exclusive: ["no-gpu"],
+      exclusive: ["no-gpu", "no-sandbox-gpu"],
     }),
     "no-gpu": Flags.boolean({
       description: "Disable GPU passthrough even when an NVIDIA GPU is detected",
-      exclusive: ["gpu"],
+      exclusive: ["gpu", "sandbox-gpu"],
     }),
     from: Flags.string({ description: "Path to a Dockerfile to use as the sandbox image source" }),
     name: Flags.string({ description: "Sandbox name" }),
     "sandbox-gpu": Flags.boolean({
       description: "Enable direct NVIDIA GPU access inside the sandbox",
+      exclusive: ["no-gpu", "no-sandbox-gpu"],
     }),
     "no-sandbox-gpu": Flags.boolean({
       description:
         "Force CPU sandbox behavior (equivalent to NEMOCLAW_SANDBOX_GPU=0; alternative to --no-gpu when Docker Desktop WSL CDI injection fails)",
+      exclusive: ["gpu", "sandbox-gpu"],
     }),
     "sandbox-gpu-device": Flags.string({
       description:
         "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
+      dependsOn: ["sandbox-gpu"],
     }),
     agent: Flags.string({ description: agentFlagDescription() }),
     agents: Flags.string({
@@ -133,32 +134,8 @@ export function buildOnboardFlags(): Record<string, any> {
       description:
         "Skip the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux/systemd hosts the loopback-override path may still restart the daemon",
     }),
-    [acceptFlagName]: Flags.boolean({ description: "Accept the third-party software notice" }),
+    [NOTICE_ACCEPT_FLAG_NAME]: Flags.boolean({
+      description: "Accept the third-party software notice",
+    }),
   } as Record<string, any>;
-}
-
-export function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
-  const args: string[] = [];
-  if (flags["non-interactive"]) args.push("--non-interactive");
-  if (flags.resume) args.push("--resume");
-  if (flags.fresh) args.push("--fresh");
-  if (flags["recreate-sandbox"]) args.push("--recreate-sandbox");
-  if (flags.gpu) args.push("--gpu");
-  if (flags["no-gpu"]) args.push("--no-gpu");
-  if (flags.from !== undefined) args.push("--from", flags.from);
-  if (flags.name !== undefined) args.push("--name", flags.name);
-  if (flags["sandbox-gpu"]) args.push("--sandbox-gpu");
-  if (flags["no-sandbox-gpu"]) args.push("--no-sandbox-gpu");
-  if (flags["sandbox-gpu-device"] !== undefined) {
-    args.push("--sandbox-gpu-device", flags["sandbox-gpu-device"]);
-  }
-  if (flags.agent !== undefined) args.push("--agent", flags.agent);
-  if (flags.agents !== undefined) args.push("--agents", flags.agents);
-  if (flags["control-ui-port"] !== undefined) {
-    args.push("--control-ui-port", String(flags["control-ui-port"]));
-  }
-  if (flags.yes) args.push("--yes");
-  if (flags["no-ollama-autostart"]) args.push("--no-ollama-autostart");
-  if (flags[acceptFlagName]) args.push(NOTICE_ACCEPT_FLAG);
-  return args;
 }

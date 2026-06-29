@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveOpenshell } from "../../../../dist/lib/adapters/openshell/resolve";
+import { describe, expect, it } from "vitest";
+import { resolveOpenshell } from "./resolve";
 
 describe("lib/resolve-openshell", () => {
   it("returns command -v result when absolute path", () => {
@@ -62,6 +62,25 @@ describe("lib/resolve-openshell", () => {
         checkExecutable: (p) => p === "/usr/local/bin/openshell",
       }),
     ).toBe("/usr/local/bin/openshell");
+  });
+
+  it("falls back to the Apple Silicon Homebrew prefix at /opt/homebrew/bin (#5334)", () => {
+    expect(
+      resolveOpenshell({
+        commandVResult: null,
+        checkExecutable: (p) => p === "/opt/homebrew/bin/openshell",
+      }),
+    ).toBe("/opt/homebrew/bin/openshell");
+  });
+
+  it("prefers /opt/homebrew/bin over /usr/local/bin (#5334)", () => {
+    expect(
+      resolveOpenshell({
+        commandVResult: null,
+        checkExecutable: (p) =>
+          p === "/opt/homebrew/bin/openshell" || p === "/usr/local/bin/openshell",
+      }),
+    ).toBe("/opt/homebrew/bin/openshell");
   });
 
   it("falls back to /usr/bin", () => {

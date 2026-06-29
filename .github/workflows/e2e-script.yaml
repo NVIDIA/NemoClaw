@@ -47,6 +47,11 @@ on:
         required: false
         type: string
         default: ""
+      apt_packages:
+        description: Space-separated apt packages to install before running the E2E script.
+        required: false
+        type: string
+        default: ""
       env_json:
         description: JSON object of non-secret environment variables for the script.
         required: false
@@ -143,14 +148,26 @@ jobs:
 
           printf '%s=%s\n' "$E2E_CHECKED_OUT_REF_ENV" "$(git -C repo rev-parse HEAD)" >> "$GITHUB_ENV"
 
-      - name: Checkout workflow action
+      - name: Checkout workflow actions
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          ref: ${{ github.ref }}
+          # Two-checkout boundary: the E2E target under test is checked out
+          # separately in repo/ from inputs.ref, while privileged workflow
+          # helper actions are pinned to the caller workflow commit. The
+          # free-standing Vitest job uses a different inline boundary model
+          # because it checks out and executes the target ref directly.
+          ref: ${{ github.sha }}
           sparse-checkout: |
+            .github/actions/install-apt-packages
             .github/actions/run-e2e-script
           path: workflow-actions
           persist-credentials: false
+
+      - name: Install requested apt packages
+        if: ${{ inputs.apt_packages != '' }}
+        uses: ./workflow-actions/.github/actions/install-apt-packages
+        with:
+          packages: ${{ inputs.apt_packages }}
 
       - name: Export script environment
         env:

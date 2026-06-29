@@ -8,7 +8,7 @@ import {
   isModelRouterCommandLineForPort,
   readModelRouterProcessCommandLine,
   stopTrackedModelRouterForAgentChange,
-} from "../../../dist/lib/onboard/model-router-process";
+} from "./model-router-process";
 
 describe("model-router process ownership checks", () => {
   it("recognizes model-router proxy command lines for the expected port", () => {

@@ -34,14 +34,14 @@ describe("vLLM profile detection", () => {
     vi.clearAllMocks();
   });
 
-  it("uses Qwen3.6 27B and the 26.05.post1 NGC image on DGX Station", () => {
+  it("uses DeepSeek V4 Flash and the 26.05.post1 NGC image on DGX Station", () => {
     const profile = detectVllmProfile({ platform: "station", type: "nvidia" });
 
     expect(profile).not.toBeNull();
     expect(profile!.name).toBe("DGX Station");
     expect(profile!.image).toBe("nvcr.io/nvidia/vllm:26.05.post1-py3");
-    expect(profile!.defaultModel.id).toBe("Qwen/Qwen3.6-27B-FP8");
-    expect(profile!.defaultModel.envValue).toBe("qwen3.6-27b");
+    expect(profile!.defaultModel.id).toBe("deepseek-ai/DeepSeek-V4-Flash");
+    expect(profile!.defaultModel.envValue).toBe("deepseek-v4-flash");
   });
 
   it("keeps DGX Spark on the Qwen3.6 35B NVFP4 default", () => {

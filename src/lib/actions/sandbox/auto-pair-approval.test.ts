@@ -268,7 +268,7 @@ process.exit(2);
     }
   });
 
-  it("does not recover approval failures without the #4462 compatibility signature", () => {
+  it("does not recover approval failures without the compatibility signature (#4462)", () => {
     if (spawnSync("sh", ["-c", "command -v python3"], { stdio: "ignore" }).status !== 0) {
       return;
     }

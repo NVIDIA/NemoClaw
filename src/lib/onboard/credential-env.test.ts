@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { hydrateCredentialEnv } from "../../../dist/lib/onboard/credential-env";
+import { hydrateCredentialEnv } from "./credential-env";
 
 const ORIGINAL_TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 

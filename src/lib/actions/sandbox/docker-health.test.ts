@@ -2,12 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import {
-  getSandboxDockerHealth,
-  getSandboxDockerRuntime,
-} from "../../../../dist/lib/actions/sandbox/docker-health";
-import type { SandboxEntry } from "../../../../dist/lib/state/registry";
+import type { SandboxEntry } from "../../state/registry";
+import { getSandboxDockerHealth, getSandboxDockerRuntime } from "./docker-health";
 
 function fixture({
   driver = "docker",

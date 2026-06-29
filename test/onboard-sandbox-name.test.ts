@@ -9,19 +9,19 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadAgent } from "../dist/lib/agent/defs.js";
+import { loadAgent } from "../src/lib/agent/defs.js";
 import {
   getNameValidationGuidance,
   NAME_ALLOWED_FORMAT,
   suggestNameSlug,
-} from "../dist/lib/name-validation.js";
+} from "../src/lib/name-validation.js";
 
 const {
   getDefaultSandboxNameForAgent,
   getRequestedSandboxAgentName,
   getSandboxPromptDefault,
   normalizeSandboxAgentName,
-} = require("../dist/lib/onboard") as {
+} = require("../src/lib/onboard") as {
   getDefaultSandboxNameForAgent: (agent?: { name: string } | null) => string;
   getRequestedSandboxAgentName: (agent?: { name: string } | null) => string;
   getSandboxPromptDefault: (agent?: { name: string } | null) => string;
@@ -150,7 +150,7 @@ describe("onboard sandbox naming helpers", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bad-name-"));
     const scriptPath = path.join(tmpDir, "onboard-bad-name.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     const script = String.raw`
 const onboardModule = require(${onboardPath});

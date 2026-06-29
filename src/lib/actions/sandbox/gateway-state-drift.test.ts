@@ -3,11 +3,11 @@
 
 import { createRequire } from "node:module";
 
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 import type { OpenShellStateRpcIssue } from "../../adapters/openshell/gateway-drift";
 
-type GatewayStateModule = typeof import("../../../../dist/lib/actions/sandbox/gateway-state");
+type GatewayStateModule = typeof import("./gateway-state");
 
 const requireDist = createRequire(import.meta.url);
 
@@ -46,10 +46,10 @@ describe("sandbox gateway state drift guard", () => {
     exitSpy = mockExit();
     errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    const gatewayDrift = requireDist("../../../../dist/lib/adapters/openshell/gateway-drift.js");
-    const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-    const gatewayRuntime = requireDist("../../../../dist/lib/gateway-runtime-action.js");
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
+    const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+    const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+    const registry = requireDist("../../state/registry.js");
 
     getSandboxSpy = vi.spyOn(registry, "getSandbox").mockReturnValue(null);
 
@@ -99,7 +99,7 @@ describe("sandbox gateway state drift guard", () => {
       removeSandboxSpy,
     );
 
-    gatewayState = requireDist("../../../../dist/lib/actions/sandbox/gateway-state.js");
+    gatewayState = requireDist("./gateway-state.js");
   });
 
   afterEach(() => {

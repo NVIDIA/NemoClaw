@@ -6,9 +6,9 @@ import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const policyChannelModulePath = "../../../../dist/lib/actions/sandbox/policy-channel.js";
+const policyChannelModulePath = "./policy-channel.js";
 
-type PolicyChannelModule = typeof import("../../../../dist/lib/actions/sandbox/policy-channel");
+type PolicyChannelModule = typeof import("./policy-channel");
 
 describe("policy channel remove/enable flows", () => {
   let exitSpy: MockInstance;
@@ -52,7 +52,7 @@ describe("policy channel remove/enable flows", () => {
   });
 
   it("supports stop dry runs for configured channels", async () => {
-    const registry = requireDist("../../../../dist/lib/state/registry.js");
+    const registry = requireDist("../../state/registry.js");
     vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
     vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
     vi.spyOn(registry, "getDisabledChannels").mockReturnValue([]);
