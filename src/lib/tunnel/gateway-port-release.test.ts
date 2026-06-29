@@ -301,6 +301,26 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain("lsof failed while scanning");
   });
 
+  it("does not report released when the confirmation probe itself fails", () => {
+    // Port is bound on the initial scan (so the stop path runs), but lsof
+    // errors on every confirmation probe. A failed probe is not proof the port
+    // is free, so released must stay false rather than coercing null -> [].
+    const lsof = lsofResponder(ok("555\n"), { status: 2, stdout: "", stderr: "boom" });
+    const stop = stopSpy(emptyStopResult({ stopped: [555] }));
+
+    const result = releaseManagedGatewayPort(
+      { confirmTimeoutMs: 10 },
+      {
+        ...baseDeps,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.released).toBe(false);
+  });
+
   it("skips the lsof sweep but still delegates to the pid-file stopper when lsof is absent", () => {
     const stop = stopSpy(emptyStopResult());
     const run = vi.fn(() => ok());

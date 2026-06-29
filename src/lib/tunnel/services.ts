@@ -626,12 +626,19 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // after `nemoclaw stop`, so a fresh onboard / port-conflict recovery cannot
   // re-bind it (#5968). Best-effort: a stop must never fail because gateway
   // teardown hit an edge case.
-  try {
-    gatewayPortRelease.releaseManagedGatewayPort(sandboxName ? { sandboxName } : {});
-  } catch (error) {
-    warn(
-      `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
-    );
+  //
+  // Only run when a sandbox identity was resolved. With no sandbox name the
+  // port resolver would fall back to the process-wide default gateway port —
+  // which is not tied to the `pidDir` selected above and could tear down a
+  // different worktree's default gateway.
+  if (sandboxName) {
+    try {
+      gatewayPortRelease.releaseManagedGatewayPort({ sandboxName });
+    } catch (error) {
+      warn(
+        `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
+      );
+    }
   }
 
   info("All services stopped.");

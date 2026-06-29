@@ -257,14 +257,27 @@ export function releaseManagedGatewayPort(
     // Nothing was bound to the port to begin with — already free.
     released = true;
   } else {
-    released = waitUntil(() => (listeningPids(port, run, env, warn) ?? []).length === 0, {
-      deadlineMs: now() + confirmTimeoutMs,
-      initialIntervalMs: confirmPollIntervalMs,
-      maxIntervalMs: confirmPollIntervalMs,
-      backoffFactor: 1,
-      now,
-      ...(depsOverrides.sleep ? { sleep: depsOverrides.sleep } : {}),
-    });
+    // A null probe means lsof itself errored — that is not a confirmation that
+    // the port is free, so it must not coerce to released. Track it so a
+    // transient lsof failure after the stop attempt cannot be reported as a
+    // released port.
+    let confirmProbeFailed = false;
+    released = waitUntil(
+      () => {
+        const pids = listeningPids(port, run, env, warn);
+        confirmProbeFailed = pids === null;
+        return pids !== null && pids.length === 0;
+      },
+      {
+        deadlineMs: now() + confirmTimeoutMs,
+        initialIntervalMs: confirmPollIntervalMs,
+        maxIntervalMs: confirmPollIntervalMs,
+        backoffFactor: 1,
+        now,
+        ...(depsOverrides.sleep ? { sleep: depsOverrides.sleep } : {}),
+      },
+    );
+    if (confirmProbeFailed) released = false;
     if (!released) remaining = listeningPids(port, run, env, warn) ?? [];
   }
 

@@ -528,12 +528,14 @@ describe("stopAll", () => {
     expect(releaseGatewaySpy).toHaveBeenCalledWith({ sandboxName: "nemoclaw-5968" });
   });
 
-  it("still releases the gateway port when no sandbox name is resolved (#5968)", () => {
+  it("skips gateway port release when no sandbox name is resolved (#5968)", () => {
+    // With no sandbox identity the port resolver would fall back to the
+    // process-wide default gateway port, which is not tied to this pidDir and
+    // could tear down another worktree's gateway. So release must be skipped.
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     stopAll({ pidDir });
     logSpy.mockRestore();
 
-    expect(releaseGatewaySpy).toHaveBeenCalledTimes(1);
-    expect(releaseGatewaySpy).toHaveBeenCalledWith({});
+    expect(releaseGatewaySpy).not.toHaveBeenCalled();
   });
 });
