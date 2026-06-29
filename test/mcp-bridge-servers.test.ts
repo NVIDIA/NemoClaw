@@ -250,4 +250,70 @@ describe("authenticated MCP live fixtures", () => {
       ],
     });
   });
+
+  it("uses Hermes progressive disclosure when the MCP tool is deferred", async () => {
+    const resultToken = "MCP_AUTH_REWRITE_OK::deferred-fixture";
+    const server = await startCompatibleMock({
+      apiKey: "compatible-key",
+      model: "mock/model",
+      toolChallenge: "deferred-fixture",
+      toolResultToken: resultToken,
+      toolNames: ["mcp_fake_fake_echo"],
+      deferredToolName: "mcp_fake_fake_echo",
+    });
+    servers.push(server);
+    const url = `http://127.0.0.1:${server.port}/v1/chat/completions`;
+    const headers = {
+      authorization: "Bearer compatible-key",
+      "content-type": "application/json",
+    };
+
+    const first = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "mock/model",
+        messages: [{ role: "user", content: "use the deferred tool" }],
+        tools: [
+          {
+            type: "function",
+            function: { name: "tool_call", parameters: {} },
+          },
+        ],
+      }),
+    });
+    const firstBody = (await first.json()) as {
+      choices: Array<{
+        message: { tool_calls: Array<{ function: { name: string; arguments: string } }> };
+      }>;
+    };
+    expect(firstBody.choices[0].message.tool_calls[0]).toMatchObject({
+      function: {
+        name: "tool_call",
+        arguments: JSON.stringify({
+          name: "mcp_fake_fake_echo",
+          arguments: { challenge: "deferred-fixture" },
+        }),
+      },
+    });
+    expect(JSON.stringify(firstBody)).not.toContain(resultToken);
+
+    const final = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: "mock/model",
+        messages: [{ role: "tool", content: JSON.stringify({ result: resultToken }) }],
+        tools: [
+          {
+            type: "function",
+            function: { name: "tool_call", parameters: {} },
+          },
+        ],
+      }),
+    });
+    expect(await final.json()).toMatchObject({
+      choices: [{ message: { content: resultToken } }],
+    });
+  });
 });

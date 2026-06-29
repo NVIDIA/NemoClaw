@@ -141,23 +141,20 @@ async function assertSecretAbsentFromSandbox(
   sandboxName: string,
   paths: string[],
   secrets: string[] = [HOST_SECRET],
+  artifactName = "assert-secret-absent-from-sandbox",
 ): Promise<void> {
-  const result = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(
-      [
-        "set -eu",
-        ...secrets.map(
-          (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
-        ),
-      ].join("\n"),
+  const script = [
+    "set -eu",
+    ...secrets.map(
+      (secret) => `! grep -R ${JSON.stringify(secret)} ${paths.join(" ")} 2>/dev/null`,
     ),
-    {
-      artifactName: "assert-secret-absent-from-sandbox",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
-  );
+  ].join("\n");
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
+    artifactName,
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [...secrets, Buffer.from(script, "utf8").toString("base64")],
+    timeoutMs: 60_000,
+  });
   expectExitZero(result, "host MCP secret must not appear in sandbox files");
 }
 
@@ -382,29 +379,25 @@ async function assertHermesConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const result = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(
-      [
-        "set -eu",
-        "/opt/hermes/.venv/bin/python - <<'PY'",
-        "import pathlib, yaml",
-        "path = pathlib.Path('/sandbox/.hermes/config.yaml')",
-        "text = path.read_text(encoding='utf-8')",
-        "data = yaml.safe_load(text) or {}",
-        `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
-        `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-        "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
-        `assert ${JSON.stringify(HOST_SECRET)} not in text`,
-        "PY",
-      ].join("\n"),
-    ),
-    {
-      artifactName: "hermes-mcp-config-assertions",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
-  );
+  const script = [
+    "set -eu",
+    "/opt/hermes/.venv/bin/python - <<'PY'",
+    "import pathlib, yaml",
+    "path = pathlib.Path('/sandbox/.hermes/config.yaml')",
+    "text = path.read_text(encoding='utf-8')",
+    "data = yaml.safe_load(text) or {}",
+    `entry = data['mcp_servers'][${JSON.stringify(SERVER_NAME)}]`,
+    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
+    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
+    `assert ${JSON.stringify(HOST_SECRET)} not in text`,
+    "PY",
+  ].join("\n");
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
+    artifactName: "hermes-mcp-config-assertions",
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [HOST_SECRET, Buffer.from(script, "utf8").toString("base64")],
+    timeoutMs: 60_000,
+  });
   expectExitZero(result, "Hermes MCP config contains placeholder and no raw host secret");
 }
 
@@ -413,31 +406,63 @@ async function assertDeepAgentsConfig(
   sandboxName: string,
   mcpUrl: string,
 ): Promise<void> {
-  const result = await sandbox.execShell(
-    sandboxName,
-    trustedSandboxShellScript(
-      [
-        "set -eu",
-        "python3 - <<'PY'",
-        "import json, pathlib",
-        "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
-        "text = path.read_text(encoding='utf-8')",
-        "data = json.loads(text)",
-        `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
-        "assert entry['type'] == 'http'",
-        `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
-        "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
-        `assert ${JSON.stringify(HOST_SECRET)} not in text`,
-        "PY",
-      ].join("\n"),
-    ),
-    {
-      artifactName: "deepagents-mcp-config-assertions",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
-  );
+  const script = [
+    "set -eu",
+    "python3 - <<'PY'",
+    "import json, pathlib",
+    "path = pathlib.Path('/sandbox/.deepagents/.mcp.json')",
+    "text = path.read_text(encoding='utf-8')",
+    "data = json.loads(text)",
+    `entry = data['mcpServers'][${JSON.stringify(SERVER_NAME)}]`,
+    "assert entry['type'] == 'http'",
+    `assert entry['url'] == ${JSON.stringify(mcpUrl)}`,
+    "assert entry['headers']['Authorization'] == 'Bearer openshell:resolve:env:FAKE_MCP_SECRET'",
+    `assert ${JSON.stringify(HOST_SECRET)} not in text`,
+    "PY",
+  ].join("\n");
+  const result = await sandbox.execShell(sandboxName, trustedSandboxShellScript(script), {
+    artifactName: "deepagents-mcp-config-assertions",
+    env: buildAvailabilityProbeEnv(),
+    redactionValues: [HOST_SECRET, Buffer.from(script, "utf8").toString("base64")],
+    timeoutMs: 60_000,
+  });
   expectExitZero(result, "Deep Agents MCP config contains placeholder and no raw host secret");
+}
+
+async function assertAuthenticatedMcpDiscovery(
+  fakeMcp: Awaited<ReturnType<typeof startFakeMcpHttpsServer>>,
+  options: {
+    requestOffset: number;
+    expectedSecret: string;
+    label: string;
+  },
+): Promise<void> {
+  await expect
+    .poll(
+      () => {
+        const requests = fakeMcp.requests.slice(options.requestOffset);
+        const observed = (rpcMethod: "initialize" | "tools/list") =>
+          requests.some(
+            (request) =>
+              request.method === "POST" &&
+              request.path === "/mcp" &&
+              request.rpcMethod === rpcMethod &&
+              request.auth === `Bearer ${options.expectedSecret}`,
+          );
+        return {
+          initialized: observed("initialize"),
+          toolsListed: observed("tools/list"),
+          requests: requests.map((request) => ({
+            method: request.method,
+            path: request.path,
+            rpcMethod: request.rpcMethod,
+            credentialRewritten: request.auth === `Bearer ${options.expectedSecret}`,
+          })),
+        };
+      },
+      { interval: 500, timeout: 90_000, message: options.label },
+    )
+    .toMatchObject({ initialized: true, toolsListed: true });
 }
 
 async function assertRealAdapterToolCall(
@@ -826,9 +851,17 @@ req.end(body);
     OPENCLAW_SANDBOX_NAME,
     ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
     [HOST_SECRET, ROTATED_HOST_SECRET],
+    "openclaw-assert-secrets-absent-after-rotation",
   );
   await rebuildWithoutMcpHostSecret(host, OPENCLAW_SANDBOX_NAME, "openclaw");
   await installMcpTestCaInSandbox(host, sandbox, OPENCLAW_SANDBOX_NAME, "openclaw-rebuild");
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    OPENCLAW_SANDBOX_NAME,
+    ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
+    [HOST_SECRET, ROTATED_HOST_SECRET],
+    "openclaw-assert-secrets-absent-after-rebuild",
+  );
   await assertRealAdapterToolCall(sandbox, fakeMcp, {
     agent: "openclaw",
     sandboxName: OPENCLAW_SANDBOX_NAME,
@@ -872,6 +905,7 @@ liveAgentMatrixTest(
       toolChallenge: TOOL_CHALLENGE,
       toolResultToken: hermesResult,
       toolNames: ["mcp_fake_fake_echo"],
+      deferredToolName: "mcp_fake_fake_echo",
     });
     cleanup.add("stop Hermes MCP bridge compatible endpoint mock", () => compatibleMock.close());
     const fakeMcp = await startFakeMcpHttpsServer({
@@ -895,11 +929,17 @@ liveAgentMatrixTest(
       bestEffortRemoveBridge(host, HERMES_SANDBOX_NAME),
     );
 
+    const initialDiscoveryOffset = fakeMcp.requests.length;
     const providerName = await addBridgeAndReadStatus(host, {
       sandboxName: HERMES_SANDBOX_NAME,
       mcpUrl,
       expectedAdapter: "hermes-config",
       artifactPrefix: "hermes",
+    });
+    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+      requestOffset: initialDiscoveryOffset,
+      expectedSecret: HOST_SECRET,
+      label: "Hermes initial MCP discovery",
     });
     await assertBridgeInfrastructure(host, sandbox, {
       sandboxName: HERMES_SANDBOX_NAME,
@@ -921,16 +961,46 @@ liveAgentMatrixTest(
       resultToken: hermesResult,
       artifactName: "hermes-real-mcp-tool-call-after-restart",
     });
+    fakeMcp.setSecret(ROTATED_HOST_SECRET);
+    await rotateBridgeCredential(host, HERMES_SANDBOX_NAME, "hermes");
+    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+      agent: "hermes",
+      sandboxName: HERMES_SANDBOX_NAME,
+      resultToken: hermesResult,
+      artifactName: "hermes-real-mcp-tool-call-after-credential-rotation",
+      expectedSecret: ROTATED_HOST_SECRET,
+    });
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      ["/sandbox/.hermes"],
+      [HOST_SECRET, ROTATED_HOST_SECRET],
+      "hermes-assert-secrets-absent-after-rotation",
+    );
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
+    const rebuildDiscoveryOffset = fakeMcp.requests.length;
     await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes-rebuild", {
       recoverAgentRuntime: true,
     });
+    await assertAuthenticatedMcpDiscovery(fakeMcp, {
+      requestOffset: rebuildDiscoveryOffset,
+      expectedSecret: ROTATED_HOST_SECRET,
+      label: "Hermes post-rebuild MCP discovery",
+    });
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      HERMES_SANDBOX_NAME,
+      ["/sandbox/.hermes"],
+      [HOST_SECRET, ROTATED_HOST_SECRET],
+      "hermes-assert-secrets-absent-after-rebuild",
+    );
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
       resultToken: hermesResult,
       artifactName: "hermes-real-mcp-tool-call-after-rebuild",
+      expectedSecret: ROTATED_HOST_SECRET,
     });
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "hermes",
@@ -1008,14 +1078,38 @@ liveAgentMatrixTest(
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-after-restart",
     });
+    fakeMcp.setSecret(ROTATED_HOST_SECRET);
+    await rotateBridgeCredential(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
+    await assertRealAdapterToolCall(sandbox, fakeMcp, {
+      agent: "langchain-deepagents-code",
+      sandboxName: DEEPAGENTS_SANDBOX_NAME,
+      resultToken: deepAgentsResult,
+      artifactName: "deepagents-real-mcp-tool-call-after-credential-rotation",
+      expectedSecret: ROTATED_HOST_SECRET,
+    });
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      DEEPAGENTS_SANDBOX_NAME,
+      ["/sandbox/.deepagents"],
+      [HOST_SECRET, ROTATED_HOST_SECRET],
+      "deepagents-assert-secrets-absent-after-rotation",
+    );
     await rebuildWithoutMcpHostSecret(host, DEEPAGENTS_SANDBOX_NAME, "deepagents");
     await installMcpTestCaInSandbox(host, sandbox, DEEPAGENTS_SANDBOX_NAME, "deepagents-rebuild");
     await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
+    await assertSecretAbsentFromSandbox(
+      sandbox,
+      DEEPAGENTS_SANDBOX_NAME,
+      ["/sandbox/.deepagents"],
+      [HOST_SECRET, ROTATED_HOST_SECRET],
+      "deepagents-assert-secrets-absent-after-rebuild",
+    );
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,
       resultToken: deepAgentsResult,
       artifactName: "deepagents-real-mcp-tool-call-after-rebuild",
+      expectedSecret: ROTATED_HOST_SECRET,
     });
     await removeBridgeAndAssertEmpty(host, sandbox, {
       agent: "langchain-deepagents-code",

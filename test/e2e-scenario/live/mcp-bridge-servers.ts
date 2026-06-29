@@ -80,6 +80,7 @@ export async function startCompatibleMock(options: {
   toolChallenge?: string;
   toolResultToken?: string;
   toolNames?: string[];
+  deferredToolName?: string;
 }): Promise<StartedHttpServer> {
   const server = http.createServer(async (req, res) => {
     const requestPath = new URL(req.url ?? "/", "http://compatible.mock").pathname;
@@ -106,12 +107,25 @@ export async function startCompatibleMock(options: {
         messages?: Array<{ role?: string; content?: unknown }>;
         tools?: Array<{ function?: { name?: string } }>;
       };
-      const toolName = body.tools
+      const directToolName = body.tools
         ?.map((tool) => tool.function?.name)
         .find(
           (name): name is string =>
             typeof name === "string" && (options.toolNames ?? []).includes(name),
         );
+      const deferredToolWrapper =
+        !directToolName &&
+        options.deferredToolName &&
+        body.tools?.some((tool) => tool.function?.name === "tool_call")
+          ? "tool_call"
+          : undefined;
+      const toolName = directToolName ?? deferredToolWrapper;
+      const toolArguments = directToolName
+        ? { challenge: options.toolChallenge }
+        : {
+            name: options.deferredToolName,
+            arguments: { challenge: options.toolChallenge },
+          };
       const sawAuthenticatedToolResult = (body.messages ?? []).some(
         (message) =>
           message.role === "tool" &&
@@ -133,9 +147,7 @@ export async function startCompatibleMock(options: {
                   type: "function",
                   function: {
                     name: toolName,
-                    arguments: JSON.stringify({
-                      challenge: options.toolChallenge,
-                    }),
+                    arguments: JSON.stringify(toolArguments),
                   },
                 },
               ],
