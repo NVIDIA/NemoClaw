@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -302,7 +303,11 @@ describe("E2E fixture clients", () => {
         "--",
         "sh",
         "-lc",
-        `eval "$(printf '%s' '${encodedScript}' | base64 -d)"`,
+        [
+          "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+          `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
+          `eval "$_NEMOCLAW_E2E_SCRIPT"`,
+        ].join("; "),
       ],
       options: {
         artifactName: "custom-exec-shell",
@@ -322,6 +327,22 @@ describe("E2E fixture clients", () => {
     expect(payload).not.toMatch(/[\r\n]/);
     const encodedScript = payload.match(/'([A-Za-z0-9+/=]+)'/)?.[1] ?? "";
     expect(Buffer.from(encodedScript, "base64").toString("utf8")).toBe(script);
+  });
+
+  it("sandbox client fails closed when the sandbox has no base64 decoder", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+
+    await sandbox.execShell("assistant", trustedSandboxShellScript("echo should-not-run"));
+
+    const payload = runner.calls[0]?.args.at(-1) ?? "";
+    const result = spawnSync("/bin/sh", ["-c", payload], {
+      encoding: "utf8",
+      env: { PATH: "" },
+    });
+    expect(result.status).toBe(127);
+    expect(result.stderr).toContain("NEMOCLAW_BASE64_MISSING");
+    expect(result.stdout).not.toContain("should-not-run");
   });
 
   it("sandbox client requires trusted non-empty shell scripts", () => {

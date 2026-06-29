@@ -106,7 +106,11 @@ export class SandboxClient {
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
     const encodedScript = Buffer.from(script, "utf8").toString("base64");
-    const singleLineScript = `eval "$(printf '%s' '${encodedScript}' | base64 -d)"`;
+    const singleLineScript = [
+      "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
+      `_NEMOCLAW_E2E_SCRIPT="$(printf '%s' '${encodedScript}' | base64 -d)" || exit $?`,
+      `eval "$_NEMOCLAW_E2E_SCRIPT"`,
+    ].join("; ");
     return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", singleLineScript], {
       artifactName: `sandbox-exec-shell-${name}`,
       ...options,
