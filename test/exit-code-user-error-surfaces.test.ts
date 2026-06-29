@@ -106,7 +106,12 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
     fs.rmSync(home, { recursive: true, force: true });
   });
 
-  function runCli(args: string[]): { code: number; combined: string } {
+  function runCli(args: string[]): {
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    error: Error | undefined;
+    combined: string;
+  } {
     const result = spawnSync(process.execPath, [CLI, ...args], {
       encoding: "utf-8",
       timeout: 30_000,
@@ -119,7 +124,9 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       },
     });
     return {
-      code: result.status ?? -1,
+      status: result.status,
+      signal: result.signal,
+      error: result.error,
       combined: `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
     };
   }
@@ -127,7 +134,10 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
   // Each row is [label, argv, expectedSubstring]. The substring is a stable
   // fragment of the branch-specific error text, so a row that regresses to a
   // different boundary (e.g. sandbox resolution) fails the substring check as
-  // well as the exit-code invariant. The hard invariant is the non-zero exit.
+  // well as the exit-code invariant. The hard invariant is a real positive
+  // exit code from a clean process exit — see the assertions below, which
+  // reject spawn failures and signal/timeout terminations so a killed process
+  // (status === null) can never satisfy the "non-zero exit" claim.
   const cases: ReadonlyArray<[string, string[], string]> = [
     // Missing required arg — oclif parse error, exits before any gateway probe.
     ["credentials reset without a provider", ["credentials", "reset"], "required arg"],
@@ -156,10 +166,15 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
 
   for (const [label, argv, expected] of cases) {
     it(`${label} prints an error and exits non-zero`, testTimeoutOptions(30_000), () => {
-      const { code, combined } = runCli(argv);
+      const { status, signal, error, combined } = runCli(argv);
+      // The process must have launched and exited on its own — not failed to
+      // spawn and not been killed by a signal/timeout (which leaves
+      // status === null and would otherwise masquerade as a "non-zero exit").
+      expect(error).toBeUndefined();
+      expect(signal).toBeNull();
       expect(combined.trim().length).toBeGreaterThan(0);
       expect(combined).toContain(expected);
-      expect(code).not.toBe(0);
+      expect(status).toBeGreaterThan(0);
     });
   }
 });
