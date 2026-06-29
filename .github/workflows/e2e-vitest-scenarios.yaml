@@ -3332,6 +3332,82 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  security-posture-vitest:
+    permissions:
+      contents: read
+    needs: generate-matrix
+    if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',security-posture-vitest,') || contains(format(',{0},', inputs.scenarios), ',security-posture,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - agent: openclaw
+            sandbox_name: e2e-openclaw-security-posture
+            test_file: test/e2e-scenario/live/full-e2e.test.ts
+          - agent: hermes
+            sandbox_name: e2e-hermes-security-posture
+            test_file: test/e2e-scenario/live/hermes-e2e.test.ts
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "security-posture"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/security-posture-${{ matrix.agent }}
+      NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+      NEMOCLAW_AGENT: ${{ matrix.agent }}
+      # Legacy-parity contract: enforce a non-root host user. PID 1 must stay
+      # root long enough to step down child processes, so its uid, bounding
+      # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
+      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
+      NEMOCLAW_E2E_SECURITY_POSTURE: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: "60"
+      NEMOCLAW_RECREATE_SANDBOX: "1"
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
+      OPENSHELL_GATEWAY: nemoclaw
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Run security posture live Vitest test
+        env:
+          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          npx vitest run --project e2e-scenarios-live \
+            "${{ matrix.test_file }}" \
+            --silent=false --reporter=default
+
+      - name: Upload security posture artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-security-posture-${{ matrix.agent }}
+          path: e2e-artifacts/vitest/security-posture-${{ matrix.agent }}/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
   cloud-onboard-vitest:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',cloud-onboard-vitest,') || contains(format(',{0},', inputs.scenarios), ',cloud-onboard,') }}
@@ -5947,6 +6023,7 @@ jobs:
         jetson-nvmap-gpu-vitest,
         concurrent-gateway-ports-vitest,
         full-e2e-vitest,
+        security-posture-vitest,
         cloud-onboard-vitest,
         gpu-double-onboard-vitest,
         onboard-repair-vitest,
