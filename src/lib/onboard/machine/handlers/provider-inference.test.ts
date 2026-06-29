@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { clearCompatibleEndpointReasoning } from "../../reasoning-mode";
 import {
   handleProviderInferenceState,
   type ProviderInferenceStateOptions,
@@ -212,6 +213,38 @@ describe("handleProviderInferenceState", () => {
       compatibleEndpointReasoning: "true",
       provider: "compatible-endpoint",
     });
+  });
+
+  it("clears stale reasoning before resumed non-compatible inference setup", async () => {
+    vi.stubEnv("NEMOCLAW_REASONING", "true");
+    const session = createSession({
+      provider: "nvidia-prod",
+      model: "nvidia/test",
+      compatibleEndpointReasoning: "true",
+    });
+    session.steps.provider_selection.status = "complete";
+    const setupInference = vi.fn(async () => {
+      expect(process.env.NEMOCLAW_REASONING).toBeUndefined();
+      return { ok: true as const };
+    });
+    const { deps } = createDeps({
+      clearCompatibleEndpointReasoning,
+      setupInference,
+      isInferenceRouteReady: vi.fn(() => false),
+    });
+
+    try {
+      const result = await handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      });
+
+      expect(setupInference).toHaveBeenCalledOnce();
+      expect(result.compatibleEndpointReasoning).toBeNull();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("disables recorded provider recovery during fresh provider selection", async () => {

@@ -114,7 +114,9 @@ describe("createRemoteModelValidator", () => {
     assert.equal(state.preferredInferenceApi, "openai-completions");
     assert.equal(state.compatibleEndpointReasoning, "true");
     assert.equal(configuredReasoning, true);
-    assert.deepEqual(logLines, ["  Reasoning mode enabled for this compatible endpoint model."]);
+    assert.deepEqual(logLines, [
+      "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+    ]);
   });
 
   it("maps provider validation model retries without mutating selected model state", async () => {

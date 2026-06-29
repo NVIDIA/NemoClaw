@@ -239,6 +239,11 @@ Route, configuration, and authentication failures still fail immediately.
 Set the following environment variables for scripted or CI/CD deployments.
 Set `NEMOCLAW_REASONING=true` when the compatible endpoint serves a reasoning-only model.
 
+<Warning>
+  Reasoning mode validates only `/v1/chat/completions`; it does not verify tool calling or
+  streaming. Enable it only when the endpoint supports the capabilities your agent needs.
+</Warning>
+
 ```bash
 NEMOCLAW_PROVIDER=custom \
   NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \

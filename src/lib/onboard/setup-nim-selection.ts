@@ -159,7 +159,9 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
           state.compatibleEndpointReasoning = reasoning;
         }
         if (reasoning === "true") {
-          (deps.log ?? console.log)("  Reasoning mode enabled for this compatible endpoint model.");
+          (deps.log ?? console.log)(
+            "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+          );
         }
         const validation = await deps.validateCustomOpenAiLikeSelection(
           remoteConfig.label,

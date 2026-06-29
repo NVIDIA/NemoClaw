@@ -107,6 +107,7 @@ const { setupNim } = require(${onboardPath});
   assert.equal(payload.result.model, "reasoning-model");
   assert.equal(payload.result.preferredInferenceApi, "openai-completions");
   assert.equal(payload.reasoning, "true");
+  assert.ok(payload.lines.some((line: string) => line.includes("tools and streaming")));
   const curlInvocations = fs.readFileSync(curlArgsLog, "utf-8");
   assert.match(curlInvocations, /chat\/completions/);
   assert.doesNotMatch(curlInvocations, /\/responses/);
