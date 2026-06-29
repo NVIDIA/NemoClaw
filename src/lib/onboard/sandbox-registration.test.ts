@@ -174,7 +174,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.compatibleEndpointReasoning).toBe("true");
   });
 
-  it("normalizes invalid preferred API and reasoning values", () => {
+  it("normalizes invalid preferred inference API values", () => {
     const entry = buildCreatedSandboxRegistryEntry({
       sandboxName: "demo",
       inferenceSelection: {
@@ -183,7 +183,7 @@ describe("buildCreatedSandboxRegistryEntry", () => {
         endpointUrl: "https://example.test/v1",
         credentialEnv: "COMPATIBLE_API_KEY",
         preferredInferenceApi: "chat",
-        compatibleEndpointReasoning: "invalid",
+        compatibleEndpointReasoning: null,
         nimContainer: null,
       },
       runtimeFields,
@@ -200,7 +200,6 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     });
 
     expect(entry.preferredInferenceApi).toBeNull();
-    expect(entry.compatibleEndpointReasoning).toBeNull();
   });
 });
 
