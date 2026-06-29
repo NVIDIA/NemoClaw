@@ -3,6 +3,7 @@
 
 import fs from "node:fs";
 import http, { type Server } from "node:http";
+import { createRequire } from "node:module";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +26,7 @@ import { isTransientProviderValidationFailure } from "./network-policy-transient
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = path.join(REPO_ROOT, "bin", "nemoclaw.js");
+const requireCompiled = createRequire(import.meta.url);
 export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-hermes-inference-switch";
 validateSandboxName(SANDBOX_NAME);
 const USE_COMPATIBLE_HOSTED = process.env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE === "1";
@@ -42,19 +44,59 @@ const INSTALL_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS
 
 interface MockAnthropicProvider {
   endpointUrl: string;
+  port: number;
   close(): Promise<void>;
+}
+
+interface AppliedMockFirewallRule {
+  gatewayIp: string;
+  port: number;
+  subnet: string;
 }
 
 export function mockAnthropicEndpointUrl(
   port: number,
   runtimeEnv: NodeJS.ProcessEnv = process.env,
 ): string {
-  // OpenShell's current gateway runs either directly on the host or in a
-  // --network host compatibility container. Advertising loopback avoids the
-  // host-bridge/UFW path while the sandbox still reaches the mock exclusively
-  // through inference.local.
-  const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "127.0.0.1";
+  const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
   return `http://${host}:${port}`;
+}
+
+async function prepareMockAnthropicReachability(
+  port: number,
+): Promise<AppliedMockFirewallRule | null> {
+  const { formatHostServiceUnreachableMessage, probeHostServiceSandboxReachability } =
+    requireCompiled(
+      path.join(REPO_ROOT, "dist/lib/onboard/host-service-reachability.js"),
+    ) as typeof import("../../../src/lib/onboard/host-service-reachability.ts");
+  const { tryAutoApplyUfwRule } = requireCompiled(
+    path.join(REPO_ROOT, "dist/lib/onboard/ufw-auto-apply.js"),
+  ) as typeof import("../../../src/lib/onboard/ufw-auto-apply.ts");
+  const initial = await probeHostServiceSandboxReachability({ port });
+  if (initial.ok || initial.reason === "probe_unavailable") return null;
+
+  const repair = tryAutoApplyUfwRule(initial, {
+    // GitHub-hosted runners are disposable and this rule is limited to the
+    // discovered Docker bridge CIDR, gateway IP, and ephemeral mock port.
+    optedIn: process.env.GITHUB_ACTIONS === "true" ? true : undefined,
+    port,
+  });
+  if (repair.applied && initial.subnet && initial.gatewayIp) {
+    const verified = await probeHostServiceSandboxReachability({ port });
+    if (verified.ok) {
+      return { gatewayIp: initial.gatewayIp, port, subnet: initial.subnet };
+    }
+  }
+
+  const guidance = formatHostServiceUnreachableMessage(initial, {
+    serviceLabel: "Hermes inference-switch mock",
+    port,
+  });
+  throw new Error(
+    [guidance, `Automatic narrow firewall repair: ${repair.reason}`, repair.detail]
+      .filter(Boolean)
+      .join("\n"),
+  );
 }
 
 export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
@@ -125,6 +167,30 @@ export function chatContent(raw: string): string {
       .find((value): value is string => typeof value === "string" && value.trim().length > 0)
       ?.trim() ?? ""
   );
+}
+
+export async function runHermesPongWithRetry(options: {
+  attempts?: number;
+  delay?: (milliseconds: number) => Promise<void>;
+  run: (attempt: number) => Promise<ShellProbeResult>;
+}): Promise<ShellProbeResult> {
+  const attempts = options.attempts ?? 3;
+  const delay =
+    options.delay ??
+    ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let last: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await options.run(attempt);
+    let pong = false;
+    if (last.exitCode === 0) {
+      try {
+        pong = /PONG/iu.test(chatContent(last.stdout));
+      } catch {}
+    }
+    if (pong || attempt === attempts) return last;
+    await delay(5_000);
+  }
+  throw new Error("Hermes live probe retry loop completed without running an attempt.");
 }
 
 export async function cleanupHermesSwitch(
@@ -256,6 +322,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
   }
   return {
     endpointUrl: mockAnthropicEndpointUrl((address as AddressInfo).port),
+    port: (address as AddressInfo).port,
     close: () => closeServer(server),
   };
 }
@@ -268,6 +335,32 @@ export async function ensureCompatibleAnthropicSwitchProvider(
     return null;
   const mock = SWITCH_MOCK_ANTHROPIC === "1" ? await startMockAnthropicProvider() : undefined;
   mock && cleanup.add("close compatible Anthropic switch mock", () => mock.close());
+  const firewallRule = mock ? await prepareMockAnthropicReachability(mock.port) : null;
+  firewallRule &&
+    cleanup.add("remove compatible Anthropic switch mock firewall rule", async () => {
+      const removed = await host.command(
+        "sudo",
+        [
+          "-n",
+          "ufw",
+          "--force",
+          "delete",
+          "allow",
+          "from",
+          firewallRule.subnet,
+          "to",
+          firewallRule.gatewayIp,
+          "port",
+          String(firewallRule.port),
+          "proto",
+          "tcp",
+        ],
+        { artifactName: "cleanup-anthropic-switch-mock-firewall", timeoutMs: 30_000 },
+      );
+      if (removed.exitCode !== 0) {
+        throw new Error(`Could not remove mock firewall rule: ${removed.stderr}`);
+      }
+    });
   const endpointUrl = process.env.NEMOCLAW_SWITCH_ENDPOINT_URL ?? mock?.endpointUrl ?? "";
   const compatibleKey = process.env.COMPATIBLE_ANTHROPIC_API_KEY ?? "test-compatible-anthropic-key";
   expect(
@@ -398,6 +491,10 @@ export function expectedBaseUrl(): string {
   return SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
+}
+
+export function inferenceLocalMaxTokens(api: string = SWITCH_API): number {
+  return api === "anthropic-messages" ? 32 : 100;
 }
 
 export function expectedApiMode(): string | undefined {

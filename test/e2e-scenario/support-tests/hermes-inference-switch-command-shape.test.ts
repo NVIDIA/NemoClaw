@@ -8,15 +8,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
   cleanupHermesSwitch,
   hostedInstallModel,
+  inferenceLocalMaxTokens,
   installHermes,
   mockAnthropicEndpointUrl,
   openshellGatewayName,
   runHermesInferenceSetWithRetry,
+  runHermesPongWithRetry,
   SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
 
@@ -67,13 +70,32 @@ describe("Hermes inference switch command shape", () => {
     ).toBe("initial-hosted-model");
   });
 
-  it("advertises the host-network mock over loopback by default", () => {
-    expect(mockAnthropicEndpointUrl(18_766, {})).toBe("http://127.0.0.1:18766");
+  it("advertises the mock through the OpenShell host alias", () => {
+    expect(mockAnthropicEndpointUrl(18_766, {})).toBe("http://host.openshell.internal:18766");
     expect(
       mockAnthropicEndpointUrl(18_766, {
         NEMOCLAW_SWITCH_MOCK_HOST: "host.openshell.internal",
       }),
     ).toBe("http://host.openshell.internal:18766");
+  });
+
+  it("retries live PONG probes before returning the final result", async () => {
+    const probeResult = (stdout: string): ShellProbeResult =>
+      ({ exitCode: 0, stdout, stderr: "" }) as ShellProbeResult;
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(probeResult('{"error":"no compatible inference route available"}'))
+      .mockResolvedValueOnce(probeResult('{"content":[{"type":"text","text":"PONG"}]}'));
+    const delay = vi.fn().mockResolvedValue(undefined);
+
+    await expect(runHermesPongWithRetry({ delay, run })).resolves.toMatchObject({ exitCode: 0 });
+    expect(run.mock.calls).toEqual([[1], [2]]);
+    expect(delay).toHaveBeenCalledWith(5_000);
+  });
+
+  it("keeps the Anthropic direct probe within the frozen E2E token budget", () => {
+    expect(inferenceLocalMaxTokens("anthropic-messages")).toBe(32);
+    expect(inferenceLocalMaxTokens("openai-completions")).toBe(100);
   });
 
   it("discards failed onboarding state before an install attempt", async () => {
