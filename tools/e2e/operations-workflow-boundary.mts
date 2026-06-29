@@ -24,17 +24,19 @@ type WorkflowStep = {
   with?: Record<string, unknown>;
 };
 
+type WorkflowPermissions = Record<string, unknown> | string;
+
 type WorkflowJob = {
   env?: Record<string, unknown>;
   if?: string;
   needs?: unknown;
-  permissions?: Record<string, unknown>;
+  permissions?: WorkflowPermissions;
   steps?: WorkflowStep[];
 };
 
 export type OperationsWorkflow = {
   jobs: Record<string, WorkflowJob>;
-  permissions?: Record<string, unknown>;
+  permissions?: WorkflowPermissions;
   on?: {
     workflow_dispatch?: {
       inputs?: Record<string, Record<string, unknown>>;
@@ -60,6 +62,10 @@ function sorted(values: Iterable<string>): string[] {
 
 function sameMembers(left: readonly string[], right: readonly string[]): boolean {
   return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+}
+
+function permissionMap(permissions: WorkflowPermissions | undefined): Record<string, unknown> {
+  return permissions !== null && typeof permissions === "object" ? permissions : {};
 }
 
 function findStep(job: WorkflowJob, name: string): WorkflowStep {
@@ -104,7 +110,8 @@ function validateNotify(errors: string[], workflow: OperationsWorkflow): void {
   ) {
     errors.push("notify-on-failure must run only for failed or cancelled scheduled runs");
   }
-  if (job.permissions?.issues !== "write" || Object.keys(job.permissions ?? {}).length !== 1) {
+  const permissions = permissionMap(job.permissions);
+  if (permissions.issues !== "write" || Object.keys(permissions).length !== 1) {
     errors.push("notify-on-failure must hold only issues: write");
   }
   const notify = findStep(job, "Create or update scheduled E2E failure issue");
@@ -130,6 +137,7 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   }
 
   const job = workflow.jobs.scorecard ?? {};
+  const permissions = permissionMap(job.permissions);
   if (
     job.if !==
     "${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}"
@@ -137,9 +145,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     errors.push("scorecard must run after scheduled and manual E2E executions");
   }
   if (
-    job.permissions?.actions !== "read" ||
-    job.permissions?.contents !== "read" ||
-    Object.keys(job.permissions ?? {}).length !== 2
+    permissions.actions !== "read" ||
+    permissions.contents !== "read" ||
+    Object.keys(permissions).length !== 2
   ) {
     errors.push("scorecard permissions must be actions: read and contents: read");
   }
@@ -290,7 +298,12 @@ function validateAdvisorRetirement(errors: string[], advisorPath: string): void 
     advisor.permissions,
     ...Object.values(advisor.jobs ?? {}).map((job) => job.permissions),
   ];
-  if (permissionBlocks.some((permissions) => permissions?.actions === "write")) {
+  if (
+    permissionBlocks.some(
+      (permissions) =>
+        permissions === "write-all" || permissionMap(permissions).actions === "write",
+    )
+  ) {
     errors.push("E2E advisor must not hold actions: write");
   }
   if (/createWorkflowDispatch|workflow_dispatches/u.test(source)) {

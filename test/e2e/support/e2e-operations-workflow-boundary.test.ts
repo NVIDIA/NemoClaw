@@ -159,9 +159,14 @@ describe("E2E operations workflow boundary", () => {
     const directory = mkdtempSync(join(tmpdir(), "nemoclaw-e2e-operations-"));
     const advisorPath = join(directory, "advisor.yaml");
     try {
+      writeFileSync(advisorPath, "permissions: write-all\njobs:\n  advisor:\n    steps: []\n");
+      expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toContain(
+        "E2E advisor must not hold actions: write",
+      );
+
       writeFileSync(
         advisorPath,
-        'permissions:\n  actions: "write"\njobs:\n  advisor:\n    steps:\n      - run: createWorkflowDispatch()\n',
+        'permissions: read-all\njobs:\n  advisor:\n    permissions:\n      actions: "write"\n    steps:\n      - run: createWorkflowDispatch()\n',
       );
       expect(validateE2eOperationsWorkflow(workflow, advisorPath)).toEqual(
         expect.arrayContaining([
