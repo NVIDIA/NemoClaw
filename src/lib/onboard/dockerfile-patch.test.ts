@@ -14,6 +14,7 @@ import {
   isValidProxyPort,
   patchStagedDockerfile,
 } from "./dockerfile-patch";
+import { clearCompatibleEndpointReasoning } from "./reasoning-mode";
 
 const tmpRoots: string[] = [];
 
@@ -77,6 +78,7 @@ afterEach(() => {
   delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
   delete process.env.NEMOCLAW_PROXY_HOST;
   delete process.env.NEMOCLAW_PROXY_PORT;
+  delete process.env.NEMOCLAW_REASONING;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_ENDPOINT;
   delete process.env.NEMOCLAW_OPENCLAW_OTEL_SERVICE_NAME;
@@ -84,6 +86,22 @@ afterEach(() => {
 });
 
 describe("dockerfile patch helpers", () => {
+  it("does not bake stale reasoning state after a provider switch clears it", () => {
+    process.env.NEMOCLAW_REASONING = "true";
+    clearCompatibleEndpointReasoning();
+    const dockerfilePath = dockerfileWith("ARG NEMOCLAW_REASONING=false\n");
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "nvidia/test",
+      "https://chat.example",
+      "build-1",
+      "nvidia-prod",
+    );
+
+    expect(fs.readFileSync(dockerfilePath, "utf-8")).toContain("ARG NEMOCLAW_REASONING=false");
+  });
+
   it("encodes Docker JSON ARG values as base64 JSON", () => {
     expect(
       Buffer.from(encodeDockerJsonArg({ supportsStore: false }), "base64").toString("utf-8"),
