@@ -47,8 +47,36 @@ required_checks='["checks","commit-lint","dco-check"]'
 observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
 missing_checks=$(jq -cn --argjson required "$required_checks" --argjson observed "$observed_checks" '$required - $observed')
 missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')
-ci_failure_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select((.conclusion // .state) == "FAILURE" or (.conclusion // .state) == "CANCELLED" or (.conclusion // .state) == "TIMED_OUT" or (.state // "") == "ERROR")] | length')
-ci_pending_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING" or (.state // "") == "PENDING" or (.state // "") == "EXPECTED")] | length')
+# Keep this allowlist aligned with check-gates.ts checkCi(): every other completed
+# CheckRun conclusion or terminal StatusContext state fails closed.
+ci_failing_checks=$(printf '%s' "$raw" | jq -c '[
+  (.statusCheckRollup // [])[]
+  | if .state != null then
+      (.state | ascii_upcase) as $state
+      | select($state != "SUCCESS" and $state != "PENDING" and $state != "EXPECTED")
+      | "\(.context // .name // "(unknown)"): \($state)"
+    else
+      (.status // "" | ascii_upcase) as $status
+      | (.conclusion // "" | ascii_upcase) as $conclusion
+      | select($status == "COMPLETED")
+      | select($conclusion != "SUCCESS" and $conclusion != "NEUTRAL" and $conclusion != "SKIPPED")
+      | "\(.name // .context // "(unknown)"): \($conclusion)"
+    end
+]')
+ci_pending_checks=$(printf '%s' "$raw" | jq -c '[
+  (.statusCheckRollup // [])[]
+  | if .state != null then
+      (.state | ascii_upcase) as $state
+      | select($state == "PENDING" or $state == "EXPECTED" or $state == "")
+      | (.context // .name // "(unknown)")
+    else
+      (.status // "" | ascii_upcase) as $status
+      | select($status != "COMPLETED")
+      | (.name // .context // "(unknown)")
+    end
+]')
+ci_failure_count=$(printf '%s' "$ci_failing_checks" | jq 'length')
+ci_pending_count=$(printf '%s' "$ci_pending_checks" | jq 'length')
 gate_ci_green=$(
   [ "$ci_failure_count" = "0" ] && [ "$ci_pending_count" = "0" ] && [ "$missing_check_count" = "0" ] && echo true || echo false
 )
@@ -116,6 +144,8 @@ cat <<JSON
     "state": "$state",
     "ci_failure_count": $ci_failure_count,
     "ci_pending_count": $ci_pending_count,
+    "ci_failing_checks": $ci_failing_checks,
+    "ci_pending_checks": $ci_pending_checks,
     "ci_missing_required_checks": $missing_checks,
     "mergeable": "$mergeable",
     "merge_state_status": "$merge_state",

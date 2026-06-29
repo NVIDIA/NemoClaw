@@ -16,6 +16,7 @@ interface ComplianceFixture {
 
 interface ComparatorFixture extends ComplianceFixture {
   checkNames?: string[];
+  checkConclusions?: Record<string, string>;
 }
 
 function shellSingleQuote(value: string): string {
@@ -96,7 +97,11 @@ function runComparatorGate(fixture: ComparatorFixture) {
     body: fixture.body,
     headRefOid: "abc123",
     statusCheckRollup: (fixture.checkNames ?? ["checks", "commit-lint", "dco-check"]).map(
-      (name) => ({ name, status: "COMPLETED", conclusion: "SUCCESS" }),
+      (name) => ({
+        name,
+        status: "COMPLETED",
+        conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
+      }),
     ),
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
@@ -250,5 +255,23 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.ci_green_latest_sha).toBe(false);
     expect(output.details.ci_missing_required_checks).toEqual(["dco-check"]);
     expect(output.failures).toContain("substantive:ci_failures=0,pending=0,missing=dco-check");
+  });
+
+  it.each([
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+    "STALE",
+  ])("fails closed for a completed required check with conclusion %s", (conclusion) => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkConclusions: { checks: conclusion },
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.ci_green_latest_sha).toBe(false);
+    expect(output.details.ci_failing_checks).toEqual([`checks: ${conclusion}`]);
+    expect(output.failures).toContain("substantive:ci_failures=1,pending=0,missing=");
   });
 });
