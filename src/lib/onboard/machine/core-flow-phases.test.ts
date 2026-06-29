@@ -11,7 +11,7 @@ import {
 } from "./core-flow-phases";
 import type { OnboardFlowContext } from "./flow-context";
 import type { OnboardStateResult } from "./result";
-import { advanceTo } from "./result";
+import { advanceTo, branchTo } from "./result";
 import type { OnboardSequencePhase } from "./sequence-runner";
 
 type Agent = { name: string };
@@ -40,6 +40,7 @@ function context(
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -91,6 +92,7 @@ function createPhases(
         hermesAuthMethod: null,
         hermesToolGateways: ["local"],
         preferredInferenceApi: "chat",
+        compatibleEndpointReasoning: null,
         nimContainer: "nim-test",
       })),
       setupInference: vi.fn(async () => ({ ok: true as const })),
@@ -107,6 +109,8 @@ function createPhases(
       recordStateSkipped: vi.fn(async () => createSession()),
       recordRepairEvent: vi.fn(async () => createSession()),
       hydrateCredentialEnv: vi.fn(),
+      configureCompatibleEndpointReasoning: vi.fn(async () => "false" as const),
+      clearCompatibleEndpointReasoning: vi.fn(() => null),
       repairLocalInferenceSystemdOverrideOrExit: vi.fn(),
       isNonInteractive: () => true,
       getOpenshellBinary: () => "openshell",
@@ -144,9 +148,7 @@ function createPhases(
       hydrateMessagingChannelConfig: (config) => config,
       messagingChannelConfigsEqual: () => true,
       getSandboxReuseState: () => "missing",
-      computeTelegramRequireMention: () => null,
       hasSandboxGpuDrift: () => false,
-      hasWechatConfigDrift: () => false,
       getSandboxHermesToolGateways: () => [],
       normalizeHermesToolGatewaySelections: (value) => (Array.isArray(value) ? value : []),
       stringSetsEqual: (left, right) =>
@@ -161,6 +163,7 @@ function createPhases(
       setupMessagingChannels: vi.fn(async () => ["slack", "discord"]),
       readMessagingPlanFromEnv: () => null,
       writePlanToEnv: vi.fn(),
+      clearPlanEnv: vi.fn(),
       getRegistrySandboxMessagingPlan: () => null,
       promptValidatedSandboxName: vi.fn(async () => "my-sandbox"),
       selectResourceProfileForSandbox: vi.fn(async () => null),
@@ -186,12 +189,12 @@ function createPhases(
 }
 
 describe("core onboard flow phases", () => {
-  it("runs provider selection and carries inference output into the flow context", async () => {
-    const [providerPhase] = createPhases();
+  it("carries provider selection output into sandbox setup", async () => {
+    const [providerPhase, sandboxPhase] = createPhases();
 
-    const result = await providerPhase.run(context());
+    const providerResult = await providerPhase.run(context());
 
-    expect(result.context).toMatchObject({
+    expect(providerResult.context).toMatchObject({
       sandboxName: "my-sandbox",
       model: "nvidia/test",
       provider: "nim",
@@ -201,12 +204,55 @@ describe("core onboard flow phases", () => {
       preferredInferenceApi: "chat",
       nimContainer: "nim-test",
     });
-    expect(Array.isArray(result.result)).toBe(true);
+    expect(Array.isArray(providerResult.result)).toBe(true);
+
+    const sandboxResult = await sandboxPhase.run(providerResult.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: null,
+      gpu: { platform: "linux" },
+      sandboxGpuConfig: { mode: "cdi" },
+      gpuPassthrough: true,
+      hermesToolGateways: ["local"],
+      preferredInferenceApi: "chat",
+      nimContainer: "nim-test",
+      selectedMessagingChannels: ["slack", "discord"],
+      webSearchSupported: true,
+    });
+  });
+
+  it("passes fresh context through to provider setup recovery policy", async () => {
+    const setupNim = vi.fn(async () => ({
+      model: "nvidia/test",
+      provider: "nim",
+      endpointUrl: "https://example.test/v1",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      hermesAuthMethod: null,
+      hermesToolGateways: [],
+      preferredInferenceApi: "chat",
+      compatibleEndpointReasoning: null,
+      nimContainer: null,
+    }));
+    const [providerPhase] = createPhases({ providerDeps: { setupNim } });
+
+    await providerPhase.run(context({ fresh: true }));
+
+    expect(setupNim).toHaveBeenCalledWith(
+      { platform: "linux" },
+      "my-sandbox",
+      { name: "openclaw" },
+      false,
+    );
   });
 
   it("uses normalized context Hermes tool gateways for provider inference resume", async () => {
     const setupInference = vi.fn(async () => ({ ok: true as const }));
-    const [providerPhase] = createPhases({
+    const [providerPhase, sandboxPhase] = createPhases({
       providerDeps: {
         ensureResumeProviderReady: vi.fn(async () => ({
           forceInferenceSetup: false,
@@ -250,30 +296,85 @@ describe("core onboard flow phases", () => {
       { allowToolsIncompatible: false },
     );
     expect(result.context.hermesToolGateways).toEqual(["nous-web"]);
+
+    const sandboxResult = await sandboxPhase.run(result.context);
+
+    expect(sandboxResult.context).toMatchObject({
+      sandboxName: "created-sandbox",
+      model: "nvidia/test",
+      provider: "hermes",
+      credentialEnv: "HERMES_API_KEY",
+      hermesToolGateways: ["nous-web"],
+      sandboxGpuConfig: { mode: "cdi" },
+    });
   });
 
-  it("runs sandbox setup only after provider state is complete", async () => {
-    const [, sandboxPhase] = createPhases();
-
-    await expect(sandboxPhase.run(context())).rejects.toThrow(
-      "Onboarding state is incomplete before sandbox setup.",
-    );
-
-    const result = await sandboxPhase.run(
-      context({
-        model: "nvidia/test",
-        provider: "nim",
-        hermesToolGateways: ["local"],
-        preferredInferenceApi: "chat",
-        nimContainer: "nim-test",
-      }),
-    );
-
-    expect(result.context).toMatchObject({
-      sandboxName: "created-sandbox",
-      selectedMessagingChannels: ["slack", "discord"],
-      webSearchSupported: true,
+  it("uses the strict runner for fresh provider selection sessions", async () => {
+    const calls: string[] = [];
+    const applied: string[] = [];
+    let runtimeSession = createSession({
+      machine: {
+        version: 1,
+        state: "provider_selection",
+        stateEnteredAt: "2026-06-09T00:00:00.000Z",
+        revision: 1,
+      },
     });
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => {
+          calls.push("provider_selection");
+          return {
+            context: ctx,
+            result: [
+              advanceTo("inference", { metadata: { state: "provider_selection" } }),
+              advanceTo("sandbox", { metadata: { state: "inference" } }),
+            ],
+          };
+        },
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => {
+          calls.push("sandbox");
+          return {
+            context: { ...ctx, sandboxName: "created-sandbox" },
+            result: branchTo("openclaw", { metadata: { state: "sandbox" } }),
+          };
+        },
+      },
+    ];
+
+    const result = await runCoreOnboardFlowSlice({
+      context: context({ model: "nvidia/test", provider: "nim" }),
+      runtime: {
+        session: async () => runtimeSession,
+        applyResult: async (stateResult) => {
+          const next = (stateResult as ReturnType<typeof advanceTo>).next;
+          applied.push(next);
+          runtimeSession = createSession({
+            machine: {
+              version: 1,
+              state: next,
+              stateEnteredAt: "2026-06-09T00:03:00.000Z",
+              revision: runtimeSession.machine.revision + 1,
+            },
+          });
+          return runtimeSession;
+        },
+      },
+      phases,
+      resume: false,
+      recordStateResult: async () => {
+        throw new Error("compatibility recorder should not run");
+      },
+    });
+
+    expect(calls).toEqual(["provider_selection", "sandbox"]);
+    expect(applied).toEqual(["inference", "sandbox", "openclaw"]);
+    expect(result.context.sandboxName).toBe("created-sandbox");
+    expect(result.session.machine.state).toBe("openclaw");
   });
 
   it("records each phase result on the resume compatibility path", async () => {
@@ -294,7 +395,15 @@ describe("core onboard flow phases", () => {
     await runCoreOnboardFlowSlice({
       context: context({ resume: true }),
       runtime: {
-        session: async () => createSession(),
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state: "provider_selection",
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 1,
+            },
+          }),
         applyResult: async () => createSession(),
       },
       phases,
@@ -305,6 +414,79 @@ describe("core onboard flow phases", () => {
     });
 
     expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it.each([
+    "policies",
+    "finalizing",
+    "post_verify",
+  ] as const)("lets resume sessions at %s pass through core compatibility", async (state) => {
+    const recorded: string[] = [];
+    const phases: readonly OnboardSequencePhase<CoreContext>[] = [
+      {
+        state: "provider_selection",
+        run: (ctx) => ({ context: ctx, result: advanceTo("sandbox") }),
+      },
+      {
+        state: "sandbox",
+        run: (ctx) => ({ context: ctx, result: advanceTo("openclaw") }),
+      },
+    ];
+
+    await runCoreOnboardFlowSlice({
+      context: context({ resume: true }),
+      runtime: {
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state,
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 7,
+            },
+          }),
+        applyResult: async () => createSession(),
+      },
+      phases,
+      resume: true,
+      recordStateResult: async (result) => {
+        recorded.push((result as ReturnType<typeof advanceTo>).next);
+      },
+    });
+
+    expect(recorded).toEqual(["sandbox", "openclaw"]);
+  });
+
+  it.each([
+    "complete",
+    "failed",
+  ] as const)("rejects terminal %s sessions before core compatibility side effects", async (state) => {
+    const phase: OnboardSequencePhase<CoreContext> = {
+      state: "provider_selection",
+      run: vi.fn((ctx) => ({ context: ctx, result: advanceTo("sandbox") })),
+    };
+
+    await expect(
+      runCoreOnboardFlowSlice({
+        context: context({ resume: true }),
+        runtime: {
+          session: async () =>
+            createSession({
+              machine: {
+                version: 1,
+                state,
+                stateEnteredAt: "2026-06-09T00:00:00.000Z",
+                revision: 7,
+              },
+            }),
+          applyResult: async () => createSession(),
+        },
+        phases: [phase],
+        resume: true,
+        recordStateResult: async () => undefined,
+      }),
+    ).rejects.toThrow("Unexpected onboarding live flow state before slice entry");
+    expect(phase.run).not.toHaveBeenCalled();
   });
 
   it("keeps non-resume ahead-state sessions on the compatibility path", async () => {

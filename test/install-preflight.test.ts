@@ -414,7 +414,7 @@ exit 98
     expect(output).not.toMatch(/deprecated compatibility wrapper/);
   });
 
-  it("--help exits 0 and shows install usage", () => {
+  it("exits 0 and shows install usage for --help", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -449,7 +449,7 @@ exit 98
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
   });
 
-  it("--version exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for --version", () => {
     const result = spawnSync("bash", [INSTALLER, "--version"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -461,7 +461,7 @@ exit 98
     expect(output).not.toMatch(/0\.1\.0/);
   });
 
-  it("-v exits 0 and prints the version number", () => {
+  it("exits 0 and prints the version number for -v", () => {
     const result = spawnSync("bash", [INSTALLER, "-v"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -785,7 +785,7 @@ exit 0
 
     fs.writeFileSync(
       path.join(tmp, ".nemoclaw", "onboard-session.json"),
-      JSON.stringify({ resumable: true, status: "in_progress" }, null, 2),
+      '{"resumable":true,"status":"in_progress","sandboxName":"box","steps":{"sandbox":{"status":"complete"}}}\n',
     );
 
     writeNodeStub(fakeBin);
@@ -982,7 +982,7 @@ fi`,
   // #2430: --fresh is the escape hatch. Even with a session file on disk
   // (failed or otherwise), the installer should skip the auto-resume check
   // and let the onboard command create a new session.
-  it("--fresh skips auto-resume regardless of session state (#2430)", () => {
+  it("skips auto-resume with --fresh regardless of session state (#2430)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-fresh-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1078,7 +1078,7 @@ fi`,
     expect(log).not.toMatch(/--resume/);
   });
 
-  it("skips onboarding when shared host preflight detects Docker is missing", () => {
+  it("fails non-interactive install when shared host preflight detects Docker is missing", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-missing-docker-"));
     const fakeBin = path.join(tmp, "bin");
     const prefix = path.join(tmp, "prefix");
@@ -1160,7 +1160,7 @@ fi`,
     });
 
     const output = `${result.stdout}${result.stderr}`;
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(1);
     expect(output).toMatch(/Host preflight found issues that will prevent onboarding right now\./);
     expect(output).toMatch(/Start Docker/);
     expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
@@ -2900,7 +2900,7 @@ describe("installer flag parsing", () => {
     expect(output).toMatch(/NemoClaw Installer/); // usage was printed
   });
 
-  it("--help shows NEMOCLAW_INSTALL_TAG in environment section", () => {
+  it("shows NEMOCLAW_INSTALL_TAG in the --help environment section", () => {
     const result = spawnSync("bash", [INSTALLER, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -3125,7 +3125,7 @@ exit 0`,
     return { result, args };
   }
 
-  it("#2670: ACCEPT_THIRD_PARTY_SOFTWARE=1 alone clears the notice in non-TTY mode", () => {
+  it("clears the notice in non-TTY mode with ACCEPT_THIRD_PARTY_SOFTWARE=1 alone (#2670)", () => {
     const { result, args } = callShowUsageNotice({
       // Simulates curl|bash mode: stdin is not a TTY, NON_INTERACTIVE is unset,
       // and only --yes-i-accept-third-party-software was passed.
@@ -3160,7 +3160,7 @@ exit 0`,
     expect(output).not.toMatch(/\/dev\/tty/);
   });
 
-  it("#3058: error message includes a working curl|bash example users can copy-paste", () => {
+  it("includes a working curl|bash example users can copy-paste in the error message (#3058)", () => {
     // The reporter on #3058 hit this error with `curl ... | bash` on a
     // non-TTY box and was left guessing how to combine the env var with
     // the documented one-liner. The fix surfaces the exact invocations
@@ -3171,207 +3171,6 @@ exit 0`,
     expect(output).toMatch(/NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash/);
     expect(output).toMatch(/bash -s -- --yes-i-accept-third-party-software/);
     expect(output).toMatch(/bash <\(curl/);
-  });
-});
-
-describe("installer express install prompt (sourced)", () => {
-  function runExpressPromptWithTty(
-    answer: string,
-    stdinMode: "pipe" | "tty",
-    platform = "DGX Spark",
-  ) {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
-    const python =
-      spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], {
-        encoding: "utf-8",
-      }).stdout.trim() || "python3";
-    const ptyRunner = `
-import os
-import pty
-import select
-import signal
-import sys
-import time
-
-installer = sys.argv[1]
-answer = sys.argv[2].encode()
-stdin_mode = sys.argv[3]
-platform = sys.argv[4]
-script = r'''
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
-NON_INTERACTIVE=""
-NEMOCLAW_PROVIDER=""
-NEMOCLAW_NO_EXPRESS=""
-maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
-'''
-env = dict(os.environ)
-env["INSTALLER_UNDER_TEST"] = installer
-env["EXPRESS_PLATFORM"] = platform
-pid, fd = pty.fork()
-if pid == 0:
-    if stdin_mode == "pipe":
-        devnull = os.open(os.devnull, os.O_RDONLY)
-        os.dup2(devnull, 0)
-        os.close(devnull)
-    os.execvpe("bash", ["bash", "-c", script], env)
-
-output = bytearray()
-os.set_blocking(fd, False)
-sent = False
-exit_code = 124
-deadline = time.time() + 10
-while True:
-    ready, _, _ = select.select([fd], [], [], 0.1)
-    if ready:
-        try:
-            chunk = os.read(fd, 4096)
-        except BlockingIOError:
-            chunk = b""
-        except OSError:
-            chunk = b""
-        if chunk:
-            output.extend(chunk)
-        if (not sent) and b"[Y/n]" in output:
-            os.write(fd, answer)
-            sent = True
-    waited = os.waitpid(pid, os.WNOHANG)
-    if waited[0] == pid:
-        exit_code = os.waitstatus_to_exitcode(waited[1])
-        break
-    if time.time() > deadline:
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        try:
-            os.waitpid(pid, 0)
-        except ChildProcessError:
-            pass
-        break
-
-try:
-    os.close(fd)
-except OSError:
-    pass
-sys.stdout.buffer.write(output)
-sys.exit(exit_code)
-`;
-    return spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform], {
-      cwd: tmp,
-      encoding: "utf-8",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-      env: {
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
-      },
-    });
-  }
-
-  it("offers express install when curl-piped stdin still has a controlling TTY", () => {
-    const result = runExpressPromptWithTty("y\n", "pipe");
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Detected DGX Spark/);
-    expect(output).toMatch(
-      /Express install will configure managed local Ollama with model qwen3\.6:35b/,
-    );
-    expect(output).toMatch(/Sandbox name: my-spark-assistant/);
-    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
-    expect(output).toMatch(/Run express install/);
-    expect(output).toMatch(/Using express install for DGX Spark/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
-    );
-  });
-
-  it("detects Windows WSL as an express install platform", () => {
-    const result = spawnSync(
-      "bash",
-      [
-        "-c",
-        `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform
-`,
-      ],
-      {
-        cwd: path.join(import.meta.dirname, ".."),
-        encoding: "utf-8",
-        env: {
-          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-detect-")),
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-          WSL_DISTRO_NAME: "Ubuntu",
-        },
-      },
-    );
-
-    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
-    expect(result.stdout).toBe("Windows WSL");
-  });
-
-  it("maps Windows WSL express install to Windows-host Ollama", () => {
-    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Detected Windows WSL/);
-    expect(output).toMatch(
-      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
-    );
-    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
-    expect(output).toMatch(/Run express install/);
-    expect(output).toMatch(/Using express install for Windows WSL/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1 SANDBOX=/,
-    );
-  });
-
-  it("skips express install without a controlling TTY", () => {
-    if (process.platform === "darwin") {
-      return;
-    }
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-no-tty-"));
-    const result = spawnSync(
-      "setsid",
-      [
-        "bash",
-        "-c",
-        `
-source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "DGX Spark"; }
-NON_INTERACTIVE=""
-NEMOCLAW_PROVIDER=""
-NEMOCLAW_NO_EXPRESS=""
-maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
-`,
-      ],
-      {
-        cwd: tmp,
-        encoding: "utf-8",
-        input: "",
-        env: {
-          HOME: tmp,
-          PATH: TEST_SYSTEM_PATH,
-          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
-        },
-      },
-    );
-    const output = `${result.stdout}${result.stderr}`;
-    expect(result.status, output).toBe(0);
-    expect(output).toMatch(/Detected DGX Spark/);
-    expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
-    expect(output).not.toMatch(/Run express install/);
-    expect(output).toMatch(
-      /RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= POLICY= YES= SANDBOX=/,
-    );
   });
 });
 
@@ -3973,7 +3772,7 @@ sys.exit(exit_code)
     return runInstallerWithTty(answer, "tty");
   }
 
-  it("#2671: headless curl|bash with no flags exits 1 BEFORE phase 1 (atomic — no Node/CLI install)", () => {
+  it("exits 1 before phase 1 for headless curl|bash with no flags and installs nothing (#2671)", () => {
     const { result, phases } = runInstaller({});
     expect(result.status).not.toBe(0);
     const output = `${result.stdout}${result.stderr}`;
@@ -4056,7 +3855,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--non-interactive alone with a controlling TTY still stops before phase 1", () => {
+  it("stops before phase 1 for --non-interactive alone with a controlling TTY", () => {
     const { result, phases, state } = runInstallerWithTty("yes\n", "pipe", {
       NEMOCLAW_NON_INTERACTIVE: "1",
     });
@@ -4072,7 +3871,7 @@ sys.exit(exit_code)
     expect(state).toBe("");
   });
 
-  it("--yes-i-accept-third-party-software alone is sufficient to clear the fail-fast gate", () => {
+  it("clears the fail-fast gate with --yes-i-accept-third-party-software alone", () => {
     // The flag implies non-interactive intent (set by main() before the
     // preflight check), so it must clear the gate AND let the install
     // progress past preflight into phase 1 — assert phases is non-empty
@@ -4084,7 +3883,7 @@ sys.exit(exit_code)
     expect(phases).not.toBe("");
   });
 
-  it("--non-interactive alone does not clear the fail-fast gate", () => {
+  it("does not clear the fail-fast gate with --non-interactive alone", () => {
     const { result, phases } = runInstaller({ NEMOCLAW_NON_INTERACTIVE: "1" });
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status).not.toBe(0);

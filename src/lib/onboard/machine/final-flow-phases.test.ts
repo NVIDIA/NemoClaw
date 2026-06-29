@@ -29,7 +29,7 @@ describe("final onboard flow phases", () => {
 
     const result = await policiesPhase.run(context({ selectedMessagingChannels: ["slack"] }));
 
-    expect(mergePolicyMessagingChannels).toHaveBeenCalledWith(["slack"], [], null, null);
+    expect(mergePolicyMessagingChannels).toHaveBeenCalledWith(["slack"], [], [], []);
     expect(result.context.selectedMessagingChannels).toEqual(["slack", "discord"]);
   });
 
@@ -56,7 +56,15 @@ describe("final onboard flow phases", () => {
     await runFinalOnboardFlowSlice({
       context: context({ resume: true }),
       runtime: {
-        session: async () => createSession(),
+        session: async () =>
+          createSession({
+            machine: {
+              version: 1,
+              state: "openclaw",
+              stateEnteredAt: "2026-06-09T00:00:00.000Z",
+              revision: 1,
+            },
+          }),
         applyResult: async () => createSession(),
       },
       phases,

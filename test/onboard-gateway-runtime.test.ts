@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
+import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../src/lib/onboard/vm-driver-process.js";
 
 const {
   areRequiredDockerDriverBinariesPresent,
@@ -19,7 +19,7 @@ const {
   parseDockerCdiSpecDirs,
   shouldAllowOpenshellAboveBlueprintMax,
   shouldRequireDockerDriverEnv,
-} = require("../dist/lib/onboard") as {
+} = require("../src/lib/onboard") as {
   areRequiredDockerDriverBinariesPresent: (
     platform?: NodeJS.Platform,
     binaries?: {
@@ -279,7 +279,7 @@ describe("onboard gateway runtime helpers", () => {
         desiredEnv,
         gatewayBin: "/home/user/.local/bin/openshell-gateway",
       })?.reason,
-    ).toContain("executable=/usr/bin/docker");
+    ).toMatch(/^executable=.* \(expected \/home\/user\/\.local\/bin\/openshell-gateway\)$/);
   });
 
   it("recognizes an existing Docker-driver gateway listener on Docker-driver platforms", () => {

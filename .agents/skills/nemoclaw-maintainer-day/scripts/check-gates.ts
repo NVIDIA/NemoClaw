@@ -4,7 +4,7 @@
 /**
  * Deterministic merge-gate checker for a single NemoClaw PR.
  *
- * Checks all 4 required gates and outputs structured JSON.
+ * Checks all 5 required gates and outputs structured JSON.
  * Claude uses the output to decide: approve, route to salvage, or report blockers.
  *
  * Usage: node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/check-gates.ts <pr-number> [--repo OWNER/REPO]
@@ -19,6 +19,15 @@ import {
   REQUIRED_CHECK_NAMES,
   type StatusCheck,
 } from "./shared.ts";
+import {
+  parsePraCommentNdjson,
+  parsePraMeta,
+  selectLatestTrustedPraComment,
+  evalPraComment,
+  validateAdvisorRun,
+  type PraRun,
+  type PrAdvisorGateResult,
+} from "./pra-gate.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,6 +59,7 @@ interface GateOutput {
     conflicts: GateResult & { mergeStateStatus?: string };
     coderabbit: GateResult & { unresolvedThreads?: CodeRabbitThread[] };
     riskyCodeTested: GateResult & { riskyFiles?: string[]; hasTests?: boolean };
+    prAdvisor: PrAdvisorGateResult;
   };
 }
 
@@ -260,7 +270,59 @@ function checkCodeRabbit(
 }
 
 // ---------------------------------------------------------------------------
-// Gate 4: Risky code has tests
+// Gate 4: PR Review Advisor not blocked
+// ---------------------------------------------------------------------------
+
+function checkPrAdvisor(repo: string, number: number, headSha: string): PrAdvisorGateResult {
+  // --jq ".[]" emits one JSON object per line (NDJSON) — deterministic across pages
+  const raw = run("gh", [
+    "api",
+    `repos/${repo}/issues/${number}/comments`,
+    "--paginate",
+    "--jq",
+    ".[]",
+  ]);
+
+  if (!raw) {
+    return { pass: false, details: "Could not fetch PR comments (API error — fail-closed)" };
+  }
+
+  const allComments = parsePraCommentNdjson(raw);
+  const latest = selectLatestTrustedPraComment(allComments);
+
+  if (!latest) {
+    return { pass: true, details: "No PR Review Advisor comment found" };
+  }
+
+  // Validate the referenced Actions run before trusting the recommendation.
+  // github-actions[bot] is a shared identity across all workflows in the repo.
+  // A different workflow posting a comment with the same marker format would
+  // pass comment_id/head_sha checks without this step.
+  const meta = parsePraMeta(latest.body ?? "");
+  if (meta) {
+    const runRaw = run("gh", ["api", `repos/${repo}/actions/runs/${meta.runId}`]);
+    if (!runRaw) {
+      return { pass: false, details: "Could not validate advisor run (API error — fail-closed)" };
+    }
+    let runData: PraRun;
+    try {
+      runData = JSON.parse(runRaw) as PraRun;
+    } catch {
+      return { pass: false, details: "Could not parse advisor run response — fail-closed" };
+    }
+    if (!validateAdvisorRun(runData, meta, latest.updated_at ?? "")) {
+      return {
+        pass: false,
+        details: "PR Review Advisor run provenance check failed — fail-closed",
+      };
+    }
+  }
+
+  return evalPraComment(latest, headSha);
+}
+
+// ---------------------------------------------------------------------------
+// Gate 5: Risky code has tests
 // ---------------------------------------------------------------------------
 
 function checkRiskyCodeTested(
@@ -310,7 +372,7 @@ function main(): void {
     "--repo",
     repo,
     "--json",
-    "number,title,url,files,statusCheckRollup,mergeStateStatus",
+    "number,title,url,files,statusCheckRollup,mergeStateStatus,headRefOid",
   ]) as {
     number: number;
     title: string;
@@ -318,6 +380,7 @@ function main(): void {
     files: Array<{ path: string; status: string }>;
     statusCheckRollup: StatusCheck[];
     mergeStateStatus: string;
+    headRefOid: string;
   } | null;
 
   if (!prData) {
@@ -329,13 +392,14 @@ function main(): void {
   const conflicts = checkConflicts(prData.mergeStateStatus);
   const coderabbit = checkCodeRabbit(repo, prNumber);
   const riskyCodeTested = checkRiskyCodeTested(prData.files ?? []);
+  const prAdvisor = checkPrAdvisor(repo, prNumber, prData.headRefOid ?? "");
 
   const output: GateOutput = {
     pr: prNumber,
     url: prData.url,
     title: prData.title,
-    allPass: ci.pass && conflicts.pass && coderabbit.pass && riskyCodeTested.pass,
-    gates: { ci, conflicts, coderabbit, riskyCodeTested },
+    allPass: ci.pass && conflicts.pass && coderabbit.pass && riskyCodeTested.pass && prAdvisor.pass,
+    gates: { ci, conflicts, coderabbit, riskyCodeTested, prAdvisor },
   };
 
   console.log(JSON.stringify(output, null, 2));

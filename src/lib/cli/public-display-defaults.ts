@@ -10,6 +10,13 @@ import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-met
 
 const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
   ...SANDBOX_AGENTS_DISPLAY_LAYOUT,
+  "agents:list": [
+    {
+      group: "Getting Started",
+      order: 1.5,
+      description: "List available agent runtimes for onboard --agent",
+    },
+  ],
   ...SANDBOX_SESSIONS_DISPLAY_LAYOUT,
   "backup-all": [
     {
@@ -80,6 +87,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       group: "Getting Started",
       order: 0,
+      description: "Configure inference endpoint and credentials (--agent to choose runtime)",
     },
     {
       group: "Getting Started",
@@ -248,6 +256,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Sandbox Management",
       order: 4.5,
       flags: "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
+    },
+  ],
+  "sandbox:agent": [
+    {
+      group: "Sandbox Management",
+      order: 4.55,
+      flags: "[openclaw-agent-flags...]",
     },
   ],
   "sandbox:upload": [
@@ -481,6 +496,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       group: "Cleanup",
       order: 43,
       description: "Run uninstall.sh (local only; no remote fallback)",
+    },
+  ],
+  use: [
+    {
+      group: "Sandbox Management",
+      order: 2.5,
+      usage: "nemoclaw use <name>",
+      flags: "[--json]",
     },
   ],
   update: [

@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { buildChain } from "../../dist/lib/dashboard/contract.js";
-import { verifyDeployment } from "../../dist/lib/verify-deployment.js";
+import { buildChain } from "./dashboard/contract.js";
+import { verifyDeployment } from "./verify-deployment.js";
 
 const NO_RETRY = { retryDelaysMs: [], sleep: async (_ms: number) => {} };
 

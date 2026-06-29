@@ -43,6 +43,7 @@ export function printAgentsParentHelp(): void {
   console.log("");
   console.log("  Subcommands:");
   console.log("    add       Add an OpenClaw agent in the sandbox.");
+  console.log("    apply     Reconcile the sandbox roster against an agents.yaml manifest.");
   console.log("    delete    Delete an OpenClaw agent in the sandbox.");
   console.log("    list      List OpenClaw agents configured in the sandbox.");
   console.log("");

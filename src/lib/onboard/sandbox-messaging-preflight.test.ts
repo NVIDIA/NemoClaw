@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
+import { listChannels } from "../sandbox/channels";
 import {
   prepareSandboxMessagingPreflight,
   type SandboxMessagingPreflightDeps,
-} from "../../../dist/lib/onboard/sandbox-messaging-preflight";
-import { listChannels } from "../../../dist/lib/sandbox/channels";
+} from "./sandbox-messaging-preflight";
 
 class ExitError extends Error {
   constructor(readonly code: number) {
@@ -38,7 +37,18 @@ function planChannel(channelId: string) {
     configured: true,
     disabled: false,
     inputs: [],
-    hooks: [],
+    hooks:
+      channelId === "slack"
+        ? [
+            {
+              channelId: "slack",
+              id: "slack-socket-mode-gateway-conflict",
+              phase: "pre-enable",
+              handler: "slack.socketModeGatewayConflict",
+              onFailure: "abort",
+            },
+          ]
+        : [],
   };
 }
 
@@ -229,7 +239,7 @@ describe("prepareSandboxMessagingPreflight", () => {
       expect.stringContaining("Slack Socket Mode is already enabled for sandbox 'other'"),
     );
     expect(deps.error).toHaveBeenCalledWith(
-      expect.stringContaining("only one sandbox per gateway can receive Slack Socket Mode events"),
+      expect.stringContaining("resolve the messaging pre-enable conflict above"),
     );
   });
 

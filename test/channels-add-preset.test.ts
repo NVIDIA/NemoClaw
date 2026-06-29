@@ -14,6 +14,8 @@ import path from "node:path";
 import { describe, it } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
+const j = (p: string) =>
+  JSON.stringify(path.join(repoRoot, "src", "lib", p.replace(/\.js$/, ".ts")));
 
 function runScript(
   scriptBody: string,
@@ -87,7 +89,6 @@ function buildPreamble({
   presetMissingNetworkPolicies?: boolean;
   presetMalformedYaml?: boolean;
 } = {}): string {
-  const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -280,7 +281,7 @@ module.exports = {
 `;
 }
 
-describe("channels add applies matching policy preset (issue #3437)", () => {
+describe("channels add applies a matching policy preset (#3437)", () => {
   it("plans channel enrollment through the messaging manifest workflow", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;
@@ -307,7 +308,7 @@ const ctx = module.exports;
         isInteractive: false,
         configuredChannels: ["slack"],
         disabledChannels: [],
-        supportedChannelIds: ["telegram", "discord", "wechat", "slack", "whatsapp"],
+        supportedChannelIds: ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"],
       },
     ]);
   });
@@ -1575,9 +1576,8 @@ const ctx = module.exports;
 // startup breadcrumb confirmation or an actionable warning. These tests
 // drive the verifier through stubbed sandbox-exec output so the contract
 // is pinned regardless of OpenClaw/OpenShell runtime availability.
-describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
+describe("channels add verifies bridge startup after rebuild (#4314, #4390)", () => {
   function buildInteractivePreamble(): string {
-    const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
     return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
@@ -1589,10 +1589,14 @@ const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
 const execCalls = [];
 processRecovery.executeSandboxExecCommand = (name, command) => {
   execCalls.push({ name, command });
-  if (typeof command === "string" && command.startsWith("cat /sandbox/.openclaw/openclaw.json")) {
+  if (typeof command === "string" && command.includes("/sandbox/.openclaw/openclaw.json")) {
     return { status: 0, stdout: JSON.stringify(global.__testConfig || {}), stderr: "" };
   }
-  if (typeof command === "string" && command.indexOf("tail -n 400 /tmp/gateway.log") !== -1) {
+  if (
+    typeof command === "string" &&
+    command.includes("tail -n 400") &&
+    command.includes("/tmp/gateway.log")
+  ) {
     return { status: 0, stdout: global.__testLog || "", stderr: "" };
   }
   return { status: 0, stdout: "", stderr: "" };
@@ -1698,9 +1702,7 @@ const ctx = module.exports;
     assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
     const payload = parseResultPayload(result);
     assert.ok(
-      payload.logs.some((line: string) =>
-        line.includes("was not marked enabled in baked openclaw.json"),
-      ),
+      payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `expected enabled-flag warning; got:\n${payload.logs.join("\n")}`,
     );
   });
@@ -1798,9 +1800,7 @@ const ctx = module.exports;
     const payload = parseResultPayload(result);
     assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
     assert.ok(
-      !payload.logs.some((line: string) =>
-        line.includes("was not marked enabled in baked openclaw.json"),
-      ),
+      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked")),
       `Hermes sandbox should not see OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
     );
     assert.ok(
@@ -1840,12 +1840,12 @@ global.__testLog = "";
 describe("channel preset source-of-truth", () => {
   it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
     const { knownChannelNames } = require(
-      path.join(repoRoot, "dist", "lib", "sandbox", "channels.js"),
+      path.join(repoRoot, "src", "lib", "sandbox", "channels.ts"),
     ) as {
       knownChannelNames: () => string[];
     };
     const { loadPreset, parsePresetPolicyKeys } = require(
-      path.join(repoRoot, "dist", "lib", "policy", "index.js"),
+      path.join(repoRoot, "src", "lib", "policy", "index.ts"),
     ) as {
       loadPreset: (name: string) => string | null;
       parsePresetPolicyKeys: (content: string | null | undefined) => string[];

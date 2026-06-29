@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { patchStagedDockerfile } from "../../../dist/lib/onboard/dockerfile-patch";
+import { patchStagedDockerfile } from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
 

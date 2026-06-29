@@ -10,7 +10,7 @@ import {
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithDiagnostics,
   runDetachedForwardStartWithPortReleaseRetries,
-} from "../../../dist/lib/onboard/forward-start";
+} from "./forward-start";
 
 // Build an `openshell forward list`-shaped output for the given live entries.
 // Mirrors the column layout (SANDBOX BIND PORT PID STATUS) that

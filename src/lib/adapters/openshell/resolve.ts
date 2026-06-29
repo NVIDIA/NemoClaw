@@ -50,8 +50,17 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
   }
 
   // Step 2: fallback candidates
+  //
+  // `/opt/homebrew/bin` is the Apple Silicon Homebrew prefix. It is frequently
+  // absent from the non-interactive/login shell that drives onboarding (Homebrew
+  // only adds it via `brew shellenv`, which many profiles source after the
+  // non-interactive guard), so `command -v openshell` above can miss a perfectly
+  // good Homebrew install. Probing the prefix directly keeps NemoClaw coherent
+  // with a Homebrew-installed OpenShell instead of reporting "openshell not
+  // found" while the binary sits in `/opt/homebrew/bin` (#5334).
   const candidates = [
     ...(home?.startsWith("/") ? [`${home}/.local/bin/openshell`] : []),
+    "/opt/homebrew/bin/openshell",
     "/usr/local/bin/openshell",
     "/usr/bin/openshell",
   ];

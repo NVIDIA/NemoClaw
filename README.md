@@ -16,6 +16,7 @@ It provides guided onboarding, a hardened blueprint, routed inference, network p
 
 - [OpenClaw](https://openclaw.ai) (default)
 - [Hermes](https://get-hermes.ai/)
+- [LangChain Deep Agents Code](https://docs.langchain.com/oss/python/deepagents/code/overview)
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
@@ -28,6 +29,7 @@ For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the
 |-------|-------|
 | OpenClaw (default) | [Quickstart with OpenClaw](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart.html) |
 | Hermes | [Quickstart with Hermes](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-hermes.html) |
+| LangChain Deep Agents Code | [Quickstart with LangChain Deep Agents Code](https://docs.nvidia.com/nemoclaw/latest/get-started/quickstart-langchain-deepagents-code.html) |
 
 ## Documentation
 

@@ -11,11 +11,11 @@
 // The fix validates all tar entry paths before extraction and audits
 // symlinks after extraction.
 
-import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 // ═══════════════════════════════════════════════════════════════════
 // Helpers — tar archive construction
@@ -115,13 +115,13 @@ function buildTar(
  * Import the actual validation/extraction functions from the source.
  */
 type SandboxStateModule = Pick<
-  typeof import("../dist/lib/state/sandbox.js"),
+  typeof import("../src/lib/state/sandbox.js"),
   "validateTarEntries" | "safeTarExtract" | "rejectHardLinks"
 >;
 
 function isSandboxStateModule(
   value: object | null,
-): value is typeof import("../dist/lib/state/sandbox.js") {
+): value is typeof import("../src/lib/state/sandbox.js") {
   return (
     value !== null &&
     typeof Reflect.get(value, "validateTarEntries") === "function" &&
@@ -131,9 +131,9 @@ function isSandboxStateModule(
 }
 
 async function loadSandboxState(): Promise<SandboxStateModule> {
-  // The CLI compiles to dist/lib/ — import from there
+  // Load source through the integration project's CommonJS hook.
   const loaded = await import(
-    path.join(import.meta.dirname, "..", "dist", "lib", "state", "sandbox.js")
+    path.join(import.meta.dirname, "..", "src", "lib", "state", "sandbox.ts")
   );
   const mod = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isSandboxStateModule(mod)) {
@@ -391,7 +391,7 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
   // is extracted on the host, these absolute targets don't exist on the host
   // and were falsely rejected as escapes. The fix maps /sandbox/ paths onto
   // the extraction root before checking, matching the sandbox-internal view.
-  it("regression #2317: allows known-safe /sandbox/.openclaw-data symlinks in backup archives", async () => {
+  it("allows known-safe /sandbox/.openclaw-data symlinks in backup archives (#2317)", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-"));
     try {
@@ -414,7 +414,7 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
-  it("regression #2317: still blocks absolute symlinks outside /sandbox/.openclaw-data", async () => {
+  it("still blocks absolute symlinks outside /sandbox/.openclaw-data (#2317)", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-block-"));
     try {
@@ -515,7 +515,7 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
-  it("regression #2317: blocks path traversal within allowed prefix (/sandbox/.openclaw-data/../../etc/passwd)", async () => {
+  it("blocks path traversal within the allowed /sandbox/.openclaw-data prefix (#2317)", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-traversal-"));
     try {

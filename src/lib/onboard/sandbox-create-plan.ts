@@ -1,12 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type MessagingCredentialMetadata,
+  listMessagingCredentialMetadata,
+} from "../messaging/channels";
 import type { InitialSandboxPolicy } from "./initial-policy";
 import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
 type MessagingTokenDef = {
+  name?: string;
   envKey: string;
   token: string | null;
 };
@@ -43,6 +48,7 @@ export type PrepareSandboxCreatePlanInput = {
   ): string[];
   getMessagingChannelForEnvKey(envKey: string): string | null;
   getHermesToolGatewayProviderName(sandboxName: string): string;
+  agentName?: string | null;
   deps?: SandboxCreatePlanDeps;
 };
 
@@ -71,6 +77,48 @@ function getInitialSandboxCreatePolicy(
   return prepareInitialSandboxCreatePolicy(...args);
 }
 
+function filterEnabledChannelNames(
+  channelNames: readonly string[],
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return channelNames.filter((channelName) => !disabledChannelNames.has(channelName));
+}
+
+function filterMessagingTokenDefsByEnabledChannel(
+  messagingTokenDefs: MessagingTokenDef[],
+  disabledChannelNames: ReadonlySet<string>,
+  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+): MessagingTokenDef[] {
+  return messagingTokenDefs.filter(({ envKey }) => {
+    const channel = getMessagingChannelForEnvKey(envKey);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
+function resolveTokenProviderChannelMap(
+  messagingTokenDefs: MessagingTokenDef[],
+  getMessagingChannelForEnvKey: (envKey: string) => string | null,
+): Map<string, string> {
+  const providerChannels = new Map<string, string>();
+  for (const { envKey, name } of messagingTokenDefs) {
+    if (!name) continue;
+    const channel = getMessagingChannelForEnvKey(envKey);
+    if (channel) providerChannels.set(name, channel);
+  }
+  return providerChannels;
+}
+
+function filterMessagingProvidersByEnabledChannel(
+  providerNames: string[],
+  providerChannels: ReadonlyMap<string, string>,
+  disabledChannelNames: ReadonlySet<string>,
+): string[] {
+  return providerNames.filter((providerName) => {
+    const channel = providerChannels.get(providerName);
+    return !channel || !disabledChannelNames.has(channel);
+  });
+}
+
 function resolveActiveMessagingChannels({
   channels,
   disabledChannelNames,
@@ -87,31 +135,55 @@ function resolveActiveMessagingChannels({
   | "messagingTokenDefs"
   | "reusableMessagingChannels"
 >): string[] {
-  const tokensByEnvKey = Object.fromEntries(
-    messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
-  );
+  const primaryCredentialEnvKeys = getPrimaryCredentialEnvKeys();
   const qrSelectedChannels = resolveQrSelectedChannels(
     channels,
     enabledChannels,
     disabledChannelNames,
   );
-  return [
-    ...new Set([
-      ...messagingTokenDefs
-        .filter(({ token }) => !!token)
-        .flatMap(({ envKey }) => {
-          const channel = getMessagingChannelForEnvKey(envKey);
-          if (channel) return [channel];
-          // SLACK_APP_TOKEN alone does not enable slack; bot token is required.
-          if (envKey === "SLACK_APP_TOKEN") {
-            return tokensByEnvKey["SLACK_BOT_TOKEN"] ? ["slack"] : [];
-          }
-          return [];
-        }),
-      ...reusableMessagingChannels,
-      ...qrSelectedChannels,
-    ]),
-  ];
+  return filterEnabledChannelNames(
+    [
+      ...new Set([
+        ...messagingTokenDefs
+          .filter(({ token }) => !!token)
+          .flatMap(({ envKey }) => {
+            const channel = getMessagingChannelForEnvKey(envKey);
+            return channel && primaryCredentialEnvKeys.has(envKey) ? [channel] : [];
+          }),
+        ...reusableMessagingChannels,
+        ...qrSelectedChannels,
+      ]),
+    ],
+    disabledChannelNames,
+  );
+}
+
+function getPrimaryCredentialEnvKeys(): Set<string> {
+  const credentialsByChannel = new Map<string, MessagingCredentialMetadata[]>();
+  for (const credential of listMessagingCredentialMetadata()) {
+    const credentials = credentialsByChannel.get(credential.channelId) ?? [];
+    credentials.push(credential);
+    credentialsByChannel.set(credential.channelId, credentials);
+  }
+
+  const envKeys = new Set<string>();
+  for (const credentials of credentialsByChannel.values()) {
+    const primary =
+      credentials.find((credential) => credential.primary) ??
+      [...credentials].sort(compareCredentialsForPrimarySelection)[0];
+    if (primary) envKeys.add(primary.providerEnvKey);
+  }
+  return envKeys;
+}
+
+function compareCredentialsForPrimarySelection(
+  left: MessagingCredentialMetadata,
+  right: MessagingCredentialMetadata,
+): number {
+  return (
+    left.credentialId.localeCompare(right.credentialId) ||
+    left.providerEnvKey.localeCompare(right.providerEnvKey)
+  );
 }
 
 export function prepareSandboxCreatePlan({
@@ -132,14 +204,24 @@ export function prepareSandboxCreatePlan({
   upsertMessagingProviders,
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
+  agentName,
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
+  const enabledMessagingTokenDefs = filterMessagingTokenDefsByEnabledChannel(
+    messagingTokenDefs,
+    disabledChannelNames,
+    getMessagingChannelForEnvKey,
+  );
+  const providerChannels = resolveTokenProviderChannelMap(
+    messagingTokenDefs,
+    getMessagingChannelForEnvKey,
+  );
   const activeMessagingChannels = resolveActiveMessagingChannels({
     channels,
     disabledChannelNames,
     enabledChannels,
     getMessagingChannelForEnvKey,
-    messagingTokenDefs,
+    messagingTokenDefs: enabledMessagingTokenDefs,
     reusableMessagingChannels,
   });
   const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } = (
@@ -151,6 +233,7 @@ export function prepareSandboxCreatePlan({
     directGpu: sandboxGpuConfig.sandboxGpuEnabled,
     dockerGpuPatch: useDockerGpuPatch,
     additionalPresets: hermesToolGateways,
+    agentName,
   });
   const createArgs = [
     "--from",
@@ -166,12 +249,16 @@ export function prepareSandboxCreatePlan({
 
   appendResourceFlags(createArgs);
   runProviderPreDeleteCleanup();
-  const messagingProviders = [
-    ...new Set([
-      ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
-      ...reusableMessagingProviders,
-    ]),
-  ];
+  const messagingProviders = filterMessagingProvidersByEnabledChannel(
+    [
+      ...new Set([
+        ...upsertMessagingProviders(enabledMessagingTokenDefs, { replaceExisting: true }),
+        ...reusableMessagingProviders,
+      ]),
+    ],
+    providerChannels,
+    disabledChannelNames,
+  );
   for (const provider of messagingProviders) {
     createArgs.push("--provider", provider);
   }

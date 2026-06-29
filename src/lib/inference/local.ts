@@ -9,11 +9,12 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
-import type { CurlProbeResult } from "../adapters/http/probe";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
+import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 import {
   applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
   MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
@@ -22,8 +23,8 @@ import {
   resetOllamaRuntimeContextWindowAutoState,
   resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
 } from "./ollama-runtime-context";
-import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 import { applyVllmRuntimeContextWindow as applyVllmRuntimeContextWindowFromModels } from "./vllm-runtime-context";
+
 export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
@@ -356,6 +357,26 @@ export function getLocalProviderHealthEndpoint(provider: string): string | null 
 export function getLocalProviderHealthCheck(provider: string): string[] | null {
   const endpoint = getLocalProviderHealthEndpoint(provider);
   return endpoint ? ["curl", ...buildValidatedCurlCommandArgs(["-sf", endpoint])] : null;
+}
+
+/**
+ * Positive host-side reachability signal for a local inference provider: does
+ * it actually respond on its host loopback endpoint (127.0.0.1:<port>)?
+ *
+ * Unlike validateLocalProvider, this does NOT run the Docker `--add-host`
+ * container-reachability emulation — that probe is unreliable on some Docker
+ * setups (the real sandbox path is k3s CoreDNS), so its failure is not
+ * evidence the route is down. Callers that need a positive "the provider is
+ * up" signal (not merely "the host is not down") should use this.
+ */
+export function isLocalProviderHostHealthy(
+  provider: string,
+  runCaptureImpl?: RunCaptureFn,
+): boolean {
+  const command = getLocalProviderHealthCheck(provider);
+  if (!command) return false;
+  const capture = runCaptureImpl ?? runCapture;
+  return Boolean(capture(command, { ignoreError: true }));
 }
 
 export function getLocalProviderLabel(provider: string): string | null {

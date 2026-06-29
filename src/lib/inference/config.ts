@@ -13,6 +13,12 @@ export const INFERENCE_ROUTE_URL = "https://inference.local/v1";
 export const NOUS_RECOMMENDED_MODELS_URL =
   "https://portal.nousresearch.com/api/nous/recommended-models";
 export const DEFAULT_CLOUD_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+// Fallback context window used when no per-model value is known. Cloud providers
+// have no per-model context metadata today (CLOUD_MODEL_OPTIONS carries only
+// id/label), so they fall back to this; matches the onboarding build default in
+// scripts/generate-openclaw-config.mts. Per-model cloud accuracy is tracked
+// separately (cloud context-window registry).
+export const DEFAULT_CONTEXT_WINDOW = 131072;
 export const HERMES_PROVIDER_MODEL_OPTIONS = [
   "moonshotai/kimi-k2.6",
   "xiaomi/mimo-v2.5-pro",

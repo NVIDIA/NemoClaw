@@ -4,10 +4,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentDefinition } from "./defs";
 
-type AgentOnboardModule = typeof import("../../../dist/lib/agent/onboard");
-type DockerImageModule = typeof import("../../../dist/lib/adapters/docker/image");
-type DockerInspectModule = typeof import("../../../dist/lib/adapters/docker/inspect");
-type SandboxBaseImageModule = typeof import("../../../dist/lib/sandbox-base-image");
+type AgentOnboardModule = typeof import("./onboard");
+type DockerImageModule = typeof import("../adapters/docker/image");
+type DockerInspectModule = typeof import("../adapters/docker/inspect");
+type SandboxBaseImageModule = typeof import("../sandbox-base-image");
 
 /**
  * Build a minimal Hermes agent manifest for base-image provisioning tests.
@@ -25,6 +25,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       healthPath: "/health",
       auth: "none",
     },
+    webAuth: { method: "bearer_token", env: "API_SERVER_KEY" },
     configPaths: {
       dir: "/sandbox/.hermes",
       configFile: "config.yaml",
@@ -34,11 +35,11 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
+    userManagedFiles: [],
     versionCommand: "hermes --version",
     expectedVersion: "2026.4.30",
     hasDevicePairing: false,
     phoneHomeHosts: [],
-    messagingPlatforms: [],
     dockerfileBasePath: "/test/root/agents/hermes/Dockerfile.base",
     dockerfilePath: "/test/root/agents/hermes/Dockerfile",
     startScriptPath: null,
@@ -65,19 +66,17 @@ function withMockedDocker<T>(
   }) => T,
 ): T {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerImageModule = require("../../../dist/lib/adapters/docker/image") as DockerImageModule;
+  const dockerImageModule = require("../adapters/docker/image") as DockerImageModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const dockerInspectModule =
-    require("../../../dist/lib/adapters/docker/inspect") as DockerInspectModule;
+  const dockerInspectModule = require("../adapters/docker/inspect") as DockerInspectModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const sandboxBaseImageModule =
-    require("../../../dist/lib/sandbox-base-image") as SandboxBaseImageModule;
+  const sandboxBaseImageModule = require("../sandbox-base-image") as SandboxBaseImageModule;
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const runnerModule = require("../../../dist/lib/runner") as { ROOT: string };
+  const runnerModule = require("../runner") as { ROOT: string };
   const originalDockerBuild = dockerImageModule.dockerBuild;
   const originalDockerImageInspect = dockerInspectModule.dockerImageInspect;
   const originalResolveSandboxBaseImage = sandboxBaseImageModule.resolveSandboxBaseImage;
-  const agentOnboardModulePath = require.resolve("../../../dist/lib/agent/onboard");
+  const agentOnboardModulePath = require.resolve("./onboard");
   delete require.cache[agentOnboardModulePath];
 
   const dockerBuildMock = vi.fn().mockReturnValue({ status: 0 });
@@ -96,7 +95,7 @@ function withMockedDocker<T>(
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const agentOnboardModule = require("../../../dist/lib/agent/onboard") as AgentOnboardModule;
+    const agentOnboardModule = require("./onboard") as AgentOnboardModule;
     return run({
       ensureAgentBaseImage: agentOnboardModule.ensureAgentBaseImage,
       dockerBuildMock,

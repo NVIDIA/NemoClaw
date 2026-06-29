@@ -6,14 +6,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GATEWAY_PORT } from "../../../dist/lib/core/ports";
-import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { buildDockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
 import {
   getDockerDriverGatewayRuntimeMarkerDriftForStateDir,
   getDockerDriverGatewayRuntimeMarkerPath,
   readDockerDriverGatewayRuntimeMarker,
   writeDockerDriverGatewayRuntimeMarkerForStateDir,
-} from "../../../dist/lib/onboard/docker-driver-gateway-runtime-marker";
+} from "./docker-driver-gateway-runtime-marker";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
@@ -23,7 +23,7 @@ import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
-} from "../../../dist/lib/onboard/gateway-binding";
+} from "./gateway-binding";
 
 describe("gateway-binding resolver (#4422)", () => {
   it("keeps the bare nemoclaw names for the default gateway port", () => {

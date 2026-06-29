@@ -25,7 +25,12 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
-import { type StepMutationOptions, shouldUpdateMachine } from "./onboard-step-mutation";
+import {
+  LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
+  RECORD_ONLY_STEP_MUTATION_OPTIONS,
+  type StepMutationOptions,
+  shouldUpdateMachine,
+} from "./onboard-step-mutation";
 import { nextMachineStateAfterCompletedStep } from "./onboard-step-state";
 
 export const SESSION_VERSION = 1;
@@ -95,6 +100,7 @@ export interface Session {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   routerPid: number | null;
   routerCredentialHash: string | null;
@@ -164,6 +170,7 @@ export interface SessionUpdates {
   credentialEnv?: string | null;
   hermesAuthMethod?: HermesAuthMethod | null;
   preferredInferenceApi?: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer?: string | null;
   routerPid?: number;
   routerCredentialHash?: string;
@@ -193,6 +200,7 @@ export interface DebugSessionSummary {
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning: string | null;
   nimContainer: string | null;
   hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
@@ -442,6 +450,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     credentialEnv: overrides.credentialEnv ?? null,
     hermesAuthMethod: overrides.hermesAuthMethod ?? null,
     preferredInferenceApi: overrides.preferredInferenceApi ?? null,
+    compatibleEndpointReasoning: overrides.compatibleEndpointReasoning ?? null,
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
@@ -484,6 +493,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     credentialEnv: readString(data.credentialEnv),
     hermesAuthMethod: readHermesAuthMethod(data.hermesAuthMethod),
     preferredInferenceApi: readString(data.preferredInferenceApi),
+    compatibleEndpointReasoning: readString(data.compatibleEndpointReasoning),
     nimContainer: readString(data.nimContainer),
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
@@ -863,6 +873,64 @@ export function releaseOnboardLock(): void {
 
 // ── Step management ──────────────────────────────────────────────
 
+export type NullableSessionUpdateIntent<T> =
+  | { kind: "unchanged" }
+  | { kind: "clear" }
+  | { kind: "set"; value: T };
+
+export type NullableSessionUpdateKey = {
+  [K in keyof Session]-?: null extends Session[K] ? K : never;
+}[keyof Session];
+
+type NullableStringSessionUpdateKey = {
+  [K in NullableSessionUpdateKey]-?: NonNullable<Session[K]> extends string ? K : never;
+}[NullableSessionUpdateKey];
+
+function sessionUpdateUnchanged<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "unchanged" };
+}
+
+function sessionUpdateClear<T>(): NullableSessionUpdateIntent<T> {
+  return { kind: "clear" };
+}
+
+function sessionUpdateSet<T>(value: T): NullableSessionUpdateIntent<T> {
+  return { kind: "set", value };
+}
+
+export function getNullableStringUpdateIntent(
+  value: unknown,
+  normalize?: (v: string) => string | null,
+): NullableSessionUpdateIntent<string> {
+  if (value === undefined) return sessionUpdateUnchanged();
+  if (value === null) return sessionUpdateClear();
+  if (typeof value !== "string") return sessionUpdateUnchanged();
+
+  const normalized = normalize ? normalize(value) : value;
+  return normalized === null ? sessionUpdateClear() : sessionUpdateSet(normalized);
+}
+
+export function hasSessionUpdateValue<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind !== "unchanged";
+}
+
+export function isSessionUpdateClear<T>(intent: NullableSessionUpdateIntent<T>): boolean {
+  return intent.kind === "clear";
+}
+
+export function applyNullableSessionUpdate<K extends NullableSessionUpdateKey>(
+  safe: Partial<Session>,
+  key: K,
+  intent: NullableSessionUpdateIntent<NonNullable<Session[K]>>,
+): void {
+  if (intent.kind === "unchanged") return;
+  if (intent.kind === "clear") {
+    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
+    return;
+  }
+  (safe as Record<K, Session[K]>)[key] = intent.value as Session[K];
+}
+
 // Apply an explicit-clear-aware update for a nullable session field.
 //
 //   value === "string"  → assign (after optional normalizer)
@@ -874,27 +942,19 @@ export function releaseOnboardLock(): void {
 // (credentialEnv=null) silently dropped the clear and left the stale value
 // on disk. The rebuild preflight then demanded a credential the current
 // sandbox does not actually need.
-function assignNullableString<K extends keyof Session>(
+function assignNullableString<K extends NullableStringSessionUpdateKey>(
   safe: Partial<Session>,
   key: K,
   value: unknown,
   normalize?: (v: string) => string | null,
 ): void {
-  if (value === undefined) return;
-  if (value === null) {
-    (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-    return;
-  }
-  if (typeof value === "string") {
-    const normalized = normalize ? normalize(value) : value;
-    if (normalized === null) {
-      // A normalizer that returned null means the input was unredactable;
-      // treat the same as an explicit clear rather than dropping silently.
-      (safe as Record<K, Session[K] | null>)[key] = null as Session[K] & null;
-      return;
-    }
-    (safe as Record<K, Session[K]>)[key] = normalized as Session[K];
-  }
+  applyNullableSessionUpdate(
+    safe,
+    key,
+    getNullableStringUpdateIntent(value, normalize) as NullableSessionUpdateIntent<
+      NonNullable<Session[K]>
+    >,
+  );
   // Non-string, non-null, non-undefined values are silently dropped —
   // matches the pre-#2625 behavior for malformed input (e.g. numbers via
   // JSON re-entry).
@@ -914,6 +974,7 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.hermesAuthMethod = null;
   }
   assignNullableString(safe, "preferredInferenceApi", updates.preferredInferenceApi);
+  assignNullableString(safe, "compatibleEndpointReasoning", updates.compatibleEndpointReasoning);
   assignNullableString(safe, "nimContainer", updates.nimContainer);
   if (
     typeof updates.routerPid === "number" &&
@@ -990,7 +1051,10 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-function markStepStartedWithOptions(stepName: string, options: StepMutationOptions = {}): Session {
+function markStepStartedWithOptions(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1019,7 +1083,7 @@ function markStepStartedWithOptions(stepName: string, options: StepMutationOptio
 function markStepCompleteWithOptions(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   const safeUpdates = filterSafeUpdates(updates);
   const hasUpdates = Object.keys(safeUpdates).length > 0;
@@ -1061,18 +1125,21 @@ function markStepCompleteWithOptions(
   return updatedSession;
 }
 
-export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
+export function markStepStarted(
+  stepName: string,
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
+): Session {
   return markStepStartedWithOptions(stepName, options);
 }
 
 export function markStepStartedRecordOnly(stepName: string): Session {
-  return markStepStartedWithOptions(stepName, { updateMachine: false });
+  return markStepStartedWithOptions(stepName, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepComplete(
   stepName: string,
   updates: SessionUpdates = {},
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepCompleteWithOptions(stepName, updates, options);
 }
@@ -1081,7 +1148,7 @@ export function markStepCompleteRecordOnly(
   stepName: string,
   updates: SessionUpdates = {},
 ): Session {
-  return markStepCompleteWithOptions(stepName, updates, { updateMachine: false });
+  return markStepCompleteWithOptions(stepName, updates, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function markStepSkipped(stepName: string): Session {
@@ -1109,7 +1176,7 @@ export function markStepSkipped(stepName: string): Session {
 function markStepFailedWithOptions(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1152,13 +1219,13 @@ function markStepFailedWithOptions(
 export function markStepFailed(
   stepName: string,
   message: string | null = null,
-  options: StepMutationOptions = {},
+  options: StepMutationOptions = RECORD_ONLY_STEP_MUTATION_OPTIONS,
 ): Session {
   return markStepFailedWithOptions(stepName, message, options);
 }
 
 export function markStepFailedRecordOnly(stepName: string, message: string | null = null): Session {
-  return markStepFailedWithOptions(stepName, message, { updateMachine: false });
+  return markStepFailedWithOptions(stepName, message, RECORD_ONLY_STEP_MUTATION_OPTIONS);
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
@@ -1215,6 +1282,7 @@ export function summarizeForDebug(
     credentialEnv: session.credentialEnv,
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
+    compatibleEndpointReasoning: session.compatibleEndpointReasoning,
     nimContainer: session.nimContainer,
     hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,

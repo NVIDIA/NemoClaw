@@ -29,7 +29,7 @@ function buildStubOpenshell(home: string, logFile: string): string {
 }
 
 describe("sandbox download/upload CLI wrappers", () => {
-  it("forwards `<name> download <sandbox-path> [host-dest]` to openshell", () => {
+  it("forwards `<name> download <sandbox-path> [host-dest]` to openshell with the host-dest resolved against the caller cwd", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-"));
     try {
       writeSandboxRegistry(home);
@@ -43,15 +43,16 @@ describe("sandbox download/upload CLI wrappers", () => {
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8");
-      expect(calls).toMatch(
-        /sandbox download alpha \/sandbox\/\.openclaw\/workspace\/SOUL\.md \.\/out/,
+      const expectedHostDest = path.resolve(process.cwd(), "out");
+      expect(calls).toContain(
+        `sandbox download alpha /sandbox/.openclaw/workspace/SOUL.md ${expectedHostDest}`,
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("defaults the host destination to '.' when omitted", () => {
+  it("defaults the host destination to the caller cwd when omitted", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-default-"));
     try {
       writeSandboxRegistry(home);
@@ -65,13 +66,13 @@ describe("sandbox download/upload CLI wrappers", () => {
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8");
-      expect(calls).toMatch(/sandbox download alpha \/sandbox\/\.openclaw\/x \./);
+      expect(calls).toContain(`sandbox download alpha /sandbox/.openclaw/x ${process.cwd()}`);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("forwards `<name> upload <host-path> [sandbox-dest]` to openshell", () => {
+  it("forwards `<name> upload <host-path> [sandbox-dest]` to openshell with the host-path resolved against the caller cwd", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-upload-"));
     try {
       writeSandboxRegistry(home);
@@ -88,15 +89,16 @@ describe("sandbox download/upload CLI wrappers", () => {
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8");
-      expect(calls).toMatch(
-        /sandbox upload alpha \.\/SOUL\.md \/sandbox\/\.openclaw\/workspace\/SOUL\.md/,
+      const expectedHostPath = path.resolve(process.cwd(), "SOUL.md");
+      expect(calls).toContain(
+        `sandbox upload alpha ${expectedHostPath} /sandbox/.openclaw/workspace/SOUL.md`,
       );
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it("defaults the sandbox destination to /sandbox/ when omitted", () => {
+  it("defaults the sandbox destination to /sandbox/ when omitted and still resolves the host path against the caller cwd", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-upload-default-"));
     try {
       writeSandboxRegistry(home);
@@ -110,7 +112,8 @@ describe("sandbox download/upload CLI wrappers", () => {
       expect(result.code).toBe(0);
 
       const calls = fs.readFileSync(openshellLog, "utf8");
-      expect(calls).toMatch(/sandbox upload alpha \.\/x \/sandbox\//);
+      const expectedHostPath = path.resolve(process.cwd(), "x");
+      expect(calls).toContain(`sandbox upload alpha ${expectedHostPath} /sandbox/`);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

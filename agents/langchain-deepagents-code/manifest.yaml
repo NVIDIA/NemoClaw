@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Agent manifest for LangChain Deep Agents Code.
+# This is a terminal-oriented harness: there is no long-running gateway or
+# dashboard health surface. NemoClaw validates the binary/config and leaves
+# interactive/headless execution to the user's sandbox shell.
+
+name: langchain-deepagents-code
+display_name: "LangChain Deep Agents Code"
+description: "Terminal coding agent built on the Deep Agents SDK"
+version_constraint: ">=0.1.12"
+language: python
+license: MIT
+homepage: "https://docs.langchain.com/oss/python/deepagents/code/overview"
+
+# ── Binary & process ────────────────────────────────────────────
+install_method: pip
+binary_path: /usr/local/bin/dcode
+version_command: "dcode --version"
+expected_version: "0.1.12"
+
+runtime:
+  kind: terminal
+  interactive_command: "dcode"
+  headless_command: "dcode -n"
+  smoke_commands:
+    - "dcode --version"
+    - "test -s /sandbox/.deepagents/config.toml && echo NEMOCLAW_DEEPAGENTS_CONFIG_OK"
+
+# ── Configuration ───────────────────────────────────────────────
+config:
+  dir: /sandbox/.deepagents
+  config_file: config.toml
+  env_file: .env
+  format: toml
+
+# ── State directories ──────────────────────────────────────────
+# dcode runs with HOME=/sandbox, so its state dirs resolve under
+# /sandbox/.deepagents. The built-in skill-creator writes user skills to
+# agent/skills (per its init_skill.py), so it must be backed up alongside
+# .state and skills — otherwise skills are silently lost on rebuild.
+state_dirs:
+  - .state
+  - skills
+  - agent/skills
+
+# ── Top-level durable state files ───────────────────────────────
+# config.toml is non-secret NemoClaw-generated provider/model configuration.
+# .env and .mcp.json are intentionally omitted because they may contain
+# user-added service credentials; this managed harness disables MCP at runtime.
+state_files:
+  - path: config.toml
+  - path: hooks.json
+user_managed_files:
+  - .env
+  - .mcp.json
+
+device_pairing: false
+
+# ── Inference ───────────────────────────────────────────────────
+# V1 routes NVIDIA/OpenAI-compatible selections through OpenShell's managed
+# inference.local endpoint using Deep Agents Code's OpenAI-compatible provider.
+inference:
+  provider_type: openai_compatible
+  base_url_config_key: "models.providers.openai.base_url"
+  model_config_key: "models.default"
+  proxy_support: implicit
+
+package_registry:
+  hosts:
+    - pypi.org
+    - files.pythonhosted.org
+  binary: /opt/venv/bin/pip3

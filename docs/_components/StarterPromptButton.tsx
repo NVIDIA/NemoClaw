@@ -45,7 +45,6 @@ After I choose, use the matching documentation variant. Do not mix OpenClaw-spec
 Use these Markdown documentation pages as the first sources:
 
 - Documentation index for AI clients: https://docs.nvidia.com/nemoclaw/llms.txt
-- Full Markdown documentation bundle: https://docs.nvidia.com/nemoclaw/llms-full.txt
 - OpenClaw home: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/home.md
 - OpenClaw prerequisites: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/prerequisites.md
 - OpenClaw quickstart: https://docs.nvidia.com/nemoclaw/latest/user-guide/openclaw/get-started/quickstart.md
@@ -122,7 +121,7 @@ Channel credential requirements:
 
 | Channel | Required values |
 |---|---|
-| Telegram | \`TELEGRAM_BOT_TOKEN\`; optional \`TELEGRAM_ALLOWED_IDS\`, \`TELEGRAM_REQUIRE_MENTION\` |
+| Telegram | \`TELEGRAM_BOT_TOKEN\`; optional \`TELEGRAM_ALLOWED_IDS\`, \`TELEGRAM_REQUIRE_MENTION\`, \`TELEGRAM_GROUP_POLICY\` (OpenClaw only) |
 | Discord | \`DISCORD_BOT_TOKEN\`; optional \`DISCORD_SERVER_ID\`, \`DISCORD_USER_ID\`, \`DISCORD_REQUIRE_MENTION\` |
 | Slack | \`SLACK_BOT_TOKEN\`, \`SLACK_APP_TOKEN\`; optional \`SLACK_ALLOWED_USERS\`, \`SLACK_ALLOWED_CHANNELS\` |
 | WhatsApp | No host token; add the channel, rebuild, then complete QR pairing inside the sandbox as documented |

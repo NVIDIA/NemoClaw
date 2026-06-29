@@ -46,9 +46,23 @@ export const telegramManifest = {
       envKey: "TELEGRAM_REQUIRE_MENTION",
       statePath: "telegramConfig.requireMention",
       validValues: ["0", "1"],
+      defaultValue: "1",
       prompt: {
         label: "Telegram group mention mode",
         help: "Controls Telegram group-chat behavior only — reply only when @mentioned vs. to all group messages. Direct messages are unaffected by this setting and remain subject to pairing and TELEGRAM_ALLOWED_IDS.",
+      },
+    },
+    {
+      id: "groupPolicy",
+      kind: "config",
+      required: false,
+      envKey: "TELEGRAM_GROUP_POLICY",
+      statePath: "telegramConfig.groupPolicy",
+      validValues: ["open", "allowlist", "disabled"],
+      defaultValue: "open",
+      prompt: {
+        label: "Telegram group policy",
+        help: "Controls OpenClaw Telegram group access. Hermes does not expose an equivalent disable-groups policy.",
       },
     },
   ],
@@ -61,7 +75,15 @@ export const telegramManifest = {
       placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     },
   ],
-  policyPresets: [{ name: "telegram", policyKeys: ["telegram_bot"] }],
+  policyPresets: [
+    {
+      name: "telegram",
+      policyKeys: ["telegram_bot"],
+      agentPolicyKeys: {
+        hermes: ["telegram"],
+      },
+    },
+  ],
   render: [
     {
       id: "telegram-openclaw-channel",
@@ -80,7 +102,7 @@ export const telegramManifest = {
                 enabled: false,
               },
               proxy: "{{proxyUrl}}",
-              groupPolicy: "open",
+              groupPolicy: "{{telegramConfig.groupPolicy}}",
               dmPolicy: "{{allowedIds.telegram.dmPolicy}}",
               allowFrom: "{{allowedIds.telegram.values}}",
             },
@@ -93,14 +115,10 @@ export const telegramManifest = {
       kind: "json-fragment",
       agent: "openclaw",
       target: "openclaw.json",
-      when: "{{telegramConfig.requireMention}}",
+      when: "{{telegramConfig.openclawGroups}}",
       fragment: {
         path: "channels.telegram.groups",
-        value: {
-          "*": {
-            requireMention: "{{telegramConfig.requireMention}}",
-          },
-        },
+        value: "{{telegramConfig.openclawGroups}}",
       },
     },
     {
@@ -150,10 +168,29 @@ export const telegramManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      channelName: "telegram",
+      visibility: {
+        configKeys: ["telegram"],
+        logPatterns: ["telegram"],
+      },
+      nodePreloads: [
+        {
+          module: "telegram-diagnostics",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Telegram diagnostics (provider readiness + inference errors)",
+          installedMessage: "[channels] Telegram diagnostics installed (NODE_OPTIONS updated)",
+        },
+      ],
+    },
+  },
   state: {
     persist: {
       allowedIds: ["allowedIds"],
-      telegramConfig: ["requireMention"],
+      telegramConfig: ["requireMention", "groupPolicy"],
     },
     rebuildHydration: [
       {
@@ -163,6 +200,10 @@ export const telegramManifest = {
       {
         statePath: "telegramConfig.requireMention",
         env: "TELEGRAM_REQUIRE_MENTION",
+      },
+      {
+        statePath: "telegramConfig.groupPolicy",
+        env: "TELEGRAM_GROUP_POLICY",
       },
     ],
   },
@@ -207,11 +248,41 @@ export const telegramManifest = {
       ],
     },
     {
+      id: "telegram-openclaw-config-prompt",
+      phase: "enroll",
+      handler: "common.configPrompt",
+      agents: ["openclaw"],
+      outputs: [
+        {
+          id: "groupPolicy",
+          kind: "config",
+        },
+      ],
+    },
+    {
       id: "telegram-get-me-reachability",
       phase: "reachability-check",
       handler: "telegram.getMeReachability",
       inputs: ["botToken"],
       onFailure: "skip-channel",
+    },
+    {
+      id: "telegram-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "telegram.openclawBridgeHealth",
+      agents: ["openclaw"],
+      onFailure: "abort",
+    },
+    {
+      id: "telegram-gateway-conflict-status",
+      phase: "status",
+      handler: "telegram.gatewayConflictStatus",
+      outputs: [
+        {
+          id: "bridgeHealth",
+          kind: "status",
+        },
+      ],
     },
   ],
 } as const satisfies ChannelManifest;

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Security Sweep Workflow
 
 Review a security-sensitive item before it enters the normal fast path.
@@ -8,7 +11,7 @@ The morning triage and `find-review-pr` already surface security-labeled PRs. St
 
 ## Step 2: Gather Context
 
-Read the PR or issue, all comments, linked items, changed files, diff, current checks, and recent relevant `main` commits.
+Read the PR or issue, all comments, CodeRabbit findings, PR Review Advisor feedback, linked items, changed files, diff, current checks, and recent relevant `main` commits.
 
 ## Step 3: Classify Risk
 

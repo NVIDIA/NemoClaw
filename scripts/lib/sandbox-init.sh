@@ -10,7 +10,8 @@
 # security fix applied here protects both agents automatically.
 #
 # Usage (from an entrypoint script):
-#   SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+#   SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+#   SCRIPT_DIR="${SCRIPT_SOURCE%/*}"
 #   # shellcheck source=scripts/lib/sandbox-init.sh
 #   source "${SCRIPT_DIR}/../scripts/lib/sandbox-init.sh"  # adjust path
 #
@@ -19,6 +20,16 @@
 # Guard against double-sourcing.
 [ -z "${_SANDBOX_INIT_LOADED:-}" ] || return 0
 _SANDBOX_INIT_LOADED=1
+
+_SANDBOX_INIT_SOURCE="${BASH_SOURCE[0]}"
+_SANDBOX_INIT_DIR="${_SANDBOX_INIT_SOURCE%/*}"
+if [ "$_SANDBOX_INIT_DIR" = "$_SANDBOX_INIT_SOURCE" ]; then
+  _SANDBOX_INIT_DIR="."
+fi
+_SANDBOX_INIT_DIR="$(cd "$_SANDBOX_INIT_DIR" && pwd)"
+unset _SANDBOX_INIT_SOURCE
+# shellcheck source=scripts/lib/sandbox-rlimits.sh
+source "${_SANDBOX_INIT_DIR}/sandbox-rlimits.sh"
 
 # ── /tmp trust boundary map ──────────────────────────────────────
 # Files in /tmp that cross user boundaries. Every file sourced by system-wide
@@ -218,34 +229,6 @@ lock_config_after_write() {
       return 1
     fi
   done
-}
-
-# ── Resource limits (RLIMITs) ────────────────────────────────────
-# Harden RLIMITs at PID 1 (root) so the caps are inherited by every descendant
-# and cannot be raised after the privilege step-down. nproc (#809) prevents
-# fork bombs; nofile (#4527) caps open file descriptors so the sandbox no
-# longer inherits the Docker daemon default (~1048576), which can exceed the
-# host runtime limit. Best-effort: some container runtimes (e.g. brev, Docker
-# Desktop, WSL) reject ulimit changes with "Invalid argument"; warn but do not
-# block startup. Set the soft limit before the hard limit (ordering matters;
-# see #951). Hard==soft makes the cap unraisable: raising the hard RLIMIT
-# requires CAP_SYS_RESOURCE, which the unprivileged stepped-down agent never
-# holds. NOTE: this only covers the PID 1 entrypoint process tree (gateway +
-# agent); 'openshell sandbox connect' shells are spawned outside this tree and
-# still inherit the runtime default (NVIDIA/OpenShell#1452).
-harden_resource_limits() {
-  if ! ulimit -Su 512 2>/dev/null; then
-    echo "[SECURITY] Could not set soft nproc limit (container runtime may restrict ulimit)" >&2
-  fi
-  if ! ulimit -Hu 512 2>/dev/null; then
-    echo "[SECURITY] Could not set hard nproc limit (container runtime may restrict ulimit)" >&2
-  fi
-  if ! ulimit -Sn 65536 2>/dev/null; then
-    echo "[SECURITY] Could not set soft nofile limit (container runtime may restrict ulimit)" >&2
-  fi
-  if ! ulimit -Hn 65536 2>/dev/null; then
-    echo "[SECURITY] Could not set hard nofile limit (container runtime may restrict ulimit)" >&2
-  fi
 }
 
 # ── Capability dropping ──────────────────────────────────────────
@@ -768,20 +751,71 @@ harden_config_symlinks() {
 }
 
 # ── Messaging channels ──────────────────────────────────────────
-# Channel entries are baked into the config at image build time via
-# NEMOCLAW_MESSAGING_PLAN_B64 manifest render hooks. Placeholder tokens
-# flow through to the L7 proxy for rewriting at egress. Real tokens are
-# never visible inside the sandbox.
+# Channel entries are baked into the config at image build time via manifest
+# render hooks. Placeholder tokens flow through to the L7 proxy for rewriting
+# at egress. Real tokens are never visible inside the sandbox.
 #
 # This function just logs which channels are active. Runtime patching
 # of config files is not possible — Landlock enforces read-only at
 # the kernel level.
 configure_messaging_channels() {
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || [ -n "${DISCORD_BOT_TOKEN:-}" ] || [ -n "${SLACK_BOT_TOKEN:-}" ] || return 0
+  local channels
+  channels="$(read_messaging_plan_channels || true)"
+  [ -n "$channels" ] || return 0
 
   echo "[channels] Messaging channels active (baked at build time):" >&2
-  [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && echo "[channels]   telegram" >&2
-  [ -n "${DISCORD_BOT_TOKEN:-}" ] && echo "[channels]   discord" >&2
-  [ -n "${SLACK_BOT_TOKEN:-}" ] && echo "[channels]   slack" >&2
+  while IFS= read -r channel; do
+    [ -n "$channel" ] || continue
+    echo "[channels]   $channel" >&2
+  done <<EOF
+$channels
+EOF
   return 0
+}
+
+read_messaging_plan_channels() {
+  python3 - <<'PY'
+import base64
+import json
+import os
+
+DEFAULT_ARTIFACT_PATH = "/usr/local/share/nemoclaw/messaging-runtime-plan.json"
+
+
+def read_plan():
+    raw = os.environ.get("NEMOCLAW_MESSAGING_PLAN_B64", "").strip()
+    if raw:
+        try:
+            return json.loads(base64.b64decode(raw).decode("utf-8"))
+        except Exception:
+            raise SystemExit(0)
+    artifact_path = os.environ.get("NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH", DEFAULT_ARTIFACT_PATH)
+    if not artifact_path or not os.path.isfile(artifact_path):
+        raise SystemExit(0)
+    try:
+        with open(artifact_path, encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        raise SystemExit(0)
+
+
+plan = read_plan()
+if not isinstance(plan, dict):
+    raise SystemExit(0)
+seen = set()
+disabled = {
+    str(channel).strip().lower()
+    for channel in plan.get("disabledChannels", [])
+    if isinstance(channel, str)
+}
+for item in plan.get("channels", []):
+    if not isinstance(item, dict):
+        continue
+    channel = str(item.get("channelId") or "").strip().lower()
+    if not channel or channel in seen:
+        continue
+    if item.get("active") is True and item.get("disabled") is not True and channel not in disabled:
+        seen.add(channel)
+        print(channel)
+PY
 }

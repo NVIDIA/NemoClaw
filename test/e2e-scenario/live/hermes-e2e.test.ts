@@ -11,6 +11,10 @@ import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import {
+  DEFAULT_HOSTED_INFERENCE_MODEL,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // Migrated from test/e2e/test-hermes-e2e.sh.
@@ -32,7 +36,7 @@ const HERMES_DASHBOARD_INTERNAL_PORT =
 const SESSION_FILE = path.join(os.homedir(), ".nemoclaw", "onboard-session.json");
 const REGISTRY_FILE = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
 const LIVE_TIMEOUT_MS = 70 * 60_000;
-const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? "nvidia/nemotron-3-super-120b-a12b";
+const CHAT_MODEL = process.env.NEMOCLAW_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL;
 const ONBOARD_VALIDATION_TIMEOUT_SECONDS =
   process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS ?? "60";
 
@@ -64,18 +68,18 @@ function hermesDashboardE2eEnabled(): boolean {
   );
 }
 
-function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
+function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
+    ...hostedEnv,
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_AGENT: "hermes",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
-    NEMOCLAW_MODEL: CHAT_MODEL,
+    NEMOCLAW_MODEL: hostedEnv.NEMOCLAW_MODEL ?? CHAT_MODEL,
     NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: ONBOARD_VALIDATION_TIMEOUT_SECONDS,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
   };
-  if (apiKey) env.NVIDIA_INFERENCE_API_KEY = apiKey;
   if (process.env.NEMOCLAW_E2E_HERMES_DASHBOARD) {
     env.NEMOCLAW_E2E_HERMES_DASHBOARD = process.env.NEMOCLAW_E2E_HERMES_DASHBOARD;
   }
@@ -95,9 +99,9 @@ function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
   return env;
 }
 
-function chatPayload(prompt: string, maxTokens = 256): string {
+function chatPayload(model: string, prompt: string, maxTokens = 256): string {
   return JSON.stringify({
-    model: CHAT_MODEL,
+    model,
     messages: [{ role: "user", content: prompt }],
     max_tokens: maxTokens,
   });
@@ -219,10 +223,8 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
   "hermes-e2e: install.sh onboards Hermes and proves health plus live inference",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, provider, sandbox, secrets }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "hermes-e2e",
@@ -233,7 +235,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       dashboardEnabled: hermesDashboardE2eEnabled(),
     });
 
-    const env = commandEnv(apiKey);
+    const env = commandEnv(hosted.env);
     const redactionValues = [apiKey];
 
     const cleanupHermes = async (label: string) => {
@@ -278,20 +280,21 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
 
     expect(fs.existsSync(path.join(REPO_ROOT, "agents", "hermes", "manifest.yaml"))).toBe(true);
 
-    const providerModels = await provider.requestJson(
-      trustedProviderEndpoint("https://inference-api.nvidia.com/v1/models", {
-        allowedHosts: ["inference-api.nvidia.com"],
-      }),
+    const providerReachability = await provider.probeReachability(
+      trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
       {
-        artifactName: "phase-1-inference-models",
-        curlMaxTimeSeconds: 15,
-        headers: [`Authorization: Bearer ${apiKey}`],
+        artifactName: "phase-1-inference-reachability",
         env: buildAvailabilityProbeEnv(),
         redactionValues,
         timeoutMs: 30_000,
       },
     );
-    expect(providerModels.json).toBeTruthy();
+    const reachabilityStatus = providerReachability.stdout.trim();
+    expect(providerReachability.exitCode, resultText(providerReachability)).toBe(0);
+    expect(["000", "401", "403"], resultText(providerReachability)).not.toContain(
+      reachabilityStatus,
+    );
+    expect(Number(reachabilityStatus), resultText(providerReachability)).toBeLessThan(500);
 
     // Phase 2: real installer + non-interactive Hermes onboard.
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
@@ -356,7 +359,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       timeoutMs: 30_000,
     });
     expect(inference.exitCode, resultText(inference)).toBe(0);
-    expect(resultText(inference)).toMatch(/nvidia-prod/i);
+    expect(resultText(inference)).toContain(hosted.providerName);
 
     const policy = await sandbox.openshell(["policy", "get", "--full", SANDBOX_NAME], {
       artifactName: "phase-3-openshell-policy-get",
@@ -491,7 +494,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
           }),
           {
             artifactName: `phase-5-direct-nvidia-chat-attempt-${attempt}`,
-            body: chatPayload("Reply with exactly one word: PONG", attempt === 1 ? 256 : 1024),
+            body: chatPayload(
+              hosted.model,
+              "Reply with exactly one word: PONG",
+              attempt === 1 ? 256 : 1024,
+            ),
             curlMaxTimeSeconds: 90,
             headers: ["Content-Type: application/json", `Authorization: Bearer ${apiKey}`],
             env: buildAvailabilityProbeEnv(),
@@ -520,7 +527,11 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
             "-H",
             "Content-Type: application/json",
             "--data-raw",
-            chatPayload("Reply with exactly one word: PONG", attempt === 1 ? 256 : 1024),
+            chatPayload(
+              hosted.model,
+              "Reply with exactly one word: PONG",
+              attempt === 1 ? 256 : 1024,
+            ),
             "https://inference.local/v1/chat/completions",
           ],
           {

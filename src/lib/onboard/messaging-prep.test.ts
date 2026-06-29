@@ -3,12 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { BRAVE_API_KEY_ENV } from "../../../dist/lib/inference/web-search";
+import { BRAVE_API_KEY_ENV } from "../inference/web-search";
+import { listChannels } from "../sandbox/channels";
 import {
-  prepareCreateSandboxMessaging,
   type CreateSandboxMessagingPrepInput,
-} from "../../../dist/lib/onboard/messaging-prep";
-import { listChannels } from "../../../dist/lib/sandbox/channels";
+  prepareCreateSandboxMessaging,
+} from "./messaging-prep";
 
 function normalizeCredentialValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -31,6 +31,7 @@ function createInput(
     getMessagingChannelForEnvKey: (envKey) => {
       if (envKey === "DISCORD_BOT_TOKEN") return "discord";
       if (envKey === "SLACK_BOT_TOKEN") return "slack";
+      if (envKey === "SLACK_APP_TOKEN") return "slack";
       if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
       if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
       return null;
@@ -141,10 +142,11 @@ describe("prepareCreateSandboxMessaging", () => {
       }),
     );
 
-    expect(result.messagingTokenDefs.map(({ envKey }) => envKey)).toEqual([
+    expect([...result.messagingTokenDefs.map(({ envKey }) => envKey)].sort()).toEqual([
       "DISCORD_BOT_TOKEN",
-      "SLACK_BOT_TOKEN",
+      "MSTEAMS_APP_PASSWORD",
       "SLACK_APP_TOKEN",
+      "SLACK_BOT_TOKEN",
       "TELEGRAM_BOT_TOKEN",
       "WECHAT_BOT_TOKEN",
     ]);

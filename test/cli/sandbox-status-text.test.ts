@@ -1,13 +1,18 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { runWithEnv, testTimeoutOptions, writeSandboxRegistry } from "./helpers";
+import {
+  runWithEnv,
+  testTimeoutOptions,
+  writeHealthyDockerStub,
+  writeSandboxRegistry,
+} from "./helpers";
 
 describe("CLI sandbox status text output", () => {
   it("sandbox <name> status surfaces docker_unreachable header and suppresses stale Inference probe", () => {
@@ -64,6 +69,178 @@ describe("CLI sandbox status text output", () => {
     expect(headerIdx).toBeGreaterThanOrEqual(0);
     expect(sandboxIdx).toBeGreaterThan(headerIdx);
     expect((r.out.match(/Failure layer: docker_unreachable/g) || []).length).toBe(1);
+  });
+
+  it("sandbox <name> status reports unknown runtime when a registered agent cannot load", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-missing-agent-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      agent: "missing-terminal-agent",
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    });
+    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Harness:  missing-terminal-agent (unknown)");
+    expect(r.out).toMatch(/Agent load error:\s+Agent 'missing-terminal-agent' not found:/);
+    expect(r.out).not.toContain("Harness:  OpenClaw (gateway)");
+    expect(r.out).not.toContain("OpenClaw: running");
+  });
+
+  it("sandbox <name> status reports the Deep Agents Code terminal harness (#5718)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-dcode-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "dcode-station", {
+      agent: "langchain-deepagents-code",
+      provider: "nvidia-prod",
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.44",
+    });
+    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "dcode-station" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: dcode-station'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron-3-super-120b-a12b'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("dcode-station status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(r.out).toContain("Interactive: dcode");
+    expect(r.out).toContain('Headless: dcode -n "<prompt>"');
+    expect(r.out).toContain("LangChain Deep Agents Code runtime: terminal");
+    expect(r.out).not.toContain("Harness:  OpenClaw (gateway)");
+    expect(r.out).not.toContain("OpenClaw: running");
+  });
+
+  it("sandbox <name> status warns when a terminal runtime cgroup records an OOM kill (#5796)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-dcode-oom-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      agent: "langchain-deepagents-code",
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    });
+    writeHealthyDockerStub(localBin);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+        "  echo 'oom_kill=1'",
+        "  echo 'source=/sys/fs/cgroup/memory.events'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Phase: Ready");
+    expect(r.out).toContain("Harness:  LangChain Deep Agents Code (terminal)");
+    expect(r.out).toContain("Runtime health:");
+    expect(r.out).toContain("degraded");
+    expect(r.out).toContain("1 OOM kill recorded");
+    expect(r.out).toContain("Sandbox may be degraded after an OOM kill.");
+    expect(r.out).toContain("Run `nemoclaw alpha rebuild` to restore.");
   });
 
   it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {

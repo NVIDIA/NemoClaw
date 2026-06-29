@@ -3,6 +3,33 @@
 
 import type { ChannelManifest } from "../../manifest";
 
+// Compatibility boundary: Hermes' Slack adapter requires Bolt-shaped xoxb-/xapp-
+// placeholders in .env, while older OpenShell persisted bindings may still pass
+// generic openshell:resolve:env:SLACK_* runtime env values into startup. The
+// manifest owns these aliases, the reduced runtime plan carries them to the
+// Hermes entrypoint, and runtime-config-guard only applies them for active,
+// non-disabled Slack channels. The no-runtime-plan fallback is intentionally
+// limited to runtime-config-guard.py's LEGACY_PROVIDER_PLACEHOLDER_KEYS; new
+// channels must ship runtime-plan metadata instead of extending ambient fallback
+// behavior. Remove this normalization once all persisted Hermes legacy bindings
+// render manifest placeholders directly.
+const slackRuntimeEnvAliases = [
+  {
+    envKey: "SLACK_BOT_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    message:
+      "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+  {
+    envKey: "SLACK_APP_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+    value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    message:
+      "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+  },
+] as const;
+
 export const slackManifest = {
   schemaVersion: 1,
   id: "slack",
@@ -23,7 +50,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack Bot Token",
         help: "Slack API → Your Apps → OAuth & Permissions → Bot User OAuth Token (xoxb-...).",
-        placeholder: "xoxb-...",
       },
     },
     {
@@ -37,7 +63,6 @@ export const slackManifest = {
       prompt: {
         label: "Slack App Token (Socket Mode)",
         help: "Slack API → Your Apps → Basic Information → App-Level Tokens (xapp-...).",
-        placeholder: "xapp-...",
       },
     },
     {
@@ -72,6 +97,7 @@ export const slackManifest = {
       providerName: "{sandboxName}-slack-bridge",
       providerEnvKey: "SLACK_BOT_TOKEN",
       placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      primary: true,
     },
     {
       id: "slackAppToken",
@@ -81,7 +107,7 @@ export const slackManifest = {
       placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
     },
   ],
-  policyPresets: ["slack"],
+  policyPresets: [{ name: "slack", requiredAtCreate: true }],
   render: [
     {
       id: "slack-openclaw-channel",
@@ -146,6 +172,47 @@ export const slackManifest = {
       },
     },
   ],
+  runtime: {
+    openclaw: {
+      channelName: "slack",
+      visibility: {
+        configKeys: ["slack"],
+        logPatterns: ["slack"],
+      },
+      envAliases: slackRuntimeEnvAliases,
+      nodePreloads: [
+        {
+          module: "slack-channel-guard",
+          injectInto: ["boot", "connect"],
+          optional: false,
+          installMessage:
+            "[channels] Installing Slack channel guard (unhandled-rejection safety net)",
+          installedMessage: "[channels] Slack channel guard installed (NODE_OPTIONS updated)",
+        },
+      ],
+      secretScans: [
+        {
+          path: "/sandbox/.openclaw/openclaw.json",
+          pattern: "(?:xoxb|xapp)-(?!OPENSHELL-RESOLVE-ENV-)",
+          message: "[SECURITY] Slack token leaked into {path} - refusing to serve",
+          exitCode: 78,
+        },
+      ],
+    },
+    hermes: {
+      envAliases: slackRuntimeEnvAliases,
+    },
+  },
+  agentPackages: [
+    {
+      id: "openclawPluginPackage",
+      agent: "openclaw",
+      manager: "openclaw-plugin",
+      spec: "npm:@openclaw/slack@{{openclaw.version}}",
+      pin: true,
+      required: true,
+    },
+  ],
   state: {
     persist: {
       allowedIds: ["allowedUsers"],
@@ -164,23 +231,28 @@ export const slackManifest = {
   },
   hooks: [
     {
-      id: "slack-openclaw-package-install",
-      phase: "agent-install",
-      handler: "common.staticOutputs",
+      id: "slack-socket-mode-gateway-conflict",
+      phase: "pre-enable",
+      handler: "slack.socketModeGatewayConflict",
+      onFailure: "abort",
+    },
+    {
+      id: "slack-openclaw-bridge-health",
+      phase: "health-check",
+      handler: "slack.openclawBridgeHealth",
       agents: ["openclaw"],
+      onFailure: "abort",
+    },
+    {
+      id: "slack-socket-mode-gateway-status",
+      phase: "status",
+      handler: "slack.socketModeGatewayStatus",
       outputs: [
         {
-          id: "openclawPluginPackage",
-          kind: "package-install",
-          required: true,
-          value: {
-            manager: "openclaw-plugin",
-            spec: "npm:@openclaw/slack@{{openclaw.version}}",
-            pin: true,
-          },
+          id: "gatewayOverlaps",
+          kind: "status",
         },
       ],
-      onFailure: "abort",
     },
     {
       id: "slack-token-paste",

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { OnboardFlowContext, OnboardFlowPhaseResult } from "./flow-context";
+import { assertProviderModelSelectedContext, assertSandboxCreatedContext } from "./flow-context";
 import {
   createAgentSetupPhase,
   createFinalizationPhase,
@@ -45,8 +46,16 @@ export function buildOnboardFlowPhaseSequence<Context extends OnboardFlowContext
       const result = await handlers.gateway(context);
       return { session: result.context.session, result: result.result };
     }),
-    createProviderInferencePhase((context) => handlers.providerInference(context)),
-    createSandboxPhase((context) => handlers.sandbox(context)),
+    createProviderInferencePhase(async (context) => {
+      const { context: nextContext, result } = await handlers.providerInference(context);
+      assertProviderModelSelectedContext(nextContext, "provider inference result");
+      return { context: nextContext, result };
+    }),
+    createSandboxPhase(async (context) => {
+      const { context: nextContext, result } = await handlers.sandbox(context);
+      assertSandboxCreatedContext(nextContext, "sandbox result");
+      return { context: nextContext, result };
+    }),
     createOpenclawSetupPhase((context) => handlers.openclaw(context)),
     createAgentSetupPhase((context) => handlers.agentSetup(context)),
     createPoliciesPhase((context) => handlers.policies(context)),

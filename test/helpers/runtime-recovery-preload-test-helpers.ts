@@ -3,7 +3,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { GATEWAY_PRELOAD_GUARDS } from "../../dist/lib/agent/runtime-recovery-preload";
+import { GATEWAY_PRELOAD_GUARDS } from "../../src/lib/agent/runtime-recovery-preload";
 
 const [SAFETY_NET_GUARD, CIAO_GUARD] = GATEWAY_PRELOAD_GUARDS;
 
@@ -21,8 +21,12 @@ export function createRecoveryPreloadHarnessPaths(root: string): RecoveryPreload
     preloadTmpSafetyNet: path.join(root, "preload-tmp-safety-net.js"),
     preloadTmpCiao: path.join(root, "preload-tmp-ciao.js"),
   };
-  fs.writeFileSync(paths.preloadSourceSafetyNet, "module.exports = 'trusted safety net';\n");
-  fs.writeFileSync(paths.preloadSourceCiao, "module.exports = 'trusted ciao guard';\n");
+  fs.writeFileSync(paths.preloadSourceSafetyNet, "module.exports = 'trusted safety net';\n", {
+    mode: 0o644,
+  });
+  fs.writeFileSync(paths.preloadSourceCiao, "module.exports = 'trusted ciao guard';\n", {
+    mode: 0o644,
+  });
   return paths;
 }
 

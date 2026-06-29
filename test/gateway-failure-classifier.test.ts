@@ -6,12 +6,12 @@ import { describe, expect, it } from "vitest";
 import {
   classifyGatewayFailure,
   classifySandboxContainerFailure,
-  getLayerHeader,
   type GatewayFailureRunners,
+  getLayerHeader,
   isDockerRuntimeDown,
   printDockerRuntimeDownGuidance,
   type SandboxContainerFailureRunners,
-} from "../dist/lib/actions/sandbox/gateway-failure-classifier.js";
+} from "../src/lib/actions/sandbox/gateway-failure-classifier.js";
 
 function makeRunners(overrides: Partial<GatewayFailureRunners> = {}): GatewayFailureRunners {
   return {

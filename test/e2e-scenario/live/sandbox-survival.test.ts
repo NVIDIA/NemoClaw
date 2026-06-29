@@ -15,8 +15,10 @@ import path from "node:path";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { assertExitZero, resultText, sandboxAccessEnv } from "../fixtures/clients/index.ts";
+import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { NemoClawInstance } from "../fixtures/phases/index.ts";
 import type { SandboxMarker } from "../fixtures/phases/state-validation.ts";
 
@@ -45,16 +47,15 @@ function extractSemver(raw: string): string | undefined {
   return raw.match(/\d+\.\d+\.\d+/)?.[0];
 }
 
-function installEnv(apiKey: string): NodeJS.ProcessEnv {
+function installEnv(hostedEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    NVIDIA_INFERENCE_API_KEY: apiKey,
+    ...hostedEnv,
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_AGENT: "openclaw",
-    NEMOCLAW_PROVIDER: "cloud",
   };
 }
 
@@ -78,16 +79,15 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     cleanup,
     host,
     lifecycle,
+    provider,
     runtime,
     sandbox,
     secrets,
     skip,
     stateValidation,
   }) => {
-    const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
-    expect(apiKey.startsWith("nvapi-"), "NVIDIA_INFERENCE_API_KEY must start with nvapi-").toBe(
-      true,
-    );
+    const hosted = requireHostedInferenceConfig(secrets);
+    const apiKey = hosted.apiKey;
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-survival",
@@ -117,17 +117,19 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       skip("Docker is required for sandbox survival E2E");
     }
 
-    const modelsReachable = await host.command(
-      "curl",
-      ["-sf", "--max-time", "10", "https://inference-api.nvidia.com/v1/models"],
+    const endpointReachable = await provider.probeReachability(
+      trustedProviderEndpoint(hosted.endpointUrl, { allowedHosts: ["inference-api.nvidia.com"] }),
       {
-        artifactName: "prereq-inference-api-models",
+        artifactName: "prereq-inference-api-reachability",
         env: buildAvailabilityProbeEnv(),
         redactionValues: [apiKey],
-        timeoutMs: 15_000,
+        timeoutMs: 25_000,
       },
     );
-    expect(modelsReachable.exitCode, resultText(modelsReachable)).toBe(0);
+    const reachabilityStatus = endpointReachable.stdout.trim();
+    expect(endpointReachable.exitCode, resultText(endpointReachable)).toBe(0);
+    expect(["000", "401", "403"], resultText(endpointReachable)).not.toContain(reachabilityStatus);
+    expect(Number(reachabilityStatus), resultText(endpointReachable)).toBeLessThan(500);
     expect(fs.existsSync(path.join(REPO_ROOT, "install.sh"))).toBe(true);
 
     await host.bestEffortCleanupSandbox(SANDBOX_NAME, {
@@ -185,7 +187,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     const install = await host.command("bash", ["install.sh", "--non-interactive"], {
       artifactName: "install-sh-sandbox-survival",
       cwd: REPO_ROOT,
-      env: installEnv(apiKey),
+      env: installEnv(hosted.env),
       redactionValues: [apiKey],
       timeoutMs: 20 * 60_000,
     });

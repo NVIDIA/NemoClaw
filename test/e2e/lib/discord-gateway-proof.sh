@@ -77,6 +77,56 @@ fake_discord_gateway_allowed_ip_options() {
   printf '%s' 'allowed-ip=10.0.0.0/8,allowed-ip=172.16.0.0/12,allowed-ip=192.168.0.0/16'
 }
 
+check_fake_discord_gateway_rewrite_capture() {
+  local capture_file="$1"
+  local expected_token="$2"
+
+  node - "$capture_file" "$expected_token" <<'NODE'
+const fs = require("fs");
+const [file, expected] = process.argv.slice(2);
+let serialized;
+let rows;
+try {
+  serialized = fs.readFileSync(file, "utf8");
+  rows = serialized
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+} catch {
+  console.log("CAPTURE_PARSE_ERROR");
+  process.exit(8);
+}
+
+const identify = rows.filter((row) => row.event === "identify").at(-1);
+if (!identify) {
+  console.log("NO_IDENTIFY");
+  process.exit(2);
+}
+if (identify.tokenMatchesExpected !== true) {
+  console.log("BAD_TOKEN_REWRITE");
+  process.exit(3);
+}
+if (identify.tokenLooksPlaceholder) {
+  console.log("PLACEHOLDER_LEAK");
+  process.exit(4);
+}
+if (Object.prototype.hasOwnProperty.call(identify, "token")) {
+  console.log("RAW_TOKEN_CAPTURED");
+  process.exit(5);
+}
+if (serialized.includes(expected)) {
+  console.log("RAW_TOKEN_LEAK");
+  process.exit(6);
+}
+if (serialized.includes("openshell:resolve:env:")) {
+  console.log("PLACEHOLDER_LEAK");
+  process.exit(7);
+}
+console.log("OK");
+NODE
+}
+
 apply_fake_discord_gateway_policy() {
   local sandbox_name="$1"
   local port="$2"

@@ -298,7 +298,6 @@ channel_presence() {
 dump_channel_state() {
   info "registry.messaging.plan.channels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; const c=r.sandboxes?.[n]?.messaging?.plan?.channels; process.stdout.write(JSON.stringify(Array.isArray(c)?c.map((x)=>x?.channelId):null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
   info "registry.messaging.plan.disabledChannels: $(node -e 'const fs=require("fs"); const [p,n]=process.argv.slice(1); const r=fs.existsSync(p)?JSON.parse(fs.readFileSync(p,"utf8")):{}; process.stdout.write(JSON.stringify(r.sandboxes?.[n]?.messaging?.plan?.disabledChannels ?? null));' "$REGISTRY" "$ACTIVE_SANDBOX" 2>/dev/null || echo null)"
-  info "registry.providerCredentialHashes: $(registry_field providerCredentialHashes)"
   if [ "$ACTIVE_AGENT" = "openclaw" ]; then
     info "openclaw.json channels:"
     sandbox_exec "python3 -c 'import json; print(list(json.load(open(\"/sandbox/.openclaw/openclaw.json\")).get(\"channels\", {}).keys()))' 2>&1" | head -10 || true
@@ -808,6 +807,9 @@ run_agent_scenario() {
   assert_provider_records_exist "after stop"
   assert_host_messaging_config "after stop+rebuild"
   assert_host_messaging_plan_state "disabled" "after stop+rebuild"
+  for channel in "${CHANNELS[@]}"; do
+    assert_policy_preset_active "$channel" "inactive" "after stop+rebuild"
+  done
 
   section "${agent}: channels start all + rebuild"
   start_all_channels
@@ -822,6 +824,9 @@ run_agent_scenario() {
   assert_provider_records_exist "after start"
   assert_host_messaging_config "after start+rebuild"
   assert_host_messaging_plan_state "active" "after start+rebuild"
+  for channel in "${CHANNELS[@]}"; do
+    assert_policy_preset_active "$channel" "active" "after start+rebuild"
+  done
 }
 
 section "Phase 0: Prerequisites"

@@ -8,7 +8,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
 import { ROOT } from "../runner";
+import {
+  formatAgentAliasSuffix,
+  resolveAgentNameAlias as resolveKnownAgentNameAlias,
+} from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
+import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentWebAuth, readWebAuth } from "./web-auth";
+
+export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
+export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -70,6 +80,7 @@ export interface AgentDefinition {
   version_command?: string;
   expected_version?: string;
   gateway_command?: string;
+  runtime?: AgentRuntime;
   device_pairing?: boolean;
   phone_home_hosts?: string[];
   forward_ports?: number[];
@@ -78,24 +89,25 @@ export interface AgentDefinition {
   inference?: AgentInference;
   state_dirs?: string[];
   state_files?: AgentStateFile[];
-  messaging_platforms?: { supported?: string[] };
+  user_managed_files?: string[];
   _legacy_paths?: StringMap;
   agentDir: string;
   manifestPath: string;
   readonly displayName: string;
-  readonly healthProbe: AgentHealthProbe;
+  readonly healthProbe: AgentHealthProbe | null;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly webAuth: AgentWebAuth;
   readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
   readonly stateFiles: AgentStateFile[];
+  readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
-  readonly messagingPlatforms: string[];
   readonly dockerfileBasePath: string | null;
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;
@@ -112,6 +124,25 @@ export interface AgentChoice {
 }
 
 const _cache = new Map<string, AgentDefinition>();
+
+export { agentAliasSummary } from "./aliases";
+
+export function resolveAgentNameAlias(
+  value: string | null | undefined,
+  availableAgents: readonly string[] = listAgents(),
+): string | null {
+  return resolveKnownAgentNameAlias(value, availableAgents);
+}
+
+function unknownAgentMessage(
+  value: string,
+  context: string | null,
+  available: readonly string[],
+): string {
+  const choices = available.join(", ");
+  const suffix = context ? ` ${context}` : "";
+  return `Unknown agent '${value}'${suffix}. Available: ${choices}${formatAgentAliasSuffix(available)}`;
+}
 
 function isManifestValue(value: unknown): value is ManifestValue {
   if (value === null || value instanceof Date) return true;
@@ -156,6 +187,46 @@ function readStringArray(record: ManifestRecord, key: string): string[] | undefi
   const value = record[key];
   if (!Array.isArray(value)) return undefined;
   return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+const CONTROL_CHAR_RE = /[\x00-\x1f\x7f]/;
+
+function readUserManagedFiles(record: ManifestRecord): string[] | undefined {
+  const value = record.user_managed_files;
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("Agent manifest field 'user_managed_files' must be an array");
+  }
+
+  return value.map((entry, index) => {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a string`,
+      );
+    }
+    if (entry.length === 0) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not be empty`,
+      );
+    }
+    if (CONTROL_CHAR_RE.test(entry)) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain control characters`,
+      );
+    }
+    if (entry.startsWith("/")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must be a relative path, not absolute`,
+      );
+    }
+    const segments = entry.split("/");
+    if (segments.some((segment) => segment === "..")) {
+      throw new Error(
+        `Agent manifest field 'user_managed_files[${String(index)}]' must not contain '..' path components`,
+      );
+    }
+    return entry;
+  });
 }
 
 function readStateFiles(record: ManifestRecord): AgentStateFile[] | undefined {
@@ -252,14 +323,6 @@ function readHealthProbe(record: ManifestRecord): AgentHealthProbe | undefined {
   }
 
   return undefined;
-}
-
-function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] } | undefined {
-  const messagingPlatforms = readObject(record, "messaging_platforms");
-  if (!messagingPlatforms) return undefined;
-
-  const supported = readStringArray(messagingPlatforms, "supported");
-  return supported ? { supported } : {};
 }
 
 function readDashboard(record: ManifestRecord): AgentDashboard {
@@ -372,15 +435,17 @@ export function loadAgent(name: string): AgentDefinition {
   const versionCommand = readString(raw, "version_command");
   const expectedVersion = readString(raw, "expected_version");
   const gatewayCommand = readString(raw, "gateway_command");
+  const runtime = readAgentRuntime(raw);
   const forwardPorts = readPortArray(raw, "forward_ports");
   const dashboard = readDashboard(raw);
+  const webAuth = readWebAuth(raw);
   const healthProbe = readHealthProbe(raw);
   const config = readObject(raw, "config");
   const inference = readInference(raw);
   const stateDirs = readStringArray(raw, "state_dirs");
   const stateFiles = readStateFiles(raw);
+  const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
-  const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
 
@@ -393,6 +458,7 @@ export function loadAgent(name: string): AgentDefinition {
     version_command: versionCommand,
     expected_version: expectedVersion,
     gateway_command: gatewayCommand,
+    runtime,
     device_pairing: readBoolean(raw, "device_pairing"),
     phone_home_hosts: phoneHomeHosts,
     forward_ports: forwardPorts,
@@ -401,7 +467,7 @@ export function loadAgent(name: string): AgentDefinition {
     inference,
     state_dirs: stateDirs,
     state_files: stateFiles,
-    messaging_platforms: messagingPlatforms,
+    user_managed_files: userManagedFiles,
     _legacy_paths: legacyPathConfig,
     agentDir,
     manifestPath,
@@ -410,7 +476,10 @@ export function loadAgent(name: string): AgentDefinition {
       return displayName ?? manifestName;
     },
 
-    get healthProbe(): AgentHealthProbe {
+    get healthProbe(): AgentHealthProbe | null {
+      if (runtime.kind === "terminal" && !healthProbe) {
+        return null;
+      }
       return (
         healthProbe ?? {
           url: `http://localhost:${String(DASHBOARD_PORT)}/`,
@@ -421,11 +490,18 @@ export function loadAgent(name: string): AgentDefinition {
     },
 
     get forwardPort(): number {
+      if (runtime.kind === "terminal" && !forwardPorts?.[0]) {
+        return 0;
+      }
       return forwardPorts?.[0] ?? DASHBOARD_PORT;
     },
 
     get dashboard(): AgentDashboard {
       return dashboard;
+    },
+
+    get webAuth(): AgentWebAuth {
+      return webAuth;
     },
 
     get dashboardUi(): AgentDashboardUi | null {
@@ -453,6 +529,10 @@ export function loadAgent(name: string): AgentDefinition {
       return stateFiles ?? [];
     },
 
+    get userManagedFiles(): string[] {
+      return userManagedFiles ?? [];
+    },
+
     get versionCommand(): string {
       return versionCommand ?? `${binaryPath ?? "unknown"} --version`;
     },
@@ -467,10 +547,6 @@ export function loadAgent(name: string): AgentDefinition {
 
     get phoneHomeHosts(): string[] {
       return phoneHomeHosts ?? [];
-    },
-
-    get messagingPlatforms(): string[] {
-      return messagingPlatforms?.supported ?? [];
     },
 
     get dockerfileBasePath(): string | null {
@@ -530,13 +606,24 @@ export function loadAgent(name: string): AgentDefinition {
  * OpenClaw is listed first as the default.
  */
 export function getAgentChoices(): AgentChoice[] {
-  const agents = listAgents().map((name) => {
-    const agent = loadAgent(name);
-    return {
-      name: agent.name,
-      displayName: agent.displayName,
-      description: agent.description ?? "",
-    };
+  // Build the menu defensively: a single malformed non-default manifest must
+  // not abort interactive onboarding (e.g. an OpenClaw user accepting the
+  // default). Skip agents that fail to load and surface a warning instead.
+  const agents = listAgents().flatMap((name) => {
+    try {
+      const agent = loadAgent(name);
+      return [
+        {
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description ?? "",
+        },
+      ];
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`  Warning: skipping agent '${name}' — failed to load manifest: ${reason}`);
+      return [];
+    }
   });
 
   agents.sort((left, right) => {
@@ -561,32 +648,33 @@ export function resolveAgentName({
 } = {}): string {
   if (agentFlag) {
     const available = listAgents();
-    if (!available.includes(agentFlag)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${agentFlag}'. Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(agentFlag, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(agentFlag, null, available));
     }
-    return agentFlag;
+    return resolved;
   }
 
   const envAgent = process.env.NEMOCLAW_AGENT;
   if (envAgent) {
     const available = listAgents();
-    if (!available.includes(envAgent)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${envAgent}' (from NEMOCLAW_AGENT). Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(envAgent, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(envAgent, "(from NEMOCLAW_AGENT)", available));
     }
-    return envAgent;
+    return resolved;
   }
 
   if (session?.agent) {
     const available = listAgents();
-    if (!available.includes(session.agent)) {
+    const resolved = resolveAgentNameAlias(session.agent, available);
+    if (!resolved) {
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );
       return "openclaw";
     }
-    return session.agent;
+    return resolved;
   }
 
   return "openclaw";

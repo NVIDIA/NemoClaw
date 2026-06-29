@@ -72,9 +72,9 @@ describe("CLI dispatch", () => {
         const expectedDetachLines = [
           "sandbox provider detach alpha alpha-telegram-bridge",
           "sandbox provider detach alpha alpha-discord-bridge",
+          "sandbox provider detach alpha alpha-wechat-bridge",
           "sandbox provider detach alpha alpha-slack-bridge",
           "sandbox provider detach alpha alpha-slack-app",
-          "sandbox provider detach alpha alpha-wechat-bridge",
           "sandbox provider detach alpha alpha-brave-search",
         ];
         for (const line of expectedDetachLines) {

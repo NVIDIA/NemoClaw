@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import {
   CLI,
@@ -18,8 +18,8 @@ import {
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
-    const sandboxConfigModule = await import("../../dist/lib/sandbox/config.js");
-    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+    const sandboxConfigModule = await import("../../src/lib/sandbox/config.js");
+    const { parseConfigGetArgs } = sandboxConfigModule as {
       parseConfigGetArgs: (
         args: string[],
       ) =>
@@ -134,12 +134,42 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("nemoclaw gc");
     expect(r.out).toContain("(--yes|-y|--force, --dry-run)");
     expect(r.out).toContain("nemoclaw onboard");
-    expect(r.out).toContain("Configure inference endpoint and credentials");
+    expect(r.out).toContain(
+      "Configure inference endpoint and credentials (--agent to choose runtime)",
+    );
+    expect(r.out).toContain("nemoclaw agents list");
+    expect(r.out).toContain("List available agent runtimes for onboard --agent");
     expect(r.out).toContain("nemoclaw onboard --from");
     expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
   });
 
-  it("--help exits 0", () => {
+  it("onboard help lists installed agent runtime names in the --agent description", () => {
+    const r = run("onboard --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Agent runtime to onboard (openclaw, hermes, langchain-deepagents-code;",
+    );
+    expect(r.out).toContain("aliases: nemohermes → hermes;");
+    expect(r.out).toContain("nemo-deepagents/dcode/deepagents/deepagents-code/langchain →");
+    expect(r.out).toContain("langchain-deepagents-code)");
+  });
+
+  it("agents parent shows command help instead of sandbox lookup", () => {
+    const r = run("agents");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("nemoclaw agents list");
+    expect(r.out).not.toContain("Sandbox 'agents' does not exist");
+  });
+
+  it("agents list exits 0 and lists global agent runtimes", () => {
+    const r = run("agents list");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("openclaw");
+    expect(r.out).toContain("hermes");
+    expect(r.out).toContain("langchain-deepagents-code");
+  });
+
+  it("exits 0 for --help", () => {
     expect(run("--help").code).toBe(0);
   });
 
@@ -149,7 +179,7 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("-h exits 0", () => {
+  it("exits 0 for -h", () => {
     expect(run("-h").code).toBe(0);
   });
 
@@ -195,7 +225,9 @@ describe("CLI dispatch", () => {
     const policy = run("policy set");
     expect(policy.code).toBe(1);
     expect(policy.out).toContain("Unknown nemoclaw command: policy set");
-    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain(
+      "Run: openshell policy set --policy <policy-file> --wait <sandbox-name>",
+    );
     expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
     expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
 

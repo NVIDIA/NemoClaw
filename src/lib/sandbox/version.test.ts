@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock heavy dependencies that pull in the full module graph
@@ -140,6 +140,13 @@ describe("checkAgentVersion", () => {
       "test-sb",
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
+    const sshArgs = vi.mocked(spawnSync).mock.calls[0]?.[1] as string[];
+    const configFile = sshArgs[sshArgs.indexOf("-F") + 1];
+    const configDir = dirname(configFile);
+    expect(configDir).not.toBe(tmpdir());
+    expect(basename(configDir)).toMatch(/^nemoclaw-ver-/);
+    expect(basename(configFile)).toBe("ssh_config");
+    expect(existsSync(configDir)).toBe(false);
 
     // Should have cached the version in registry
     const updated = registry.getSandbox("test-sb");

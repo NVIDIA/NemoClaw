@@ -23,6 +23,7 @@ if [[ "\${1:-}" != "--compare-versions" ]]; then
 fi
 rank() {
   case "\${1:-}" in
+    2020.1.1) printf '20200101' ;;
     2026.4.30) printf '20260430' ;;
     2026.5.1~rc1) printf '20260500' ;;
     2026.5.1) printf '20260501' ;;
@@ -89,11 +90,19 @@ describe("cloudflared APT package resolver", () => {
     expect(result.stderr).toContain("meets minimum 2026.5.1");
   });
 
-  it("preserves exact CLOUDFLARED_VERSION overrides for emergency repro", () => {
+  it("preserves syntactically valid exact CLOUDFLARED_VERSION overrides for emergency repro", () => {
     const result = runResolver("2026.5.1\n2026.5.10", "2026.5.1", "2020.1.1");
 
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toBe("2020.1.1");
+  });
+
+  it("rejects invalid CLOUDFLARED_VERSION overrides before apt install", () => {
+    const result = runResolver("2026.5.1\n2026.5.10", "2026.5.1", "bad/min");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("invalid CLOUDFLARED_VERSION");
+    expect(result.stdout.trim()).toBe("");
   });
 
   it("rejects invalid minimum versions before comparing package versions", () => {

@@ -568,6 +568,11 @@ else
 fi
 assert_host_telegram_plan "removed" "after channels remove"
 
+unset TELEGRAM_BOT_TOKEN
+unset TELEGRAM_ALLOWED_IDS
+unset TELEGRAM_REQUIRE_MENTION
+info "Telegram env inputs unset before post-remove rebuild so they do not request a fresh channel add"
+
 info "Rebuilding sandbox to apply the remove..."
 if run_rebuild_with_live_log /tmp/nc-rebuild-remove.log; then
   pass "C5b: rebuild (post-remove) completed"

@@ -11,7 +11,7 @@ import {
   normalizeReadModesForDockerCopy,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} from "../dist/lib/sandbox/build-context";
+} from "../src/lib/sandbox/build-context";
 
 describe("sandbox build context staging", () => {
   function writeBuildContextFixture(sourceRoot: string) {
@@ -30,6 +30,7 @@ describe("sandbox build context staging", () => {
     }
 
     writeFixture("Dockerfile");
+    writeFixture("tsconfig.runtime-preloads.json", "{}\n");
     for (const fileName of [
       "package.json",
       "package-lock.json",
@@ -74,6 +75,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
+    writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
     writeFixture(path.join("scripts", "lib", "openclaw_device_approval_policy.py"));
     writeFixture(path.join("scripts", "lib", "clean_runtime_shell_env_shim.py"));
     writeFixture(
@@ -84,7 +86,6 @@ describe("sandbox build context staging", () => {
     );
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
-    writeFixture(path.join("scripts", "patch-openclaw-slack-deny-feedback.mts"));
   }
 
   function expectDockerfileScriptCopiesExist(buildCtx: string, stagedDockerfile: string) {
@@ -230,6 +231,7 @@ describe("sandbox build context staging", () => {
     try {
       const { buildCtx, stagedDockerfile } = stageOptimizedSandboxBuildContext(repoRoot, tmpDir);
       expectDockerfileScriptCopiesExist(buildCtx, stagedDockerfile);
+      expect(fs.existsSync(path.join(buildCtx, "tsconfig.runtime-preloads.json"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", "blueprint.yaml"))).toBe(true);
       expect(
@@ -297,11 +299,29 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-chat-send.js"))).toBe(
         true,
       );
-      expect(
-        fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-slack-deny-feedback.mts")),
-      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-rlimits.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("build context stats honor filters without descending into excluded directories", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-stats-"));
+
+    try {
+      fs.mkdirSync(path.join(tmpDir, "include"), { recursive: true });
+      fs.mkdirSync(path.join(tmpDir, "skip", "nested"), { recursive: true });
+      fs.writeFileSync(path.join(tmpDir, "include", "a.txt"), "1234");
+      fs.writeFileSync(path.join(tmpDir, "skip", "nested", "b.txt"), "567890");
+
+      const stats = collectBuildContextStats(
+        tmpDir,
+        (entryPath) => !entryPath.split(path.sep).includes("skip"),
+      );
+
+      expect(stats).toEqual({ fileCount: 1, totalBytes: 4 });
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

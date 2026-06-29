@@ -5,7 +5,7 @@ import { createRequire } from "module";
 import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const runner = require("../../dist/lib/runner");
+const runner = require("./runner");
 
 describe("run with argv array", () => {
   it("executes a simple command and returns result", () => {

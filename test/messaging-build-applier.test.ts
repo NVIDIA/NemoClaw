@@ -27,6 +27,7 @@ const GENERATOR_PATH = path.join(
   "scripts",
   "generate-openclaw-config.mts",
 );
+const TEST_PATH = process.env.PATH || "/usr/bin:/bin";
 
 const BASE_GENERATOR_ENV: Record<string, string> = {
   NEMOCLAW_MODEL: "test-model",
@@ -59,10 +60,22 @@ function wechatConfigB64(overrides: Record<string, string> = {}): string {
   ).toString("base64");
 }
 
+function teamsConfigB64(overrides: Record<string, string | string[]> = {}): string {
+  return Buffer.from(
+    JSON.stringify({
+      appId: "test-teams-app-id",
+      tenantId: "test-teams-tenant-id",
+      allowedUsers: ["00000000-0000-0000-0000-000000000001"],
+      webhookPort: "3978",
+      ...overrides,
+    }),
+  ).toString("base64");
+}
+
 function runDryRun(envOverrides: Record<string, string> = {}) {
   const env = withLegacyMessagingPlanEnv(
     {
-      PATH: process.env.PATH || "/usr/bin:/bin",
+      PATH: TEST_PATH,
       ...envOverrides,
     },
     "openclaw",
@@ -93,6 +106,14 @@ function parseDryRun(envOverrides: Record<string, string> = {}) {
   return JSON.parse(result.stdout);
 }
 
+function decodePlan(encoded: string): any {
+  return JSON.parse(Buffer.from(encoded, "base64").toString("utf-8"));
+}
+
+function encodePlan(plan: any): string {
+  return Buffer.from(JSON.stringify(plan)).toString("base64");
+}
+
 describe("messaging-build-applier.mts: agent-install", () => {
   it("collects selected messaging plugin install specs", () => {
     const payload = parseDryRun({
@@ -103,8 +124,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "slack",
         "whatsapp",
         "wechat",
+        "teams",
       ]),
       NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
+      NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
     });
 
     expect(payload.installSpecs).toEqual([
@@ -112,9 +135,11 @@ describe("messaging-build-applier.mts: agent-install", () => {
       "npm:@tencent-weixin/openclaw-weixin@2.4.3",
       "npm:@openclaw/slack@2026.5.22",
       "npm:@openclaw/whatsapp@2026.5.22",
+      "npm:@openclaw/msteams@2026.5.22",
     ]);
     expect(payload.doctorEnv).toEqual({
       DISCORD_BOT_TOKEN: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      MSTEAMS_APP_PASSWORD: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
       SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
       SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       TELEGRAM_BOT_TOKEN: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
@@ -197,15 +222,255 @@ describe("messaging-build-applier.mts: agent-install", () => {
     expect(result.stderr).toContain("NEMOCLAW_MESSAGING_PLAN_B64");
   });
 
-  it("rejects tampered package-install specs before invoking OpenClaw", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-allowlist-"));
+  it("writes a reduced runtime plan artifact for entrypoint startup", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [
+        {
+          channelId: "telegram",
+          active: true,
+          disabled: false,
+          inputs: [{ value: "do-not-persist-input-value" }],
+        },
+        { channelId: "slack", active: false, disabled: true },
+      ],
+      disabledChannels: ["slack"],
+      credentialBindings: [
+        {
+          channelId: "telegram",
+          credentialId: "telegram-bot-token",
+          providerName: "telegram-provider-name",
+          providerEnvKey: "TELEGRAM_BOT_TOKEN",
+          placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+          credentialHash: "do-not-persist-hash",
+        },
+      ],
+      agentRender: [
+        {
+          channelId: "telegram",
+          agent: "openclaw",
+          target: "openclaw.json",
+          kind: "json-fragment",
+          path: "channels.telegram",
+          value: { token: "do-not-persist-render-value" },
+        },
+      ],
+      buildSteps: [
+        {
+          channelId: "telegram",
+          kind: "build-file",
+          outputId: "seed-file",
+          value: { content: "do-not-persist-build-step" },
+        },
+      ],
+      runtimeSetup: {
+        nodePreloads: [
+          {
+            channelId: "telegram",
+            module: "telegram-diagnostics",
+            source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+            target: "/tmp/nemoclaw-telegram-diagnostics.js",
+            injectInto: ["boot", "connect"],
+            optional: false,
+            installMessage: "[channels] install telegram diagnostics",
+            installedMessage: "[channels] installed telegram diagnostics",
+          },
+        ],
+        envAliases: [],
+        secretScans: [],
+      },
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "openclaw",
+          "--phase",
+          "runtime-setup",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: TEST_PATH,
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+            NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf-8"));
+      expect(artifact).toMatchObject({
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "openclaw",
+        workflow: "rebuild",
+        channels: [
+          { channelId: "telegram", active: true, disabled: false },
+          { channelId: "slack", active: false, disabled: true },
+        ],
+        disabledChannels: ["slack"],
+        credentialBindings: [{ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }],
+        runtimeSetup: {
+          nodePreloads: [
+            {
+              channelId: "telegram",
+              source: "/usr/local/lib/nemoclaw/preloads/telegram-diagnostics.js",
+              target: "/tmp/nemoclaw-telegram-diagnostics.js",
+              injectInto: ["boot", "connect"],
+              optional: false,
+            },
+          ],
+          envAliases: [],
+          secretScans: [],
+        },
+      });
+      expect(JSON.stringify(artifact)).not.toContain("do-not-persist");
+      expect(JSON.stringify(artifact)).not.toContain("openshell:resolve:env");
+      expect(artifact.runtimeSetup.nodePreloads[0]).not.toHaveProperty("module");
+      expect((fs.statSync(artifactPath).mode & 0o777).toString(8)).toBe("644");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("skips runtime plan artifact output when messaging is not configured", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "runtime-setup",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: TEST_PATH,
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.existsSync(artifactPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves Hermes runtime env aliases in the reduced runtime plan artifact", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-plan-artifact-"));
+    const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
+    const plan = {
+      schemaVersion: 1,
+      sandboxName: "test-sandbox",
+      agent: "hermes",
+      workflow: "rebuild",
+      channels: [{ channelId: "slack", active: true, disabled: false }],
+      disabledChannels: [],
+      credentialBindings: [
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+      agentRender: [],
+      buildSteps: [],
+      runtimeSetup: {
+        nodePreloads: [],
+        envAliases: [
+          {
+            channelId: "slack",
+            envKey: "SLACK_BOT_TOKEN",
+            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+            value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+            message:
+              "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+          },
+          {
+            channelId: "slack",
+            envKey: "SLACK_APP_TOKEN",
+            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+            value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+            message:
+              "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+          },
+        ],
+        secretScans: [],
+      },
+    };
+
+    try {
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "runtime-setup",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            PATH: TEST_PATH,
+            NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH: artifactPath,
+            NEMOCLAW_MESSAGING_PLAN_B64: encodePlan(plan),
+          },
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      const artifact = JSON.parse(fs.readFileSync(artifactPath, "utf-8"));
+      expect(artifact).toMatchObject({
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        workflow: "rebuild",
+        channels: [{ channelId: "slack", active: true, disabled: false }],
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+        runtimeSetup: {
+          envAliases: plan.runtimeSetup.envAliases,
+        },
+      });
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("installs package-install specs supplied by the compiled plan", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-package-plan-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
     fs.writeFileSync(
       fakeOpenclaw,
       [
         "#!/usr/bin/env node",
-        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, 'invoked\\n');",
+        "require('node:fs').appendFileSync(process.env.OPENCLAW_TRACE, `${process.argv.slice(2).join('|')}\\n`);",
         "process.exit(0);",
         "",
       ].join("\n"),
@@ -227,8 +492,8 @@ describe("messaging-build-applier.mts: agent-install", () => {
           required: true,
           value: {
             manager: "openclaw-plugin",
-            spec: "npm:@evil/plugin@1.0.0",
-            pin: true,
+            spec: "npm:@example/manifest-owned-plugin@{{openclaw.version}}",
+            pin: false,
           },
         },
       ],
@@ -249,7 +514,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
           env: {
-            PATH: tmp + ":" + (process.env.PATH || "/usr/bin:/bin"),
+            PATH: tmp + ":" + TEST_PATH,
             OPENCLAW_TRACE: tracePath,
             OPENCLAW_VERSION: "2026.5.22",
             NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
@@ -258,9 +523,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
         },
       );
 
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("not allowed");
-      expect(fs.existsSync(tracePath)).toBe(false);
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
+        "plugins|install|npm:@example/manifest-owned-plugin@2026.5.22",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -284,7 +550,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const planEnv = withLegacyMessagingPlanEnv(
         {
-          PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+          PATH: `${tmp}:${TEST_PATH}`,
           OPENCLAW_TRACE: tracePath,
           OPENCLAW_VERSION: "2026.5.22",
           NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64([
@@ -293,8 +559,10 @@ describe("messaging-build-applier.mts: agent-install", () => {
             "slack",
             "whatsapp",
             "wechat",
+            "teams",
           ]),
           NEMOCLAW_WECHAT_CONFIG_B64: wechatConfigB64(),
+          NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
         },
         "openclaw",
       );
@@ -322,13 +590,138 @@ describe("messaging-build-applier.mts: agent-install", () => {
         "plugins|install|npm:@tencent-weixin/openclaw-weixin@2.4.3|--pin|||",
         "plugins|install|npm:@openclaw/slack@2026.5.22|--pin|||",
         "plugins|install|npm:@openclaw/whatsapp@2026.5.22|--pin|||",
+        "plugins|install|npm:@openclaw/msteams@2026.5.22|--pin|||",
       ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("#4246: messaging post-agent-install render reaches the mocked OpenClaw doctor boundary", () => {
+  it("installs Hermes Python packages supplied by the compiled Teams plan", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-teams-packages-"));
+    const tracePath = path.join(tmp, "uv.trace");
+    const fakeUv = path.join(tmp, "uv");
+    fs.writeFileSync(
+      fakeUv,
+      ["#!/bin/sh", 'printf \'%s\\n\' "$*" >> "$UV_TRACE"', "exit 0", ""].join("\n"),
+      { mode: 0o755 },
+    );
+
+    try {
+      const planEnv = withLegacyMessagingPlanEnv(
+        {
+          PATH: `${tmp}:${TEST_PATH}`,
+          UV_TRACE: tracePath,
+          NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["teams"]),
+          NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
+        },
+        "hermes",
+      );
+
+      const dryRun = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "agent-install",
+          "--dry-run",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: planEnv,
+          timeout: 10_000,
+        },
+      );
+      expect(dryRun.status, dryRun.stderr).toBe(0);
+      expect(JSON.parse(dryRun.stdout).hermesUvPackages).toEqual([
+        "microsoft-teams-apps==2.0.13.4",
+        "aiohttp==3.14.1",
+      ]);
+
+      const result = spawnSync(
+        "node",
+        [
+          "--experimental-strip-types",
+          SCRIPT_PATH,
+          "--agent",
+          "hermes",
+          "--phase",
+          "agent-install",
+        ],
+        {
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          env: planEnv,
+          timeout: 10_000,
+        },
+      );
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(fs.readFileSync(tracePath, "utf-8").trim()).toBe(
+        "pip install --python /opt/hermes/.venv/bin/python --no-cache -- microsoft-teams-apps==2.0.13.4 aiohttp==3.14.1",
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Hermes Python packages not declared by trusted built-in channel manifests", () => {
+    const baseEnv = withLegacyMessagingPlanEnv(
+      {
+        PATH: TEST_PATH,
+        NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["teams"]),
+        NEMOCLAW_TEAMS_CONFIG_B64: teamsConfigB64(),
+      },
+      "hermes",
+    );
+    const plan = decodePlan(baseEnv.NEMOCLAW_MESSAGING_PLAN_B64);
+    plan.buildSteps = [
+      ...plan.buildSteps,
+      {
+        channelId: "teams",
+        kind: "package-install",
+        outputId: "tamperedHermesPackage",
+        required: true,
+        value: {
+          manager: "hermes-uv-pip",
+          spec: "unexpected-package==1.2.3",
+        },
+      },
+    ];
+
+    const result = spawnSync(
+      "node",
+      [
+        "--experimental-strip-types",
+        SCRIPT_PATH,
+        "--agent",
+        "hermes",
+        "--phase",
+        "agent-install",
+        "--dry-run",
+      ],
+      {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...baseEnv,
+          NEMOCLAW_MESSAGING_PLAN_B64: encodePlan(plan),
+        },
+        timeout: 10_000,
+      },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("tamperedHermesPackage");
+    expect(result.stderr).toContain("not declared by a trusted built-in manifest");
+    expect(result.stderr).toContain("unexpected-package==1.2.3");
+  });
+
+  it("reaches the mocked OpenClaw doctor boundary during post-agent-install messaging render (#4246)", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-discord-runtime-contract-"));
     const tracePath = path.join(tmp, "openclaw.trace");
     const fakeOpenclaw = path.join(tmp, "openclaw");
@@ -362,7 +755,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const generatorEnv = withLegacyMessagingPlanEnv(
         {
-          PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+          PATH: `${tmp}:${TEST_PATH}`,
           HOME: tmp,
           ...BASE_GENERATOR_ENV,
           NEMOCLAW_MESSAGING_CHANNELS_B64: discordChannels,
@@ -380,7 +773,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(generatorResult.status, generatorResult.stderr).toBe(0);
 
       const applierEnv = {
-        PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+        PATH: `${tmp}:${TEST_PATH}`,
         HOME: tmp,
         OPENCLAW_TRACE: tracePath,
         OPENCLAW_VERSION: "2026.5.22",
@@ -469,7 +862,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const generatorEnv = withLegacyMessagingPlanEnv(
         {
-          PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+          PATH: `${tmp}:${TEST_PATH}`,
           HOME: tmp,
           ...BASE_GENERATOR_ENV,
           NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -500,7 +893,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
           env: {
-            PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+            PATH: `${tmp}:${TEST_PATH}`,
             HOME: tmp,
             OPENCLAW_TRACE: tracePath,
             NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
@@ -539,7 +932,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     try {
       const generatorEnv = withLegacyMessagingPlanEnv(
         {
-          PATH: process.env.PATH || "/usr/bin:/bin",
+          PATH: TEST_PATH,
           HOME: tmp,
           ...BASE_GENERATOR_ENV,
           NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
@@ -572,7 +965,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
           env: {
-            PATH: `${tmp}:${process.env.PATH || "/usr/bin:/bin"}`,
+            PATH: `${tmp}:${TEST_PATH}`,
             HOME: tmp,
             NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
           },
@@ -652,7 +1045,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
           env: {
-            PATH: process.env.PATH || "/usr/bin:/bin",
+            PATH: TEST_PATH,
             HOME: tmp,
             NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
           },
@@ -704,7 +1097,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           encoding: "utf-8",
           stdio: ["pipe", "pipe", "pipe"],
           env: {
-            PATH: process.env.PATH || "/usr/bin:/bin",
+            PATH: TEST_PATH,
             HOME: tmp,
             NEMOCLAW_MESSAGING_PLAN_B64: Buffer.from(JSON.stringify(plan)).toString("base64"),
           },
@@ -747,7 +1140,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
       fs.writeFileSync(path.join(hermesDir, ".env"), "API_SERVER_PORT=18642\n");
       const env = withLegacyMessagingPlanEnv(
         {
-          PATH: process.env.PATH || "/usr/bin:/bin",
+          PATH: TEST_PATH,
           HOME: tmp,
           NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["telegram"]),
         },

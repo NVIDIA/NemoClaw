@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { selectResourceProfileForSandbox } from "../../../dist/lib/onboard/resource-profile-selection.js";
 import type { ResourceProfileSelectionDeps } from "./resource-profile-selection";
+import { selectResourceProfileForSandbox } from "./resource-profile-selection.js";
 
 function makeDeps(
   overrides: Partial<ResourceProfileSelectionDeps> = {},
