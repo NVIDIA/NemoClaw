@@ -4424,6 +4424,19 @@ handle_openclaw_gateway_control_request() {
   local old_pid="${GATEWAY_PID:-0}"
   local old_identity="${GATEWAY_PID_START_IDENTITY:-}"
 
+  if [ "$GATEWAY_CONTROL_ACTION" = "probe" ]; then
+    if ! run_openclaw_config_guard preflight-restart; then
+      gateway_control_fail unsafe-config "$old_pid"
+      return 1
+    fi
+    if ! openclaw_gateway_healthy "$old_pid" "$old_identity"; then
+      gateway_control_fail health-timeout "$old_pid"
+      return 1
+    fi
+    gateway_control_complete already-running "$old_pid" "$old_pid"
+    return 0
+  fi
+
   if [ "$GATEWAY_CONTROL_ACTION" = "recover" ] \
     && openclaw_gateway_healthy "$old_pid" "$old_identity"; then
     if ! run_openclaw_config_guard recover; then

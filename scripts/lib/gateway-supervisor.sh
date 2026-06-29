@@ -60,7 +60,7 @@ gateway_control_take_request() {
   esac
   [ "${#nonce}" -eq 64 ] || return 1
   case "$action" in
-    restart | recover) ;;
+    restart | recover | probe) ;;
     *) return 1 ;;
   esac
   [ -z "${extra:-}" ] || return 1

@@ -123,4 +123,70 @@ describe("OpenClaw gateway recovery during respawn races", () => {
     );
     expect(result.stdout).not.toContain("unexpected-");
   });
+
+  it.each([
+    {
+      label: "reports the existing gateway healthy",
+      guardStatus: 0,
+      healthStatus: 0,
+      expected: [
+        "take-request",
+        "guard:preflight-restart",
+        "healthy:4242:777",
+        "complete:already-running:4242:4242",
+        "rc:0",
+      ],
+    },
+    {
+      label: "rejects an unsafe config before checking health",
+      guardStatus: 1,
+      healthStatus: 0,
+      expected: ["take-request", "guard:preflight-restart", "fail:unsafe-config:4242", "rc:1"],
+    },
+    {
+      label: "reports an unhealthy gateway after config validation",
+      guardStatus: 0,
+      healthStatus: 1,
+      expected: [
+        "take-request",
+        "guard:preflight-restart",
+        "healthy:4242:777",
+        "fail:health-timeout:4242",
+        "rc:1",
+      ],
+    },
+  ])("keeps the authenticated probe read-only when it $label", ({
+    guardStatus,
+    healthStatus,
+    expected,
+  }) => {
+    const script = [
+      "set -uo pipefail",
+      "GATEWAY_PID=4242",
+      'GATEWAY_PID_START_IDENTITY="777"',
+      "gateway_control_take_request() { GATEWAY_CONTROL_ACTION=probe; printf 'take-request\\n'; }",
+      `run_openclaw_config_guard() { printf "guard:%s\\n" "$1"; return ${guardStatus}; }`,
+      `openclaw_gateway_healthy() { printf "healthy:%s:%s\\n" "$1" "$2"; return ${healthStatus}; }`,
+      'gateway_control_complete() { printf "complete:%s:%s:%s\\n" "$1" "$2" "$3"; }',
+      'gateway_control_fail() { printf "fail:%s:%s\\n" "$1" "$2"; }',
+      "prepare_openclaw_gateway_restart() { printf 'unexpected-prepare\\n'; }",
+      "retire_openclaw_supervised_gateway() { printf 'unexpected-retire\\n'; }",
+      "mark_openclaw_gateway_stopped() { printf 'unexpected-mark-stopped\\n'; }",
+      "launch_openclaw_gateway() { printf 'unexpected-launch\\n'; }",
+      "stop_openclaw_gateway_fail_closed() { printf 'unexpected-stop\\n'; }",
+      "kill() { printf 'unexpected-signal\\n'; }",
+      extractShellFunction(source, "handle_openclaw_gateway_control_request"),
+      "rc=0; handle_openclaw_gateway_control_request || rc=$?",
+      'printf "rc:%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
+    expect(result.stdout).not.toContain("unexpected-");
+  });
 });

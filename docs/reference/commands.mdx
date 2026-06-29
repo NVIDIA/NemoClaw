@@ -695,6 +695,8 @@ In a direct root-entrypoint container, the request reaches the root PID 1 superv
 In an OpenShell-managed container, the request enters the root-owned mode `0500` managed controller through a sanitized root exec while OpenShell remains PID 1.
 It does not use ordinary `openshell sandbox exec` or an in-sandbox manual relaunch as a fallback.
 It is idempotent.
+When `recover` repairs a stopped built-in OpenClaw or Hermes gateway, it retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
+Other controller failures stop immediately.
 If the gateway is already running, the command exits zero without force-restarting it; it can still re-evaluate supported safety checks and check or recover host-side forwards.
 Use [`$$nemoclaw <name> gateway restart`](#$$nemoclaw-name-gateway-restart) when you deliberately need a running gateway to reload runtime configuration or plugins.
 

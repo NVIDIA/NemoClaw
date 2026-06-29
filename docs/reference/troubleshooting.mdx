@@ -642,9 +642,9 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-If another direct root-entrypoint lifecycle request is in progress, the helper reports `SUPERVISOR_BUSY`.
-This error is retryable.
-Wait for the active request to finish and retry once.
+When `recover` repairs a stopped built-in gateway, NemoClaw automatically retries only when stdout is empty and stderr is exactly one `SUPERVISOR_BUSY` or `SUPERVISOR_UNAVAILABLE` line, with at most three controller attempts.
+It does not retry other status or output combinations.
+If that bounded retry is exhausted, or if `gateway restart` reports `SUPERVISOR_BUSY`, wait for the active request to finish and retry the command.
 If the error mentions `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
 The managed controller also refuses an ambiguous or changing process tree instead of guessing which same-UID process is the gateway.
 Rebuild the image before retrying:

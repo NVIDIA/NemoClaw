@@ -74,6 +74,34 @@ function runHermesHealthyGatewayRecovery(integrityStatus: 0 | 1) {
   ]);
 }
 
+function runHermesGatewayProbe(opts: {
+  prepareStatus: 0 | 1;
+  healthStatus: 0 | 1;
+  auxiliariesStatus: 0 | 1;
+}) {
+  const source = fs.readFileSync(START_SCRIPT, "utf-8");
+  return runBashHarness([
+    'trace() { printf "%s\\n" "$*"; }',
+    "gateway_control_take_request() { GATEWAY_CONTROL_ACTION=probe; trace take-request; }",
+    `prepare_hermes_gateway_restart() { HERMES_RESTART_FAILURE_CODE=hash-mismatch; trace preflight; return ${opts.prepareStatus}; }`,
+    'gateway_control_pid_is_live() { trace "pid-live:$1"; return 0; }',
+    `hermes_gateway_healthy() { trace "gateway-healthy:$1"; return ${opts.healthStatus}; }`,
+    `hermes_auxiliaries_need_recovery() { trace auxiliaries-check; return ${opts.auxiliariesStatus}; }`,
+    'gateway_control_complete() { trace "complete:$1:$2:$3"; }',
+    'gateway_control_fail() { trace "fail:$1:$2"; }',
+    "seal_hermes_restart_inputs() { trace unexpected-seal; }",
+    "unseal_hermes_restart_inputs() { trace unexpected-unseal; }",
+    "ensure_hermes_supervised_auxiliaries() { trace unexpected-launch-auxiliaries; }",
+    "stop_hermes_gateway_fail_closed() { trace unexpected-stop; }",
+    "mark_hermes_gateway_stopped() { trace unexpected-mark-stopped; }",
+    "kill() { trace unexpected-signal; }",
+    extractShellFunction(source, "handle_hermes_gateway_control_request"),
+    "GATEWAY_PID=4242",
+    "HERMES_RESTART_FAILURE_CODE=internal",
+    'if handle_hermes_gateway_control_request; then trace "handler-rc:0"; else trace "handler-rc:$?"; fi',
+  ]);
+}
+
 function runHermesOrphanedSealCheck(opts: {
   sandboxMetadata: string;
   stateFileExists?: boolean;
@@ -171,6 +199,71 @@ describe("Hermes PID 1 supervisor recovery", () => {
       "handler-rc:1",
     ]);
     expect(result.stdout).not.toContain("auxiliaries");
+  });
+
+  it.each([
+    {
+      label: "reports the existing gateway and auxiliaries healthy",
+      prepareStatus: 0 as const,
+      healthStatus: 0 as const,
+      auxiliariesStatus: 1 as const,
+      expected: [
+        "take-request",
+        "preflight",
+        "pid-live:4242",
+        "gateway-healthy:4242",
+        "auxiliaries-check",
+        "complete:already-running:4242:4242",
+        "handler-rc:0",
+      ],
+    },
+    {
+      label: "rejects failed preflight before checking processes",
+      prepareStatus: 1 as const,
+      healthStatus: 0 as const,
+      auxiliariesStatus: 1 as const,
+      expected: ["take-request", "preflight", "fail:hash-mismatch:4242", "handler-rc:1"],
+    },
+    {
+      label: "reports an unhealthy gateway",
+      prepareStatus: 0 as const,
+      healthStatus: 1 as const,
+      auxiliariesStatus: 1 as const,
+      expected: [
+        "take-request",
+        "preflight",
+        "pid-live:4242",
+        "gateway-healthy:4242",
+        "fail:health-timeout:4242",
+        "handler-rc:1",
+      ],
+    },
+    {
+      label: "reports auxiliaries that need recovery",
+      prepareStatus: 0 as const,
+      healthStatus: 0 as const,
+      auxiliariesStatus: 0 as const,
+      expected: [
+        "take-request",
+        "preflight",
+        "pid-live:4242",
+        "gateway-healthy:4242",
+        "auxiliaries-check",
+        "fail:health-timeout:4242",
+        "handler-rc:1",
+      ],
+    },
+  ])("keeps the authenticated probe read-only when it $label", ({
+    prepareStatus,
+    healthStatus,
+    auxiliariesStatus,
+    expected,
+  }) => {
+    const result = runHermesGatewayProbe({ prepareStatus, healthStatus, auxiliariesStatus });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(expected);
+    expect(result.stdout).not.toContain("unexpected-");
   });
 
   it("routes a secret-boundary refusal through whole-container gateway revocation", () => {

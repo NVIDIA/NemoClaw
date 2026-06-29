@@ -2241,6 +2241,21 @@ handle_hermes_gateway_control_request() {
   local old_pid="${GATEWAY_PID:-0}"
   local failure_code
 
+  if [ "$GATEWAY_CONTROL_ACTION" = "probe" ]; then
+    if ! prepare_hermes_gateway_restart; then
+      gateway_control_fail "$HERMES_RESTART_FAILURE_CODE" "$old_pid"
+      return 1
+    fi
+    if ! gateway_control_pid_is_live "$old_pid" \
+      || ! hermes_gateway_healthy "$old_pid" \
+      || hermes_auxiliaries_need_recovery; then
+      gateway_control_fail health-timeout "$old_pid"
+      return 1
+    fi
+    gateway_control_complete already-running "$old_pid" "$old_pid"
+    return 0
+  fi
+
   if [ "$GATEWAY_CONTROL_ACTION" = "recover" ] \
     && gateway_control_pid_is_live "$old_pid" \
     && hermes_gateway_healthy "$old_pid"; then

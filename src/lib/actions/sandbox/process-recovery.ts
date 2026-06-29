@@ -266,7 +266,7 @@ export function executeSandboxExecCommand(
 
 export function executeGatewaySupervisorAction(
   sandboxName: string,
-  action: "restart" | "recover",
+  action: "restart" | "recover" | "probe",
   timeout = 210000,
 ): SandboxCommandResult | null {
   const nonce = randomBytes(32).toString("hex");
@@ -363,82 +363,31 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
 }
 
-function isLoopbackHttpProbeUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return (
-      parsed.protocol === "http:" &&
-      (parsed.hostname === "127.0.0.1" ||
-        parsed.hostname === "localhost" ||
-        parsed.hostname === "[::1]")
-    );
-  } catch {
-    return false;
-  }
+function hasGatewayRecoveryMarker(result: SandboxCommandResult | null): boolean {
+  return !!(
+    result &&
+    result.status === 0 &&
+    (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
+  );
 }
 
-export function probeDirectContainerGatewayHealth(
-  sandboxName: string,
-  probeUrl: string,
-  options: {
-    privilegedExecArgvImpl?: typeof privilegedSandboxExecArgv;
-    dockerSpawnSyncImpl?: typeof dockerSpawnSync;
-  } = {},
-): boolean | null {
-  if (!isLoopbackHttpProbeUrl(probeUrl)) return null;
-
-  const buildArgv = options.privilegedExecArgvImpl ?? privilegedSandboxExecArgv;
-  let argv: string[];
-  try {
-    argv = buildArgv(
-      sandboxName,
-      [
-        "/usr/bin/curl",
-        "-q",
-        "--noproxy",
-        "*",
-        "-sS",
-        "-o",
-        "/dev/null",
-        "-w",
-        "%{http_code}",
-        "--max-time",
-        "3",
-        probeUrl,
-      ],
-      false,
-      true,
-    );
-  } catch (error) {
-    if (isDirectSandboxFallbackUnavailableError(error)) return null;
-    throw error;
-  }
-
-  const runDocker = options.dockerSpawnSyncImpl ?? dockerSpawnSync;
-  try {
-    const result = runDocker(argv, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: resolveSandboxExecTimeout(),
-    });
-    if (result.error) return null;
-    const httpCode =
-      typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
-    if (result.status !== 0) return false;
-    if (httpCode === "200" || httpCode === "401") return true;
-    return /^\d{3}$/.test(httpCode) ? false : null;
-  } catch {
-    return null;
-  }
+function isExactlyRetryableManagedRecoveryFailure(result: SandboxCommandResult | null): boolean {
+  if (result === null) return false;
+  if (result.status !== 1) return false;
+  if (result.stdout.trim() !== "") return false;
+  const lines = result.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length === 1 && ["SUPERVISOR_UNAVAILABLE", "SUPERVISOR_BUSY"].includes(lines[0]);
 }
 
-export function probeRecoveredSandboxGatewayDirect(
+export function confirmRecoveredSandboxGatewayManaged(
   sandboxName: string,
   options: {
-    directHealthImpl?: typeof probeDirectContainerGatewayHealth;
-    getProbeUrlImpl?: typeof getSandboxHealthProbeUrl;
     getSandboxImpl?: typeof registry.getSandbox;
     getSessionAgentImpl?: typeof agentRuntime.getSessionAgent;
+    requestGatewaySupervisorActionImpl?: typeof executeGatewaySupervisorAction;
   } = {},
 ): boolean | null {
   const getSandbox = options.getSandboxImpl ?? registry.getSandbox;
@@ -454,9 +403,11 @@ export function probeRecoveredSandboxGatewayDirect(
   const agent = getSessionAgent(sandboxName);
   if (persistedAgent === "hermes" && agent?.name !== "hermes") return null;
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
-  const getProbeUrl = options.getProbeUrlImpl ?? getSandboxHealthProbeUrl;
-  const directHealth = options.directHealthImpl ?? probeDirectContainerGatewayHealth;
-  return directHealth(sandboxName, getProbeUrl(sandboxName));
+  const requestGatewaySupervisorAction =
+    options.requestGatewaySupervisorActionImpl ?? executeGatewaySupervisorAction;
+  const result = requestGatewaySupervisorAction(sandboxName, "probe");
+  if (hasGatewayRecoveryMarker(result)) return true;
+  return result === null ? null : false;
 }
 
 export async function isSandboxGatewayRunningForStatus(
@@ -527,7 +478,7 @@ function recoverSandboxProcesses(
     quiet?: boolean;
     requestGatewaySupervisorAction?: typeof executeGatewaySupervisorAction;
   } = {},
-): boolean {
+): "managed" | "custom" | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   let persistedAgent: string | null;
@@ -539,27 +490,38 @@ function recoverSandboxProcesses(
         ? `Sandbox agent lookup failed: ${error.message}.`
         : "Sandbox agent lookup failed.";
     quiet || printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
-    return false;
+    return null;
   }
-  const hasRecoveryMarker = (result: SandboxCommandResult | null) =>
-    !!(
-      result &&
-      result.status === 0 &&
-      (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
-    );
   const recoveredSsh = (result: SandboxCommandResult | null) =>
-    !!(result && result.status === 0 && hasRecoveryMarker(result));
+    !!(result && result.status === 0 && hasGatewayRecoveryMarker(result));
+  const recoverManagedGateway = (): boolean => {
+    const maxAttempts = 3;
+    const retryIntervalSeconds = readNonNegativeNumberEnv(
+      "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
+      3,
+    );
+    let execResult: SandboxCommandResult | null = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      execResult = requestGatewaySupervisorAction(sandboxName, "recover");
+      if (hasGatewayRecoveryMarker(execResult)) return true;
+
+      // PID 1 may replace the gateway between the host's stopped observation
+      // and the controller's process-tree capture. Retry only exact transient
+      // controller results; integrity/config/launch refusals are terminal.
+      if (!isExactlyRetryableManagedRecoveryFailure(execResult) || attempt === maxAttempts) break;
+      sleepSeconds(retryIntervalSeconds);
+    }
+    const failure = classifyGatewayRestartFailure(execResult);
+    if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
+    return false;
+  };
   if (persistedAgent === "hermes") {
     if (!isHermesAgent(agent)) {
       const detail = "Hermes agent definition could not be loaded.";
       if (!quiet) printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
-      return false;
+      return null;
     }
-    const execResult = requestGatewaySupervisorAction(sandboxName, "recover");
-    if (hasRecoveryMarker(execResult)) return true;
-    const failure = classifyGatewayRestartFailure(execResult);
-    if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
-    return false;
+    return recoverManagedGateway() ? "managed" : null;
   }
 
   // A persisted non-OpenClaw runtime whose manifest cannot be loaded is not
@@ -570,27 +532,23 @@ function recoverSandboxProcesses(
   if (persistedAgent && persistedAgent !== "openclaw" && !agent) {
     const detail = `${persistedAgent} agent definition could not be loaded.`;
     if (!quiet) printGatewayRestartFailure(sandboxName, "unsupported agent", detail);
-    return false;
+    return null;
   }
 
   if ((!persistedAgent || persistedAgent === "openclaw") && (!agent || agent.name === "openclaw")) {
-    const execResult = requestGatewaySupervisorAction(sandboxName, "recover");
-    if (hasRecoveryMarker(execResult)) return true;
-    const failure = classifyGatewayRestartFailure(execResult);
-    if (!quiet) printGatewayRestartFailure(sandboxName, failure.layer, failure.detail);
-    return false;
+    return recoverManagedGateway() ? "managed" : null;
   }
 
   const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort);
-  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return false;
+  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return null;
   if (agentScript) {
     // Non-Hermes custom manifests do not yet declare a supported host-side
     // runtime user. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
+    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript)) ? "custom" : null;
   }
 
-  return false;
+  return null;
 }
 
 export function restartSandboxGateway(
@@ -609,7 +567,12 @@ export function restartSandboxGateway(
         waitForRecoveredSandboxGateway: (name, options) =>
           waitForRecoveredSandboxGateway(name, {
             ...options,
+            initialManagedHealthPassed: true,
             timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
+            managedProbeImpl: (sandboxName) =>
+              confirmRecoveredSandboxGatewayManaged(sandboxName, {
+                requestGatewaySupervisorActionImpl: executeGatewaySupervisorAction,
+              }),
           }),
         ensureSandboxPortForward,
         ensureHermesDashboardPortForwardIfEnabled,
@@ -683,7 +646,8 @@ function recoveryAgentDisplayName(
 export function waitForRecoveredSandboxGateway(
   sandboxName: string,
   options: {
-    directProbeImpl?: (sandboxName: string) => boolean | null;
+    managedProbeImpl?: (sandboxName: string) => boolean | null;
+    initialManagedHealthPassed?: boolean;
     probeImpl?: (sandboxName: string) => boolean | null;
     sleepImpl?: (seconds: number) => void;
     quiet?: boolean;
@@ -691,8 +655,8 @@ export function waitForRecoveredSandboxGateway(
   } = {},
 ): boolean {
   const probe = options.probeImpl ?? isSandboxGatewayRunning;
-  const directProbe =
-    options.directProbeImpl ?? (options.probeImpl ? null : probeRecoveredSandboxGatewayDirect);
+  const managedProbe =
+    options.managedProbeImpl ?? (options.probeImpl ? null : confirmRecoveredSandboxGatewayManaged);
   const sleep = options.sleepImpl ?? sleepSeconds;
   const requestedTimeoutSeconds =
     typeof options.timeoutSeconds === "number" &&
@@ -714,18 +678,26 @@ export function waitForRecoveredSandboxGateway(
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
   const probeDuringRecoveryWait = () => {
-    const result = probe(sandboxName);
-    if (result === true || !directProbe) return result;
-    return directProbe(sandboxName);
+    const managedResult = managedProbe?.(sandboxName) ?? null;
+    if (managedResult !== null) return managedResult;
+    return probe(sandboxName);
   };
 
-  const recovered = waitUntil(() => probeDuringRecoveryWait() === true, {
-    initialIntervalMs: intervalSeconds * 1000,
-    maxIntervalMs: intervalSeconds * 1000,
-    backoffFactor: 1,
-    maxAttempts: attempts,
-    sleep: (ms) => sleep(ms / 1000),
-  });
+  // A successful managed restart/recover marker is already emitted only after
+  // the controller proves the exact child, listener, HTTP health, and declared
+  // auxiliaries from inside the gateway network namespace. Trust that as the
+  // initial observation; the settle check below still independently re-proves
+  // health and catches a delayed #4710 wedge.
+  const initialManagedHealthPassed = options.initialManagedHealthPassed === true;
+  const recovered =
+    initialManagedHealthPassed ||
+    waitUntil(() => probeDuringRecoveryWait() === true, {
+      initialIntervalMs: intervalSeconds * 1000,
+      maxIntervalMs: intervalSeconds * 1000,
+      backoffFactor: 1,
+      maxAttempts: attempts,
+      sleep: (ms) => sleep(ms / 1000),
+    });
   if (!recovered) return false;
 
   // #4710: a freshly relaunched gateway can serve for ~20s and then drop
@@ -744,6 +716,13 @@ export function waitForRecoveredSandboxGateway(
     console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
   }
   sleep(settleSeconds);
+  if (initialManagedHealthPassed) {
+    // The managed probe is a read-only, authenticated point check in the exact
+    // gateway network namespace. Its typed failure is authoritative: never let
+    // an outer-namespace HTTP response override it or extend this settle check
+    // beyond the controller's single bounded probe.
+    return managedProbe?.(sandboxName) === true;
+  }
   // A stopped HTTP probe is still only a point-in-time observation. PID 1 can
   // have respawned the gateway while OpenClaw is still finishing its startup
   // transition, so multiple stopped results may precede a healthy listener.
@@ -1020,17 +999,22 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     console.log("  Recovering...");
   }
 
-  const recovered = recoverSandboxProcesses(sandboxName, {
+  const recoveryKind = recoverSandboxProcesses(sandboxName, {
     quiet,
     requestGatewaySupervisorAction,
   });
-  if (recovered) {
+  if (recoveryKind !== null) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
     if (
       !waitForRecoveredSandboxGateway(sandboxName, {
         quiet,
+        initialManagedHealthPassed: recoveryKind === "managed",
         timeoutSeconds: gatewayRecoveryTimeoutSeconds(recoveryAgent),
+        managedProbeImpl: (name) =>
+          confirmRecoveredSandboxGatewayManaged(name, {
+            requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
+          }),
       })
     ) {
       if (!quiet) {
@@ -1068,7 +1052,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       return {
         checked: true,
         wasRunning: false,
-        recovered,
+        recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail:
@@ -1080,7 +1064,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
       return {
         checked: true,
         wasRunning: false,
-        recovered,
+        recovered: true,
         forwardRecovered: false,
         forwardRecoveryFailed: true,
         forwardRecoveryFailureDetail: auxiliaryFailureDetail,
@@ -1089,7 +1073,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     return {
       checked: true,
       wasRunning: false,
-      recovered,
+      recovered: true,
       forwardRecovered: forwardRecovered || anyAuxiliaryRecovered(auxiliaryResults),
     };
   }
@@ -1098,7 +1082,7 @@ function checkAndRecoverSandboxProcessesWithoutHostLock(
     printHostManagedGatewayRecoveryHints(sandboxName, recoveryAgent);
   }
 
-  return { checked: true, wasRunning: false, recovered, forwardRecovered: false };
+  return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
 }
 
 export function checkAndRecoverSandboxProcesses(

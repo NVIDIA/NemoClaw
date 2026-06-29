@@ -36,7 +36,7 @@ fail() {
 ACTION="$1"
 NONCE="$2"
 case "$ACTION" in
-  restart | recover) ;;
+  restart | recover | probe) ;;
   *) fail "SUPERVISOR_INVALID_ACTION" ;;
 esac
 case "$NONCE" in

@@ -169,6 +169,7 @@ custom-box  127.0.0.1  19000  12345  running`;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
     let recovered = false;
+    let healthProbeCalls = 0;
 
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
@@ -181,6 +182,12 @@ custom-box  127.0.0.1  19000  12345  running`;
       } as never);
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
         (command: unknown, rawArgs: unknown) => {
+          if (
+            String(command).endsWith("openshell") &&
+            getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl")
+          ) {
+            healthProbeCalls += 1;
+          }
           const setRecovered = (value: boolean): void => {
             recovered = value;
           };
@@ -226,6 +233,7 @@ custom-box  127.0.0.1  19000  12345  running`;
       expect(sshCommands.some((command) => command.includes('"$AGENT_BIN" gateway run'))).toBe(
         true,
       );
+      expect(healthProbeCalls).toBe(2);
       expect(recovered).toBe(true);
     } finally {
       restoreEnvValue("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", previousWaitSeconds);

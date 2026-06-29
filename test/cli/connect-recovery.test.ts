@@ -357,7 +357,7 @@ describe("CLI dispatch", () => {
     },
   );
 
-  it("waits for recovered gateway health before failing probe-only", async () => {
+  it("uses the authenticated recovery marker as the initial managed health proof", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-wait-"));
     const localBin = path.join(home, "bin");
     const markerFile = path.join(home, "openshell-calls");
@@ -417,7 +417,7 @@ describe("CLI dispatch", () => {
 
       expect(r.code).toBe(0);
       expect(r.out).toContain("Probe complete: recovered OpenClaw gateway");
-      expect(fs.readFileSync(readyCountFile, "utf8").trim()).toBe("3");
+      expect(fs.existsSync(readyCountFile)).toBe(false);
       expectGatewayControlRecovery(dockerCalls);
     } finally {
       await stopForwardListeners();

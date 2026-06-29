@@ -39,7 +39,7 @@ type SandboxAgentLookup = (sandboxName: string) => { agent?: string | null } | n
 
 type SupervisorAction = (
   sandboxName: string,
-  action: "restart" | "recover",
+  action: "restart" | "recover" | "probe",
   timeout?: number,
 ) => GatewayRestartCommandResult | null;
 
@@ -59,7 +59,11 @@ export type GatewayRestartDeps = {
   executeSandboxExecCommand: SandboxExec;
   waitForRecoveredSandboxGateway: (
     sandboxName: string,
-    options?: { quiet?: boolean; timeoutSeconds?: number },
+    options?: {
+      quiet?: boolean;
+      timeoutSeconds?: number;
+      initialManagedHealthPassed?: boolean;
+    },
   ) => boolean;
   ensureSandboxPortForward: (sandboxName: string) => boolean;
   ensureHermesDashboardPortForwardIfEnabled: (sandboxName: string) => boolean | null;
@@ -275,7 +279,12 @@ export function restartSandboxGatewayWithDeps(
     return { ok: false, failureLayer: failure.layer, detail: failure.detail };
   }
 
-  if (!deps.waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
+  if (
+    !deps.waitForRecoveredSandboxGateway(sandboxName, {
+      quiet,
+      initialManagedHealthPassed: true,
+    })
+  ) {
     const detail = "gateway process restarted but health did not pass before timeout";
     printGatewayRestartFailure(sandboxName, "health timeout", detail);
     deps.printGatewayWedgeDiagnostics(sandboxName, deps.executeSandboxExecCommand);

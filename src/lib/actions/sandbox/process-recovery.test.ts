@@ -5,142 +5,88 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so this test cannot pass against a stale build.
 import {
-  probeDirectContainerGatewayHealth,
-  probeRecoveredSandboxGatewayDirect,
+  confirmRecoveredSandboxGatewayManaged,
   probeSandboxInferenceGatewayHealth,
   waitForRecoveredSandboxGateway,
 } from "./process-recovery";
 
-describe("probeDirectContainerGatewayHealth", () => {
-  const directArgv = ["exec", "--user", "root", "openshell-my-sandbox", "/usr/bin/curl"];
-
-  it("accepts only an exact successful health response through sanitized fixed argv", () => {
-    const buildArgv = vi.fn(() => directArgv);
-    const runDocker = vi.fn(() => ({ status: 0, stdout: "200", stderr: "" }) as never);
-
-    expect(
-      probeDirectContainerGatewayHealth("my-sandbox", "http://127.0.0.1:18789/health", {
-        privilegedExecArgvImpl: buildArgv,
-        dockerSpawnSyncImpl: runDocker,
-      }),
-    ).toBe(true);
-    expect(buildArgv).toHaveBeenCalledWith(
-      "my-sandbox",
-      [
-        "/usr/bin/curl",
-        "-q",
-        "--noproxy",
-        "*",
-        "-sS",
-        "-o",
-        "/dev/null",
-        "-w",
-        "%{http_code}",
-        "--max-time",
-        "3",
-        "http://127.0.0.1:18789/health",
-      ],
-      false,
-      true,
-    );
-    expect(runDocker).toHaveBeenCalledWith(
-      directArgv,
-      expect.objectContaining({ encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] }),
-    );
-  });
-
-  it("rejects a healthy-looking response from a nonzero curl", () => {
-    expect(
-      probeDirectContainerGatewayHealth("my-sandbox", "http://localhost:8642/health", {
-        privilegedExecArgvImpl: () => directArgv,
-        dockerSpawnSyncImpl: () => ({ status: 1, stdout: "200", stderr: "" }) as never,
-      }),
-    ).toBe(false);
-  });
-
-  it("refuses non-loopback or non-HTTP probe URLs before privileged exec", () => {
-    const buildArgv = vi.fn(() => directArgv);
-
-    expect(
-      probeDirectContainerGatewayHealth("my-sandbox", "https://example.com/health", {
-        privilegedExecArgvImpl: buildArgv,
-      }),
-    ).toBeNull();
-    expect(buildArgv).not.toHaveBeenCalled();
-  });
-
-  it("propagates identity and ambiguity refusals from privileged container selection", () => {
-    expect(() =>
-      probeDirectContainerGatewayHealth("my-sandbox", "http://127.0.0.1:18789/health", {
-        privilegedExecArgvImpl: () => {
-          throw new Error("ambiguous direct container identity");
-        },
-      }),
-    ).toThrow(/ambiguous direct container identity/);
-  });
-});
-
-describe("probeRecoveredSandboxGatewayDirect scope", () => {
-  const directHealth = vi.fn(() => true);
+describe("confirmRecoveredSandboxGatewayManaged scope", () => {
+  const requestGatewaySupervisorAction = vi.fn(() => ({
+    status: 0,
+    stdout: "GATEWAY_PID=4242\n",
+    stderr: "",
+  }));
   const openClawEntry = {
     name: "my-sandbox",
     agent: "openclaw",
     openshellDriver: "docker",
   };
 
-  it("allows the tie-break for a built-in direct-driver OpenClaw sandbox", () => {
-    directHealth.mockClear();
+  it("accepts only an authenticated recovery marker for a built-in OpenClaw sandbox", () => {
+    requestGatewaySupervisorAction.mockClear();
     expect(
-      probeRecoveredSandboxGatewayDirect("my-sandbox", {
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
         getSandboxImpl: () => openClawEntry,
         getSessionAgentImpl: () => null,
-        getProbeUrlImpl: () => "http://127.0.0.1:18789/health",
-        directHealthImpl: directHealth,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
       }),
     ).toBe(true);
-    expect(directHealth).toHaveBeenCalledWith("my-sandbox", "http://127.0.0.1:18789/health");
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("my-sandbox", "probe");
   });
 
-  it("does not probe custom agents or non-direct OpenShell drivers", () => {
-    directHealth.mockClear();
+  it("does not control custom agents or non-direct OpenShell drivers", () => {
+    requestGatewaySupervisorAction.mockClear();
     expect(
-      probeRecoveredSandboxGatewayDirect("my-sandbox", {
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
         getSandboxImpl: () => ({ ...openClawEntry, agent: "custom-agent" }),
-        directHealthImpl: directHealth,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
       }),
     ).toBeNull();
     expect(
-      probeRecoveredSandboxGatewayDirect("my-sandbox", {
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
         getSandboxImpl: () => ({ ...openClawEntry, openshellDriver: "kubernetes" }),
-        directHealthImpl: directHealth,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
       }),
     ).toBeNull();
-    expect(directHealth).not.toHaveBeenCalled();
+    expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
   it("does not treat an unloaded Hermes definition as OpenClaw", () => {
-    directHealth.mockClear();
+    requestGatewaySupervisorAction.mockClear();
     expect(
-      probeRecoveredSandboxGatewayDirect("hermes-box", {
+      confirmRecoveredSandboxGatewayManaged("hermes-box", {
         getSandboxImpl: () => ({ ...openClawEntry, name: "hermes-box", agent: "hermes" }),
         getSessionAgentImpl: () => null,
-        directHealthImpl: directHealth,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
       }),
     ).toBeNull();
-    expect(directHealth).not.toHaveBeenCalled();
+    expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
   });
 
-  it("allows the tie-break for a loaded built-in Hermes direct-driver sandbox", () => {
-    directHealth.mockClear();
+  it("allows authenticated confirmation for a loaded built-in Hermes sandbox", () => {
+    requestGatewaySupervisorAction.mockClear();
     expect(
-      probeRecoveredSandboxGatewayDirect("hermes-box", {
+      confirmRecoveredSandboxGatewayManaged("hermes-box", {
         getSandboxImpl: () => ({ ...openClawEntry, name: "hermes-box", agent: "hermes" }),
         getSessionAgentImpl: () => ({ name: "hermes", runtime: { kind: "gateway" } }) as never,
-        getProbeUrlImpl: () => "http://localhost:8642/health",
-        directHealthImpl: directHealth,
+        requestGatewaySupervisorActionImpl: requestGatewaySupervisorAction,
       }),
     ).toBe(true);
-    expect(directHealth).toHaveBeenCalledWith("hermes-box", "http://localhost:8642/health");
+    expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "probe");
+  });
+
+  it("rejects a marker from a failed controller action", () => {
+    expect(
+      confirmRecoveredSandboxGatewayManaged("my-sandbox", {
+        getSandboxImpl: () => openClawEntry,
+        getSessionAgentImpl: () => null,
+        requestGatewaySupervisorActionImpl: () => ({
+          status: 1,
+          stdout: "GATEWAY_PID=4242\n",
+          stderr: "GATEWAY_FAILED",
+        }),
+      }),
+    ).toBe(false);
   });
 });
 
@@ -226,55 +172,49 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25]);
   });
 
-  it("reconciles stale stopped state through direct health only inside recovery waiting", () => {
+  it("uses one authenticated managed probe after the settle window", () => {
     const sleeps: number[] = [];
-    const directProbe = vi.fn(() => true);
+    const managedProbe = vi.fn(() => true);
+    const ordinaryProbe = vi.fn(() => false);
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([false, true]),
-      directProbeImpl: directProbe,
+      initialManagedHealthPassed: true,
+      probeImpl: ordinaryProbe,
+      managedProbeImpl: managedProbe,
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(true);
-    expect(directProbe).toHaveBeenCalledOnce();
+    expect(managedProbe).toHaveBeenCalledOnce();
+    expect(ordinaryProbe).not.toHaveBeenCalled();
     expect(sleeps).toEqual([25]);
   });
 
-  it("reconciles inconclusive recovery transport through direct health", () => {
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
-    const directProbe = vi.fn(() => true);
+  it("does not let ordinary outer-namespace health override a managed probe failure", () => {
+    const sleeps: number[] = [];
+    const managedProbe = vi.fn(() => false);
+    const ordinaryProbe = vi.fn(() => true);
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([null]),
-      directProbeImpl: directProbe,
+      initialManagedHealthPassed: true,
+      probeImpl: ordinaryProbe,
+      managedProbeImpl: managedProbe,
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(false);
+    expect(managedProbe).toHaveBeenCalledOnce();
+    expect(ordinaryProbe).not.toHaveBeenCalled();
+    expect(sleeps).toEqual([25]);
+  });
+
+  it("accepts the initial managed proof without another probe when settling is disabled", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    const managedProbe = vi.fn(() => false);
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      initialManagedHealthPassed: true,
+      probeImpl: () => false,
+      managedProbeImpl: managedProbe,
       sleepImpl: () => {},
     });
     expect(ok).toBe(true);
-    expect(directProbe).toHaveBeenCalledOnce();
-  });
-
-  it("uses direct health to reconcile a stale post-settle stopped result", () => {
-    const sleeps: number[] = [];
-    const directProbe = vi.fn(() => true);
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([true, false]),
-      directProbeImpl: directProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
-    });
-    expect(ok).toBe(true);
-    expect(directProbe).toHaveBeenCalledOnce();
-    expect(sleeps).toEqual([25]);
-  });
-
-  it("uses direct health to reconcile inconclusive post-settle transport", () => {
-    const sleeps: number[] = [];
-    const directProbe = vi.fn(() => true);
-    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([true, null]),
-      directProbeImpl: directProbe,
-      sleepImpl: (seconds: number) => sleeps.push(seconds),
-    });
-    expect(ok).toBe(true);
-    expect(directProbe).toHaveBeenCalledOnce();
-    expect(sleeps).toEqual([25]);
+    expect(managedProbe).not.toHaveBeenCalled();
   });
 
   it("uses the bounded recovery window for transient stopped probes", () => {
@@ -318,12 +258,13 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([true, false, false]),
-      directProbeImpl: () => false,
+      initialManagedHealthPassed: true,
+      probeImpl: makeProbe([true]),
+      managedProbeImpl: () => false,
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(false);
-    expect(sleeps).toEqual([25, 3, 3]);
+    expect(sleeps).toEqual([25]);
   });
 
   it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", () => {

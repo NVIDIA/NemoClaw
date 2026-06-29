@@ -104,6 +104,7 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
       expect(deps.requestGatewaySupervisorAction).toHaveBeenCalledWith("alpha", "restart", 210000);
       expect(deps.waitForRecoveredSandboxGateway).toHaveBeenCalledWith("alpha", {
+        initialManagedHealthPassed: true,
         quiet: false,
       });
       expect(deps.ensureSandboxPortForward).toHaveBeenCalledWith("alpha");

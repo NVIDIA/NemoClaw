@@ -278,6 +278,7 @@ with tempfile.TemporaryDirectory() as root:
     try:
         restarted = control._control("restart", "a" * 64)
         recovered = control._control("recover", "b" * 64)
+        probed = control._control("probe", "e" * 64)
 
         real_wait_for_healthy = control._wait_for_healthy_gateway
         timeout_refresh_waits = []
@@ -455,6 +456,7 @@ with tempfile.TemporaryDirectory() as root:
         "reused": reused,
         "restarted": restarted,
         "recovered": recovered,
+        "probed": probed,
         "timeout_refresh": [
             timeout_refresh,
             timeout_refresh_signals,
@@ -508,6 +510,7 @@ describe("managed gateway root control", () => {
       reused: "SUPERVISOR_UNAVAILABLE",
       restarted: ["ok", 41, 43],
       recovered: ["already-running", 43, 43],
+      probed: ["already-running", 43, 43],
       timeout_refresh: [
         ["ok", 44, 45],
         [44],

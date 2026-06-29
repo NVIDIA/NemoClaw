@@ -70,19 +70,22 @@ afterEach(() => {
 });
 
 describe("gateway supervisor request protocol", () => {
-  it("accepts an exact versioned request and publishes a nonce-bound status", () => {
+  it.each([
+    "restart",
+    "probe",
+  ])("accepts an exact versioned %s request and publishes a nonce-bound status", (action) => {
     const result = runSupervisorLibrary(
       [
         "GATEWAY_CONTROL_SIGNAL_PENDING=1",
         "gateway_control_take_request",
         'printf "%s %s\\n" "$GATEWAY_CONTROL_NONCE" "$GATEWAY_CONTROL_ACTION"',
       ].join("\n"),
-      `v1 ${VALID_NONCE} restart\n`,
+      `v1 ${VALID_NONCE} ${action}\n`,
     );
 
     expect(result).toMatchObject({
       status: 0,
-      stdout: `${VALID_NONCE} restart`,
+      stdout: `${VALID_NONCE} ${action}`,
       stderr: "",
     });
     const statusPath = join(result.controlDirectory, "status");
@@ -110,21 +113,24 @@ describe("gateway supervisor request protocol", () => {
     expect(result).toMatchObject({ status: 0, stdout: "rejected", stderr: "" });
   });
 
-  it("publishes completion with the request nonce and removes the request", () => {
+  it.each([
+    ["recover", "ok", 101, 202],
+    ["probe", "already-running", 101, 101],
+  ])("publishes %s completion with the request nonce and removes the request", (action, detail, oldPid, newPid) => {
     const result = runSupervisorLibrary(
       [
         "GATEWAY_CONTROL_SIGNAL_PENDING=1",
         "gateway_control_take_request",
-        "gateway_control_complete ok 101 202",
+        `gateway_control_complete ${detail} ${oldPid} ${newPid}`,
         'test ! -e "$NEMOCLAW_GATEWAY_CONTROL_REQUEST"',
         'cat "$NEMOCLAW_GATEWAY_CONTROL_STATUS"',
       ].join("\n"),
-      `v1 ${VALID_NONCE} recover\n`,
+      `v1 ${VALID_NONCE} ${action}\n`,
     );
 
     expect(result).toMatchObject({
       status: 0,
-      stdout: `v1 ${VALID_NONCE} complete ok 101 202`,
+      stdout: `v1 ${VALID_NONCE} complete ${detail} ${oldPid} ${newPid}`,
       stderr: "",
     });
   });
@@ -261,7 +267,10 @@ describe("gateway supervisor listener ownership", () => {
 });
 
 describe("root-only gateway control helper", () => {
-  it("enters managed control with isolated Python before user-site startup hooks", () => {
+  it.each([
+    "restart",
+    "probe",
+  ])("enters managed %s control with isolated Python before user-site startup hooks", (action) => {
     const root = temporaryDirectory("nemoclaw-managed-python-isolation-");
     const userBase = join(root, "attacker-userbase");
     const marker = join(root, "pth-loaded");
@@ -301,7 +310,7 @@ describe("root-only gateway control helper", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
-    const isolated = spawnSync(CONTROL_HELPER, ["restart", VALID_NONCE], {
+    const isolated = spawnSync(CONTROL_HELPER, [action, VALID_NONCE], {
       encoding: "utf-8",
       env: {
         ...attackEnv,
@@ -313,7 +322,7 @@ describe("root-only gateway control helper", () => {
     expect(isolated.status, isolated.stderr).toBe(0);
     expect(JSON.parse(isolated.stdout)).toEqual({
       isolated: 1,
-      args: ["restart", VALID_NONCE],
+      args: [action, VALID_NONCE],
     });
     expect(existsSync(marker)).toBe(false);
   });

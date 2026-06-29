@@ -1018,6 +1018,18 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
 
         _preflight(spec, reader, supervisor)
 
+        if action == "probe":
+            if old_identity is None:
+                raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+            if not _gateway_healthy(reader, old_identity, spec):
+                raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+            if not _gateway_auxiliaries_healthy(reader, old_identity, spec):
+                raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+            healthy = reader.capture(old_identity.pid)
+            if healthy.stable_key() != old_identity.stable_key():
+                raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+            return "already-running", old_identity.pid, healthy.pid
+
         if action == "recover" and old_identity is not None:
             # PID 1 continuously supervises the managed gateway. A host
             # recovery request can arrive after PID 1 has launched a
@@ -1061,7 +1073,7 @@ def _validate_request(argv: list[str]) -> tuple[str, str]:
     if len(argv) != 2:
         raise ControlError("SUPERVISOR_INVALID_REQUEST")
     action, nonce = argv
-    if action not in ("restart", "recover"):
+    if action not in ("restart", "recover", "probe"):
         raise ControlError("SUPERVISOR_INVALID_ACTION")
     if not NONCE_RE.fullmatch(nonce):
         raise ControlError("SUPERVISOR_INVALID_NONCE")

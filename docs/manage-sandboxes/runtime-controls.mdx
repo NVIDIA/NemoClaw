@@ -114,6 +114,12 @@ It cannot prove process provenance against a malicious process running under the
 Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 For Hermes, the managed controller always preflights the secret boundary and verifies the strict root-owned hash when the config and environment are locked.
 
+For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
+After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.
+The controller rechecks the exact managed child, listener, HTTP health, and required auxiliary processes from inside the gateway network namespace without restarting the gateway.
+A failed managed probe is authoritative and cannot be overridden by an outer-namespace HTTP response.
+Custom agents that recover through an SSH script do not use this controller probe and continue to poll ordinary gateway health.
+
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger exact-child recovery.
 Five gateway exits within 60 seconds quarantine relaunch until the sandbox is recreated.
