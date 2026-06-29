@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   dangerousCapabilities,
@@ -9,15 +9,7 @@ import {
   securityPostureModeEnv,
 } from "../fixtures/security-posture.ts";
 
-const originalSecurityPosture = process.env.NEMOCLAW_E2E_SECURITY_POSTURE;
-const originalExpectNonRootHost = process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST;
-
-afterEach(() => {
-  if (originalSecurityPosture === undefined) delete process.env.NEMOCLAW_E2E_SECURITY_POSTURE;
-  else process.env.NEMOCLAW_E2E_SECURITY_POSTURE = originalSecurityPosture;
-  if (originalExpectNonRootHost === undefined) delete process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST;
-  else process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST = originalExpectNonRootHost;
-});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("security posture fixture", () => {
   it("decodes the dangerous Linux capability bits", () => {
@@ -32,11 +24,11 @@ describe("security posture fixture", () => {
   });
 
   it("only forwards the explicit security-posture mode", () => {
-    delete process.env.NEMOCLAW_E2E_SECURITY_POSTURE;
+    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", undefined);
     expect(securityPostureEnabled()).toBe(false);
     expect(securityPostureModeEnv()).toEqual({});
 
-    process.env.NEMOCLAW_E2E_SECURITY_POSTURE = "1";
+    vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "1");
     expect(securityPostureEnabled()).toBe(true);
     expect(securityPostureModeEnv()).toEqual({
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
