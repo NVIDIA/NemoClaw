@@ -106,4 +106,16 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(comparator).toContain("gate_contributor_compliance");
     expect(comparator).toContain(".commit.verification.verified");
   });
+
+  it("gives distinct remediation for PR-body and commit-verification failures", () => {
+    const verdict = read(".agents/skills/nemoclaw-maintainer-pr-comparator/templates/verdict.md");
+
+    expect(verdict).toContain("Missing PR-body DCO declaration: update the PR body");
+    expect(verdict).toContain(
+      "Missing GitHub Verified commit history: replace the branch with compliant history",
+    );
+    expect(verdict).not.toContain(
+      "PR-body DCO declaration or GitHub Verified commit history is missing",
+    );
+  });
 });

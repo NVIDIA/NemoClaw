@@ -78,7 +78,9 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 **PR #A — ineligible:**
 - Substantive: Rebase against current main (3 conflicts in `<file>`)
-- Ineligible: PR-body DCO declaration or GitHub Verified commit history is missing; contributor must replace the branch with compliant history
+- Ineligible: contributor gate failed; the author must fix each failing requirement before re-review
+  - Missing PR-body DCO declaration: update the PR body
+  - Missing GitHub Verified commit history: replace the branch with compliant history
 
 **PR #B — fix to merge:**
 - Substantive: 5 unresolved CodeRabbit threads at `<thread-ids>`
@@ -86,6 +88,6 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 ### Suggested action
 
-1. Ask the PR #A author to provide a compliant PR body and clean GitHub Verified commit history; do not repair or approve the PR on their behalf
+1. Ask the PR #A author to fix each failing contributor gate; do not repair or approve the PR on their behalf
 2. Salvage PR #B by resolving the substantive failures, then re-run this skill to confirm the winner
 ```
