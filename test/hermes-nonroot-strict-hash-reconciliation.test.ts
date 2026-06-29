@@ -38,7 +38,7 @@ function hashInputs(fixture: ReconciliationFixture): string {
   return result.stdout;
 }
 
-function createFixture(): ReconciliationFixture {
+function createFixture(hermesMode = 0o3770): ReconciliationFixture {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-nonroot-hash-"));
   const sandboxDir = path.join(root, "sandbox");
   const hermesDir = path.join(sandboxDir, ".hermes");
@@ -56,7 +56,7 @@ function createFixture(): ReconciliationFixture {
   };
   fs.mkdirSync(hermesDir, { recursive: true });
   fs.chmodSync(sandboxDir, 0o770);
-  fs.chmodSync(hermesDir, 0o3770);
+  fs.chmodSync(hermesDir, hermesMode);
   fs.writeFileSync(fixture.configPath, fixture.trustedConfig, { mode: 0o640 });
   fs.writeFileSync(fixture.envPath, fixture.trustedEnv, { mode: 0o600 });
   const trustedHash = hashInputs(fixture);
@@ -94,6 +94,7 @@ function runManagedNonrootWrite(
 ) {
   const wrapper = String.raw`
 import importlib.util
+import os
 import sys
 
 source = sys.argv[1]
@@ -104,6 +105,7 @@ module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
 module._managed_nonroot_reconciliation_is_allowed = lambda: True
+module._sandbox_identity = lambda: (os.geteuid(), os.getegid())
 sys.argv = [source, *sys.argv[2:]]
 raise SystemExit(module.main())
 `;
@@ -177,8 +179,62 @@ print(json.dumps([allowed, marker_present, not_supervised, source_helper]))
       expect(JSON.parse(result.stdout)).toEqual([true, false, false, false]);
     });
 
-    it("reconciles only the generated startup API key and completes the config transaction", () => {
-      const fixture = createFixture();
+    it("admits only sandbox-owned writable private-live or canonical-mutable metadata (#2426)", () => {
+      const probe = String.raw`
+import importlib.util
+import json
+import sys
+
+source = sys.argv[1]
+spec = importlib.util.spec_from_file_location("nemoclaw_runtime_config_guard_posture", source)
+if spec is None or spec.loader is None:
+    raise SystemExit("could not load runtime guard fixture")
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module._sandbox_identity = lambda: (1234, 1234)
+
+def files(mode=0o640, uid=1234, gid=1234):
+    return {
+        name: {"original": {"mode": mode, "uid": uid, "gid": gid}}
+        for name in ("config.yaml", ".env", ".config-hash")
+    }
+
+allowed = module._mutable_nonroot_reconciliation_posture_is_allowed
+private_live = allowed({"mode": 0o700, "uid": 1234, "gid": 1234}, files())
+canonical_mutable = allowed({"mode": 0o3770, "uid": 1234, "gid": 1234}, files())
+foreign_private = allowed({"mode": 0o700, "uid": 0, "gid": 0}, files(uid=0, gid=0))
+unexpected_mode = allowed({"mode": 0o770, "uid": 1234, "gid": 1234}, files())
+locked = allowed({"mode": 0o755, "uid": 0, "gid": 0}, files(0o444, 0, 0))
+read_only_input = files()
+read_only_input[".env"]["original"]["mode"] = 0o440
+partly_read_only = allowed({"mode": 0o700, "uid": 1234, "gid": 1234}, read_only_input)
+group_writable = allowed({"mode": 0o700, "uid": 1234, "gid": 1234}, files(0o660))
+world_writable = allowed({"mode": 0o700, "uid": 1234, "gid": 1234}, files(0o666))
+print(json.dumps([private_live, canonical_mutable, foreign_private, unexpected_mode, locked, partly_read_only, group_writable, world_writable]))
+`;
+      const result = spawnSync("python3", ["-c", probe, RUNTIME_CONFIG_GUARD], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+      ]);
+    });
+
+    it.each([
+      ["private live", 0o700],
+      ["canonical mutable", 0o3770],
+    ])("reconciles only the generated startup API key from the %s posture and completes the config transaction (#2426)", (_label, hermesMode) => {
+      const fixture = createFixture(hermesMode);
       const generatedKey = "a".repeat(64);
       fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${generatedKey}\n`);
       refreshCompatOnly(fixture);
@@ -205,6 +261,54 @@ print(json.dumps([allowed, marker_present, not_supervised, source_helper]))
         expect(fs.existsSync(fixture.statePath)).toBe(false);
         expect(fs.existsSync(path.join(fixture.root, "hermes-config-mutation.lock"))).toBe(false);
       } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    it("refuses strict reconciliation from the shields-up root-locked posture (#2426)", () => {
+      const fixture = createFixture();
+      fs.appendFileSync(fixture.envPath, `API_SERVER_KEY=${"8".repeat(64)}\n`);
+      refreshCompatOnly(fixture);
+      fs.chmodSync(fixture.hermesDir, 0o755);
+      fs.chmodSync(fixture.configPath, 0o444);
+      fs.chmodSync(fixture.envPath, 0o444);
+      fs.chmodSync(fixture.compatHashPath, 0o444);
+      const strictBefore = fs.readFileSync(fixture.hashPath, "utf-8");
+
+      try {
+        const result = runManagedNonrootWrite(
+          fixture,
+          expectedConfigDigest(fixture),
+          "model:\n  default: must-not-apply\n",
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("outside mutable Hermes posture");
+        assertCleanRefusal(fixture, strictBefore);
+      } finally {
+        fs.chmodSync(fixture.hermesDir, 0o700);
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    });
+
+    it("preserves the write-config shields-up refusal when the strict hash is current (#2426)", () => {
+      const fixture = createFixture();
+      fs.chmodSync(fixture.hermesDir, 0o755);
+      fs.chmodSync(fixture.configPath, 0o444);
+      fs.chmodSync(fixture.envPath, 0o444);
+      fs.chmodSync(fixture.compatHashPath, 0o444);
+      const strictBefore = fs.readFileSync(fixture.hashPath, "utf-8");
+
+      try {
+        const result = runManagedNonrootWrite(
+          fixture,
+          expectedConfigDigest(fixture),
+          "model:\n  default: must-not-apply\n",
+        );
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("config writes are unavailable while shields are up");
+        assertCleanRefusal(fixture, strictBefore);
+      } finally {
+        fs.chmodSync(fixture.hermesDir, 0o700);
         fs.rmSync(fixture.root, { recursive: true, force: true });
       }
     });

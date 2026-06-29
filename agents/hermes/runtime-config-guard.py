@@ -1288,6 +1288,38 @@ def _managed_nonroot_reconciliation_is_allowed() -> bool:
     )
 
 
+def _mutable_nonroot_reconciliation_posture_is_allowed(
+    hermes_meta: dict[str, int],
+    file_states: dict[str, dict[str, object]],
+) -> bool:
+    try:
+        sandbox_uid, sandbox_gid = _sandbox_identity()
+    except UnsafePathError:
+        return False
+
+    # OpenShell can present the live non-root home as private 0700 after the
+    # managed supervisor/dashboard has started. Shields-down transitions use
+    # the canonical set-id 03770 form. Both are sandbox-owned mutable roots;
+    # the root-owned 0755/0444 shields-up posture must never be reconciled.
+    if (
+        hermes_meta.get("uid") != sandbox_uid
+        or hermes_meta.get("gid") != sandbox_gid
+        or hermes_meta.get("mode") not in (0o700, 0o3770)
+    ):
+        return False
+
+    for name in ("config.yaml", ".env", ".config-hash"):
+        original = file_states.get(name, {}).get("original")
+        if (
+            not isinstance(original, dict)
+            or original.get("uid") != sandbox_uid
+            or original.get("gid") != sandbox_gid
+            or int(original.get("mode", 0)) not in (0o600, 0o640)
+        ):
+            return False
+    return True
+
+
 def _reconcile_nonroot_startup_api_key_hash(
     hermes_dir: str,
     hash_file: str,
@@ -1308,16 +1340,12 @@ def _reconcile_nonroot_startup_api_key_hash(
         raise UnsafePathError(
             "strict hash verification failed outside managed non-root startup"
         )
-    if hermes_meta.get("mode") != 0o3770:
+    if not _mutable_nonroot_reconciliation_posture_is_allowed(
+        hermes_meta, file_states
+    ):
         raise UnsafePathError(
             "refusing strict hash reconciliation outside mutable Hermes posture"
         )
-    for name in ("config.yaml", ".env", ".config-hash"):
-        original = file_states.get(name, {}).get("original")
-        if not isinstance(original, dict) or int(original.get("mode", 0)) & 0o222 == 0:
-            raise UnsafePathError(
-                "refusing strict hash reconciliation outside mutable Hermes posture"
-            )
 
     config_path = os.path.join(hermes_dir, "config.yaml")
     env_path = os.path.join(hermes_dir, ".env")

@@ -363,6 +363,102 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
 }
 
+function isLoopbackHttpProbeUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return (
+      parsed.protocol === "http:" &&
+      (parsed.hostname === "127.0.0.1" ||
+        parsed.hostname === "localhost" ||
+        parsed.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function probeDirectContainerGatewayHealth(
+  sandboxName: string,
+  probeUrl: string,
+  options: {
+    privilegedExecArgvImpl?: typeof privilegedSandboxExecArgv;
+    dockerSpawnSyncImpl?: typeof dockerSpawnSync;
+  } = {},
+): boolean | null {
+  if (!isLoopbackHttpProbeUrl(probeUrl)) return null;
+
+  const buildArgv = options.privilegedExecArgvImpl ?? privilegedSandboxExecArgv;
+  let argv: string[];
+  try {
+    argv = buildArgv(
+      sandboxName,
+      [
+        "/usr/bin/curl",
+        "-q",
+        "--noproxy",
+        "*",
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "--max-time",
+        "3",
+        probeUrl,
+      ],
+      false,
+      true,
+    );
+  } catch (error) {
+    if (isDirectSandboxFallbackUnavailableError(error)) return null;
+    throw error;
+  }
+
+  const runDocker = options.dockerSpawnSyncImpl ?? dockerSpawnSync;
+  try {
+    const result = runDocker(argv, {
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: resolveSandboxExecTimeout(),
+    });
+    if (result.error) return null;
+    const httpCode =
+      typeof result.stdout === "string" ? result.stdout : String(result.stdout || "");
+    if (result.status !== 0) return false;
+    if (httpCode === "200" || httpCode === "401") return true;
+    return /^\d{3}$/.test(httpCode) ? false : null;
+  } catch {
+    return null;
+  }
+}
+
+export function probeRecoveredSandboxGatewayDirect(
+  sandboxName: string,
+  options: {
+    directHealthImpl?: typeof probeDirectContainerGatewayHealth;
+    getProbeUrlImpl?: typeof getSandboxHealthProbeUrl;
+    getSandboxImpl?: typeof registry.getSandbox;
+    getSessionAgentImpl?: typeof agentRuntime.getSessionAgent;
+  } = {},
+): boolean | null {
+  const getSandbox = options.getSandboxImpl ?? registry.getSandbox;
+  const entry = getSandbox(sandboxName);
+  if (!entry) return null;
+  const persistedAgent = entry.agent ?? "openclaw";
+  if (persistedAgent !== "openclaw" && persistedAgent !== "hermes") return null;
+
+  const driver = entry.openshellDriver?.trim().toLowerCase() ?? null;
+  if (driver !== null && driver !== "docker" && driver !== "vm") return null;
+
+  const getSessionAgent = options.getSessionAgentImpl ?? agentRuntime.getSessionAgent;
+  const agent = getSessionAgent(sandboxName);
+  if (persistedAgent === "hermes" && agent?.name !== "hermes") return null;
+  if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
+  const getProbeUrl = options.getProbeUrlImpl ?? getSandboxHealthProbeUrl;
+  const directHealth = options.directHealthImpl ?? probeDirectContainerGatewayHealth;
+  return directHealth(sandboxName, getProbeUrl(sandboxName));
+}
+
 export async function isSandboxGatewayRunningForStatus(
   sandboxName: string,
 ): Promise<boolean | null> {
@@ -587,6 +683,7 @@ function recoveryAgentDisplayName(
 export function waitForRecoveredSandboxGateway(
   sandboxName: string,
   options: {
+    directProbeImpl?: (sandboxName: string) => boolean | null;
     probeImpl?: (sandboxName: string) => boolean | null;
     sleepImpl?: (seconds: number) => void;
     quiet?: boolean;
@@ -594,6 +691,8 @@ export function waitForRecoveredSandboxGateway(
   } = {},
 ): boolean {
   const probe = options.probeImpl ?? isSandboxGatewayRunning;
+  const directProbe =
+    options.directProbeImpl ?? (options.probeImpl ? null : probeRecoveredSandboxGatewayDirect);
   const sleep = options.sleepImpl ?? sleepSeconds;
   const requestedTimeoutSeconds =
     typeof options.timeoutSeconds === "number" &&
@@ -614,7 +713,13 @@ export function waitForRecoveredSandboxGateway(
       ? Math.max(1, Math.floor(timeoutSeconds / intervalSeconds) + 1)
       : Math.max(1, Math.floor(timeoutSeconds) + 1);
 
-  const recovered = waitUntil(() => probe(sandboxName) === true, {
+  const probeDuringRecoveryWait = () => {
+    const result = probe(sandboxName);
+    if (result !== false || !directProbe) return result;
+    return directProbe(sandboxName) === true;
+  };
+
+  const recovered = waitUntil(() => probeDuringRecoveryWait() === true, {
     initialIntervalMs: intervalSeconds * 1000,
     maxIntervalMs: intervalSeconds * 1000,
     backoffFactor: 1,
@@ -644,7 +749,7 @@ export function waitForRecoveredSandboxGateway(
   // transition, so multiple stopped results may precede a healthy listener.
   // Give stopped and inconclusive probes the same bounded recovery window.
   // A persistent #4710 wedge still fails closed when that window expires.
-  return waitUntil(() => probe(sandboxName) === true, {
+  return waitUntil(() => probeDuringRecoveryWait() === true, {
     initialIntervalMs: intervalSeconds * 1000,
     maxIntervalMs: intervalSeconds * 1000,
     backoffFactor: 1,
