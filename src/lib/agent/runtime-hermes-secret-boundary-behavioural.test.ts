@@ -304,27 +304,20 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
         /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
         `_GATEWAY_LOG=${opts.recoveryFallbackLog}`,
       );
-    if (opts.trustManagerValidation !== false) {
-      stubbed = stubbed.replace(
-        /\/usr\/bin\/python3/g,
-        path.join(opts.stubsDir, "trusted-python3"),
-      );
-    }
+    stubbed =
+      opts.trustManagerValidation === false
+        ? stubbed
+        : stubbed.replace(/\/usr\/bin\/python3/g, path.join(opts.stubsDir, "trusted-python3"));
     if (opts.envFilePath) {
       stubbed = stubbed.replace(/\/sandbox\/\.hermes\/\.env/g, opts.envFilePath);
     }
     if (opts.proxyEnvPath) {
       stubbed = stubbed.replace(/\/tmp\/nemoclaw-proxy-env\.sh/g, opts.proxyEnvPath);
     }
-    if (opts.procRoot) {
-      stubbed = stubbed.replace(/\/proc\//g, `${opts.procRoot}/`);
-    }
-    if (opts.rootLifecycleMarkerPath) {
-      stubbed = stubbed.replace(
-        /\/run\/nemoclaw\/hermes-root-lifecycle/g,
-        opts.rootLifecycleMarkerPath,
-      );
-    }
+    stubbed = opts.procRoot ? stubbed.replace(/\/proc\//g, `${opts.procRoot}/`) : stubbed;
+    stubbed = opts.rootLifecycleMarkerPath
+      ? stubbed.replace(/\/run\/nemoclaw\/hermes-root-lifecycle/g, opts.rootLifecycleMarkerPath)
+      : stubbed;
 
     const scriptPath = path.join(opts.tmp, "recovery.sh");
     fs.writeFileSync(

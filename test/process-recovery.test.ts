@@ -385,34 +385,35 @@ describe("checkAndRecoverSandboxProcesses", () => {
     const registry = requireSource("../src/lib/state/registry.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
-    const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-    let healthProbeCalls = 0;
-    let recoveryCalls = 0;
     let firstHealthCommand = "";
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
     try {
-      vi.spyOn(childProcess, "spawnSync").mockImplementation(
-        (rawCommand: unknown, rawArgs: unknown) => {
-          const command = String(rawCommand);
+      const spawnSync = vi
+        .spyOn(childProcess, "spawnSync")
+        .mockImplementationOnce((_rawCommand: unknown, rawArgs: unknown) => {
+          firstHealthCommand = getSandboxExecShellCommand(rawArgs);
+          expect(firstHealthCommand).toContain("HTTP_CODE=$(curl");
+          return {
+            status: 0,
+            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
+            stderr: "",
+          } as never;
+        })
+        .mockImplementationOnce((rawCommand: unknown, rawArgs: unknown) => {
           const shellCommand = getSandboxExecShellCommand(rawArgs);
-          if (shellCommand.includes("HTTP_CODE=$(curl")) {
-            healthProbeCalls += 1;
-            if (!firstHealthCommand) firstHealthCommand = shellCommand;
-            return {
-              status: 0,
-              stdout: `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${healthProbeCalls === 1 ? "STOPPED" : "RUNNING"}\n`,
-              stderr: "",
-            } as never;
-          }
-          if (command === "ssh") {
-            recoveryCalls += 1;
-            expect(shellCommand).toContain("'/usr/local/bin/nemoclaw-start' </dev/null");
-            expect(shellCommand).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
-            return { status: 0, stdout: "SERVICE_PID=123\n", stderr: "" } as never;
-          }
-          return { status: 0, stdout: "", stderr: "" } as never;
-        },
-      );
+          expect(String(rawCommand)).toBe("ssh");
+          expect(shellCommand).toContain("'/usr/local/bin/nemoclaw-start' </dev/null");
+          expect(shellCommand).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
+          return { status: 0, stdout: "SERVICE_PID=123\n", stderr: "" } as never;
+        })
+        .mockImplementationOnce((_rawCommand: unknown, rawArgs: unknown) => {
+          expect(getSandboxExecShellCommand(rawArgs)).toContain("HTTP_CODE=$(curl");
+          return {
+            status: 0,
+            stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+            stderr: "",
+          } as never;
+        });
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
         name: "hermes",
         forwardPort: 18789,
@@ -444,14 +445,9 @@ describe("checkAndRecoverSandboxProcesses", () => {
       });
       expect(firstHealthCommand).toContain("_HERMES_MANAGED_GATEWAY");
       expect(firstHealthCommand).toContain('case "$HTTP_CODE:$_HERMES_MANAGED_GATEWAY"');
-      expect(healthProbeCalls).toBe(2);
-      expect(recoveryCalls).toBe(1);
+      expect(spawnSync).toHaveBeenCalledTimes(3);
     } finally {
-      if (previousSettleSeconds === undefined) {
-        delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-      } else {
-        process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds;
-      }
+      vi.unstubAllEnvs();
     }
   });
   it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
