@@ -105,7 +105,7 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
 // The new behaviour detects the missing `sudo -n` upfront and skips the
 // loopback override with an actionable warning so the headless install can
 // continue against Ollama's existing bind.
-describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () => {
+describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () => {
   // CR thread: isolate NEMOCLAW_NON_INTERACTIVE_SUDO_MODE so an outer shell
   // that has set it to `prompt` cannot change which branch of getSudoPrefix
   // these tests exercise. Each test in this block targets the `sudo -n`
@@ -137,6 +137,47 @@ describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () 
       );
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  // Ultra advisor PRA-4: prove the happy path. When passwordless sudo IS
+  // available, the new skip-with-warning gate must NOT fire and must not
+  // emit the "passwordless sudo is not available" warning. Without this
+  // assertion, a regression that inverted the gate condition would still
+  // pass every other test in this block (they all hit the skip path or
+  // an early return). The function continues into the live override path
+  // afterwards, which then fails downstream because we are not on a real
+  // Linux+systemd+Ollama host; we tolerate that downstream failure (via
+  // a process.exit stub) because it is OUT OF SCOPE for this test, which
+  // is solely about the new gate not skipping when sudo IS available.
+  it("does NOT skip the override when passwordless sudo IS available", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("exit-stub");
+    }) as never);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      try {
+        ensureOllamaLoopbackSystemdOverride({
+          platformImpl: () => "linux",
+          hasOllamaSystemdUnitImpl: () => true,
+          isNonInteractive: () => true,
+          hasPasswordlessSudoImpl: () => true,
+        });
+      } catch (err) {
+        // Downstream override (real runShell against a non-existent
+        // systemd unit) throws via our process.exit stub. Anything else
+        // re-raises so the assertion sees the real failure.
+        expect((err as Error).message).toBe("exit-stub");
+      }
+      const passwordlessSudoWarnings = warn.mock.calls
+        .map((c) => c.join(" "))
+        .filter((line) => line.includes("passwordless sudo is not available"));
+      expect(passwordlessSudoWarnings).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+      exit.mockRestore();
+      error.mockRestore();
     }
   });
 
