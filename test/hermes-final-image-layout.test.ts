@@ -75,11 +75,9 @@ function readText(filePath: string): string {
 }
 
 function runFinalLayout({
-  baseImage = "nemoclaw-hermes-base-local",
   legacyData = "none",
   openclaw = "none",
 }: {
-  baseImage?: string;
   legacyData?: LegacyDataFixture;
   openclaw?: OpenClawFixture;
 } = {}) {
@@ -105,26 +103,11 @@ function runFinalLayout({
     "# Flatten stale published base images",
     "# Pin config hash at build time",
   ).replaceAll("/root/.cache/pip", path.join(tmp, "root-cache", "pip"));
-  const { result } = runDockerShell(
-    `BASE_IMAGE=${JSON.stringify(baseImage)}; ${layoutCommand}`,
-    sandboxRoot,
-  );
+  const { result } = runDockerShell(layoutCommand, sandboxRoot);
   return { hermesDir, legacyTarget, openclawTarget, result, sandboxRoot, tmp };
 }
 
 describe("Hermes final image layout", () => {
-  it("rejects mutable official base references", () => {
-    const run = runFinalLayout({
-      baseImage: "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest",
-    });
-    try {
-      expect(run.result.status).toBe(1);
-      expect(run.result.stderr).toContain("must use an immutable sha256 digest");
-    } finally {
-      fs.rmSync(run.tmp, { recursive: true, force: true });
-    }
-  });
-
   it("rejects retired OpenClaw state represented as a directory", () => {
     const run = runFinalLayout({ openclaw: "directory" });
     try {

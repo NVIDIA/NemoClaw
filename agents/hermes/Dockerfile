@@ -10,7 +10,6 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:8dad3b989a9ed1
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG BASE_IMAGE
 
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
@@ -252,21 +251,14 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 USER root
 
 # Flatten stale published base images that still contain the old .hermes-data
-# symlink bridge. Official published bases must be immutable, and retired
-# OpenClaw state must never enter a Hermes final image. Local images remain
-# supported for source and regression builds. OpenShell starts the sandbox as
-# the sandbox user, so the .hermes-data migration cannot rely on root privileges
+# symlink bridge. The base resolver owns published-image provenance and exports
+# immutable digests; this final-image boundary owns layout validation so local,
+# rebuilt, and caller-selected bases remain supported. Retired OpenClaw state
+# must never enter a Hermes final image. OpenShell starts the sandbox as the
+# sandbox user, so the .hermes-data migration cannot rely on root privileges
 # inside the pod.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    base_image="${BASE_IMAGE:-nemoclaw-hermes-base-local}"; \
-    case "$base_image" in \
-        ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:*) ;; \
-        ghcr.io/nvidia/nemoclaw/hermes-sandbox-base*) \
-            echo "ERROR: official Hermes BASE_IMAGE must use an immutable sha256 digest: $base_image" >&2; \
-            exit 1; \
-            ;; \
-    esac; \
     config_dir=/sandbox/.hermes; \
     data_dir=/sandbox/.hermes-data; \
     openclaw_dir=/sandbox/.openclaw; \
