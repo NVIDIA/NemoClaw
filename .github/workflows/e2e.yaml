@@ -6387,6 +6387,9 @@ jobs:
             const traceTiming = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/analyze-trace-timing.ts'),
             );
+            const scorecardJobs = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
+            );
             const needs = ${{ toJSON(needs) }};
             const safeSelector = /^[A-Za-z0-9_-]+$/;
             const parseSelectors = (value) =>
@@ -6401,27 +6404,21 @@ jobs:
               : isDispatch
                 ? 'Manual full run'
                 : 'Scheduled E2E';
-            const metaJobs = new Set([
+            const metaJobs = [
               'generate-matrix',
               'notify-on-failure',
               'report-to-pr',
               'scorecard',
-            ]);
-            const explicitOnly = new Set(['jetson-nvmap-gpu', 'sandbox-rlimits-connect']);
-            const explicitlySelected = new Set([...requestedJobs, ...requestedTargets]);
-            const entries = Object.entries(needs)
-              .filter(([name]) => !metaJobs.has(name))
-              .filter(
-                ([name]) => !explicitOnly.has(name) || explicitlySelected.has(name),
-              )
-              .sort(([left], [right]) => left.localeCompare(right));
+            ];
+            const explicitOnly = ['jetson-nvmap-gpu', 'sandbox-rlimits-connect'];
+            const explicitlySelected = [...requestedJobs, ...requestedTargets];
 
             // GitHub's jobs API is the canonical source because `needs.live`
             // collapses every matrix target into one result and has no job URL.
             // Fall back to `needs` if the API is temporarily unavailable.
-            let canonicalJobs = null;
+            let apiJobs = null;
             try {
-              const apiJobs = await github.paginate(
+              apiJobs = await github.paginate(
                 github.rest.actions.listJobsForWorkflowRun,
                 {
                   owner: context.repo.owner,
@@ -6430,20 +6427,6 @@ jobs:
                   per_page: 100,
                 },
               );
-              const dedupedByName = new Map();
-              for (const job of apiJobs) {
-                const name = job.name.replace(/ \/ [^/]+$/, '');
-                if (metaJobs.has(name)) continue;
-                if (explicitOnly.has(name) && !explicitlySelected.has(name)) continue;
-                const existing = dedupedByName.get(name);
-                const isNewer =
-                  !existing ||
-                  (job.run_attempt ?? 0) > (existing.run_attempt ?? 0) ||
-                  ((job.run_attempt ?? 0) === (existing.run_attempt ?? 0) &&
-                    (job.completed_at ?? '') > (existing.completed_at ?? ''));
-                if (isNewer) dedupedByName.set(name, { ...job, name });
-              }
-              canonicalJobs = [...dedupedByName.values()];
             } catch (error) {
               const safeMessage = String(error.message ?? 'unknown').slice(0, 200);
               core.warning(
@@ -6451,37 +6434,14 @@ jobs:
               );
             }
 
-            let success = 0;
-            let failure = 0;
-            let cancelled = 0;
-            let skipped = 0;
-            if (canonicalJobs) {
-              for (const job of canonicalJobs) {
-                if (job.conclusion === 'success') success += 1;
-                else if (job.conclusion === 'failure') failure += 1;
-                else if (job.conclusion === 'cancelled') cancelled += 1;
-                else if (job.conclusion === 'skipped' || job.status !== 'completed') skipped += 1;
-                else failure += 1;
-              }
-            } else {
-              for (const [, value] of entries) {
-                if (value.result === 'success') success += 1;
-                else if (value.result === 'failure') failure += 1;
-                else if (value.result === 'cancelled') cancelled += 1;
-                else if (value.result === 'skipped') skipped += 1;
-                else failure += 1;
-              }
-            }
-            const total = canonicalJobs ? canonicalJobs.length : entries.length;
-            const ran = total - skipped;
-            const failedJobs = canonicalJobs
-              ? canonicalJobs
-                  .filter((job) => job.conclusion === 'failure')
-                  .map((job) => ({ name: job.name, url: job.html_url }))
-                  .sort((left, right) => left.name.localeCompare(right.name))
-              : entries
-                  .filter(([, value]) => value.result === 'failure')
-                  .map(([name]) => ({ name, url: null }));
+            const { cancelled, failedJobs, failure, ran, skipped, success, total } =
+              scorecardJobs.summarizeJobs({
+                apiJobs,
+                explicitOnlyJobNames: explicitOnly,
+                explicitlySelected,
+                metaJobNames: metaJobs,
+                needs,
+              });
             const perfect = ran > 0 && failure === 0 && cancelled === 0;
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             const today = new Date().toLocaleDateString('en-US', {

@@ -24,6 +24,13 @@ SCHEMA_VERSION = "nemoclaw.trace_timing.v1"
 OUTPUT_FILE = "cloud-onboard-trace-timing-summary.json"
 ONBOARD_ROOT_SPAN = "nemoclaw.onboard"
 ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase."
+ONBOARD_PHASE_NAMES = {
+    f"{ONBOARD_PHASE_PREFIX}preflight",
+    f"{ONBOARD_PHASE_PREFIX}gateway",
+    f"{ONBOARD_PHASE_PREFIX}provider_selection",
+    f"{ONBOARD_PHASE_PREFIX}inference",
+    f"{ONBOARD_PHASE_PREFIX}sandbox",
+}
 MAX_JSON_FILES = 100
 MAX_JSON_BYTES = 2 * 1024 * 1024
 MAX_SLOWEST_SPANS = 10
@@ -50,7 +57,7 @@ def safe_status(value: Any) -> str:
 def safe_span_name(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    if value == ONBOARD_ROOT_SPAN or value.startswith(ONBOARD_PHASE_PREFIX):
+    if value == ONBOARD_ROOT_SPAN or value in ONBOARD_PHASE_NAMES:
         return value
     return None
 
@@ -111,7 +118,7 @@ def extract_candidate(artifact: Any) -> dict[str, Any] | None:
     for span in spans:
         name = span.get("name")
         duration_ms = finite_number(span.get("duration_ms"))
-        if isinstance(name, str) and name.startswith(ONBOARD_PHASE_PREFIX) and duration_ms is not None:
+        if name in ONBOARD_PHASE_NAMES and duration_ms is not None:
             phases[name] = phases.get(name, 0.0) + duration_ms
     if not phases:
         return None

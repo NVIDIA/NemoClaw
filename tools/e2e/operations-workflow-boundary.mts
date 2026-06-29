@@ -148,9 +148,9 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   for (const fragment of [
     "scripts/scorecard/analyze-trace-timing.ts",
     "traceTiming.buildTraceTimingResult",
+    "scripts/scorecard/summarize-jobs.ts",
+    "scorecardJobs.summarizeJobs",
     "github.rest.actions.listJobsForWorkflowRun",
-    "run_attempt",
-    "job.html_url",
     "falling back to needs context",
     "jetson-nvmap-gpu",
     "sandbox-rlimits-connect",

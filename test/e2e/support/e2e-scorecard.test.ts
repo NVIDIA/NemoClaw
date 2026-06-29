@@ -7,8 +7,8 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -20,6 +20,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { ScorecardData } from "../../../scripts/scorecard/build-slack-blocks.ts";
+import type { JobSummary, SummarizeJobsInput } from "../../../scripts/scorecard/summarize-jobs.ts";
 
 const require = createRequire(import.meta.url);
 const slack = require("../../../scripts/scorecard/build-slack-blocks.ts") as {
@@ -45,6 +46,9 @@ const trace = require("../../../scripts/scorecard/analyze-trace-timing.ts") as {
   formatTopPhaseChanges: (rows: Array<{ label: string }>) => string;
   selectOnboardTrace: (texts: string[]) => { totalMs: number } | null;
 };
+const scorecardJobs = require("../../../scripts/scorecard/summarize-jobs.ts") as {
+  summarizeJobs: (input: SummarizeJobsInput) => JobSummary;
+};
 const SANITIZER = "scripts/e2e/sanitize-trace-timing.py";
 
 function makeRawTrace(): Record<string, unknown> {
@@ -60,6 +64,10 @@ function makeRawTrace(): Record<string, unknown> {
                 duration_ms: 500,
                 attributes: { api_key: "nvapi-should-never-appear" },
                 events: [{ name: "prompt", attributes: { value: "secret" } }],
+              },
+              {
+                name: "nemoclaw.onboard.phase.nvapi-attacker-controlled",
+                duration_ms: 900,
               },
             ],
           },
@@ -180,6 +188,85 @@ describe("E2E scorecard", () => {
     });
     expect(trace.selectOnboardTrace([rawTrace])).toBeNull();
     expect(trace.selectOnboardTrace([good])?.totalMs).toBe(1000);
+  });
+
+  it("uses canonical API jobs, latest reruns, and direct failure links", () => {
+    expect(
+      scorecardJobs.summarizeJobs({
+        apiJobs: [
+          { conclusion: "success", name: "generate-matrix", status: "completed" },
+          {
+            completed_at: "2026-06-29T00:00:00Z",
+            conclusion: "failure",
+            html_url: "https://example.test/old",
+            name: "live (openclaw)",
+            run_attempt: 1,
+            status: "completed",
+          },
+          {
+            completed_at: "2026-06-29T01:00:00Z",
+            conclusion: "success",
+            html_url: "https://example.test/new",
+            name: "live (openclaw)",
+            run_attempt: 2,
+            status: "completed",
+          },
+          {
+            conclusion: "timed_out",
+            html_url: "https://example.test/hermes",
+            name: "live (hermes)",
+            status: "completed",
+          },
+          { conclusion: "success", name: "cloud / inner", status: "completed" },
+          { conclusion: "skipped", name: "jetson-nvmap-gpu", status: "completed" },
+          {
+            conclusion: "success",
+            name: "sandbox-rlimits-connect",
+            status: "completed",
+          },
+          { conclusion: "success", name: "report-to-pr", status: "completed" },
+        ],
+        explicitOnlyJobNames: ["jetson-nvmap-gpu", "sandbox-rlimits-connect"],
+        explicitlySelected: ["sandbox-rlimits-connect"],
+        metaJobNames: ["generate-matrix", "report-to-pr", "scorecard"],
+        needs: {},
+      }),
+    ).toEqual({
+      cancelled: 0,
+      failedJobs: [{ name: "live (hermes)", url: "https://example.test/hermes" }],
+      failure: 1,
+      ran: 4,
+      skipped: 0,
+      success: 3,
+      total: 4,
+    });
+  });
+
+  it("falls back to needs without counting unselected explicit-only jobs", () => {
+    expect(
+      scorecardJobs.summarizeJobs({
+        apiJobs: null,
+        explicitOnlyJobNames: ["jetson-nvmap-gpu", "sandbox-rlimits-connect"],
+        explicitlySelected: ["jetson-nvmap-gpu"],
+        metaJobNames: ["generate-matrix", "report-to-pr", "scorecard"],
+        needs: {
+          "generate-matrix": { result: "success" },
+          cloud: { result: "success" },
+          malformed: { result: "timed_out" },
+          "jetson-nvmap-gpu": { result: "skipped" },
+          "sandbox-rlimits-connect": { result: "skipped" },
+          "report-to-pr": { result: "success" },
+        },
+      }),
+    ).toEqual({
+      cancelled: 0,
+      failedJobs: [{ name: "malformed", url: null }],
+      failure: 1,
+      ran: 2,
+      skipped: 1,
+      success: 1,
+      total: 3,
+    });
   });
 
   it("sanitizes raw traces into a timing-only artifact", () => {
