@@ -275,8 +275,10 @@ describe("executeSandboxExecCommand", () => {
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
   });
 
-  it("rejects a non-frame preamble that contains the startup marker", () => {
+  it("rejects a non-frame preamble and surfaces a missing trusted fallback identity", () => {
     const childProcess = requireSource("node:child_process");
+    const dockerExec = requireSource("../src/lib/adapters/docker/exec.ts");
+    const privilegedExec = requireSource("../src/lib/sandbox/privileged-exec.ts");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: [
@@ -285,12 +287,14 @@ describe("executeSandboxExecCommand", () => {
       ].join("\n"),
       stderr: "",
     } as never);
+    const privilegedArgv = vi.spyOn(privilegedExec, "privilegedSandboxExecArgv");
+    const dockerSpawnSync = vi.spyOn(dockerExec, "dockerSpawnSync");
 
-    const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand("hermes-box", "echo RUNNING"),
-    );
-
-    expect(result).toBeNull();
+    expect(() =>
+      withFakeOpenshellBinary(() => executeSandboxExecCommand("hermes-box", "echo RUNNING")),
+    ).toThrow(/No NemoClaw registry entry found.*refusing privileged exec/);
+    expect(privilegedArgv).toHaveBeenCalledTimes(1);
+    expect(dockerSpawnSync).not.toHaveBeenCalled();
   });
 
   it("passes a newline-free Hermes validator payload to OpenShell", () => {

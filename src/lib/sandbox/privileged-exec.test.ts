@@ -284,10 +284,18 @@ describe("privileged sandbox exec routing", () => {
         }),
         dockerCapture: () => "openshell-alpha-child\n",
       },
-      ({ privilegedSandboxExecArgv }) => {
-        expect(() => privilegedSandboxExecArgv("alpha", ["id"])).toThrow(
+      ({ isDirectSandboxFallbackUnavailableError, privilegedSandboxExecArgv }) => {
+        let refusal: unknown;
+        try {
+          privilegedSandboxExecArgv("alpha", ["id"]);
+        } catch (error) {
+          refusal = error;
+        }
+        expect(refusal).toBeInstanceOf(Error);
+        expect(String(refusal)).toMatch(
           /No running direct OpenShell sandbox container found for 'alpha'/,
         );
+        expect(isDirectSandboxFallbackUnavailableError(refusal)).toBe(true);
       },
     );
   });

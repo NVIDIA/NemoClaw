@@ -16,7 +16,10 @@ import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds, waitUntil } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
-import { privilegedSandboxExecArgv } from "../../sandbox/privileged-exec";
+import {
+  isDirectSandboxFallbackUnavailableError,
+  privilegedSandboxExecArgv,
+} from "../../sandbox/privileged-exec";
 import { createTempSshConfig } from "../../sandbox/temp-ssh-config";
 import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
 import * as registry from "../../state/registry";
@@ -207,8 +210,20 @@ function executeLocalDockerSandboxCommand(
   markedCommand: string,
   timeout: number,
 ): SandboxCommandResult | null {
+  let argv: string[];
   try {
-    const argv = privilegedSandboxExecArgv(sandboxName, ["sh", "-c", markedCommand]);
+    argv = privilegedSandboxExecArgv(sandboxName, ["sh", "-c", markedCommand]);
+  } catch (error) {
+    // Docker discovery failure or a stopped/nonexistent direct container means
+    // there is no local fallback. Identity refusals, unsupported drivers,
+    // registry corruption, and ambiguous matches are security-boundary
+    // diagnostics: let callers surface them instead of collapsing them into an
+    // inconclusive OpenShell transport result.
+    if (isDirectSandboxFallbackUnavailableError(error)) return null;
+    throw error;
+  }
+
+  try {
     const result = dockerSpawnSync(argv, {
       encoding: "utf-8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -239,13 +254,14 @@ export function executeSandboxExecCommand(
         timeout: effectiveTimeout,
       },
     );
-    return (
-      parseSandboxCommandResult(result) ??
-      executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout)
-    );
+    const parsed = parseSandboxCommandResult(result);
+    if (parsed !== null) return parsed;
   } catch {
-    return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
+    // OpenShell transport failed; try the trusted direct-container fallback.
   }
+  // Keep the fallback outside the OpenShell try/catch so a fail-closed identity
+  // refusal cannot be caught and retried against changing container state.
+  return executeLocalDockerSandboxCommand(sandboxName, markedCommand, effectiveTimeout);
 }
 
 export function executeGatewaySupervisorAction(

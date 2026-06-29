@@ -30,6 +30,13 @@ const SANITIZED_PRIVILEGED_ENV = [
   "RUBYOPT=",
 ] as const;
 
+class DirectSandboxFallbackUnavailableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DirectSandboxFallbackUnavailableError";
+  }
+}
+
 function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
 }
@@ -114,19 +121,34 @@ function expectedDirectContainerPattern(sandboxName: string): string {
 
 function findDirectSandboxContainer(sandboxName: string): string | null {
   const names = registeredSandboxNames(sandboxName);
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
-    timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
-  });
+  let output: string;
+  try {
+    output = dockerCapture(["ps", "--format", "{{.Names}}"], {
+      timeout: DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new DirectSandboxFallbackUnavailableError(
+      `Direct sandbox container discovery failed for '${sandboxName}': ${detail}`,
+      { cause: error },
+    );
+  }
   return selectDirectSandboxContainer(sandboxName, output, names);
 }
 
 function missingDirectContainerError(sandboxName: string, driver: string | null): Error {
   const driverLabel = driver ?? "unspecified";
-  return new Error(
+  return new DirectSandboxFallbackUnavailableError(
     `No running direct OpenShell sandbox container found for '${sandboxName}' ` +
       `(driver: ${driverLabel}). Expected a running container named ` +
       `${expectedDirectContainerPattern(sandboxName)}. Is the sandbox running?`,
   );
+}
+
+function isDirectSandboxFallbackUnavailableError(
+  error: unknown,
+): error is DirectSandboxFallbackUnavailableError {
+  return error instanceof DirectSandboxFallbackUnavailableError;
 }
 
 function missingRegistryEntryError(sandboxName: string): Error {
@@ -186,6 +208,7 @@ function privilegedSandboxExecArgv(
 
 export {
   containerNameMatchesSandbox,
+  isDirectSandboxFallbackUnavailableError,
   privilegedSandboxExecArgv,
   resolveDirectSandboxContainer,
   selectDirectSandboxContainer,
