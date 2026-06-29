@@ -67,11 +67,14 @@ export interface ReleaseGatewayPortOptions {
 }
 
 export interface ReleaseGatewayPortResult {
-  port: number;
+  /** Resolved gateway port, or null when resolution failed closed (skipped). */
+  port: number | null;
   released: boolean;
   stopped: number[];
   remaining: number[];
   scanned: boolean;
+  /** True when an invalid persisted binding made us skip the destructive path. */
+  skipped: boolean;
 }
 
 function defaultRun(command: string, args: string[], options: SpawnSyncOptions = {}): RunResult {
@@ -111,21 +114,31 @@ function isValidPort(value: number | undefined): value is number {
  * sandbox. Prefers an explicit override, then the sandbox's persisted gateway
  * binding, and finally the process-wide `GATEWAY_PORT` (env-derived, default
  * 8080) so a single-sandbox deployment with no registry entry still works.
+ *
+ * Returns `null` when the sandbox *has* a persisted gateway binding that fails
+ * validation. This stop path is destructive (it derives a pid file, scans
+ * listeners, and signals matched PIDs), so it mirrors the fail-closed contract
+ * of `resolveSandboxGatewayName`: a corrupt or tampered binding must not be
+ * silently coerced to the default port, which could stop another sandbox's
+ * (or worktree's) default gateway. The legacy/no-registry fallback to
+ * `GATEWAY_PORT` is kept only for a missing entry or a legacy entry with no
+ * gateway fields (where `resolveSandboxGatewayName` returns the base name).
  */
 export function resolveStopGatewayPort(
   options: ReleaseGatewayPortOptions,
   getSandbox: (name: string) => SandboxGatewayBinding | null,
-): number {
+): number | null {
   if (isValidPort(options.port)) return options.port;
   if (options.sandboxName) {
-    try {
-      const entry = getSandbox(options.sandboxName);
-      if (entry) {
-        const port = resolveGatewayPortFromName(resolveSandboxGatewayName(entry));
-        if (port !== null) return port;
+    const entry = getSandbox(options.sandboxName);
+    if (entry) {
+      // Honor the persisted binding as the source of truth. Fail closed when
+      // it does not validate rather than guessing the default port.
+      try {
+        return resolveGatewayPortFromName(resolveSandboxGatewayName(entry));
+      } catch {
+        return null;
       }
-    } catch {
-      /* fall through to the process-wide default */
     }
   }
   return GATEWAY_PORT;
@@ -179,6 +192,24 @@ export function releaseManagedGatewayPort(
   const getSandbox = depsOverrides.getSandbox ?? lazyGetSandbox;
 
   const port = resolveStopGatewayPort(options, getSandbox);
+  if (port === null) {
+    // Fail closed: the sandbox has a persisted gateway binding that does not
+    // validate. Skip the destructive path entirely rather than default-port
+    // cleanup that could stop another sandbox's gateway.
+    warn(
+      `Skipping gateway port release for sandbox ${JSON.stringify(options.sandboxName)}: ` +
+        "its persisted gateway binding is invalid. Resolve the registry entry, " +
+        "then re-run stop.",
+    );
+    return {
+      port: null,
+      released: false,
+      stopped: [],
+      remaining: [],
+      scanned: false,
+      skipped: true,
+    };
+  }
   const stateDir = resolveStateDir(port, env, homeDir);
   const pidFile = path.join(stateDir, "openshell-gateway.pid");
 
@@ -255,5 +286,5 @@ export function releaseManagedGatewayPort(
     );
   }
 
-  return { port, released, stopped: stopResult.stopped, remaining, scanned };
+  return { port, released, stopped: stopResult.stopped, remaining, scanned, skipped: false };
 }

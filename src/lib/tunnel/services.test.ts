@@ -441,9 +441,14 @@ describe("stopAll", () => {
     // Stub the gateway-port release so unit tests never probe/kill a real
     // host gateway bound to port 8080. Its own behavior is covered by
     // gateway-port-release.test.ts.
-    releaseGatewaySpy = vi
-      .spyOn(gatewayPortRelease, "releaseManagedGatewayPort")
-      .mockReturnValue({ port: 8080, released: true, stopped: [], remaining: [], scanned: false });
+    releaseGatewaySpy = vi.spyOn(gatewayPortRelease, "releaseManagedGatewayPort").mockReturnValue({
+      port: 8080,
+      released: true,
+      stopped: [],
+      remaining: [],
+      scanned: false,
+      skipped: false,
+    });
     originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — partial mock signature is intentional.
     childProcess.spawnSync = (command: string, args: readonly string[]) => {

@@ -109,6 +109,14 @@ describe("resolveStopGatewayPort (#5968)", () => {
   it("falls back to the default gateway port when no binding is found", () => {
     expect(resolveStopGatewayPort({ sandboxName: "alpha" }, () => null)).toBe(DEFAULT_GATEWAY_PORT);
   });
+
+  it("fails closed (null) when the persisted gateway binding is invalid", () => {
+    // An out-of-range gatewayPort is a corrupt/tampered binding;
+    // resolveSandboxGatewayName throws and we must not coerce to the default.
+    expect(resolveStopGatewayPort({ sandboxName: "alpha" }, () => ({ gatewayPort: 70000 }))).toBe(
+      null,
+    );
+  });
 });
 
 describe("releaseManagedGatewayPort (#5968)", () => {
@@ -216,6 +224,81 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
       "sudo pkill -f openshell-gateway",
     );
+  });
+
+  it("does not fall back to the default port when the persisted gateway binding is invalid", () => {
+    // Source-of-truth guard: a corrupt registry entry must NOT cause
+    // default-port cleanup or any stopHostGatewayProcesses invocation.
+    const lsof = lsofResponder(ok("999\n"));
+    const stop = stopSpy(emptyStopResult());
+    const warn = vi.fn();
+
+    const result = releaseManagedGatewayPort(
+      { sandboxName: "nemoclaw-5968" },
+      {
+        ...baseDeps,
+        warn,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => ({ gatewayPort: 0 }),
+      },
+    );
+
+    expect(result.skipped).toBe(true);
+    expect(result.released).toBe(false);
+    expect(result.port).toBe(null);
+    expect(stop.lastOptions()).toBeUndefined();
+    expect(lsof.calls).toBe(0);
+    expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
+      "persisted gateway binding is invalid",
+    );
+  });
+
+  it("leaves a non-matching listener alone without sudo pkill remediation", () => {
+    // lsof reports a PID the stopper classifies as non-matching (e.g. a
+    // Docker-published port held by docker-proxy). No matched gateway failed,
+    // so no scary remediation hint.
+    const lsof = lsofResponder(ok("444\n"), ok("444\n"));
+    const stop = stopSpy(emptyStopResult({ skippedNonMatchingPids: [444] }));
+    const warn = vi.fn();
+
+    const result = releaseManagedGatewayPort(
+      { confirmTimeoutMs: 10 },
+      {
+        ...baseDeps,
+        warn,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.released).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns and falls back to pid-file cleanup when lsof exits with a real failure", () => {
+    // lsof status > 1 is a genuine error (not "no listeners"); surface it and
+    // skip the lsof sweep, but still delegate to the pid-file stopper.
+    const stop = stopSpy(emptyStopResult());
+    const warn = vi.fn();
+    const run: NonNullable<HostGatewayProcessDeps["run"]> = (command) =>
+      command === "lsof" ? { status: 2, stdout: "", stderr: "lsof: boom" } : ok();
+
+    const result = releaseManagedGatewayPort(
+      {},
+      {
+        ...baseDeps,
+        warn,
+        run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.scanned).toBe(false);
+    expect(stop.lastOptions()?.pids).toEqual([]);
+    expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain("lsof failed while scanning");
   });
 
   it("skips the lsof sweep but still delegates to the pid-file stopper when lsof is absent", () => {
