@@ -54,9 +54,11 @@ type RebuildFlowOverrides = {
     failedDirs: string[];
     failedFiles: string[];
   };
+  restoreMcpBridgesAfterRebuild?: () => Promise<void>;
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
   sessionSandboxName?: string;
+  defaultSandbox?: string | null;
   staleRecovery?: boolean;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;
@@ -69,6 +71,7 @@ type RebuildFlowOverrides = {
     stdout?: string;
     stderr?: string;
   };
+  backupPolicyPresets?: string[];
 };
 
 type RebuildFlowHarness = {
@@ -91,6 +94,7 @@ type RebuildFlowHarness = {
   prepareMcpBridgesForRebuildSpy: MockInstance;
   reattachMcpProvidersAfterRebuildAbortSpy: MockInstance;
   removeSandboxRegistryEntrySpy: MockInstance;
+  restoreSandboxEntrySpy: MockInstance;
   restoreMcpBridgesAfterRebuildSpy: MockInstance;
   session: RebuildFlowSession;
 };
@@ -253,13 +257,16 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     ...(overrides.sandboxEntry ?? {}),
   };
   vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
-  vi.spyOn(registry, "getDefault").mockReturnValue(null);
+  vi.spyOn(registry, "getDefault").mockReturnValue(overrides.defaultSandbox ?? null);
   vi.spyOn(registry, "load").mockReturnValue({
     sandboxes: { alpha: sandboxEntry },
-    defaultSandbox: null,
+    defaultSandbox: overrides.defaultSandbox ?? null,
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const restoreSandboxEntrySpy = vi
+    .spyOn(registry, "restoreSandboxEntry")
+    .mockImplementation(() => undefined);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -285,7 +292,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     manifest: {
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: ["npm", "bad", "throw"],
+      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
     },
   });
   const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
@@ -358,7 +365,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     .mockResolvedValue(undefined);
   const restoreMcpBridgesAfterRebuildSpy = vi
     .spyOn(mcpBridge, "restoreMcpBridgesAfterRebuild")
-    .mockResolvedValue(undefined);
+    .mockImplementation(overrides.restoreMcpBridgesAfterRebuild ?? (() => Promise.resolve()));
 
   errorSpy.mockClear();
   logSpy.mockClear();
@@ -384,6 +391,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     prepareMcpBridgesForRebuildSpy,
     reattachMcpProvidersAfterRebuildAbortSpy,
     removeSandboxRegistryEntrySpy,
+    restoreSandboxEntrySpy,
     restoreMcpBridgesAfterRebuildSpy,
     session,
   };
@@ -523,7 +531,10 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { agentVersion: "0.2.0" });
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm", "bad", "throw"],
+    });
     expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
@@ -582,6 +593,72 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("prunes disabled messaging channel presets from the final registry policies", async () => {
+    const disabledSlackPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: ["slack"],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      backupPolicyPresets: ["slack", "npm"],
+      buildMessagingRebuildPlan: () => disabledSlackPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "slack");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm"],
+    });
+  });
+
+  it("prunes the disabled Teams preset from the final registry policies after rebuild", async () => {
+    const disabledTeamsPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: ["teams"],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      backupPolicyPresets: ["teams", "npm"],
+      buildMessagingRebuildPlan: () => disabledTeamsPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "teams");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm"],
+    });
+  });
+
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
     const harness = createRebuildFlowHarness({
       buildMessagingRebuildPlan: () => {
@@ -636,6 +713,32 @@ describe("rebuildSandbox flow", () => {
     expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 
+  it("does not reclaim the default sandbox when an MCP rebuild recreate fails", async () => {
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
+    const harness = createRebuildFlowHarness({
+      defaultSandbox: "alpha",
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+      },
+      onboard: () => {
+        throw new Error("inner recreate boom");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("Recreate failed");
+
+    expect(harness.removeSandboxRegistryEntrySpy).not.toHaveBeenCalled();
+    expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
+      [expect.objectContaining({ name: "alpha" })],
+    ]);
+  });
+
   it("starts the active Teams host forward after a successful rebuild", async () => {
     const plan = makeActiveTeamsMessagingPlan();
     const harness = createRebuildFlowHarness({
@@ -683,6 +786,40 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
     expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm"],
+    });
+    expect(output).toContain("Policy presets failed to reapply: bad, throw");
+  });
+
+  it("reports both MCP and policy recovery when both restores are incomplete", async () => {
+    const mcpEntry = {
+      server: "github",
+      providerName: "nemoclaw-mcp-alpha-github",
+    };
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => false,
+      backupPolicyPresets: ["npm"],
+      mcpPreparation: {
+        entries: [mcpEntry],
+        detachedProviderEntries: [mcpEntry],
+      },
+      restoreMcpBridgesAfterRebuild: () => Promise.reject(new Error("MCP restore boom")),
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("rebuilt but some post-restore steps were incomplete");
+    expect(output).toContain("MCP bridge definitions were preserved but not fully refreshed");
+    expect(output).toContain("Policy presets failed to reapply: npm");
+    expect(output).not.toContain("rebuilt successfully");
+    expect(harness.errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+    );
   });
 
   it("isolates ambient onboard-selection env during recreate, then restores it (#5735)", async () => {

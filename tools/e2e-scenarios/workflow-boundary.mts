@@ -6,6 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_VITEST_WORKFLOW_PATH = join(
   REPO_ROOT,
@@ -8078,6 +8080,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateDiagnosticsVitestJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
   validateSnapshotCommandsVitestJob(errors, jobs);
+  errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateSparkInstallVitestJob(errors, jobs);
   validateGatewayDriftPreflightVitestJob(errors, jobs);
 

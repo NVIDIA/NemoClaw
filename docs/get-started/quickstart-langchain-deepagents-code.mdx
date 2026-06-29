@@ -35,6 +35,17 @@ The image installs a hash-locked, pinned Deep Agents Code release with NVIDIA pr
 NemoClaw writes `/sandbox/.deepagents/config.toml` with an OpenAI-compatible provider pointed at `https://inference.local/v1`, uses a scoped placeholder API key for that managed route, and sets `use_responses_api = false` for Chat Completions compatibility.
 NemoClaw/OpenShell keeps real provider credentials in credential handling and does not write them into the Deep Agents config file.
 
+## Choose the Default Sandbox
+
+When you manage multiple sandboxes, use the Deep Agents alias to promote a registered Deep Agents Code sandbox to the default.
+
+```bash
+nemo-deepagents use <sandbox-name>
+```
+
+The command updates NemoClaw's host-side registry.
+It does not modify the sandbox or the `dcode` configuration.
+
 ## Use the Harness
 
 Connect to the sandbox, then launch the terminal UI.

@@ -33,6 +33,19 @@ runs:
             >/dev/null 2>&1
         }
 
+        layout_ok() {
+          local ref="$1"
+          docker run --rm --entrypoint sh "$ref" -lc '
+            set -eu
+            for path in /sandbox/.openclaw /sandbox/.hermes-data; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                echo "Hermes base image contains retired sandbox state: $path" >&2
+                exit 1
+              fi
+            done
+          '
+        }
+
         try_image() {
           local ref="$1" version digest_ref
           if ! docker pull "$ref" >/dev/null 2>&1; then
@@ -46,6 +59,10 @@ runs:
           version="$(glibc_version "$digest_ref" || true)"
           if ! glibc_ok "$version"; then
             echo "::warning::Hermes sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
+            return 1
+          fi
+          if ! layout_ok "$digest_ref"; then
+            echo "::warning::Hermes sandbox base image ${ref} contains retired sandbox state; trying another candidate"
             return 1
           fi
           if ! mcp_runtime_ok "$digest_ref"; then
@@ -73,6 +90,10 @@ runs:
         version="$(glibc_version nemoclaw-hermes-base-local || true)"
         if ! glibc_ok "$version"; then
           echo "::error::Local Hermes sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
+          exit 1
+        fi
+        if ! layout_ok nemoclaw-hermes-base-local; then
+          echo "::error::Local Hermes sandbox base image contains retired sandbox state"
           exit 1
         fi
         if ! mcp_runtime_ok nemoclaw-hermes-base-local; then

@@ -613,18 +613,18 @@ async function reattachMcpAfterDeleteFailure(
 }
 
 function restoreMcpRegistryForRebuildRetry(
-  sandboxName: string,
   staleRecovery: boolean,
   entries: McpRebuildPreparation["entries"],
   original: RebuildSandboxEntry,
-  wasDefault: boolean,
   log: (message: string) => void,
 ): void {
   if (staleRecovery || entries.length === 0) return;
   try {
-    registry.restoreSandboxEntry(original, {
-      reclaimDefault: wasDefault ? sandboxName : null,
-    });
+    // MCP-bearing rebuilds deliberately preserve the registry entry instead of
+    // removing it. Restore any metadata overwritten by a partial onboard, but
+    // leave the current default pointer alone: a concurrent `nemoclaw use`
+    // selection must win because this rebuild never moved that pointer.
+    registry.restoreSandboxEntry(original);
     log("Recreate failed: restored MCP-bearing registry entry for stale recovery retry");
   } catch (error) {
     log(`Failed to restore MCP-bearing registry entry after recreate failure: ${String(error)}`);
@@ -669,6 +669,7 @@ function postRestoreCompleted(status: {
   mcpBridgeRestoreUnverified: boolean;
   mutableConfigHashRefreshUnverified: boolean;
   mutablePermsRepairUnverified: boolean;
+  policyPresetRestoreIncomplete: boolean;
   restoreSucceeded: boolean;
 }): boolean {
   return (
@@ -676,7 +677,8 @@ function postRestoreCompleted(status: {
     !status.mutablePermsRepairUnverified &&
     !status.mutableConfigHashRefreshUnverified &&
     !status.messagingHostForwardUnverified &&
-    !status.mcpBridgeRestoreUnverified
+    !status.mcpBridgeRestoreUnverified &&
+    !status.policyPresetRestoreIncomplete
   );
 }
 
@@ -826,7 +828,6 @@ async function rebuildSandboxUnlocked(
       nim.stopNimContainer(sandboxName, { silent: true });
     }
 
-    const rebuildMcpWasDefault = registry.getDefault() === sandboxName;
     const mcpPreparation = await prepareMcpForRebuild(
       sandboxName,
       staleRecovery,
@@ -1086,14 +1087,7 @@ async function rebuildSandboxUnlocked(
           );
         }
       }
-      restoreMcpRegistryForRebuildRetry(
-        sandboxName,
-        staleRecovery,
-        rebuildMcpEntries,
-        sb,
-        rebuildMcpWasDefault,
-        log,
-      );
+      restoreMcpRegistryForRebuildRetry(staleRecovery, rebuildMcpEntries, sb, log);
 
       console.error("");
       if (staleRecovery) {
@@ -1189,12 +1183,12 @@ async function rebuildSandboxUnlocked(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
     );
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
     if (savedPresets.length > 0) {
       console.log("");
       console.log("  Restoring policy presets...");
       log(`Policy presets to restore: [${savedPresets.join(",")}]`);
-      const restoredPresets: string[] = [];
-      const failedPresets: string[] = [];
       for (const presetName of savedPresets) {
         try {
           log(`Applying preset: ${presetName}`);
@@ -1230,6 +1224,7 @@ async function rebuildSandboxUnlocked(
     let mutableConfigHashRefreshUnverified = false;
     let messagingHostForwardUnverified = false;
     let mcpBridgeRestoreUnverified = false;
+    const policyPresetRestoreIncomplete = failedPresets.length > 0;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1318,10 +1313,34 @@ async function rebuildSandboxUnlocked(
     mcpBridgeRestoreUnverified = !(await restoreMcpAfterRebuild(sandboxName, rebuildMcpEntries));
 
     // Step 7: Update registry with new version
+    //
+    // Source-of-truth reconciliation for `policies`:
+    //
+    // - Invalid state: `registry.policies` retained a preset name after the
+    //   reapply loop pruned it (disabled messaging channel) or skipped it
+    //   (failed `applyPreset`), so `policy-list` showed a ● marker for a
+    //   preset whose rules were absent from the gateway.
+    // - Source boundary: `policies.applyPreset` only appends to
+    //   `registry.policies`; nothing else writes the canonical post-rebuild
+    //   set. The reapply loop above is the only place that knows which
+    //   presets were actually reapplied.
+    // - Source-fix constraint: must run after the reapply loop and use the
+    //   successfully restored subset, not `savedPresets` (which still
+    //   includes failures).
+    // - Regression test:
+    //   `src/lib/actions/sandbox/rebuild-flow.test.ts` asserts
+    //   `registry.updateSandbox` receives `policies: restoredPresets` for
+    //   both the successful-rebuild and partial-restore harnesses.
+    // - Removal condition: drop this once `applyPreset` writes the
+    //   canonical post-apply set itself (replacing its append-only
+    //   contract), making the rebuild flow's reconciliation redundant.
     registry.updateSandbox(sandboxName, {
       agentVersion: agentDef.expectedVersion || null,
+      policies: restoredPresets,
     });
-    log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
+    log(
+      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}]`,
+    );
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
     if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
@@ -1335,6 +1354,7 @@ async function rebuildSandboxUnlocked(
         mcpBridgeRestoreUnverified,
         mutableConfigHashRefreshUnverified,
         mutablePermsRepairUnverified,
+        policyPresetRestoreIncomplete,
         restoreSucceeded,
       })
     ) {
@@ -1376,6 +1396,11 @@ async function rebuildSandboxUnlocked(
         );
       }
       printMcpRestoreRecovery(sandboxName, mcpBridgeRestoreUnverified);
+      if (policyPresetRestoreIncomplete) {
+        console.log(
+          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
+        );
+      }
     }
     // Stale recovery reset the shields state to mutable (the gone sandbox's lock
     // seal could not carry over to the fresh image). If lockdown had been enabled,

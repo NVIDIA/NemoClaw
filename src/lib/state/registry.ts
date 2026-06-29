@@ -12,13 +12,9 @@ import type { SandboxMessagingState } from "./registry-messaging";
 
 export {
   getSandboxEntryDisplayInference,
-  getSandboxEntryGatewayBinding,
   getSandboxEntryInference,
-  type NormalizedSandboxEntry,
-  normalizeSandboxEntryView,
   type SandboxEntryDisplayInference,
   type SandboxEntryInference,
-  type SandboxGatewayBinding,
 } from "./registry-entry-view";
 
 import {
@@ -30,7 +26,6 @@ import {
 } from "./registry-messaging";
 
 export {
-  getActiveMessagingChannelsFromEntry,
   getConfiguredMessagingChannelsFromEntry,
   getDisabledMessagingChannelsFromEntry,
   getHydratedMessagingPlanFromEntry,
