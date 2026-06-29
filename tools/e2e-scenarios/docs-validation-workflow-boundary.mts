@@ -34,7 +34,17 @@ export type DocsValidationWorkflow = {
 export function readDocsValidationWorkflow(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): DocsValidationWorkflow {
-  return YAML.parse(readFileSync(workflowPath, "utf8")) as DocsValidationWorkflow;
+  const parsed: unknown = YAML.parse(readFileSync(workflowPath, "utf8"));
+  const jobs =
+    parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as { jobs?: unknown }).jobs
+      : undefined;
+  return {
+    jobs:
+      jobs && typeof jobs === "object" && !Array.isArray(jobs)
+        ? (jobs as Record<string, WorkflowJob>)
+        : {},
+  };
 }
 
 function findStep(job: WorkflowJob, name: string): WorkflowStep {

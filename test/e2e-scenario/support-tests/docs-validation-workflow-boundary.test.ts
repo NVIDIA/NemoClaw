@@ -62,4 +62,17 @@ describe("docs validation workflow boundary", () => {
       rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it("reports empty workflow input as contract errors instead of throwing", () => {
+    const directory = mkdtempSync(join(tmpdir(), "nemoclaw-docs-validation-empty-"));
+    const workflowPath = join(directory, "workflow.yaml");
+    try {
+      writeFileSync(workflowPath, "");
+      expect(validateDocsValidationWorkflowBoundary(workflowPath)).toContain(
+        "docs-validation-vitest must depend on generate-matrix",
+      );
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
 });
