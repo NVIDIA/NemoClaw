@@ -448,7 +448,8 @@ describe("E2E fixture clients", () => {
   });
 
   it("sandbox client requires trusted non-empty shell scripts", () => {
-    expect(() => trustedSandboxShellScript("")).toThrow(/must not be empty/);
+    expect(() => trustedSandboxShellScript("")).toThrow(/must be non-empty/);
+    expect(() => trustedSandboxShellScript("echo ready\0ignored")).toThrow(/no NUL bytes/);
     expectTypeOf<Parameters<SandboxClient["execShell"]>[1]>().not.toEqualTypeOf<string>();
   });
 

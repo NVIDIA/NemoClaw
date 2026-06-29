@@ -3,7 +3,7 @@
 
 # verify-stale — By-Design Detection Reference
 
-Use whenever the reproducer points at removed, intentionally changed, or deprecated behavior. This branch can short-circuit Brev cost and label `status: wont-fix`, but every claim needs verifiable evidence.
+Use whenever the reproducer points at removed, intentionally changed, or deprecated behavior. This branch can short-circuit Brev cost and recommend Project Status `Won't Fix`, but every claim needs verifiable evidence and the state change requires explicit maintainer approval.
 
 ## Contents
 
@@ -18,7 +18,7 @@ Use whenever the reproducer points at removed, intentionally changed, or depreca
 
 ## Step 8.5: Detect "Behavior Changed by Design"
 
-Before scoring, check whether the symptom is intentional. Some bugs are filed against behavior that was **deliberately changed or removed** in a merged PR — running the standard rubric on these produces misleading verdicts. The symptom "still reproduces" but the right answer is "won't fix, see PR #X." Issue #2791 is the prototype: `config set` was removed in PR #2227, the reporter tested a version that already had it gone, and a standard rubric run would have buried that context under a low-confidence `verify-inconclusive` label.
+Before scoring, check whether the symptom is intentional. Some bugs are filed against behavior that was **deliberately changed or removed** in a merged PR — running the standard rubric on these produces misleading verdicts. The symptom "still reproduces" but the right answer is "won't fix, see PR #X." Issue #2791 is the prototype: `config set` was removed in PR #2227, the reporter tested a version that already had it gone, and a standard rubric run would have buried that context under a low-confidence `verify-inconclusive` verdict.
 
 This step is split into substeps so the rigor is mechanical, not optional. Every claim in the final comment must be backed by a verifiable evidence block — a comment URL with quoted phrase, a commit SHA with diff range, or a grep command with its actual output. Hand-wavy claims fail Step 8.5d's self-verification pass and force a bail to `verify-inconclusive`.
 
@@ -103,10 +103,12 @@ The cost of an incorrect "I checked and X is gone" claim in a public comment, or
 
 - **Skip the Step 9 score table** entirely. The "exit 0 + expected output" axis doesn't apply when the expected output is no longer the contract.
 - **Skip Brev provisioning** if the signal fires before Step 7 — a remote run would just confirm what static analysis already proved. (Signals 2 and 3 can run as soon as the reported version is parsed in Step 4.)
-- **Apply label `status: wont-fix`** (the existing repo label — quote it on the CLI: `gh issue edit <num> --add-label "status: wont-fix"`). It's already in the Step 3 issue-type skip list, so a labelled issue is automatically excluded from future runs without needing a separate idempotency clause.
+- **Prepare a dry run** containing Project Status `Won't Fix`, the exact public comment, the durable `by-design` marker, and `human_review_required: true`.
+- **Request explicit maintainer approval** for that exact write set. Do not substitute a status label or write before approval.
+- **On approval, update Project Status first, then post the accepted comment.** If approval is withheld, report the evidence without mutating GitHub.
 - **Use the by-design comment template below** instead of the standard Step 10 template.
 - **@-mention the reporter** so they can object if the framing is wrong.
-- **Never auto-close.** A maintainer pulls the trigger, same as the other label paths.
+- **Never auto-close.** A maintainer separately decides whether to close after reviewing the evidence and reporter response.
 
 ### By-design comment template
 
@@ -164,7 +166,7 @@ The new workflow is `<one-sentence: how to do what the user was trying to do>`.
 
 `<NVBugs cross-ref line — see below>`
 
-<!-- nemoclaw-verify-stale v1 YYYY-MM-DD -->
+<!-- nemoclaw-verify-stale v1 verdict=by-design YYYY-MM-DD -->
 ````
 
 **NVBugs cross-ref line.** If `NVBUGS_REF` was set in Step 4, append:
