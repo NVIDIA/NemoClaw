@@ -659,10 +659,22 @@ exit 0
 
         expect(result).toMatchObject({ ok: true, api: "openai-completions" });
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        let firstConfigPath: string | null = null;
         for (const call of ["1", "2"]) {
           const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-          expect(args).toContain("https://api.example.com/v1/chat/completions?key=secret%20key");
+          expect(args).toContain("https://api.example.com/v1/chat/completions");
+          expect(args).not.toContain("?key=");
           expect(args).not.toContain("Authorization: Bearer");
+          expect(args).not.toContain("secret key");
+          const lines = args.split("\n");
+          const configIndex = lines.indexOf("--config");
+          expect(configIndex).toBeGreaterThanOrEqual(0);
+          const configPath = lines[configIndex + 1];
+          if (call === "1") {
+            firstConfigPath = configPath;
+          } else {
+            expect(configPath).toBe(firstConfigPath);
+          }
         }
       } finally {
         process.env.PATH = originalPath;

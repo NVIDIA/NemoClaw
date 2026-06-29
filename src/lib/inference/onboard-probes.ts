@@ -12,6 +12,7 @@ const {
 } = require("../credentials/store");
 const { isWsl } = require("../platform");
 const httpProbe = require("../adapters/http/probe");
+const authConfigModule = require("../adapters/http/auth-config");
 const {
   getHostDockerInternalProbeFailure,
   isHijackedDockerInternalUrl,
@@ -24,7 +25,17 @@ const {
   runChatCompletionsStreamingProbe,
   runStreamingEventProbe,
 } = httpProbe;
+const { createBearerAuthConfig, createCurlAuthConfig, createXApiKeyAuthConfig } = authConfigModule;
 const trace = require("../trace");
+
+function buildOpenAiLikeAuthConfig(apiKey, options = {}) {
+  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
+  if (!normalizedKey) return createCurlAuthConfig([]);
+  if (options.authMode === "query-param") {
+    return createCurlAuthConfig([{ kind: "url-query", name: "key", value: normalizedKey }]);
+  }
+  return createBearerAuthConfig(normalizedKey);
+}
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -312,78 +323,71 @@ function executeProbeWithHttpRetry(probe) {
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
-  const useQueryParam = options.authMode === "query-param";
-  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader =
-    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
-  const url =
-    useQueryParam && normalizedKey
-      ? `${baseUrl}/responses?key=${encodeURIComponent(normalizedKey)}`
-      : `${baseUrl}/responses`;
-  const result = runCurlProbe([
-    "-sS",
-    ...getValidationProbeCurlArgs(),
-    "-H",
-    "Content-Type: application/json",
-    ...authHeader,
-    "-d",
-    JSON.stringify({
-      model,
-      input: "Call the emit_ok function with value OK. Do not answer with plain text.",
-      tool_choice: "required",
-      tools: [
-        {
-          type: "function",
-          name: "emit_ok",
-          description: "Returns the probe value for validation.",
-          parameters: {
-            type: "object",
-            properties: {
-              value: { type: "string" },
+  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+  try {
+    const result = runCurlProbe(
+      [
+        "-sS",
+        ...getValidationProbeCurlArgs(),
+        "-H",
+        "Content-Type: application/json",
+        ...authConfig.args,
+        "-d",
+        JSON.stringify({
+          model,
+          input: "Call the emit_ok function with value OK. Do not answer with plain text.",
+          tool_choice: "required",
+          tools: [
+            {
+              type: "function",
+              name: "emit_ok",
+              description: "Returns the probe value for validation.",
+              parameters: {
+                type: "object",
+                properties: {
+                  value: { type: "string" },
+                },
+                required: ["value"],
+                additionalProperties: false,
+              },
             },
-            required: ["value"],
-            additionalProperties: false,
-          },
-        },
+          ],
+        }),
+        `${baseUrl}/responses`,
       ],
-    }),
-    url,
-  ]);
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
 
-  if (!result.ok) {
-    return result;
+    if (!result.ok) {
+      return result;
+    }
+    if (hasResponsesToolCall(result.body)) {
+      return result;
+    }
+    return {
+      ok: false,
+      httpStatus: result.httpStatus,
+      curlStatus: result.curlStatus,
+      body: result.body,
+      stderr: result.stderr,
+      message: `HTTP ${result.httpStatus}: Responses API did not return a tool call`,
+    };
+  } finally {
+    authConfig.cleanup();
   }
-  if (hasResponsesToolCall(result.body)) {
-    return result;
-  }
-  return {
-    ok: false,
-    httpStatus: result.httpStatus,
-    curlStatus: result.curlStatus,
-    body: result.body,
-    stderr: result.stderr,
-    message: `HTTP ${result.httpStatus}: Responses API did not return a tool call`,
-  };
 }
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
-  const useQueryParam = options.authMode === "query-param";
-  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader =
-    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
-  const url =
-    useQueryParam && normalizedKey
-      ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
-      : `${baseUrl}/chat/completions`;
+  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
   const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
   const args = [
     "-sS",
     ...timingArgs,
     "-H",
     "Content-Type: application/json",
-    ...authHeader,
+    ...authConfig.args,
     "-d",
     JSON.stringify({
       model,
@@ -450,37 +454,44 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       max_tokens: 256,
       stream: false,
     }),
-    url,
+    `${baseUrl}/chat/completions`,
   ];
-  const result = runCurlProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
+  try {
+    const result = runCurlProbe(args, {
+      timeoutMs: getProbeProcessTimeoutMs(args),
+      trustedConfigFiles: authConfig.trustedConfigFiles,
+    });
 
-  if (!result.ok) {
-    return result;
-  }
-  if (hasChatCompletionsToolCall(result.body)) {
-    return result;
-  }
-  if (hasChatCompletionsToolCallLeak(result.body)) {
+    if (!result.ok) {
+      return result;
+    }
+    if (hasChatCompletionsToolCall(result.body)) {
+      return result;
+    }
+    if (hasChatCompletionsToolCallLeak(result.body)) {
+      return {
+        ok: false,
+        httpStatus: result.httpStatus,
+        curlStatus: result.curlStatus,
+        body: result.body,
+        stderr: result.stderr,
+        message:
+          `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
+          "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
+          "prefer vLLM with --tool-call-parser hermes).",
+      };
+    }
     return {
       ok: false,
       httpStatus: result.httpStatus,
       curlStatus: result.curlStatus,
       body: result.body,
       stderr: result.stderr,
-      message:
-        `HTTP ${result.httpStatus}: Chat Completions leaked tool calls into plain text content. ` +
-        "Use an endpoint/runtime that returns structured tool_calls (for Hermes on local inference, " +
-        "prefer vLLM with --tool-call-parser hermes).",
+      message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
     };
+  } finally {
+    authConfig.cleanup();
   }
-  return {
-    ok: false,
-    httpStatus: result.httpStatus,
-    curlStatus: result.curlStatus,
-    body: result.body,
-    stderr: result.stderr,
-    message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
-  };
 }
 
 // ── OpenAI-like probe ────────────────────────────────────────────
@@ -549,19 +560,27 @@ export function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl:
   ];
 }
 
-function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride }) {
+function runChatCompletionsProbe({
+  authHeader,
+  model,
+  url,
+  isWsl: isWslOverride,
+  trustedConfigFiles,
+}) {
   const args = getChatCompletionsProbeCurlArgs({
     authHeader,
     model,
     url,
     isWsl: isWslOverride,
   });
-  if (isDeepSeekV4ProModel(model)) {
-    return runChatCompletionsStreamingProbe(args, {
-      timeoutMs: getProbeProcessTimeoutMs(args),
-    });
+  const probeOpts = { timeoutMs: getProbeProcessTimeoutMs(args) };
+  if (trustedConfigFiles && trustedConfigFiles.length > 0) {
+    probeOpts.trustedConfigFiles = trustedConfigFiles;
   }
-  return runCurlProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
+  if (isDeepSeekV4ProModel(model)) {
+    return runChatCompletionsStreamingProbe(args, probeOpts);
+  }
+  return runCurlProbe(args, probeOpts);
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
@@ -594,282 +613,299 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     };
   }
 
-  const useQueryParam = options.authMode === "query-param";
-  const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authHeader =
-    !useQueryParam && normalizedKey ? ["-H", `Authorization: Bearer ${normalizedKey}`] : [];
-  const appendKey = (urlPath) =>
-    useQueryParam && normalizedKey
-      ? `${baseUrl}${urlPath}?key=${encodeURIComponent(normalizedKey)}`
-      : `${baseUrl}${urlPath}`;
+  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+  try {
+    const responsesProbe =
+      options.requireResponsesToolCalling === true
+        ? {
+            name: "Responses API with tool calling",
+            api: "openai-responses",
+            execute: () =>
+              probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
+          }
+        : {
+            name: "Responses API",
+            api: "openai-responses",
+            execute: () =>
+              runCurlProbe(
+                [
+                  "-sS",
+                  ...getValidationProbeCurlArgs(),
+                  "-H",
+                  "Content-Type: application/json",
+                  ...authConfig.args,
+                  "-d",
+                  JSON.stringify({
+                    model,
+                    input: "Reply with exactly: OK",
+                  }),
+                  `${baseUrl}/responses`,
+                ],
+                { trustedConfigFiles: authConfig.trustedConfigFiles },
+              ),
+          };
 
-  const responsesProbe =
-    options.requireResponsesToolCalling === true
-      ? {
-          name: "Responses API with tool calling",
-          api: "openai-responses",
-          execute: () =>
-            probeResponsesToolCalling(endpointUrl, model, apiKey, { authMode: options.authMode }),
-        }
-      : {
-          name: "Responses API",
-          api: "openai-responses",
-          execute: () =>
-            runCurlProbe([
+    const chatCompletionsProbe = {
+      name: "Chat Completions API",
+      api: "openai-completions",
+      execute: () =>
+        options.requireChatCompletionsToolCalling === true
+          ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+              authMode: options.authMode,
+            })
+          : runChatCompletionsProbe({
+              authHeader: authConfig.args,
+              model,
+              url: `${baseUrl}/chat/completions`,
+              isWsl: options.isWsl,
+              trustedConfigFiles: authConfig.trustedConfigFiles,
+            }),
+    };
+
+    // NVIDIA Build does not expose /v1/responses; probing it always returns
+    // "404 page not found" and only adds noise to error messages. Skip it
+    // entirely for that provider. See issue #1601.
+    const probes = options.skipResponsesProbe
+      ? [chatCompletionsProbe]
+      : [responsesProbe, chatCompletionsProbe];
+
+    const failures = [];
+    for (const probe of probes) {
+      const result = executeProbeWithHttpRetry(probe);
+      if (result.ok) {
+        // Streaming event validation — catch backends like SGLang that return
+        // valid non-streaming responses but emit incomplete SSE events in
+        // streaming mode. Only run for /responses probes on custom endpoints
+        // where probeStreaming was requested.
+        if (probe.api === "openai-responses" && options.probeStreaming === true) {
+          const streamResult = runStreamingEventProbe(
+            [
               "-sS",
               ...getValidationProbeCurlArgs(),
               "-H",
               "Content-Type: application/json",
-              ...authHeader,
+              ...authConfig.args,
               "-d",
               JSON.stringify({
                 model,
                 input: "Reply with exactly: OK",
+                stream: true,
               }),
-              appendKey("/responses"),
-            ]),
-        };
-
-  const chatCompletionsProbe = {
-    name: "Chat Completions API",
-    api: "openai-completions",
-    execute: () =>
-      options.requireChatCompletionsToolCalling === true
-        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
-            authMode: options.authMode,
-          })
-        : runChatCompletionsProbe({
-            authHeader,
-            model,
-            url: appendKey("/chat/completions"),
-            isWsl: options.isWsl,
-          }),
-  };
-
-  // NVIDIA Build does not expose /v1/responses; probing it always returns
-  // "404 page not found" and only adds noise to error messages. Skip it
-  // entirely for that provider. See issue #1601.
-  const probes = options.skipResponsesProbe
-    ? [chatCompletionsProbe]
-    : [responsesProbe, chatCompletionsProbe];
-
-  const failures = [];
-  for (const probe of probes) {
-    const result = executeProbeWithHttpRetry(probe);
-    if (result.ok) {
-      // Streaming event validation — catch backends like SGLang that return
-      // valid non-streaming responses but emit incomplete SSE events in
-      // streaming mode. Only run for /responses probes on custom endpoints
-      // where probeStreaming was requested.
-      if (probe.api === "openai-responses" && options.probeStreaming === true) {
-        const streamResult = runStreamingEventProbe([
-          "-sS",
-          ...getValidationProbeCurlArgs(),
-          "-H",
-          "Content-Type: application/json",
-          ...authHeader,
-          "-d",
-          JSON.stringify({
-            model,
-            input: "Reply with exactly: OK",
-            stream: true,
-          }),
-          appendKey("/responses"),
-        ]);
-        if (!streamResult.ok && streamResult.missingEvents.length > 0) {
-          // Backend responds but lacks required streaming events — fall back
-          // to /chat/completions silently.
-          console.log(`  ℹ ${streamResult.message}`);
-          failures.push({
-            name: probe.name + " (streaming)",
-            httpStatus: 0,
-            curlStatus: 0,
-            message: streamResult.message,
-            body: "",
-          });
-          continue;
-        }
-        if (!streamResult.ok) {
-          // Transport or execution failure — surface as a hard error instead
-          // of silently switching APIs.
-          return {
-            ok: false,
-            message: `${probe.name} (streaming): ${streamResult.message}`,
-            failures: [
-              {
-                name: probe.name + " (streaming)",
-                httpStatus: 0,
-                curlStatus: 0,
-                message: streamResult.message,
-                body: "",
-              },
+              `${baseUrl}/responses`,
             ],
-          };
+            { trustedConfigFiles: authConfig.trustedConfigFiles },
+          );
+          if (!streamResult.ok && streamResult.missingEvents.length > 0) {
+            // Backend responds but lacks required streaming events — fall back
+            // to /chat/completions silently.
+            console.log(`  ℹ ${streamResult.message}`);
+            failures.push({
+              name: probe.name + " (streaming)",
+              httpStatus: 0,
+              curlStatus: 0,
+              message: streamResult.message,
+              body: "",
+            });
+            continue;
+          }
+          if (!streamResult.ok) {
+            // Transport or execution failure — surface as a hard error instead
+            // of silently switching APIs.
+            return {
+              ok: false,
+              message: `${probe.name} (streaming): ${streamResult.message}`,
+              failures: [
+                {
+                  name: probe.name + " (streaming)",
+                  httpStatus: 0,
+                  curlStatus: 0,
+                  message: streamResult.message,
+                  body: "",
+                },
+              ],
+            };
+          }
         }
+        return { ok: true, api: probe.api, label: probe.name };
       }
-      return { ok: true, api: probe.api, label: probe.name };
+      if (
+        probe.api === "openai-completions" &&
+        isDeepSeekV4ProModel(model) &&
+        isProbeTimeout(result)
+      ) {
+        const warning =
+          "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
+        console.log(`  ⚠ ${warning}`);
+        return {
+          ok: true,
+          api: probe.api,
+          label: probe.name,
+          warning,
+          validated: false,
+        };
+      }
+      // Preserve the raw response body alongside the summarized message so the
+      // NVCF "Function not found for account" detector below can fall back to
+      // the raw body if summarizeProbeError ever stops surfacing the marker
+      // through `message`.
+      failures.push({
+        name: probe.name,
+        httpStatus: result.httpStatus,
+        curlStatus: result.curlStatus,
+        message: result.message,
+        body: result.body,
+      });
     }
-    if (
-      probe.api === "openai-completions" &&
-      isDeepSeekV4ProModel(model) &&
-      isProbeTimeout(result)
-    ) {
-      const warning =
-        "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
-      console.log(`  ⚠ ${warning}`);
-      return {
-        ok: true,
-        api: probe.api,
-        label: probe.name,
-        warning,
-        validated: false,
-      };
-    }
-    // Preserve the raw response body alongside the summarized message so the
-    // NVCF "Function not found for account" detector below can fall back to
-    // the raw body if summarizeProbeError ever stops surfacing the marker
-    // through `message`.
-    failures.push({
-      name: probe.name,
-      httpStatus: result.httpStatus,
-      curlStatus: result.curlStatus,
-      message: result.message,
-      body: result.body,
-    });
-  }
 
-  // Retry with doubled timeouts on timeout/connection failure, using the same
-  // backoff schedule as transient HTTP statuses. WSL2's virtualized network
-  // stack can cause the initial probe to time out before the TLS handshake
-  // completes (#987); hosted providers also occasionally drop connections for
-  // tens of seconds during incidents (#3033).
-  const isRetriableProbeResult = (result) =>
-    isTimeoutOrConnFailureStatus(result.curlStatus) ||
-    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
-  // Look across every failure entry rather than only failures[0] so a probe
-  // ordering like /responses (HTTP error) followed by /chat/completions
-  // (curl 28) still triggers the chat-completions retry path.
-  let retriedAfterTimeout = false;
-  if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
-    retriedAfterTimeout = true;
-    const platformOptions =
-      typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
-    const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
-    const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
-    const buildRetryArgs = () => [
-      "-sS",
-      ...doubledArgs,
-      "-H",
-      "Content-Type: application/json",
-      ...authHeader,
-      "-d",
-      JSON.stringify(getChatCompletionsProbePayload(model)),
-      appendKey("/chat/completions"),
-    ];
-    const runRetryProbe = () =>
-      options.requireChatCompletionsToolCalling === true
-        ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
-            authMode: options.authMode,
-            timingArgs: doubledArgs,
-          })
-        : (() => {
-            const retryArgs = buildRetryArgs();
-            return runCurlProbe(retryArgs, { timeoutMs: getProbeProcessTimeoutMs(retryArgs) });
-          })();
-    let retryResult = runRetryProbe();
-    if (retryResult.ok) {
-      return { ok: true, api: "openai-completions", label: "Chat Completions API" };
-    }
-    for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-      if (!isRetriableProbeResult(retryResult)) break;
-      const reason = isTimeoutOrConnFailureStatus(retryResult.curlStatus)
-        ? "timed out"
-        : `returned HTTP ${retryResult.httpStatus}`;
-      console.log(
-        `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
+    // Retry with doubled timeouts on timeout/connection failure, using the same
+    // backoff schedule as transient HTTP statuses. WSL2's virtualized network
+    // stack can cause the initial probe to time out before the TLS handshake
+    // completes (#987); hosted providers also occasionally drop connections for
+    // tens of seconds during incidents (#3033).
+    const isRetriableProbeResult = (result) =>
+      isTimeoutOrConnFailureStatus(result.curlStatus) ||
+      RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
+    // Look across every failure entry rather than only failures[0] so a probe
+    // ordering like /responses (HTTP error) followed by /chat/completions
+    // (curl 28) still triggers the chat-completions retry path.
+    let retriedAfterTimeout = false;
+    if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
+      retriedAfterTimeout = true;
+      const platformOptions =
+        typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
+      const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
+      const doubledArgs = baseArgs.map((arg) =>
+        /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
       );
-      sleepSync(delayMs);
-      retryResult = runRetryProbe();
+      const buildRetryArgs = () => [
+        "-sS",
+        ...doubledArgs,
+        "-H",
+        "Content-Type: application/json",
+        ...authConfig.args,
+        "-d",
+        JSON.stringify(getChatCompletionsProbePayload(model)),
+        `${baseUrl}/chat/completions`,
+      ];
+      const runRetryProbe = () =>
+        options.requireChatCompletionsToolCalling === true
+          ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+              authMode: options.authMode,
+              timingArgs: doubledArgs,
+            })
+          : (() => {
+              const retryArgs = buildRetryArgs();
+              return runCurlProbe(retryArgs, {
+                timeoutMs: getProbeProcessTimeoutMs(retryArgs),
+                trustedConfigFiles: authConfig.trustedConfigFiles,
+              });
+            })();
+      let retryResult = runRetryProbe();
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
       }
+      for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+        if (!isRetriableProbeResult(retryResult)) break;
+        const reason = isTimeoutOrConnFailureStatus(retryResult.curlStatus)
+          ? "timed out"
+          : `returned HTTP ${retryResult.httpStatus}`;
+        console.log(
+          `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
+        sleepSync(delayMs);
+        retryResult = runRetryProbe();
+        if (retryResult.ok) {
+          return { ok: true, api: "openai-completions", label: "Chat Completions API" };
+        }
+      }
+      if (options.requireChatCompletionsToolCalling === true) {
+        failures.push({
+          name: "Chat Completions API with tool calling (retry)",
+          httpStatus: retryResult.httpStatus,
+          curlStatus: retryResult.curlStatus,
+          message: retryResult.message,
+          body: retryResult.body,
+        });
+      }
     }
-    if (options.requireChatCompletionsToolCalling === true) {
-      failures.push({
-        name: "Chat Completions API with tool calling (retry)",
-        httpStatus: retryResult.httpStatus,
-        curlStatus: retryResult.curlStatus,
-        message: retryResult.message,
-        body: retryResult.body,
-      });
-    }
-  }
 
-  // Detect the NVCF "Function not found for account" error and reframe it
-  // with an actionable next step instead of dumping the raw NVCF body.
-  // See issue #1601 (Bug 2).
-  const accountFailure = failures.find(
-    (failure) =>
-      isNvcfFunctionNotFoundForAccount(failure.message) ||
-      isNvcfFunctionNotFoundForAccount(failure.body),
-  );
-  if (accountFailure) {
+    // Detect the NVCF "Function not found for account" error and reframe it
+    // with an actionable next step instead of dumping the raw NVCF body.
+    // See issue #1601 (Bug 2).
+    const accountFailure = failures.find(
+      (failure) =>
+        isNvcfFunctionNotFoundForAccount(failure.message) ||
+        isNvcfFunctionNotFoundForAccount(failure.body),
+    );
+    if (accountFailure) {
+      return {
+        ok: false,
+        message: nvcfFunctionNotFoundMessage(model),
+        failures,
+      };
+    }
+
+    const baseMessage = failures
+      .map((failure) => `${failure.name}: ${failure.message}`)
+      .join(" | ");
+    const wslHint =
+      isWsl() && retriedAfterTimeout
+        ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
+          "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
+        : "";
     return {
       ok: false,
-      message: nvcfFunctionNotFoundMessage(model),
+      message: baseMessage + wslHint,
       failures,
     };
+  } finally {
+    authConfig.cleanup();
   }
-
-  const baseMessage = failures.map((failure) => `${failure.name}: ${failure.message}`).join(" | ");
-  const wslHint =
-    isWsl() && retriedAfterTimeout
-      ? " · WSL2 detected \u2014 network verification may be slower than expected. " +
-        "Run `nemoclaw onboard` with the `--skip-verify` flag if this endpoint is known to be reachable."
-      : "";
-  return {
-    ok: false,
-    message: baseMessage + wslHint,
-    failures,
-  };
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
 
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
-  const result = runCurlProbe([
-    "-sS",
-    ...getCurlTimingArgs(),
-    "-H",
-    `x-api-key: ${normalizeCredentialValue(apiKey)}`,
-    "-H",
-    "anthropic-version: 2023-06-01",
-    "-H",
-    "content-type: application/json",
-    "-d",
-    JSON.stringify({
-      model,
-      max_tokens: 16,
-      messages: [{ role: "user", content: "Reply with exactly: OK" }],
-    }),
-    `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`,
-  ]);
-  if (result.ok) {
-    return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
+  const authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
+  try {
+    const result = runCurlProbe(
+      [
+        "-sS",
+        ...getCurlTimingArgs(),
+        ...authConfig.args,
+        "-H",
+        "anthropic-version: 2023-06-01",
+        "-H",
+        "content-type: application/json",
+        "-d",
+        JSON.stringify({
+          model,
+          max_tokens: 16,
+          messages: [{ role: "user", content: "Reply with exactly: OK" }],
+        }),
+        `${String(endpointUrl).replace(/\/+$/, "")}/v1/messages`,
+      ],
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
+    if (result.ok) {
+      return { ok: true, api: "anthropic-messages", label: "Anthropic Messages API" };
+    }
+    return {
+      ok: false,
+      message: result.message,
+      failures: [
+        {
+          name: "Anthropic Messages API",
+          httpStatus: result.httpStatus,
+          curlStatus: result.curlStatus,
+          message: result.message,
+        },
+      ],
+    };
+  } finally {
+    authConfig.cleanup();
   }
-  return {
-    ok: false,
-    message: result.message,
-    failures: [
-      {
-        name: "Anthropic Messages API",
-        httpStatus: result.httpStatus,
-        curlStatus: result.curlStatus,
-        message: result.message,
-      },
-    ],
-  };
 }
 
 module.exports = {

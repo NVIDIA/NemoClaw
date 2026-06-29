@@ -54,6 +54,8 @@ const CURL_SAFE_VALUE_OPTIONS = new Set(["--connect-timeout", "--max-time", "-X"
 const CURL_FORBIDDEN_MULTI_TRANSFER_OPTIONS = new Set(["--next"]);
 const CURL_SHORT_OPTIONS_WITH_VALUES = new Set(["-K", "-b", "-T", "-d", "-F", "-H", "-X"]);
 
+const CURL_SECRET_QUERY_PARAM_KEYS = new Set(["key", "api_key", "apikey", "access_token", "token"]);
+
 function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (typeof rawUrl !== "string" || rawUrl.trim() === "") {
     throw new Error("curl probe URL is required");
@@ -65,7 +67,27 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
   if (url.username || url.password) {
     throw new Error("curl probe URL must not embed credentials");
   }
+  for (const param of url.searchParams.keys()) {
+    if (CURL_SECRET_QUERY_PARAM_KEYS.has(param.toLowerCase())) {
+      throw new Error(
+        `curl probe URL must not embed credentials in the ${param} query parameter; route via --config`,
+      );
+    }
+  }
   return url.toString();
+}
+
+const CURL_FORBIDDEN_AUTH_HEADER_PREFIXES = ["authorization:", "x-api-key:", "x-goog-api-key:"];
+
+function assertHeaderCarriesNoSecret(option: string, value: string): void {
+  const lower = value.toLowerCase().trimStart();
+  for (const prefix of CURL_FORBIDDEN_AUTH_HEADER_PREFIXES) {
+    if (lower.startsWith(prefix)) {
+      throw new Error(
+        `curl probe ${option} must not carry credentials inline; route the header via --config`,
+      );
+    }
+  }
 }
 
 function splitCurlOptionArg(arg: string): { option: string; inlineValue?: string } {
@@ -153,6 +175,7 @@ export function validateCurlProbeArgs(
       if (curlHeaderValueReadsFromFile(value)) {
         throw new Error(`curl probe option must not read headers from a file: ${option}`);
       }
+      assertHeaderCarriesNoSecret(option, value);
       if (inlineValue === undefined) index += 1;
       continue;
     }
