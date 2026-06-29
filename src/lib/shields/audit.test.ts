@@ -153,7 +153,8 @@ describe("readRecentShieldsAutoRestore", () => {
     const future = new Date(Date.now() + 60 * 1000).toISOString();
     fs.appendFileSync(
       auditPath,
-      JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: future }) + "\n",
+      JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: future }) +
+        "\n",
     );
     const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
     expect(result).toBeNull();
