@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Demo: POST /v1/chat/completions to https://inference.local from *inside* the sandbox (SSH).
-# Same idea as test-e2e-cloud-experimental.sh Phase 5b — use this to verify dialogue without the full suite.
+# Same idea as the split cloud-onboard inference checks — use this to verify dialogue without the full suite.
 #
 # Prerequisites:
 #   - openshell on PATH, sandbox exists and is Ready

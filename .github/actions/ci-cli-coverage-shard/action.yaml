@@ -66,7 +66,7 @@ runs:
         node -e "require('node:fs').rmSync('dist', { recursive: true, force: true })"
         npm run build:cli
         npx tsx scripts/check-dist-sourcemaps.ts dist
-        npx vitest run --project cli \
+        npx vitest run --project cli --project integration \
           --shard="${CLI_SHARD}/${CLI_SHARD_COUNT}" \
           --reporter=github-actions \
           --reporter=blob \
@@ -75,7 +75,7 @@ runs:
           --coverage.reporter=json-summary \
           --coverage.reportsDirectory="coverage/cli/shard-${CLI_SHARD}" \
           --coverage.include="bin/**/*.js" \
-          --coverage.include="dist/lib/**/*.js" \
+          --coverage.include="src/**/*.ts" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
 

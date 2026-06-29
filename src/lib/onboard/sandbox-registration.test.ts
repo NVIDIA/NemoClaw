@@ -1,18 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createRequire } from "node:module";
-
-import {
-  buildCreatedSandboxRegistryEntry,
-  registerCreatedSandbox,
-  selection,
-} from "../../../dist/lib/onboard/sandbox-registration";
-
 const requireDist = createRequire(import.meta.url);
-const onboardSession = requireDist("../../../dist/lib/state/onboard-session.js");
+const onboardSession = requireDist("../state/onboard-session.js");
+const { buildCreatedSandboxRegistryEntry, registerCreatedSandbox, selection } = requireDist(
+  "./sandbox-registration.ts",
+) as typeof import("./sandbox-registration");
 
 const runtimeFields = {
   gpuEnabled: true,

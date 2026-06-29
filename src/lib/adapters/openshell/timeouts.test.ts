@@ -32,7 +32,7 @@ describe("openshell-timeouts", () => {
     expect(OPENSHELL_DOWNLOAD_TIMEOUT_MS).toBeLessThan(OPENSHELL_HEAVY_TIMEOUT_MS);
   });
 
-  it("uses the same probe constant name as PR #2454 for forward compatibility", () => {
+  it("uses the same probe constant name for forward compatibility (#2454)", () => {
     // PR #2454 introduces OPENSHELL_PROBE_TIMEOUT_MS = 15_000 locally.
     // This ensures the shared module stays aligned so #2454 can import it after rebase.
     expect(OPENSHELL_PROBE_TIMEOUT_MS).toBe(15_000);

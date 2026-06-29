@@ -807,6 +807,9 @@ run_agent_scenario() {
   assert_provider_records_exist "after stop"
   assert_host_messaging_config "after stop+rebuild"
   assert_host_messaging_plan_state "disabled" "after stop+rebuild"
+  for channel in "${CHANNELS[@]}"; do
+    assert_policy_preset_active "$channel" "inactive" "after stop+rebuild"
+  done
 
   section "${agent}: channels start all + rebuild"
   start_all_channels
@@ -821,6 +824,9 @@ run_agent_scenario() {
   assert_provider_records_exist "after start"
   assert_host_messaging_config "after start+rebuild"
   assert_host_messaging_plan_state "active" "after start+rebuild"
+  for channel in "${CHANNELS[@]}"; do
+    assert_policy_preset_active "$channel" "active" "after start+rebuild"
+  done
 }
 
 section "Phase 0: Prerequisites"

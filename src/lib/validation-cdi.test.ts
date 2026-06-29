@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { classifySandboxCreateFailure } from "../../dist/lib/validation";
+import { classifySandboxCreateFailure } from "./validation";
 
 describe("classifySandboxCreateFailure GPU CDI injection arm", () => {
   it("detects GPU CDI injection failure from 'CDI device injection failed'", () => {

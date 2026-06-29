@@ -3,11 +3,11 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { BackupResult } from "../../../dist/lib/state/sandbox";
+import type { BackupResult } from "../state/sandbox";
 import {
   backupSandboxBeforeRecreate,
   shouldSkipPreRecreateBackup,
-} from "../../../dist/lib/onboard/sandbox-backup-on-recreate";
+} from "./sandbox-backup-on-recreate";
 
 function makeBackup(overrides: Partial<BackupResult> = {}): BackupResult {
   return {
