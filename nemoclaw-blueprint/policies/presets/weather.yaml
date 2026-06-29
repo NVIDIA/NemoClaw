@@ -10,7 +10,10 @@ network_policies:
     name: weather
     endpoints:
       # Hosts the bundled OpenClaw weather skill actually calls (web_fetch + curl).
-      # wttr.in is primary; wttr.is is the documented fallback host (OpenClaw >= 2026.6.2).
+      # wttr.in is the host the skill uses on the pinned OpenClaw (2026.5.27).
+      # wttr.is is pre-allowed for forward-compat: OpenClaw >= 2026.6.2 documents it as the
+      # fallback host, so allowlisting it now prevents a silent egress gap on the next
+      # OpenClaw bump. It is simply unused on 2026.5.27 (the skill never calls it there).
       # Paths are /<location> (city, region, airport code, or coordinates) and /:help.
       #
       # Why path "/**": wttr.in's location namespace IS the path — /<city>, /<airport>,
