@@ -126,6 +126,9 @@ export const teamsManifest = {
           healthMonitor: {
             enabled: false,
           },
+          streaming: {
+            mode: "off",
+          },
           dmPolicy: "{{allowedIds.teams.dmPolicy}}",
           allowFrom: "{{allowedIds.teams.values}}",
           groupPolicy: "open",
