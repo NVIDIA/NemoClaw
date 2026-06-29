@@ -197,6 +197,8 @@ export function verifyCompatibleEndpointSandboxSmoke(options: {
  * Builds the shell script that runs inside the sandbox to confirm OpenClaw is
  * routed through NemoClaw's managed inference provider and can receive assistant
  * content from the compatible endpoint.
+ * Reasoning-only endpoints may fill 512 tokens in reasoning_content before final content;
+ * finish_reason=length retries at 1024 until providers offer non-reasoning output.
  */
 export function buildCompatibleEndpointSandboxSmokeScript(
   model: string,
@@ -204,7 +206,7 @@ export function buildCompatibleEndpointSandboxSmokeScript(
 ): string {
   const configPath = options.configPath || "/sandbox/.openclaw/openclaw.json";
   const inferenceUrl = options.inferenceUrl || `${INFERENCE_ROUTE_URL}/chat/completions`;
-  const initialMaxTokens = positiveInt(options.initialMaxTokens, 256);
+  const initialMaxTokens = positiveInt(options.initialMaxTokens, 512);
   const attempts = positiveInt(options.attempts, COMPATIBLE_ENDPOINT_SMOKE_ATTEMPTS);
   const retryDelaySeconds = nonNegativeInt(
     options.retryDelaySeconds,
