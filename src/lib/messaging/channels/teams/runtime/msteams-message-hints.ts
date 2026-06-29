@@ -8,7 +8,13 @@
 // OpenClaw skills are advisory: the model may not load a channel skill before
 // sending through the message tool. This preload keeps the channel-critical
 // mention format next to the Teams message tool prompt surface without
-// modifying the upstream OpenClaw package.
+// modifying the upstream OpenClaw package. Scope this compatibility patch to
+// the @openclaw/msteams package only; the upstream send path already parses
+// `@[Display Name](Teams user id or AAD object id)` into Teams mention entities.
+//
+// Removal criterion: drop this preload and its Teams manifest wiring once the
+// minimum @openclaw/msteams version installed by NemoClaw includes an equivalent
+// native mention hint in agentPrompt.messageToolHints.
 
 (function () {
   "use strict";
@@ -33,12 +39,21 @@
     return String(value || "").replace(/\\/g, "/");
   }
 
+  function isOpenClawMSTeamsSpecifier(value) {
+    return value === "@openclaw/msteams" || value.indexOf("@openclaw/msteams/") === 0;
+  }
+
+  function isOpenClawMSTeamsPackagePath(value) {
+    var needle = "/node_modules/@openclaw/msteams/";
+    return value.indexOf(needle) !== -1 || value.endsWith("/node_modules/@openclaw/msteams");
+  }
+
   function isOpenClawMSTeamsLoad(request, parent) {
     var normalizedRequest = normalizePathLike(request);
-    if (normalizedRequest.indexOf("@openclaw/msteams") !== -1) return true;
-    if (normalizedRequest.indexOf("/msteams/") !== -1) return true;
+    if (isOpenClawMSTeamsSpecifier(normalizedRequest)) return true;
+    if (isOpenClawMSTeamsPackagePath(normalizedRequest)) return true;
     var parentFile = normalizePathLike(parent && parent.filename);
-    return parentFile.indexOf("/@openclaw/msteams/") !== -1;
+    return isOpenClawMSTeamsPackagePath(parentFile);
   }
 
   function hasMentionHint(hints) {

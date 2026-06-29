@@ -72,6 +72,14 @@ function writeMSTeamsPackage(
   return channelFile;
 }
 
+function writeUnrelatedMSTeamsLikeModule(root: string): string {
+  const moduleDir = path.join(root, "vendor", "msteams", "fake-channel");
+  fs.mkdirSync(moduleDir, { recursive: true });
+  const moduleFile = path.join(moduleDir, "index.js");
+  fs.writeFileSync(moduleFile, pluginFixtureSource("commonjs"));
+  return moduleFile;
+}
+
 function runHintsProbe(fixtureFile: string, options: { requirePreloadTwice?: boolean } = {}) {
   const script = `
 const preload = ${JSON.stringify(MSTEAMS_HINT_PRELOAD)};
@@ -129,6 +137,18 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
       const { result, hints } = runHintsProbe(fixtureFile, { requirePreloadTwice: true });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(hints.filter((hint) => hint === MSTEAMS_MENTION_HINT)).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("does not patch unrelated modules whose path merely contains msteams", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-unrelated-"));
+    const fixtureFile = writeUnrelatedMSTeamsLikeModule(tmp);
+    try {
+      const { result, hints } = runHintsProbe(fixtureFile);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(hints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
