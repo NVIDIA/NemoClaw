@@ -492,11 +492,11 @@ describe("runAgentPassthrough", () => {
 
   it("emits no shields warning when there was no recent auto-restore (#5922)", async () => {
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    const { writes } = makeProcMock();
+    const { writes, proc } = makeProcMock();
     await runAgentPassthrough(
       "alpha",
       { extraArgs: ["--agent", "main", "-m", "hi"] },
-      { getRecentShieldsAutoRestore: () => null },
+      { getRecentShieldsAutoRestore: () => null, process: proc },
     );
     expect(execMock).toHaveBeenCalled();
     expect(writes.join("")).not.toMatch(/[Ss]hields auto-relocked/);

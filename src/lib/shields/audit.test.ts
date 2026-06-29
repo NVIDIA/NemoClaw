@@ -177,7 +177,8 @@ describe("readRecentShieldsAutoRestore", () => {
 
   it("returns null timeoutSeconds for out-of-bounds timeout values in shields_down entry (#5922)", () => {
     const now = new Date().toISOString();
-    for (const bad of [0, -1, 1801, 9999, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+    // JSON.stringify serializes these correctly (finite numbers)
+    for (const bad of [0, -1, 1801, 9999, 1.5]) {
       fs.writeFileSync(
         auditPath,
         JSON.stringify({
@@ -193,6 +194,25 @@ describe("readRecentShieldsAutoRestore", () => {
       const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
       expect(result?.timestamp, `bad value ${String(bad)}`).toBe(now);
       expect(result?.timeoutSeconds, `bad value ${String(bad)}`).toBeNull();
+    }
+  });
+
+  it("returns null timeoutSeconds when shields_down has NaN or Infinity as a raw string payload (#5922)", () => {
+    // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
+    // so write the JSONL line manually to exercise the non-finite path.
+    const now = new Date().toISOString();
+    for (const rawValue of ["NaN", "Infinity", "-Infinity"]) {
+      const downLine = `{"action":"shields_down","sandbox":"alpha","timestamp":"${new Date(Date.now() - 25 * 1000).toISOString()}","timeout_seconds":${rawValue}}`;
+      const restoreLine = JSON.stringify({
+        action: "shields_auto_restore",
+        sandbox: "alpha",
+        timestamp: now,
+      });
+      fs.writeFileSync(auditPath, downLine + "\n" + restoreLine + "\n");
+      // Malformed JSON (NaN/Infinity are not valid JSON) → parseEntry returns null → timeoutSeconds stays null
+      const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+      expect(result?.timestamp, `raw value ${rawValue}`).toBe(now);
+      expect(result?.timeoutSeconds, `raw value ${rawValue}`).toBeNull();
     }
   });
 });
