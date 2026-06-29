@@ -49,6 +49,7 @@ import {
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
 } from "../../messaging";
+import { filterEnabledPlanEntries } from "../../messaging/applier/plan-filter";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
@@ -976,19 +977,33 @@ export async function rebuildSandbox(
     // Step 5.5: Restore policy presets (#1952)
     // Built-in policy presets live in the gateway policy engine, not the sandbox
     // filesystem, so they are lost when the sandbox is destroyed and recreated.
-    // Re-apply the presets captured in the backup manifest. On stale-sandbox
-    // recovery there is no manifest, so fall back to the built-in preset names
-    // recorded on the registry entry (`sb.policies`) — the same source the backup
-    // manifest is built from — so the recovered sandbox keeps its built-in egress
-    // presets (#4497). Custom `policy-add --from-file/--from-dir` rules
+    // Re-apply the presets captured in the backup manifest plus presets compiled
+    // for active messaging channels. A stopped channel's preset is deliberately
+    // absent from the backup/registry, so the active plan is what restores it on
+    // the subsequent start rebuild. On stale-sandbox recovery there is no
+    // manifest, so fall back to the built-in preset names recorded on the
+    // registry entry (`sb.policies`) — the same source the backup manifest is
+    // built from — so the recovered sandbox keeps its built-in egress presets
+    // (#4497). Custom `policy-add --from-file/--from-dir` rules
     // (`sb.customPolicies`) are not re-applied here; like a normal rebuild, they
     // follow the recreate/onboard path and must be re-added if they were in use.
     const registryPolicyPresets = Array.isArray(sb.policies)
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
+    const activeMessagingPolicyPresets = rebuildMessagingPlan
+      ? filterEnabledPlanEntries(
+          rebuildMessagingPlan,
+          rebuildMessagingPlan.networkPolicy.entries,
+        ).map((entry) => entry.presetName)
+      : [];
     const savedPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest?.policyPresets ?? registryPolicyPresets,
+      [
+        ...new Set([
+          ...(backupManifest?.policyPresets ?? registryPolicyPresets),
+          ...activeMessagingPolicyPresets,
+        ]),
+      ],
       rebuildDisabledChannels,
     );
     const restoredPresets: string[] = [];

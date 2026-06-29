@@ -387,6 +387,61 @@ function makeActiveTeamsMessagingPlan() {
   };
 }
 
+function makeMixedMessagingPolicyPlan() {
+  const channel = (channelId: string, active: boolean, disabled: boolean) => ({
+    channelId,
+    displayName: channelId,
+    authMode: "token-paste",
+    active,
+    selected: true,
+    configured: true,
+    disabled,
+    inputs: [],
+    hooks: [],
+  });
+
+  return {
+    schemaVersion: 1,
+    sandboxName: "alpha",
+    agent: "hermes",
+    workflow: "rebuild",
+    channels: [
+      channel("telegram", true, false),
+      channel("discord", false, true),
+      channel("wechat", true, false),
+    ],
+    disabledChannels: ["discord"],
+    credentialBindings: [],
+    networkPolicy: {
+      presets: ["telegram", "discord", "wechat"],
+      entries: [
+        {
+          channelId: "telegram",
+          presetName: "telegram",
+          policyKeys: ["telegram"],
+          source: "agent-alias",
+        },
+        {
+          channelId: "discord",
+          presetName: "discord",
+          policyKeys: ["discord"],
+          source: "manifest",
+        },
+        {
+          channelId: "wechat",
+          presetName: "wechat",
+          policyKeys: ["wechat_bridge"],
+          source: "manifest",
+        },
+      ],
+    },
+    agentRender: [],
+    buildSteps: [],
+    stateUpdates: [],
+    healthChecks: [],
+  };
+}
+
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
@@ -506,6 +561,47 @@ describe("rebuildSandbox flow", () => {
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
       policies: ["npm"],
+    });
+  });
+
+  it("restores active messaging presets from the rebuild plan without reviving disabled channels", async () => {
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      backupPolicyPresets: ["npm"],
+      buildMessagingRebuildPlan: makeMixedMessagingPolicyPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "telegram");
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "wechat");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "discord");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm", "telegram", "wechat"],
+    });
+  });
+
+  it("reports an active messaging preset that fails during rebuild reconciliation", async () => {
+    const harness = createRebuildFlowHarness({
+      applyPreset: (presetName) => presetName !== "telegram",
+      backupPolicyPresets: ["npm"],
+      buildMessagingRebuildPlan: makeMixedMessagingPolicyPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    const output = harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("rebuilt but some post-restore steps were incomplete");
+    expect(output).toContain("Policy presets failed to reapply: telegram");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm", "wechat"],
     });
   });
 

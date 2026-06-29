@@ -515,22 +515,26 @@ assert_policy_preset_active() {
   fi
 
   if [ "$expected" = "active" ]; then
-    if grep -q "● ${channel}" "$log"; then
+    if ! grep -Fq "Could not query gateway" "$log" \
+      && ! grep -Fq "cannot be verified or started" "$log" \
+      && grep -F "● ${channel} —" "$log" | grep -Fqv "missing from local state"; then
       msg="${ACTIVE_AGENT}/${channel}: channel policy preset active ${context}"
       pass_msg "$msg"
     else
-      msg="${ACTIVE_AGENT}/${channel}: channel policy preset not active ${context}"
+      msg="${ACTIVE_AGENT}/${channel}: channel policy preset not consistently active ${context}"
       fail_msg "$msg"
       grep -F "$channel" "$log" | head -5 || true
     fi
   else
-    if grep -q "● ${channel}" "$log"; then
-      msg="${ACTIVE_AGENT}/${channel}: channel policy preset still active ${context}"
-      fail_msg "$msg"
-      grep -F "$channel" "$log" | head -5 || true
-    else
+    if ! grep -Fq "Could not query gateway" "$log" \
+      && ! grep -Fq "cannot be verified or started" "$log" \
+      && grep -F "○ ${channel} —" "$log" | grep -Fqv "recorded locally, not active on gateway"; then
       msg="${ACTIVE_AGENT}/${channel}: channel policy preset inactive ${context}"
       pass_msg "$msg"
+    else
+      msg="${ACTIVE_AGENT}/${channel}: channel policy preset not consistently inactive ${context}"
+      fail_msg "$msg"
+      grep -F "$channel" "$log" | head -5 || true
     fi
   fi
 }

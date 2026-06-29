@@ -359,12 +359,14 @@ async function rebuildSandbox(
   });
 }
 
-async function policyPresetActive(
+type PolicyPresetState = "active" | "inactive" | "drift" | "unverified" | "missing";
+
+async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
   channel: string,
-): Promise<boolean> {
+): Promise<PolicyPresetState> {
   const result = await host.command(
     "node",
     [process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js", SANDBOX_NAME, "policy-list"],
@@ -376,7 +378,23 @@ async function policyPresetActive(
     },
   );
   expectExitZero(result, `policy-list ${channel}`);
-  return resultText(result).includes(`● ${channel}`);
+  const output = resultText(result);
+  if (
+    output.includes("Could not query gateway") ||
+    output.includes("cannot be verified or started")
+  ) {
+    return "unverified";
+  }
+  const line = output.split(/\r?\n/).find((candidate) => candidate.includes(` ${channel} —`));
+  if (!line) return "missing";
+  if (
+    line.includes("active on gateway, missing from local state") ||
+    line.includes("recorded locally, not active on gateway")
+  ) {
+    return "drift";
+  }
+  if (line.includes(`● ${channel} —`)) return "active";
+  return line.includes(`○ ${channel} —`) ? "inactive" : "missing";
 }
 
 async function runChannelCommand(
@@ -503,9 +521,9 @@ export async function runChannelsStopStartScenario({
   await expectProvidersExist(host, env, redactions, "baseline");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetActive(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel),
       `${channel} policy active`,
-    ).toBe(true);
+    ).toBe("active");
   }
 
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "stop", channel);
@@ -524,9 +542,9 @@ export async function runChannelsStopStartScenario({
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetActive(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel),
       `${channel} policy inactive after stop+rebuild`,
-    ).toBe(false);
+    ).toBe("inactive");
   }
 
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
@@ -545,8 +563,8 @@ export async function runChannelsStopStartScenario({
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
   for (const channel of CHANNELS) {
     expect(
-      await policyPresetActive(host, env, redactions, channel),
+      await policyPresetState(host, env, redactions, channel),
       `${channel} policy active after start+rebuild`,
-    ).toBe(true);
+    ).toBe("active");
   }
 }
