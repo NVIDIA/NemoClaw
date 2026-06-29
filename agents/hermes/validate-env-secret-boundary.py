@@ -240,6 +240,11 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
     # for human display can absorb the cosmetic difference; programmatic
     # callers should query the gateway provider list instead of parsing this
     # output.
+    #
+    # Buffer all output in memory and write only on success. If masking raises
+    # mid-stream, nothing reaches `stream_out`, so a partial raw secret cannot
+    # leak through an aborted run.
+    masked_chunks: list[str] = []
     block_indent: int | None = None
     for line in stream_in:
         stripped = line.lstrip()
@@ -247,21 +252,22 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
         line_indent = len(line) - len(stripped)
         if block_indent is not None:
             if rstripped == "" or line_indent > block_indent:
-                stream_out.write(f"{' ' * (block_indent + 2)}{_MASK_PY}\n")
+                masked_chunks.append(f"{' ' * (block_indent + 2)}{_MASK_PY}\n")
                 continue
             block_indent = None
         if stripped.startswith("#"):
-            stream_out.write(line)
+            masked_chunks.append(line)
             continue
         header = _MULTILINE_HEADER_RE.match(line.rstrip("\r\n"))
         if header and _is_secret_field(header.group("key")):
             block_indent = len(header.group("indent"))
-            stream_out.write(line)
+            masked_chunks.append(line)
             continue
         masked = _PY_DICT_RE.sub(_mask_pyjson, line)
         masked = _JSON_RE.sub(_mask_pyjson, masked)
         masked = _UNQUOTED_RE.sub(_mask_unquoted, masked)
-        stream_out.write(masked)
+        masked_chunks.append(masked)
+    stream_out.write("".join(masked_chunks))
     return 0
 
 

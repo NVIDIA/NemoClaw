@@ -297,6 +297,36 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain('"access-token": "sk-****"');
   });
 
+  it("masks credential-shaped values that hermes emits on stderr", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-stderr-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const marker = path.join(dir, "real-invoked.txt");
+      const stderrPayload = "api_key: sk-stderr-leaked-secret-12345";
+      const stubScript = [
+        "#!/usr/bin/env bash",
+        `printf '%s' "$*" > ${JSON.stringify(marker)}`,
+        `printf 'api_key: ok\\n'`,
+        `printf '%s\\n' '${stderrPayload}' >&2`,
+        "exit 0",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+      const result = spawnSync("bash", [path.join(dir, "hermes"), "config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("sk-stderr-leaked-secret-12345");
+      expect(result.stderr).toContain("api_key: sk-****");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when the masker exits non-zero even though hermes succeeded", () => {
     const failingValidator = [
       "#!/usr/bin/env python3",

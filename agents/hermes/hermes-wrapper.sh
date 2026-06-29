@@ -69,7 +69,14 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
     exit 127
   }
-  "$REAL_HERMES" "$@" | "$PYTHON3" "$GUARD" mask-config-output
+  # Mask both stdout and stderr. Process substitution routes Hermes' stderr
+  # through the same masker as stdout so a diagnostic that quotes `api_key`
+  # cannot leak the value on the side channel. The masker buffers in-memory
+  # and writes on success, so a mid-stream crash never produces a partial
+  # secret on either stream.
+  "$REAL_HERMES" "$@" \
+    2> >("$PYTHON3" "$GUARD" mask-config-output >&2) \
+    | "$PYTHON3" "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
   masker_status="${statuses[1]}"
