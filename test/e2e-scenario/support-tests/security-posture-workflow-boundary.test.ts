@@ -24,7 +24,7 @@ function validateCentralWorkflowMutation(mutate: (source: string) => string): st
   const workflowPath = join(directory, "workflow.yaml");
   try {
     writeFileSync(workflowPath, mutate(readFileSync(WORKFLOW_PATH, "utf8")));
-    return validateE2eVitestScenariosWorkflowBoundary(workflowPath);
+    return validateSecurityPostureWorkflow(readSecurityPostureWorkflow(workflowPath));
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

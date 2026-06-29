@@ -183,13 +183,14 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 25 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 26 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "agents",
         "onboard",
         "update",
         "list",
+        "use",
         "deploy",
         "setup",
         "setup-spark",
@@ -283,6 +284,17 @@ describe("command-registry", () => {
           expect(cmd.hidden).not.toBe(true);
         }
       }
+    });
+
+    it("exposes the default-sandbox command in root help", () => {
+      expect(canonicalUsageList()).toContain("nemoclaw use <name>");
+      expect(commandsByGroup().get("Sandbox Management")).toContainEqual(
+        expect.objectContaining({
+          commandId: "use",
+          flags: "[--json]",
+          usage: "nemoclaw use <name>",
+        }),
+      );
     });
   });
 

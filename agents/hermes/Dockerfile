@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:60333c1982ad855d55887b4488e867eb343f3930a30aa8e0268e5397fc6f2926
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:8dad3b989a9ed1e601743310b97be21be5f59f89f7913a47d04f3ec3c40b8ce6
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -251,24 +251,34 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 USER root
 
 # Flatten stale published base images that still contain the old .hermes-data
-# symlink bridge. OpenShell starts the sandbox as the sandbox user, so runtime
-# migration cannot rely on root privileges inside the pod.
+# symlink bridge. The base resolver owns published-image provenance and exports
+# immutable digests; this final-image boundary owns layout validation so local,
+# rebuilt, and caller-selected bases remain supported. Retired OpenClaw state
+# must never enter a Hermes final image. OpenShell starts the sandbox as the
+# sandbox user, so the .hermes-data migration cannot rely on root privileges
+# inside the pod.
 # hadolint ignore=DL4006
 RUN set -eu; \
     config_dir=/sandbox/.hermes; \
     data_dir=/sandbox/.hermes-data; \
+    openclaw_dir=/sandbox/.openclaw; \
+    if [ -e "$openclaw_dir" ] || [ -L "$openclaw_dir" ]; then \
+        echo "ERROR: Hermes base image contains retired OpenClaw state: $openclaw_dir" >&2; \
+        exit 1; \
+    fi; \
     mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_link="$(find "$data_dir" -type l -print -quit)"; \
+        if [ -n "$legacy_link" ]; then \
+            echo "ERROR: refusing legacy layout cleanup because $legacy_link is a symlink" >&2; \
+            exit 1; \
+        fi; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
-            if [ -L "$entry" ]; then \
-                echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
-                exit 1; \
-            fi; \
             name="$(basename "$entry")"; \
             target="$config_dir/$name"; \
             if [ -L "$target" ]; then \

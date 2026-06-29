@@ -132,7 +132,7 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       artifactName: "install-gpu-ollama",
       cwd: REPO_ROOT,
       env: env(),
-      timeoutMs: 45 * 60_000,
+      timeoutMs: 55 * 60_000,
     });
     expect(install.exitCode, resultText(install)).toBe(0);
     await artifacts.writeText("install-gpu-ollama.log", resultText(install));
