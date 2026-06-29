@@ -73,6 +73,20 @@ export function ollamaProxyTokenFile(): string {
   return path.join(home, ".nemoclaw", "ollama-proxy-token");
 }
 
+export function openClawModelConfigProjectionScript(
+  configPath = "/sandbox/.openclaw/openclaw.json",
+): string {
+  if (!configPath.startsWith("/") || /[\0\r\n]/u.test(configPath)) {
+    throw new Error(`invalid OpenClaw config path: ${configPath}`);
+  }
+  const pathLiteral = JSON.stringify(configPath);
+  return `node - <<'NODE'
+const fs = require("node:fs");
+const config = JSON.parse(fs.readFileSync(${pathLiteral}, "utf8"));
+process.stdout.write(JSON.stringify({ agents: config.agents, models: config.models }));
+NODE`;
+}
+
 export function readTokenFileChecked(tokenFile: string): { mode: string; token: string } {
   const fd = fs.openSync(tokenFile, "r");
   try {

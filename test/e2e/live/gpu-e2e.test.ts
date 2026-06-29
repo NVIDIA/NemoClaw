@@ -17,6 +17,7 @@ import {
   ensureOllama,
   env,
   ollamaProxyTokenFile,
+  openClawModelConfigProjectionScript,
   PROXY_PORT,
   proxyStatus,
   REPO_ROOT,
@@ -97,6 +98,8 @@ test.skipIf(!shouldRunLiveE2E())(
       id: "gpu-e2e",
       boundary:
         "GPU host + install.sh Ollama provider + OpenShell sandbox + auth proxy + inference.local",
+      credentialBoundary:
+        "The proxy token remains host/OpenShell-owned and is absent from sandbox env and uploaded config evidence.",
       remoteInstallerBoundary:
         "The official Ollama installer compatibility path runs before proxy tokens are read; the workflow uses a read-only checkout token and no explicit repository secrets. Replace with a pinned package once the GPU image provides a stable install source.",
       sandboxName: SANDBOX_NAME,
@@ -136,11 +139,11 @@ test.skipIf(!shouldRunLiveE2E())(
 
     const config = await sandbox.execShell(
       SANDBOX_NAME,
-      trustedSandboxShellScript("cat /sandbox/.openclaw/openclaw.json"),
-      { artifactName: "sandbox-openclaw-config", env: env(), timeoutMs: 30_000 },
+      trustedSandboxShellScript(openClawModelConfigProjectionScript()),
+      { artifactName: "sandbox-openclaw-model-config", env: env(), timeoutMs: 30_000 },
     );
     expect(config.exitCode, resultText(config)).toBe(0);
-    await artifacts.writeText("openclaw-config.json", config.stdout);
+    await artifacts.writeText("openclaw-model-config.json", config.stdout);
     assertSmallContextCompactionPolicy(config.stdout);
 
     const status = await host.command("node", [CLI, SANDBOX_NAME, "status"], {
@@ -200,7 +203,10 @@ test.skipIf(!shouldRunLiveE2E())(
       { artifactName: "sandbox-ollama-api-key", env: env(), timeoutMs: 30_000 },
     );
     expect(sandboxToken.exitCode, resultText(sandboxToken)).toBe(0);
-    expect(sandboxToken.stdout.trim()).toBe(token);
+    expect(
+      sandboxToken.stdout.trim(),
+      "OpenShell owns proxy authentication; the host proxy token must not enter sandbox env",
+    ).toBe("");
 
     const model = await detectOllamaModel(host);
     const chat = await sandbox.execShell(
