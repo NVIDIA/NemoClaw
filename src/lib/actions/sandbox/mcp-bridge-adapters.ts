@@ -130,6 +130,8 @@ const HERMES_MCP_EXEC_TIMEOUT_SECONDS = 620;
 const HERMES_MCP_PROBE_TIMEOUT_SECONDS = 30;
 const HERMES_MCP_STARTUP_TIMEOUT_SECONDS = 90;
 const HERMES_MCP_GATEWAY_NOT_READY = "Hermes gateway is not running for managed MCP reload";
+const HERMES_MCP_LIFECYCLE_NOT_READY =
+  "Hermes gateway is not running under the managed service lifecycle";
 
 export function buildHermesMcpExecArgs(
   sandboxName: string,
@@ -551,6 +553,11 @@ export function assertAgentMcpMutationRuntimeCapability(
       if (result.status === 0 && !result.error && response?.ok === true) return true;
       lastDetail = commandOutput(result).trim();
       if (lastDetail === HERMES_MCP_GATEWAY_NOT_READY) return false;
+      if (lastDetail === HERMES_MCP_LIFECYCLE_NOT_READY) {
+        throw new McpBridgeError(
+          `Hermes sandbox '${sandboxName}' is not running the managed service lifecycle required for authenticated MCP changes. Run \`nemoclaw ${sandboxName} recover\` and retry.`,
+        );
+      }
       throw new McpBridgeError(
         `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
       );
@@ -560,7 +567,7 @@ export function assertAgentMcpMutationRuntimeCapability(
   );
   if (!ready) {
     throw new McpBridgeError(
-      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after waiting for startup. Rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
+      `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after waiting for startup. Run \`nemoclaw ${sandboxName} recover\` and retry, or rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
     );
   }
 }

@@ -10,6 +10,7 @@ import {
   buildHermesMcpStatusCommand,
   buildOpenClawMcporterInspectCommand,
 } from "../../../src/lib/actions/sandbox/mcp-bridge-adapters";
+import { buildMcpBridgePolicyKey } from "../../../src/lib/actions/sandbox/mcp-bridge-policy";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import type { McpBridgeEntry } from "../../../src/lib/state/registry";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -265,7 +266,7 @@ async function assertBridgeInfrastructure(
     timeoutMs: 60_000,
   });
   expectExitZero(policy, `${options.artifactPrefix} openshell policy get --full`);
-  expect(resultText(policy)).toContain("mcp-bridge-fake");
+  expect(resultText(policy)).toContain(buildMcpBridgePolicyKey(SERVER_NAME));
   expect(resultText(policy)).toContain("protocol: mcp");
   expect(resultText(policy)).not.toContain("tls: require");
   expect(resultText(policy)).not.toContain("credential_keys");
@@ -878,7 +879,9 @@ liveAgentMatrixTest(
       sandboxName: HERMES_SANDBOX_NAME,
       artifactName: "onboard-hermes-mcp-bridge",
     });
-    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes");
+    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes", {
+      recoverAgentRuntime: true,
+    });
     cleanup.add("remove Hermes MCP bridge", () =>
       bestEffortRemoveBridge(host, HERMES_SANDBOX_NAME),
     );
@@ -910,7 +913,9 @@ liveAgentMatrixTest(
       artifactName: "hermes-real-mcp-tool-call-after-restart",
     });
     await rebuildWithoutMcpHostSecret(host, HERMES_SANDBOX_NAME, "hermes");
-    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes-rebuild");
+    await installMcpTestCaInSandbox(host, sandbox, HERMES_SANDBOX_NAME, "hermes-rebuild", {
+      recoverAgentRuntime: true,
+    });
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",

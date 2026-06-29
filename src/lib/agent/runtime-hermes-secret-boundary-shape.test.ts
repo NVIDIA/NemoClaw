@@ -111,7 +111,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(cmd).toContain(`python3 '${VALIDATOR_PATH}' runtime-env`);
     expect(cmd).toContain("SECRET_BOUNDARY_REFUSED");
     const guardIdx = cmd.indexOf(`python3 '${VALIDATOR_PATH}'`);
-    const launchIdx = cmd.indexOf("nohup hermes gateway run");
+    const launchIdx = cmd.indexOf("'/usr/local/bin/nemoclaw-start' </dev/null");
     expect(guardIdx).toBeGreaterThanOrEqual(0);
     expect(launchIdx).toBeGreaterThanOrEqual(0);
     expect(guardIdx).toBeLessThan(launchIdx);

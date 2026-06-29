@@ -36,6 +36,7 @@ export async function installMcpTestCaInSandbox(
   sandbox: SandboxClient,
   sandboxName: string,
   artifactPrefix: string,
+  options: { recoverAgentRuntime?: boolean } = {},
 ): Promise<void> {
   const caPath = requireMcpTestCaPath();
   const install = await host.command(
@@ -56,7 +57,7 @@ export async function installMcpTestCaInSandbox(
     {
       artifactName: `${artifactPrefix}-install-mcp-test-ca`,
       env: buildAvailabilityProbeEnv(),
-      timeoutMs: 2 * 60_000,
+      timeoutMs: 3 * 60_000,
     },
   );
   if (install.exitCode !== 0) {
@@ -65,4 +66,34 @@ export async function installMcpTestCaInSandbox(
     );
   }
   await waitForSandboxAfterRestart(sandbox, sandboxName, artifactPrefix);
+
+  if (options.recoverAgentRuntime) {
+    const recover = await host.nemoclaw([sandboxName, "recover"], {
+      artifactName: `${artifactPrefix}-recover-after-mcp-ca-restart`,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS: "90",
+      },
+      timeoutMs: 3 * 60_000,
+    });
+    if (recover.exitCode !== 0) {
+      throw new Error(
+        `${artifactPrefix} recover agent runtime after installing MCP test CA\nstdout:\n${recover.stdout}\nstderr:\n${recover.stderr}`,
+      );
+    }
+    const managedLifecycle = await sandbox.exec(
+      sandboxName,
+      ["/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", "probe"],
+      {
+        artifactName: `${artifactPrefix}-assert-managed-lifecycle-after-mcp-ca-restart`,
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    if (managedLifecycle.exitCode !== 0) {
+      throw new Error(
+        `${artifactPrefix} prove managed Hermes lifecycle after recovery\nstdout:\n${managedLifecycle.stdout}\nstderr:\n${managedLifecycle.stderr}`,
+      );
+    }
+  }
 }

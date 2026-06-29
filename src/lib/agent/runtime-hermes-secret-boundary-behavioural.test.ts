@@ -8,7 +8,7 @@
 // generated-shell shape assertions live in
 // runtime-hermes-secret-boundary-shape.test.ts.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -235,7 +235,9 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
   });
 });
 
-describe("Hermes secret-boundary guard — full recovery script behaviour", () => {
+describe("Hermes secret-boundary guard — full recovery script behaviour", {
+  timeout: 20_000,
+}, () => {
   function prepareRecoveryHarness(name: string) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-hermes-recovery-${name}-`));
     const stubsDir = path.join(tmp, "bin");
@@ -263,6 +265,17 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     writeStub(stubsDir, "sleep", "exit 0");
     writeStub(stubsDir, "curl", 'printf "000"\nexit 0');
     writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\n/bin/sleep 5`);
+    const manager = writeStub(
+      stubsDir,
+      "nemoclaw-start",
+      `: > ${JSON.stringify(hermesLaunchMarker)}\n/bin/sleep 5`,
+    );
+    fs.chmodSync(manager, 0o555);
+    writeStub(
+      stubsDir,
+      "trusted-python3",
+      'if [ "$1" = "-c" ] && printf "%s" "$2" | grep -Fq "raise SystemExit(0 if manager_is_safe"; then exit 0; fi\nexec /usr/bin/python3 "$@"',
+    );
   }
 
   function runRecovery(
@@ -275,6 +288,9 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       gatewayLogPath: string;
       recoveryFallbackLog: string;
       tmp: string;
+      procRoot?: string;
+      rootLifecycleMarkerPath?: string;
+      trustManagerValidation?: boolean;
     } & RecoveryPreloadHarnessPaths,
   ) {
     const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
@@ -283,15 +299,31 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), opts.validatorPath)
       .replace(/\/tmp\/gateway-recovery\.log/g, opts.recoveryLogPath)
       .replace(/\/tmp\/gateway\.log/g, opts.gatewayLogPath)
+      .replace(/\/usr\/local\/bin\/nemoclaw-start/g, path.join(opts.stubsDir, "nemoclaw-start"))
       .replace(
         /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
         `_GATEWAY_LOG=${opts.recoveryFallbackLog}`,
       );
+    if (opts.trustManagerValidation !== false) {
+      stubbed = stubbed.replace(
+        /\/usr\/bin\/python3/g,
+        path.join(opts.stubsDir, "trusted-python3"),
+      );
+    }
     if (opts.envFilePath) {
       stubbed = stubbed.replace(/\/sandbox\/\.hermes\/\.env/g, opts.envFilePath);
     }
     if (opts.proxyEnvPath) {
       stubbed = stubbed.replace(/\/tmp\/nemoclaw-proxy-env\.sh/g, opts.proxyEnvPath);
+    }
+    if (opts.procRoot) {
+      stubbed = stubbed.replace(/\/proc\//g, `${opts.procRoot}/`);
+    }
+    if (opts.rootLifecycleMarkerPath) {
+      stubbed = stubbed.replace(
+        /\/run\/nemoclaw\/hermes-root-lifecycle/g,
+        opts.rootLifecycleMarkerPath,
+      );
     }
 
     const scriptPath = path.join(opts.tmp, "recovery.sh");
@@ -459,6 +491,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
             const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
             expect(recoveryScript).not.toBeNull();
             const stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, harness)
+              .replace(/\/usr\/bin\/python3/g, path.join(harness.stubsDir, "trusted-python3"))
               .replace(
                 new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"),
                 path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
@@ -466,6 +499,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
               .replace(/\/tmp\/gateway-recovery\.log/g, harness.recoveryLogPath)
               .replace(/\/tmp\/nemoclaw-proxy-env\.sh/g, proxyEnvFile)
               .replace(/\/tmp\/gateway\.log/g, harness.gatewayLogPath)
+              .replace(
+                /\/usr\/local\/bin\/nemoclaw-start/g,
+                path.join(harness.stubsDir, "nemoclaw-start"),
+              )
               .replace(
                 /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
                 `_GATEWAY_LOG=${harness.recoveryFallbackLog}`,
@@ -554,4 +591,253 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       removeTempDir(harness.tmp);
     }
   }, 20_000);
+
+  it("refuses a dangling root-lifecycle marker before any probe, kill, or launch", () => {
+    const harness = prepareRecoveryHarness("root-marker");
+    const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
+    const marker = path.join(harness.tmp, "hermes-root-lifecycle");
+    const curlLog = path.join(harness.tmp, "curl.log");
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.symlinkSync(path.join(harness.tmp, "missing-root-marker-target"), marker);
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+    writeStub(
+      harness.stubsDir,
+      "curl",
+      `printf '%s\\n' "$*" >> ${JSON.stringify(curlLog)}\nprintf "200"`,
+    );
+
+    try {
+      const result = runRecovery({
+        ...harness,
+        validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+        rootLifecycleMarkerPath: marker,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("HERMES_ROOT_LIFECYCLE_UNSUPPORTED");
+      expect(fs.existsSync(curlLog)).toBe(false);
+      expect(fs.existsSync(harness.pkillLog)).toBe(false);
+      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(false);
+    } finally {
+      removeTempDir(harness.tmp);
+    }
+  });
+
+  it("refuses a manager writable by the recovery identity before process mutation", () => {
+    const harness = prepareRecoveryHarness("writable-manager");
+    const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
+    const manager = path.join(harness.stubsDir, "nemoclaw-start");
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+    fs.chmodSync(manager, 0o755);
+
+    try {
+      const result = runRecovery({
+        ...harness,
+        validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+        trustManagerValidation: false,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("HERMES_SERVICE_MANAGER_UNSAFE");
+      expect(fs.existsSync(harness.pkillLog)).toBe(false);
+      expect(fs.existsSync(harness.hermesLaunchMarker)).toBe(false);
+    } finally {
+      removeTempDir(harness.tmp);
+    }
+  });
+
+  it("ignores a sandbox rc attempt to redirect the trusted service manager", () => {
+    const harness = prepareRecoveryHarness("manager-rc-override");
+    const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
+    const proxyEnvFile = path.join(harness.tmp, "nemoclaw-proxy-env.sh");
+    const evilManager = path.join(harness.tmp, "evil-manager");
+    const evilMarker = path.join(harness.tmp, "evil-manager-launched");
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      proxyEnvFile,
+      "export NODE_OPTIONS='--require=nemoclaw-sandbox-safety-net --require=nemoclaw-ciao-network-guard'\n",
+    );
+    fs.chmodSync(proxyEnvFile, 0o444);
+    writeStub(harness.tmp, "evil-manager", `: > ${JSON.stringify(evilMarker)}\n/bin/sleep 5`);
+    fs.writeFileSync(
+      path.join(harness.tmp, ".bashrc"),
+      `_HERMES_SERVICE_MANAGER=${JSON.stringify(evilManager)}\n`,
+    );
+    writeStub(harness.stubsDir, "python3", `${SHARED_PYTHON_STUB_BY_MODE}\n`);
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+
+    try {
+      const result = runRecovery({
+        ...harness,
+        validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+        proxyEnvPath: proxyEnvFile,
+      });
+      expect(result.status).toBe(0);
+      expect(waitForPath(harness.hermesLaunchMarker)).toBe(true);
+      expect(fs.existsSync(evilMarker)).toBe(false);
+    } finally {
+      removeTempDir(harness.tmp);
+    }
+  });
+
+  it("terminates an old manager without killing a one-shot manager-path decoy", async () => {
+    const harness = prepareRecoveryHarness("manager-takeover");
+    const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
+    const proxyEnvFile = path.join(harness.tmp, "nemoclaw-proxy-env.sh");
+    const procRoot = path.join(harness.tmp, "proc");
+    const manager = path.join(harness.stubsDir, "nemoclaw-start");
+    const lifecycleLog = path.join(harness.tmp, "manager-lifecycle.log");
+    const oldReady = path.join(harness.tmp, "old-manager-ready");
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.mkdirSync(procRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      proxyEnvFile,
+      "export NODE_OPTIONS='--require=nemoclaw-sandbox-safety-net --require=nemoclaw-ciao-network-guard'\n",
+    );
+    fs.chmodSync(proxyEnvFile, 0o444);
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+    fs.chmodSync(manager, 0o755);
+    fs.writeFileSync(
+      manager,
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${NEMOCLAW_TEST_OLD_MANAGER:-0}" = "1" ]; then',
+        `  trap 'printf "old-term\\n" >> ${JSON.stringify(lifecycleLog)}; rm -rf "${procRoot}/$$"; exit 0' TERM`,
+        `  : > ${JSON.stringify(oldReady)}`,
+        "  while :; do /bin/sleep 1; done",
+        "fi",
+        `printf "new-launch\\n" >> ${JSON.stringify(lifecycleLog)}`,
+        `: > ${JSON.stringify(harness.hermesLaunchMarker)}`,
+        "/bin/sleep 5",
+      ].join("\n"),
+      { mode: 0o555 },
+    );
+    const oldManager = spawn("bash", [manager], {
+      env: {
+        PATH: `${harness.stubsDir}:/usr/bin:/bin`,
+        NEMOCLAW_TEST_OLD_MANAGER: "1",
+      },
+      stdio: "ignore",
+    });
+    const decoy = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+
+    const writeFakeProcess = (pid: number, argv: string[], startTime: string) => {
+      const procDir = path.join(procRoot, String(pid));
+      fs.mkdirSync(procDir, { recursive: true });
+      fs.writeFileSync(path.join(procDir, "cmdline"), `${argv.join("\0")}\0`);
+      fs.writeFileSync(
+        path.join(procDir, "stat"),
+        `${pid} (bash) S ${[...Array(18).fill("0"), startTime].join(" ")}\n`,
+      );
+    };
+
+    try {
+      expect(waitForPath(oldReady)).toBe(true);
+      expect(oldManager.pid).toBeTypeOf("number");
+      expect(decoy.pid).toBeTypeOf("number");
+      writeFakeProcess(oldManager.pid!, ["bash", manager], "101");
+      writeFakeProcess(decoy.pid!, ["bash", manager, "true"], "202");
+      const result = runRecovery({
+        ...harness,
+        validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+        proxyEnvPath: proxyEnvFile,
+        procRoot,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("SERVICE_PID=");
+      expect(waitForPath(harness.hermesLaunchMarker)).toBe(true);
+      expect(fs.readFileSync(lifecycleLog, "utf-8").trim().split("\n")).toEqual([
+        "old-term",
+        "new-launch",
+      ]);
+      expect(decoy.killed).toBe(false);
+      expect(decoy.exitCode).toBeNull();
+    } finally {
+      oldManager.kill("SIGKILL");
+      decoy.kill("SIGKILL");
+      removeTempDir(harness.tmp);
+    }
+  }, 20_000);
+
+  function runManagedTopologyProbe(managed: boolean) {
+    const harness = prepareRecoveryHarness(managed ? "managed-parent" : "bare-parent");
+    const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
+    const proxyEnvFile = path.join(harness.tmp, "nemoclaw-proxy-env.sh");
+    const procRoot = path.join(harness.tmp, "proc");
+    const gatewayPid = "111";
+    const parentPid = "222";
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.mkdirSync(path.join(procRoot, gatewayPid), { recursive: true });
+    fs.mkdirSync(path.join(procRoot, parentPid), { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\n",
+    );
+    fs.writeFileSync(
+      proxyEnvFile,
+      "export NODE_OPTIONS='--require=nemoclaw-sandbox-safety-net --require=nemoclaw-ciao-network-guard'\n",
+    );
+    fs.chmodSync(proxyEnvFile, 0o444);
+    fs.writeFileSync(
+      path.join(procRoot, gatewayPid, "cmdline"),
+      "/usr/local/lib/nemoclaw/hermes\0gateway\0run\0",
+    );
+    fs.writeFileSync(
+      path.join(procRoot, gatewayPid, "status"),
+      `Name:\thermes\nPPid:\t${parentPid}\n`,
+    );
+    fs.writeFileSync(
+      path.join(procRoot, parentPid, "cmdline"),
+      managed ? `bash\0${path.join(harness.stubsDir, "nemoclaw-start")}\0` : "sleep\0infinity\0",
+    );
+    writeStub(harness.stubsDir, "python3", `${SHARED_PYTHON_STUB_BY_MODE}\n`);
+    stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
+    writeStub(harness.stubsDir, "curl", 'printf "200"\nexit 0');
+
+    try {
+      const result = runRecovery({
+        ...harness,
+        validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+        proxyEnvPath: proxyEnvFile,
+        procRoot,
+      });
+      return {
+        result,
+        managerLaunched: waitForPath(harness.hermesLaunchMarker),
+      };
+    } finally {
+      removeTempDir(harness.tmp);
+    }
+  }
+
+  it("does not trust HTTP health from a bare Hermes gateway without its service manager", () => {
+    const { result, managerLaunched } = runManagedTopologyProbe(false);
+    expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("ALREADY_RUNNING");
+    expect(result.stdout).toContain("SERVICE_PID=");
+    expect(managerLaunched).toBe(true);
+  });
+
+  it("keeps a healthy Hermes gateway only when its service-manager parent is present", () => {
+    const { result, managerLaunched } = runManagedTopologyProbe(true);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("ALREADY_RUNNING");
+    expect(result.stdout).not.toContain("SERVICE_PID=");
+    expect(managerLaunched).toBe(false);
+  });
 });

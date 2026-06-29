@@ -99,7 +99,7 @@ describe("buildRecoveryScript", () => {
     expect(script).toContain('"$AGENT_BIN" gateway run --port 19000');
   });
 
-  it("omits --port for Hermes so config.yaml controls the internal listen port (#2426)", () => {
+  it("recovers Hermes through its service manager instead of a bare gateway (#2426)", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).toContain("export HERMES_HOME=/sandbox/.hermes");
     expect(script).toContain("HERMES_HOME=/sandbox/.hermes");
@@ -109,26 +109,28 @@ describe("buildRecoveryScript", () => {
     expect(script).not.toContain("nemoclaw-decode-proxy");
     expect(script).not.toContain("nemoclaw-discord-facade");
     expect(script).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
-    expect(script).toContain('"$AGENT_BIN" gateway run');
+    expect(script).toContain("'/usr/local/bin/nemoclaw-start'");
+    expect(script).toContain("len(argv) == 2");
+    expect(script).toContain("'/usr/local/bin/nemoclaw-start' </dev/null");
+    expect(script).toContain("SERVICE_PID=$!");
+    expect(script).not.toContain('nohup env HERMES_HOME=/sandbox/.hermes "$AGENT_BIN" gateway run');
     expect(script).not.toContain('"$AGENT_BIN" gateway run --port 8642');
     expect(script).not.toContain("hermes gateway run --port 8642");
   });
 
-  it("relaunches the optional Hermes dashboard during recovery", () => {
+  it("delegates full Hermes dashboard and port recovery to the service manager", () => {
     const script = buildRecoveryScript(hermesAgent, 8642, {
       hermesDashboard: { publicPort: 9119, internalPort: 19119, tuiEnabled: true },
+      hermesPrimaryDashboardPort: 18789,
     });
-    expect(script).toContain("/tmp/hermes-dashboard.log");
-    expect(script).toContain("_HERMES_DASHBOARD_HOME=/sandbox/.hermes/dashboard-home");
-    expect(script).toContain("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py");
-    expect(script).toContain("${_HERMES_DASHBOARD_HOME}/gateway_state.json");
-    expect(script).toContain('HERMES_HOME="$_HERMES_DASHBOARD_HOME"');
-    expect(script).not.toContain("HERMES_HOME=/sandbox/.hermes nohup");
-    expect(script).toContain(
-      '"$AGENT_BIN" dashboard --host 127.0.0.1 --port 19119 --skip-build --no-open --tui',
-    );
-    expect(script).toContain("DASHBOARD_PID=$DPID");
-    expect(script).toContain("DASHBOARD_FAILED");
+    expect(script).toContain("NEMOCLAW_DASHBOARD_PORT=18789");
+    expect(script).toContain("NEMOCLAW_HERMES_DASHBOARD=1");
+    expect(script).toContain("NEMOCLAW_HERMES_DASHBOARD_PORT=9119");
+    expect(script).toContain("NEMOCLAW_HERMES_DASHBOARD_INTERNAL_PORT=19119");
+    expect(script).toContain("NEMOCLAW_HERMES_DASHBOARD_TUI=1");
+    expect(script).toContain("nohup env NEMOCLAW_DASHBOARD_PORT=18789");
+    expect(script).not.toContain('"$AGENT_BIN" dashboard');
+    expect(script).not.toContain("DASHBOARD_PID=$DPID");
   });
 
   it("can recover only the optional Hermes dashboard process", () => {
@@ -158,7 +160,9 @@ describe("buildRecoveryScript", () => {
   it("does not launch a Hermes decode proxy during recovery", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toContain("/usr/local/bin/nemoclaw-decode-proxy");
-    expect(script).not.toContain("/opt/hermes/.venv/bin/python");
+    expect(script).not.toContain(
+      "/opt/hermes/.venv/bin/python /usr/local/bin/nemoclaw-decode-proxy",
+    );
     expect(script).not.toContain("nemoclaw-discord-facade");
   });
 
@@ -392,7 +396,7 @@ describe("buildManualRecoveryCommand (#2426)", () => {
     expect(launchIndex).toBeGreaterThan(guardIndex);
   });
 
-  it("omits --port for Hermes and uses the current Hermes home", () => {
+  it("uses the managed Hermes lifecycle rather than a bare gateway", () => {
     const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
     expect(cmd).toContain("HERMES_HOME=/sandbox/.hermes");
     expect(cmd).not.toContain("DISCORD_PROXY=");
@@ -401,7 +405,8 @@ describe("buildManualRecoveryCommand (#2426)", () => {
     expect(cmd).not.toContain("nemoclaw-decode-proxy");
     expect(cmd).not.toContain("nemoclaw-discord-facade");
     expect(cmd).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
-    expect(cmd).toContain("nohup hermes gateway run");
+    expect(cmd).toContain("'/usr/local/bin/nemoclaw-start' </dev/null");
+    expect(cmd).not.toContain("nohup hermes gateway run");
     expect(cmd).not.toContain("--port 8642");
     expect(cmd).not.toContain("/sandbox/.hermes-data");
   });

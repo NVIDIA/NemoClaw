@@ -206,6 +206,9 @@ Resolve the reported OpenShell ownership or content mismatch, then retry.
 If NemoClaw reports that MCP policy capability is unavailable, install the required OpenShell build and rerun onboarding.
 NemoClaw checks the installed OpenShell binary for the `protocol: mcp` capability and does not enable managed MCP from a version number alone.
 
+If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
+Recovery re-establishes the managed Hermes service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.
+
 Stdio-only MCP servers are not supported.
 NemoClaw does not start, wrap, or translate them, so configure a native Streamable HTTP MCP endpoint.
 

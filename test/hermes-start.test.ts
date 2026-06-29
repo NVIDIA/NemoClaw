@@ -739,6 +739,8 @@ function runRuntimeShellEnvBootstrap() {
       `_PROXY_ENV_FILE=${shellQuote(envFile)}`,
       `_PROXY_URL=${shellQuote("http://10.200.0.1:3128")}`,
       `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
+      `PROXY_HOST=${shellQuote("10.200.0.1")}`,
+      `PROXY_PORT=${shellQuote("3128")}`,
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `SSL_CERT_FILE=${shellQuote(caFile)}`,
       "CURL_CA_BUNDLE=",
@@ -798,6 +800,8 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.result.status).toBe(0);
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
+    expect(run.envFileContent).toContain('export NEMOCLAW_PROXY_HOST="10.200.0.1"');
+    expect(run.envFileContent).toContain('export NEMOCLAW_PROXY_PORT="3128"');
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);

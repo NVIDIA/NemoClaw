@@ -135,4 +135,36 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     });
     expect(ok).toBe(false);
   });
+
+  it("uses the agent startup contract when no wait override is set", () => {
+    delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    let probes = 0;
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      timeoutSeconds: 90,
+      probeImpl: () => {
+        probes += 1;
+        return probes >= 31;
+      },
+      sleepImpl: () => {},
+    });
+    expect(ok).toBe(true);
+    expect(probes).toBe(31);
+  });
+
+  it("lets the explicit wait environment override the agent startup contract", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "0";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    let probes = 0;
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      timeoutSeconds: 90,
+      probeImpl: () => {
+        probes += 1;
+        return false;
+      },
+      sleepImpl: () => {},
+    });
+    expect(ok).toBe(false);
+    expect(probes).toBe(1);
+  });
 });

@@ -62,6 +62,22 @@ describe("Hermes managed MCP startup probe", () => {
 
     expect(result.calls).toBe(1);
     expect(result.message).toContain("does not identify the trusted launcher");
+    expect(result.message).not.toContain("nemoclaw hermes-box recover");
+  });
+
+  it("directs an unmanaged but trusted gateway to recovery before mutation", () => {
+    const result = runHermesProbe([
+      {
+        status: 1,
+        stdout: "",
+        stderr: "Hermes gateway is not running under the managed service lifecycle",
+      },
+      ready,
+    ]);
+
+    expect(result.calls).toBe(1);
+    expect(result.message).toContain("nemoclaw hermes-box recover");
+    expect(result.message).toContain("managed service lifecycle");
   });
 
   it("fails clearly when the gateway never becomes ready", () => {
@@ -69,6 +85,7 @@ describe("Hermes managed MCP startup probe", () => {
 
     expect(result.calls).toBe(3);
     expect(result.message).toContain("after waiting for startup");
+    expect(result.message).toContain("nemoclaw hermes-box recover");
     expect(result.message).toContain("Hermes gateway is not running for managed MCP reload");
   });
 });

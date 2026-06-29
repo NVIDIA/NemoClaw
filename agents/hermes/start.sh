@@ -997,6 +997,8 @@ export NO_PROXY="$_NO_PROXY_VAL"
 export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
+export NEMOCLAW_PROXY_HOST="$PROXY_HOST"
+export NEMOCLAW_PROXY_PORT="$PROXY_PORT"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
     cat <<'TUIENVEOF'

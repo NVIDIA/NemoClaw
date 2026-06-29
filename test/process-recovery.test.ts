@@ -110,13 +110,13 @@ describe("resolveSandboxDashboardPort", () => {
     ).toBe(18789);
   });
 
-  it("keeps non-OpenClaw agents on their declared forward port", () => {
+  it("uses the persisted Hermes dashboard port instead of its static manifest port", () => {
     expect(
       resolveSandboxDashboardPort("hermes-box", {
-        getSessionAgent: () => ({ forwardPort: 8642 }),
-        getSandbox: () => ({ name: "hermes-box", dashboardPort: 18790 }),
+        getSessionAgent: () => ({ name: "hermes", forwardPort: 18789 }),
+        getSandbox: () => ({ name: "hermes-box", dashboardPort: 19000 }),
       }),
-    ).toBe(8642);
+    ).toBe(19000);
   });
 
   it("does not invent a dashboard port for terminal agents without declared forwards", () => {
@@ -379,6 +379,81 @@ describe("checkAndRecoverSandboxProcesses", () => {
     });
   });
 
+  it("recovers an HTTP-serving bare Hermes gateway into the managed lifecycle", () => {
+    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
+    const registry = requireSource("../src/lib/state/registry.js");
+    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireSource("node:child_process");
+    const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
+    let healthProbeCalls = 0;
+    let recoveryCalls = 0;
+    let firstHealthCommand = "";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    try {
+      vi.spyOn(childProcess, "spawnSync").mockImplementation(
+        (rawCommand: unknown, rawArgs: unknown) => {
+          const command = String(rawCommand);
+          const shellCommand = getSandboxExecShellCommand(rawArgs);
+          if (shellCommand.includes("HTTP_CODE=$(curl")) {
+            healthProbeCalls += 1;
+            if (!firstHealthCommand) firstHealthCommand = shellCommand;
+            return {
+              status: 0,
+              stdout: `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${healthProbeCalls === 1 ? "STOPPED" : "RUNNING"}\n`,
+              stderr: "",
+            } as never;
+          }
+          if (command === "ssh") {
+            recoveryCalls += 1;
+            expect(shellCommand).toContain("'/usr/local/bin/nemoclaw-start' </dev/null");
+            expect(shellCommand).toContain("NEMOCLAW_DASHBOARD_PORT=19000");
+            return { status: 0, stdout: "SERVICE_PID=123\n", stderr: "" } as never;
+          }
+          return { status: 0, stdout: "", stderr: "" } as never;
+        },
+      );
+      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
+        name: "hermes",
+        forwardPort: 18789,
+        displayName: "Hermes Agent",
+      });
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        agent: "hermes",
+        dashboardPort: 19000,
+      });
+      vi.spyOn(openshellRuntime, "captureSandboxSshConfig").mockReturnValue({
+        status: 0,
+        output: "Host openshell-hermes-box\n",
+      });
+      vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(true);
+      vi.spyOn(openshellRuntime, "captureOpenshell").mockReturnValue({
+        status: 0,
+        output: "SANDBOX  BIND  PORT  PID  STATUS\nhermes-box  127.0.0.1  19000  12345  running",
+      });
+      vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0 } as never);
+      expect(
+        withFakeOpenshellBinary(() =>
+          checkAndRecoverSandboxProcesses("hermes-box", { quiet: true }),
+        ),
+      ).toEqual({
+        checked: true,
+        wasRunning: false,
+        recovered: true,
+        forwardRecovered: true,
+      });
+      expect(firstHealthCommand).toContain("_HERMES_MANAGED_GATEWAY");
+      expect(firstHealthCommand).toContain('case "$HTTP_CODE:$_HERMES_MANAGED_GATEWAY"');
+      expect(healthProbeCalls).toBe(2);
+      expect(recoveryCalls).toBe(1);
+    } finally {
+      if (previousSettleSeconds === undefined) {
+        delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
+      } else {
+        process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds;
+      }
+    }
+  });
   it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
@@ -390,7 +465,6 @@ beta  127.0.0.1  18789  12345  dead`;
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
     let forwardListCalls = 0;
-
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
         const shellCommand = getSandboxExecShellCommand(rawArgs);
@@ -427,7 +501,6 @@ beta  127.0.0.1  18789  12345  running`;
     const runOpenshell = vi
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0 } as never);
-
     expect(
       withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
     ).toEqual({
@@ -1133,11 +1206,14 @@ hermes-box  127.0.0.1  8642  12346  running`;
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
     let secretBoundaryCalls = 0;
+    let healthCommand = "";
+    const buildRecoveryScript = vi.spyOn(agentRuntime, "buildRecoveryScript");
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
       (_command: unknown, rawArgs: unknown) => {
         const shellCommand = getSandboxExecShellCommand(rawArgs);
         if (shellCommand.includes("HTTP_CODE=$(curl")) {
+          healthCommand = shellCommand;
           return {
             status: 0,
             stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
@@ -1182,6 +1258,8 @@ hermes-box  127.0.0.1  8642  12346  running`;
       forwardRecovered: false,
     });
     expect(secretBoundaryCalls).toBe(1);
+    expect(healthCommand).toContain("_HERMES_MANAGED_GATEWAY");
+    expect(buildRecoveryScript).not.toHaveBeenCalled();
   });
 
   it("falls through when the Hermes secret-boundary validator is absent on an older sandbox image", () => {

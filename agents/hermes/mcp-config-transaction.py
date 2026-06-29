@@ -36,6 +36,7 @@ HERMES_DIR = "/sandbox/.hermes"
 STRICT_HASH_PATH = "/etc/nemoclaw/hermes.config-hash"
 GUARD_PATH = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 ROOT_LIFECYCLE_MARKER = "/run/nemoclaw/hermes-root-lifecycle"
+SERVICE_MANAGER_PATH = b"/usr/local/bin/nemoclaw-start"
 RELOAD_TIMEOUT_SECONDS = 300
 SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ENV_PLACEHOLDER_RE = re.compile(
@@ -408,17 +409,54 @@ def apply_transaction_and_reload(
     return {"ok": True, "changed": changed, "reloaded": reloaded}
 
 
-def _is_trusted_gateway_process(pid: int) -> bool:
+def _process_arguments(pid: int) -> list[bytes]:
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as command_line:
-            arguments = command_line.read(16 * 1024).rstrip(b"\0").split(b"\0")
+            return [
+                argument
+                for argument in command_line.read(16 * 1024).split(b"\0")
+                if argument
+            ]
     except FileNotFoundError:
-        return False
+        return []
+
+
+def _is_trusted_gateway_process(pid: int) -> bool:
+    arguments = _process_arguments(pid)
     return any(
         arguments[index] in TRUSTED_HERMES_GATEWAY_LAUNCHERS
         and arguments[index + 1 : index + 3] == [b"gateway", b"run"]
         for index in range(max(0, len(arguments) - 2))
     )
+
+
+def _process_parent_pid(pid: int) -> int | None:
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as status_file:
+            for line in status_file:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except (FileNotFoundError, ValueError, IndexError):
+        return None
+    return None
+
+
+def _is_service_manager_process(pid: int) -> bool:
+    arguments = _process_arguments(pid)
+    if not arguments:
+        return False
+    if arguments == [SERVICE_MANAGER_PATH]:
+        return True
+    return (
+        os.path.basename(arguments[0]) in {b"bash", b"sh"}
+        and len(arguments) == 2
+        and arguments[1] == SERVICE_MANAGER_PATH
+    )
+
+
+def _gateway_has_managed_parent(pid: int) -> bool:
+    parent_pid = _process_parent_pid(pid)
+    return parent_pid is not None and _is_service_manager_process(parent_pid)
 
 
 def _gateway_identity() -> tuple[int, object] | None:
@@ -497,7 +535,14 @@ def _assert_non_root_lifecycle_identity() -> None:
         raise PermissionError(
             "Hermes MCP mutation requires a same-uid OpenShell sandbox runtime"
         )
-    if _gateway_identity() is None:
+    identity = _gateway_identity()
+    if identity is None:
+        raise RuntimeError("Hermes gateway is not running for managed MCP reload")
+    if not _gateway_has_managed_parent(identity[0]):
+        raise RuntimeError(
+            "Hermes gateway is not running under the managed service lifecycle"
+        )
+    if _gateway_identity() != identity:
         raise RuntimeError("Hermes gateway is not running for managed MCP reload")
 
 

@@ -55,7 +55,11 @@ export type SandboxExecCommandOptions = {
   allowLocalDockerFallback?: boolean;
 };
 
-type SandboxPortAgent = { forwardPort?: unknown; runtime?: { kind?: unknown } } | null;
+type SandboxPortAgent = {
+  name?: unknown;
+  forwardPort?: unknown;
+  runtime?: { kind?: unknown };
+} | null;
 
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
@@ -133,12 +137,14 @@ export function resolveSandboxDashboardPort(
 ): number {
   const getSessionAgent = deps.getSessionAgent ?? agentRuntime.getSessionAgent;
   const agent = getSessionAgent(sandboxName);
+  const getSandbox = deps.getSandbox ?? registry.getSandbox;
+  const sandbox = getSandbox(sandboxName);
+  if (agent?.name === "hermes" && isValidPort(sandbox?.dashboardPort)) {
+    return sandbox.dashboardPort;
+  }
   if (agent && agentRuntime.hasGatewayRuntime(agent) && isValidPort(agent.forwardPort)) {
     return agent.forwardPort;
   }
-
-  const getSandbox = deps.getSandbox ?? registry.getSandbox;
-  const sandbox = getSandbox(sandboxName);
   return isValidPort(sandbox?.dashboardPort) ? sandbox.dashboardPort : DASHBOARD_PORT;
 }
 
@@ -155,6 +161,7 @@ function getSandboxHealthProbeUrl(sandboxName: string): string {
 export function executeSandboxCommand(
   sandboxName: string,
   command: string,
+  timeout = 15000,
 ): SandboxCommandResult | null {
   const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     env: buildSubprocessEnv(),
@@ -187,7 +194,7 @@ export function executeSandboxCommand(
         encoding: "utf-8",
         env: buildSubprocessEnv(),
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: 15000,
+        timeout,
       },
     );
     return {
@@ -326,11 +333,22 @@ function parseSandboxGatewayProbe(result: SandboxCommandResult | null): boolean 
  * Fixes #2342 — previously `curl -sf` failed on 401, causing false
  * "Health Offline" readings.
  */
+function buildSandboxGatewayProbeCommand(
+  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
+  probeUrl: string,
+): string {
+  const httpProbe = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000);`;
+  if (agentRuntime.usesManagedHermesLifecycle(agent)) {
+    return `${agentRuntime.buildHermesManagedGatewayProbe()} ${httpProbe} case "$HTTP_CODE:$_HERMES_MANAGED_GATEWAY" in 200:1|401:1) echo RUNNING ;; *) echo STOPPED ;; esac`;
+  }
+  return `${httpProbe} case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
+}
+
 function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
-  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
+  const command = buildSandboxGatewayProbeCommand(agent, probeUrl);
   const execProbe = parseSandboxGatewayProbe(executeSandboxExecCommand(sandboxName, command));
   if (execProbe !== null) return execProbe;
   return parseSandboxGatewayProbe(executeSandboxCommand(sandboxName, command));
@@ -342,7 +360,7 @@ export async function isSandboxGatewayRunningForStatus(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   if (agent && !agentRuntime.hasGatewayRuntime(agent)) return null;
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
-  const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
+  const command = buildSandboxGatewayProbeCommand(agent, probeUrl);
   return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
 }
 
@@ -398,13 +416,27 @@ export async function probeSandboxInferenceGatewayHealth(
 function recoverSandboxProcesses(sandboxName: string): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
+  const sandbox = registry.getSandbox(sandboxName);
+  const hermesPrimaryDashboardPort =
+    agentRuntime.usesManagedHermesLifecycle(agent) &&
+    typeof sandbox?.dashboardPort === "number" &&
+    Number.isInteger(sandbox.dashboardPort) &&
+    sandbox.dashboardPort >= 1024 &&
+    sandbox.dashboardPort <= 65535
+      ? sandbox.dashboardPort
+      : agentRuntime.usesManagedHermesLifecycle(agent)
+        ? DASHBOARD_PORT
+        : null;
   const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort, {
     hermesDashboard: getHermesDashboardRecoveryConfig(sandboxName),
+    hermesPrimaryDashboardPort,
   });
   const hasRecoveryMarker = (result: SandboxCommandResult | null) =>
     !!(
       result &&
-      (result.stdout.includes("GATEWAY_PID=") || result.stdout.includes("ALREADY_RUNNING"))
+      (result.stdout.includes("GATEWAY_PID=") ||
+        result.stdout.includes("SERVICE_PID=") ||
+        result.stdout.includes("ALREADY_RUNNING"))
     );
   const recoveredSsh = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasRecoveryMarker(result));
@@ -414,7 +446,7 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
     // Non-OpenClaw manifests do not yet declare a runtime user for root
     // sandbox exec. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
+    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript, 60_000));
   }
 
   const script = agentRuntime.buildOpenClawRecoveryScript(dashboardPort);
@@ -460,11 +492,22 @@ export function waitForRecoveredSandboxGateway(
     probeImpl?: (sandboxName: string) => boolean | null;
     sleepImpl?: (seconds: number) => void;
     quiet?: boolean;
+    timeoutSeconds?: number;
   } = {},
 ): boolean {
   const probe = options.probeImpl ?? isSandboxGatewayRunning;
   const sleep = options.sleepImpl ?? sleepSeconds;
-  const timeoutSeconds = readNonNegativeNumberEnv("NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS", 30);
+  const configuredTimeout = options.timeoutSeconds;
+  const defaultTimeout =
+    typeof configuredTimeout === "number" &&
+    Number.isFinite(configuredTimeout) &&
+    configuredTimeout >= 0
+      ? configuredTimeout
+      : 30;
+  const timeoutSeconds = readNonNegativeNumberEnv(
+    "NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS",
+    defaultTimeout,
+  );
   const intervalSeconds = readNonNegativeNumberEnv(
     "NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS",
     3,
@@ -622,6 +665,13 @@ function ensureDeclaredAgentForwardPortsHealthy(
   if (!Array.isArray(declared) || declared.length === 0) return null;
   const hermesDashboard = getHermesDashboardRecoveryConfig(sandboxName);
   const skipSet = new Set<number>([primaryPort]);
+  if (
+    agent.name === "hermes" &&
+    isValidPort(agent.forwardPort) &&
+    agent.forwardPort !== agent.healthProbe?.port
+  ) {
+    skipSet.add(agent.forwardPort);
+  }
   if (hermesDashboard && Number.isInteger(hermesDashboard.publicPort)) {
     skipSet.add(hermesDashboard.publicPort);
   }
@@ -874,14 +924,22 @@ export function checkAndRecoverSandboxProcesses(
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (!waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
+    if (
+      !waitForRecoveredSandboxGateway(sandboxName, {
+        quiet,
+        timeoutSeconds: recoveryAgent?.healthProbe?.timeout_seconds,
+      })
+    ) {
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
         console.error("  Check /tmp/gateway.log inside the sandbox for details.");
         console.error("  Connect to the sandbox and run manually:");
         console.error(
-          `    ${agentRuntime.buildManualRecoveryCommand(recoveryAgent, recoveryPort)}`,
+          `    ${agentRuntime.buildManualRecoveryCommand(recoveryAgent, recoveryPort, {
+            hermesDashboard: getHermesDashboardRecoveryConfig(sandboxName),
+            hermesPrimaryDashboardPort: registry.getSandbox(sandboxName)?.dashboardPort,
+          })}`,
         );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
@@ -921,7 +979,12 @@ export function checkAndRecoverSandboxProcesses(
       `  Could not restart ${agentRuntime.getAgentDisplayName(recoveryAgent)} gateway automatically.`,
     );
     console.error("  Connect to the sandbox and run manually:");
-    console.error(`    ${agentRuntime.buildManualRecoveryCommand(recoveryAgent, recoveryPort)}`);
+    console.error(
+      `    ${agentRuntime.buildManualRecoveryCommand(recoveryAgent, recoveryPort, {
+        hermesDashboard: getHermesDashboardRecoveryConfig(sandboxName),
+        hermesPrimaryDashboardPort: registry.getSandbox(sandboxName)?.dashboardPort,
+      })}`,
+    );
   }
 
   return { checked: true, wasRunning: false, recovered, forwardRecovered: false };

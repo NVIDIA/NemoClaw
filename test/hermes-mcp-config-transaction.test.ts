@@ -208,6 +208,7 @@ def trusted_gateway(pid):
     observed["trusted_pids"].append(pid)
     return True
 module._is_trusted_gateway_process = trusted_gateway
+module._gateway_has_managed_parent = lambda pid: True
 def signal_gateway(pid, sent_signal):
     observed["signal_uid"] = module.os.geteuid()
     observed["signal_pid"] = pid
@@ -245,7 +246,7 @@ print(json.dumps(observed, sort_keys=True))
       signal_name: "SIGUSR1",
       signal_pid: 4242,
       signal_uid: 1000,
-      trusted_pids: [4242, 4242, 4242],
+      trusted_pids: [4242, 4242, 4242, 4242],
     });
   });
 
@@ -345,6 +346,60 @@ print(json.dumps(errors))
     expect(result.stdout).toContain("requires a same-uid OpenShell sandbox runtime");
   });
 
+  it("rejects a same-UID bare gateway before mutating managed MCP state", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.os.geteuid = lambda: 1000
+module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
+module._gateway_identity = lambda: (123, 456)
+module._gateway_has_managed_parent = lambda pid: False
+calls = []
+module.apply_transaction_and_reload = lambda action, payload: calls.append((action, payload))
+payload = {
+    "server": "fake",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
+    "replace_existing": False,
+}
+errors = []
+for operation in (lambda: module.execute("add", payload), module.probe):
+    try:
+        operation()
+    except RuntimeError as error:
+        errors.append(str(error))
+if calls or len(errors) != 2:
+    raise SystemExit(9)
+print(json.dumps(errors))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("not running under the managed service lifecycle");
+  });
+
+  it("does not mistake a one-shot nemoclaw-start wrapper for the service manager", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+arguments = {
+    1: [b"bash", module.SERVICE_MANAGER_PATH],
+    2: [b"bash", module.SERVICE_MANAGER_PATH, b"true"],
+    3: [b"bash", b"-c", b"text mentioning /usr/local/bin/nemoclaw-start"],
+}
+module._process_arguments = lambda pid: arguments[pid]
+print(json.dumps({str(pid): module._is_service_manager_process(pid) for pid in arguments}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ "1": true, "2": false, "3": false });
+  });
+
   it("runs a one-shot mutation through the stock OpenShell exec topology", () => {
     const result = runPython(`
 import importlib.util, json, sys
@@ -355,6 +410,7 @@ spec.loader.exec_module(module)
 module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
+module._gateway_has_managed_parent = lambda pid: True
 module.apply_transaction_and_reload = lambda action, payload: {
     "ok": True, "changed": True, "reloaded": True
 }
@@ -381,6 +437,7 @@ spec.loader.exec_module(module)
 module.os.geteuid = lambda: 1000
 module.os.lstat = lambda path: (_ for _ in ()).throw(FileNotFoundError(path))
 module._gateway_identity = lambda: (123, 456)
+module._gateway_has_managed_parent = lambda pid: True
 print(json.dumps(module.probe(), sort_keys=True))
 `);
 
