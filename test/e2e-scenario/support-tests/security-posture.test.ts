@@ -32,7 +32,6 @@ describe("security posture fixture", () => {
       enabled: false,
       noNewPrivileges: false,
       nonRootEntrypoint: false,
-      nonRootHost: false,
     });
     expect(securityPostureModeEnv()).toEqual({});
 
@@ -43,7 +42,6 @@ describe("security posture fixture", () => {
       enabled: true,
       noNewPrivileges: false,
       nonRootEntrypoint: false,
-      nonRootHost: true,
     });
     expect(securityPostureModeEnv()).toEqual({
       NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS: "0",
@@ -58,13 +56,12 @@ describe("security posture fixture", () => {
     vi.stubEnv("NEMOCLAW_E2E_SECURITY_POSTURE", "yes");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS", "true");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT", "on");
-    vi.stubEnv("NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST", "0");
     vi.stubEnv("NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS", "1");
 
     expect(securityPostureModeEnv()).toEqual({
       NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS: "1",
       NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: "1",
-      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "0",
+      NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
       NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS: "1",
       NEMOCLAW_E2E_SECURITY_POSTURE: "1",
     });

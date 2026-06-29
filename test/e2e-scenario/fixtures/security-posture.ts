@@ -29,7 +29,6 @@ export interface SecurityPostureExpectations {
   enabled: boolean;
   noNewPrivileges: boolean;
   nonRootEntrypoint: boolean;
-  nonRootHost: boolean;
 }
 
 const DANGEROUS_CAPABILITIES = [
@@ -87,7 +86,6 @@ export function securityPostureExpectations(
     enabled,
     noNewPrivileges: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS),
     nonRootEntrypoint: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT),
-    nonRootHost: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST ?? "1"),
   };
 }
 
@@ -97,7 +95,7 @@ export function securityPostureModeEnv(): NodeJS.ProcessEnv {
   return {
     NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS: expectations.droppedBoundingCapabilities ? "1" : "0",
     NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: expectations.nonRootEntrypoint ? "1" : "0",
-    NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: expectations.nonRootHost ? "1" : "0",
+    NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1",
     NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS: expectations.noNewPrivileges ? "1" : "0",
     NEMOCLAW_E2E_SECURITY_POSTURE: "1",
   };
@@ -182,7 +180,9 @@ exit "$bad"
 
   const functionName = agent === "hermes" ? "hermes" : "openclaw";
   const guardArg = agent === "hermes" ? "setup" : "configure";
-  const allowNonRootOwner = expectations.nonRootHost ? "1" : "0";
+  // Security-posture mode is fail-closed on the non-root host invariant. The
+  // runtime proxy file may therefore be owned by that current sandbox user.
+  const allowNonRootOwner = "1";
   const proxyEnv = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(String.raw`
