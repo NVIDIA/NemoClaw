@@ -14,6 +14,11 @@ import { type SandboxClient, validateSandboxName } from "../fixtures/clients/san
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
+import {
+  assertSecurityPosture,
+  securityPostureEnabled,
+  securityPostureModeEnv,
+} from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
@@ -34,6 +39,7 @@ function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: "nemoclaw",
+    ...securityPostureModeEnv(),
     ...extra,
   };
 }
@@ -111,6 +117,9 @@ liveTest(
         "sandbox appears in list/status and has policy/inference configuration",
         "direct hosted inference and sandbox inference.local both respond",
         "nemoclaw logs produces output and cleanup removes registry state",
+        ...(securityPostureEnabled()
+          ? ["non-root host, locked rc/proxy files, configure guard, and clean startup log"]
+          : []),
       ],
     });
 
@@ -219,11 +228,19 @@ liveTest(
     expect(logs.exitCode, resultText(logs)).toBe(0);
     expect(resultText(logs).trim().length, resultText(logs)).toBeGreaterThan(0);
 
+    const securityPosture = securityPostureEnabled()
+      ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "openclaw")
+      : null;
+
     await cleanup(host, sandbox);
     const registry = path.join(os.homedir(), ".nemoclaw", "sandboxes.json");
     const registryText = fs.existsSync(registry) ? fs.readFileSync(registry, "utf8") : "";
     expect(registryText).not.toContain(SANDBOX_NAME);
 
-    await artifacts.writeJson("scenario-result.json", { id: "full-e2e", status: "passed" });
+    await artifacts.writeJson("scenario-result.json", {
+      id: "full-e2e",
+      securityPosture,
+      status: "passed",
+    });
   },
 );
