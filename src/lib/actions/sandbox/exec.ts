@@ -128,10 +128,16 @@ export function validateWorkdirOrFail(
   }
 }
 
+export type SandboxExecRunner = (binary: string, args: readonly string[]) => SpawnLikeResult;
+
+const defaultExecRunner: SandboxExecRunner = (binary, args) =>
+  spawnSync(binary, args, { stdio: "inherit" });
+
 export async function execSandbox(
   sandboxName: string,
   command: readonly string[],
   options: SandboxExecOptions = {},
+  run: SandboxExecRunner = defaultExecRunner,
 ): Promise<void> {
   const { CLI_NAME } = require("../../cli/branding");
   const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
@@ -150,9 +156,7 @@ export async function execSandbox(
   if (options.workdir) {
     validateWorkdirOrFail(binary, sandboxName, options.workdir);
   }
-  const result = spawnSync(binary, buildOpenshellExecArgs(sandboxName, command, options), {
-    stdio: "inherit",
-  });
+  const result = run(binary, buildOpenshellExecArgs(sandboxName, command, options));
   const { code, errorMessage } = computeExitCode(result);
   if (errorMessage) {
     console.error(`  Failed to invoke openshell: ${errorMessage}`);
