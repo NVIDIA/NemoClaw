@@ -62,7 +62,7 @@ Refer to [Commands](../reference/commands) for details.
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
 | WeChat (experimental) | None. Captured through host-side QR scan during `$$nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
 | WhatsApp (experimental) | None. Pair through QR after rebuild | None |
-| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
+| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for direct-message Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -113,7 +113,11 @@ No two active Teams sandboxes can share the same local webhook port, so NemoClaw
 Teams requires an app ID, client secret, and tenant ID.
 Set `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`, or use the aliases `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, and `TEAMS_TENANT_ID`.
 The client secret is stored as the `<sandbox>-teams-bridge` OpenShell provider and reaches the sandbox as an OpenShell placeholder, not as a raw value baked into the image.
-Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may interact with the bot.
+Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may direct-message the bot.
+This direct-message allowlist does not restrict OpenClaw group or channel senders.
+OpenClaw group and channel messages stay open by default, subject to mention mode.
+Operators who need group or channel sender allowlisting can configure OpenClaw directly with `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom`.
+If `groupPolicy="allowlist"` is set without an effective group allowlist, OpenClaw denies group messages instead of treating the group as open.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
 

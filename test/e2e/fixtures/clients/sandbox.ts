@@ -7,8 +7,8 @@ import { trustedShellCommand } from "../shell-probe.ts";
 import {
   artifactLabel,
   assertExitZero,
-  outputContainsSandbox,
   type CommandRunner,
+  outputContainsSandbox,
 } from "./command.ts";
 
 /**
@@ -42,10 +42,16 @@ export type TrustedSandboxShellScript = string & {
 };
 
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
-  if (script.length === 0) {
-    throw new Error("sandbox shell script must not be empty");
+  if (script.length === 0 || script.includes("\0")) {
+    throw new Error("sandbox shell script must be non-empty and contain no NUL bytes");
   }
   return script as TrustedSandboxShellScript;
+}
+
+function sandboxShellArgument(script: TrustedSandboxShellScript): string {
+  if (!/[\r\n]/u.test(script)) return script;
+  const encoded = Buffer.from(script, "utf8").toString("base64");
+  return `eval "$(printf '%s' '${encoded}' | base64 -d)"`;
 }
 
 export class SandboxClient {
@@ -104,10 +110,13 @@ export class SandboxClient {
     options: ShellProbeRunOptions = {},
   ): Promise<ShellProbeResult> {
     validateSandboxName(name);
-    return this.openshell(["sandbox", "exec", "-n", name, "--", "sh", "-lc", script], {
-      artifactName: `sandbox-exec-shell-${name}`,
-      ...options,
-    });
+    return this.openshell(
+      ["sandbox", "exec", "-n", name, "--", "sh", "-lc", sandboxShellArgument(script)],
+      {
+        artifactName: `sandbox-exec-shell-${name}`,
+        ...options,
+      },
+    );
   }
 
   upload(

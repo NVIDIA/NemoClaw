@@ -10,11 +10,16 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
 import { trustedSandboxShellScript, validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
   DEFAULT_HOSTED_INFERENCE_MODEL,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import {
+  assertSecurityPosture,
+  securityPostureEnabled,
+  securityPostureModeEnv,
+} from "../fixtures/security-posture.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 // This is intentionally a direct live Vitest test, not a new registry layer:
@@ -77,6 +82,7 @@ function commandEnv(hostedEnv: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NEMOCLAW_MODEL: hostedEnv.NEMOCLAW_MODEL ?? CHAT_MODEL,
     NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS: ONBOARD_VALIDATION_TIMEOUT_SECONDS,
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
+    ...securityPostureModeEnv(),
   };
   if (process.env.NEMOCLAW_E2E_HERMES_DASHBOARD) {
     env.NEMOCLAW_E2E_HERMES_DASHBOARD = process.env.NEMOCLAW_E2E_HERMES_DASHBOARD;
@@ -230,6 +236,7 @@ test.skipIf(!shouldRunLiveE2E())(
       boundary: "install.sh --non-interactive + Hermes sandbox runtime",
       sandboxName: SANDBOX_NAME,
       dashboardEnabled: hermesDashboardE2eEnabled(),
+      securityPostureEnabled: securityPostureEnabled(),
     });
 
     const env = commandEnv(hosted.env);
@@ -586,6 +593,10 @@ test.skipIf(!shouldRunLiveE2E())(
     expect(manifestCheck.stdout).toMatch(/hermes_display:.*Hermes/);
     expect(manifestCheck.stdout).toMatch(/agents:.*(openclaw.*hermes|hermes.*openclaw)/);
 
+    const securityPosture = securityPostureEnabled()
+      ? await assertSecurityPosture(host, sandbox, SANDBOX_NAME, "hermes")
+      : null;
+
     // Phase 8: explicit cleanup and post-destroy registry proof.
     if (process.env.NEMOCLAW_E2E_KEEP_SANDBOX !== "1") {
       const destroy = await host.command("nemoclaw", [SANDBOX_NAME, "destroy", "--yes"], {
@@ -615,7 +626,9 @@ test.skipIf(!shouldRunLiveE2E())(
         directProviderInferencePong: true,
         sandboxInferenceLocalPong: true,
         dashboardChecked: hermesDashboardE2eEnabled(),
+        securityPostureChecked: securityPosture !== null,
       },
+      securityPosture,
     });
   },
 );
