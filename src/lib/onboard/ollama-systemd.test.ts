@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { OLLAMA_PORT } from "../core/ports";
 import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
@@ -9,6 +9,15 @@ import {
   ensureOllamaLoopbackSystemdOverride,
   mergeOllamaLoopbackSystemdOverride,
 } from "./ollama-systemd";
+
+const SUDO_MODE_ENV = "NEMOCLAW_NON_INTERACTIVE_SUDO_MODE";
+
+// Restore a process.env entry to its saved value (or delete it when the entry
+// was previously unset). Lives at top of file so test bodies stay linear per
+// the repository's growth guardrail on conditional branching in test files.
+function restoreEnv(key: string, previous: string | undefined): void {
+  previous === undefined ? delete process.env[key] : (process.env[key] = previous);
+}
 
 describe("mergeOllamaLoopbackSystemdOverride", () => {
   it("writes the OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH lines under [Service] when no drop-in exists", () => {
@@ -97,13 +106,20 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
 // loopback override with an actionable warning so the headless install can
 // continue against Ollama's existing bind.
 describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () => {
+  // CR thread: isolate NEMOCLAW_NON_INTERACTIVE_SUDO_MODE so an outer shell
+  // that has set it to `prompt` cannot change which branch of getSudoPrefix
+  // these tests exercise. Each test in this block targets the `sudo -n`
+  // branch and must see the env at its default.
+  let savedSudoMode: string | undefined;
+  beforeEach(() => {
+    savedSudoMode = process.env[SUDO_MODE_ENV];
+    delete process.env[SUDO_MODE_ENV];
+  });
+  afterEach(() => {
+    restoreEnv(SUDO_MODE_ENV, savedSudoMode);
+  });
+
   it("skips the override with a warning when sudo -n is unavailable in non-interactive mode", () => {
-    // CR thread: isolate NEMOCLAW_NON_INTERACTIVE_SUDO_MODE so an outer
-    // shell that has set it to `prompt` cannot change which branch of
-    // getSudoPrefix this test exercises. We are specifically testing the
-    // `sudo -n` branch, so force the env to its default for this test.
-    const previousSudoMode = process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
-    delete process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const result = ensureOllamaLoopbackSystemdOverride({
@@ -121,11 +137,6 @@ describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () 
       );
     } finally {
       warn.mockRestore();
-      if (previousSudoMode === undefined) {
-        delete process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
-      } else {
-        process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE = previousSudoMode;
-      }
     }
   });
 
