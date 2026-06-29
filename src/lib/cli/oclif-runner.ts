@@ -1,7 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Config as OclifConfig, execute as executeOclif } from "@oclif/core";
+import {
+  flush as flushOclif,
+  handle as handleOclif,
+  Config as OclifConfig,
+  run as runOclif,
+} from "@oclif/core";
 
 import { CLI_NAME } from "./branding";
 
@@ -138,18 +143,35 @@ export async function runOclifCommandById(
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
   applyBrandedBin(config);
+  const errorLine = opts.error ?? console.error;
   const originalArgv = process.argv;
   // oclif's parse-error help renderer consults process.argv, not just the
-  // explicit execute({ args }) value, so keep both views on the native route.
+  // explicit run() args, so keep both views on the native route.
   process.argv = [originalArgv[0] ?? process.execPath, originalArgv[1] ?? CLI_NAME, ...args];
   try {
-    await executeOclif({
-      args,
-      loadOptions: {
-        root: opts.rootDir,
-        pjson: config.pjson,
-      },
-    });
+    // Mirror @oclif/core's execute() (run → flush → handle) by hand so the
+    // native argv path keeps oclif's command lookup, parsing, help rendering,
+    // and pretty-printed errors while letting us intercept one case below.
+    await runOclif(args, { root: opts.rootDir, pjson: config.pjson });
+    await flushOclif();
+  } catch (error) {
+    await flushOclif();
+    // #5974: same hardening as runOclifCommandById. oclif's own handle() would
+    // run Exit.exit(err.oclif?.exit ?? 1) here, so a non-ExitError that merely
+    // carries oclif.exit === 0 (propagated out of a command's run()) would
+    // silently exit 0 — reporting success for a real failure on the native
+    // `internal`/`sandbox` routes. Surface the message and force a non-zero
+    // exit instead; only a genuine ExitError(0) stays a graceful exit.
+    const exitCode = getOclifExitCode(error);
+    if (exitCode === 0 && !isOclifExitError(error)) {
+      const message = formatOclifError(error) || "Command exited with no output.";
+      errorLine(`  ${message}`);
+      process.exitCode = 1;
+      return;
+    }
+    // Everything else (parse errors, ExitError, ordinary failures) keeps
+    // oclif's standard handling: pretty-print, optional help, and process exit.
+    await handleOclif(error as Parameters<typeof handleOclif>[0]);
   } finally {
     process.argv = originalArgv;
   }
