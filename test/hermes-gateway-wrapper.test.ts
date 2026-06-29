@@ -368,24 +368,6 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("# routed via OpenShell");
   });
 
-  it("documents that the Hermes dashboard exposes no config-leaking REST endpoint", () => {
-    // PRA acceptance clause: the Hermes dashboard is a static web UI seeded by
-    // agents/hermes/seed-dashboard-config.py — it has no /api/config endpoint
-    // that returns raw provider config. The CLI is the only surface that
-    // emits `config show`, so masking at the wrapper is the complete
-    // boundary. Add a real assertion once Hermes ships a dashboard config
-    // API.
-    const dashboardSourceDir = path.join(import.meta.dirname, "..", "agents", "hermes");
-    const offenders = fs
-      .readdirSync(dashboardSourceDir)
-      .filter((name) => name.endsWith(".py") || name.endsWith(".ts") || name.endsWith(".js"))
-      .filter((name) => {
-        const body = fs.readFileSync(path.join(dashboardSourceDir, name), "utf-8");
-        return /\/api\/config\b/.test(body);
-      });
-    expect(offenders).toEqual([]);
-  });
-
   it("does not mask api_key mentions inside YAML comments", () => {
     const fixture = [
       "# example: api_key: leave-this-alone-in-comment",

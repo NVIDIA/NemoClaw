@@ -18,6 +18,12 @@
 # masker. Remove the `config show` branch and this comment once Hermes CLI
 # redacts credential-shaped fields natively.
 #
+# Dashboard parity: the Hermes dashboard is a static web UI seeded by
+# `agents/hermes/seed-dashboard-config.py` — there is no `/api/config` REST
+# surface that emits the resolved config, so the CLI is the only path that
+# can leak `api_key`. If a dashboard config API ships later, mirror this
+# masker on that route or assert the response masks the same fields.
+#
 # The same guard runs in the nemoclaw-start entrypoint
 # (agents/hermes/start.sh: validate_hermes_runtime_env_secret_boundary) and in
 # the host-side gateway recovery path, but a direct `docker exec ... hermes
