@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { isExpectedMcpCurlPolicyDenial } from "../live/mcp-bridge-sandbox.ts";
@@ -64,5 +66,16 @@ describe("MCP curl policy denial classification", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  it("restores the DNS fixture before MCP removal can restart the sandbox", () => {
+    const source = fs.readFileSync("test/e2e-scenario/live/mcp-bridge.test.ts", "utf8");
+    const denialProof = source.indexOf("expect(rebindMcp.requests).toHaveLength(0);");
+    const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
+    const remove = source.indexOf("const rebindRemove = await host.nemoclaw", denialProof);
+
+    expect(denialProof).toBeGreaterThanOrEqual(0);
+    expect(restore).toBeGreaterThan(denialProof);
+    expect(remove).toBeGreaterThan(restore);
   });
 });

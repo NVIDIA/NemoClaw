@@ -943,6 +943,11 @@ req.end(body);
   expect(resultText(strictRebindDenial)).toContain('"status":403');
   expect(rebindMcp.requests).toHaveLength(0);
 
+  // Restore while the current sandbox container is stable. Removing the MCP
+  // route reloads policy and can restart the container before /etc/hosts is
+  // restored; the registered cleanup remains an idempotent fallback.
+  await restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture);
+
   const rebindRemove = await host.nemoclaw(
     [OPENCLAW_SANDBOX_NAME, "mcp", "remove", REBIND_SERVER_NAME],
     {
@@ -952,7 +957,6 @@ req.end(body);
     },
   );
   expectExitZero(rebindRemove, "remove DNS rebinding MCP route after denial proof");
-  await restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture);
 
   const requestCountBeforeAllowedNodeProof = fakeMcp.requests.length;
   const allowedNodeCall = await runNodeMcpProbe(
