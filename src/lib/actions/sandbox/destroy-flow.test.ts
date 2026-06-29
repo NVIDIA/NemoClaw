@@ -5,11 +5,10 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type DestroySandbox =
-  typeof import("../../../../dist/lib/actions/sandbox/destroy")["destroySandbox"];
+type DestroySandbox = typeof import("./destroy")["destroySandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const destroyModulePath = "../../../../dist/lib/actions/sandbox/destroy.js";
+const destroyModulePath = "./destroy.js";
 
 type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
@@ -45,19 +44,17 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const runtime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-  const destroyGateway = requireDist("../../../../dist/lib/actions/sandbox/destroy-gateway.js");
-  const sandboxProviderCleanup = requireDist(
-    "../../../../dist/lib/onboard/sandbox-provider-cleanup.js",
-  );
-  const nim = requireDist("../../../../dist/lib/inference/nim.js");
-  const ollamaProxy = requireDist("../../../../dist/lib/inference/ollama/proxy.js");
-  const tunnelServices = requireDist("../../../../dist/lib/tunnel/services.js");
-  const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
-  const timerControl = requireDist("../../../../dist/lib/shields/timer-control.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const runtime = requireDist("../../adapters/openshell/runtime.js");
+  const destroyGateway = requireDist("./destroy-gateway.js");
+  const sandboxProviderCleanup = requireDist("../../onboard/sandbox-provider-cleanup.js");
+  const nim = requireDist("../../inference/nim.js");
+  const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
+  const tunnelServices = requireDist("../../tunnel/services.js");
+  const onboardSession = requireDist("../../state/onboard-session.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const timerControl = requireDist("../../shields/timer-control.js");
 
   vi.spyOn(resolve, "resolveOpenshell").mockReturnValue("/usr/bin/openshell");
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({

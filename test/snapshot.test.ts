@@ -21,7 +21,7 @@ process.env.HOME = TMP_HOME;
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 type BackupScalar = string | number | boolean | null | undefined;
 type BackupValue = BackupScalar | BackupManifestOverrides | BackupValue[];
-type SandboxStateModule = typeof import("../dist/lib/state/sandbox.js");
+type SandboxStateModule = typeof import("../src/lib/state/sandbox.js");
 type SandboxStateModuleCandidate = Partial<SandboxStateModule> | null;
 function isSandboxStateModule(value: SandboxStateModuleCandidate): value is SandboxStateModule {
   return (
@@ -33,7 +33,7 @@ function isSandboxStateModule(value: SandboxStateModuleCandidate): value is Sand
   );
 }
 const loadedSandboxState = await import(
-  pathToFileURL(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js")).href
+  pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
 );
 if (!isSandboxStateModule(loadedSandboxState)) {
   throw new Error("Expected sandbox-state module exports to be available");

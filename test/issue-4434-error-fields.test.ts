@@ -70,7 +70,7 @@ function missingIssue4434AcceptanceFields(output: string): Issue4434AcceptanceFi
   );
 }
 
-describe("issue #4434 full OpenClaw TUI error guard", () => {
+describe("full OpenClaw TUI error guard (#4434)", () => {
   it("requires the reviewed patched output to include all full-acceptance fields", () => {
     expect(readDockerfileOpenClawVersion()).toBe(CURRENT_REVIEWED_OPENCLAW_VERSION);
     expect(

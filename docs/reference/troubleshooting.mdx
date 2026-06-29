@@ -1446,6 +1446,25 @@ For environment setup steps, refer to [Windows Prerequisites](../get-started/pre
 
 Check your network connectivity.
 If you are behind a VPN, try reconnecting or switching to a different network.
+If your network or Windows image blocks the online WSL installer, install WSL manually with Microsoft's [offline install guidance](https://learn.microsoft.com/en-us/windows/wsl/install#offline-install).
+Download the latest official WSL `.msi` package from the [Microsoft WSL releases page](https://github.com/microsoft/WSL/releases/latest), choose the matching `.x64.msi` or `.arm64.msi`, install it, reboot if Windows requests it, then rerun `wsl --status`.
+
+### Bootstrap says "Windows Subsystem for Linux is not fully installed"
+
+The bootstrap script checks `wsl --status` before it installs or opens Ubuntu.
+If Windows reports that the WSL runtime is not installed, the script attempts `wsl --install --no-distribution` automatically.
+If the repair command succeeds, reboot when prompted and let the bootstrap resume after sign-in.
+If the repair command fails, follow the printed repair steps.
+If the repair command returns `Forbidden (403)` or remains blocked, install WSL manually with Microsoft's [offline install guidance](https://learn.microsoft.com/en-us/windows/wsl/install#offline-install).
+Download the latest official WSL `.msi` package from the [Microsoft WSL releases page](https://github.com/microsoft/WSL/releases/latest), choose the matching `.x64.msi` or `.arm64.msi`, install it, reboot if Windows requests it, then rerun the bootstrap script.
+Use the same repair flow if the bootstrap says "Windows Subsystem for Linux could not be verified" and reports a nonzero `wsl --status` exit code.
+
+### Bootstrap says "Windows reports that WSL 2 cannot start yet"
+
+The bootstrap script attempts `wsl --install --no-distribution` automatically when `wsl --status` reports that WSL 2 cannot start.
+If the repair command succeeds, reboot when prompted and let the bootstrap resume after sign-in.
+If the message persists after repair and reboot, enable virtualization in firmware and confirm that the Virtual Machine Platform optional component is enabled.
+Manual WSL installation only helps when the WSL runtime is missing or the online installer is blocked.
 
 ### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
 

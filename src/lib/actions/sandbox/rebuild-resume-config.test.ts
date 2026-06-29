@@ -6,13 +6,13 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
+const onboardSession = requireDist("../../state/onboard-session.js");
 const {
   isLocalInferenceProvider,
   getRebuildCredentialEnvFromRegistry,
   getRebuildEndpointFromRegistry,
   prepareRebuildResumeConfig,
-} = requireDist("../../../../dist/lib/actions/sandbox/rebuild-resume-config.js");
+} = requireDist("./rebuild-resume-config.js");
 
 const noopLog = () => undefined;
 const throwingBail = (msg: string): never => {
@@ -140,7 +140,10 @@ describe("prepareRebuildResumeConfig", () => {
   it("validates and canonicalizes a matching custom-endpoint session endpoint", () => {
     vi.spyOn(onboardSession, "loadSession").mockReturnValue({
       sandboxName: "alpha",
+      provider: "compatible-endpoint",
+      model: "m",
       endpointUrl: " http://127.0.0.1:19999/v1/?x=1#frag ",
+      compatibleEndpointReasoning: "true",
     });
     const config = prepareRebuildResumeConfig(
       "alpha",
@@ -153,9 +156,34 @@ describe("prepareRebuildResumeConfig", () => {
       provider: "compatible-endpoint",
       model: "m",
       credentialEnv: "COMPATIBLE_API_KEY",
+      compatibleEndpointReasoning: "true",
       pinEndpoint: false,
       endpointUrl: "http://127.0.0.1:19999/v1",
     });
+  });
+
+  it.each([
+    { provider: "openai-api", model: "m" },
+    { provider: "compatible-endpoint", model: "other-model" },
+  ])("clears reasoning from a same-name session with stale $provider/$model selection", (selection) => {
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "alpha",
+      endpointUrl: "https://session.example.test/v1",
+      compatibleEndpointReasoning: "true",
+      ...selection,
+    });
+    const config = prepareRebuildResumeConfig(
+      "alpha",
+      entry({
+        provider: "compatible-endpoint",
+        model: "m",
+        endpointUrl: "https://registry.example.test/v1",
+      }),
+      null,
+      noopLog,
+      throwingBail,
+    );
+    expect(config?.compatibleEndpointReasoning).toBeNull();
   });
 
   it("prefers durable registry endpoint metadata over a stale matching session endpoint", () => {
@@ -394,7 +422,10 @@ describe("prepareRebuildResumeConfig", () => {
   });
 
   it("recreates custom endpoints from durable registry metadata when the session is unrelated", () => {
-    vi.spyOn(onboardSession, "loadSession").mockReturnValue({ sandboxName: "other" });
+    vi.spyOn(onboardSession, "loadSession").mockReturnValue({
+      sandboxName: "other",
+      compatibleEndpointReasoning: "true",
+    });
     const config = prepareRebuildResumeConfig(
       "alpha",
       entry({
@@ -413,6 +444,7 @@ describe("prepareRebuildResumeConfig", () => {
       model: "m",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: null,
       pinEndpoint: true,
       endpointUrl: "http://127.0.0.1:19999/v1",
     });

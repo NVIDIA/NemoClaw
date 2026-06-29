@@ -9,6 +9,8 @@ const {
   envInt,
   LOCAL_INFERENCE_TIMEOUT_SECS,
 }: typeof import("./onboard/env") = require("./onboard/env");
+type ProviderSelectionResult =
+  import("./onboard/machine/handlers/provider-inference").ProviderSelectionResult;
 const {
   agentProductName,
   cliDisplayName,
@@ -28,10 +30,9 @@ const {
   requireProviderChoice,
   resolveCompatibleEndpointInput,
 }: typeof import("./onboard/setup-nim-selection") = require("./onboard/setup-nim-selection");
-const {
-  createSetupNimOllamaHandlers,
-}: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
+const setupNimOllama: typeof import("./onboard/setup-nim-ollama") = require("./onboard/setup-nim-ollama");
 const inferenceInputCapability = require("./onboard/inference-input-capability");
+const reasoningMode: typeof import("./onboard/reasoning-mode") = require("./onboard/reasoning-mode");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const {
   abortNonInteractive,
@@ -1048,6 +1049,7 @@ const { validateSelectedRemoteModel } = createRemoteModelValidator({
   shouldRequireResponsesToolCalling,
   shouldSkipResponsesProbe,
   getProbeAuthMode,
+  configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
 });
 
 const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
@@ -1059,20 +1061,17 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
   buildContext;
 // classifySandboxCreateFailure — see validation import above
 
-// ---------------------------------------------------------------------------
-// Ollama model prompt/pull/prepare functions — from inference/ollama/proxy.ts
-// (proxy lifecycle functions already imported at the top of this file)
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
   prepareOllamaModel,
-} = require("./inference/ollama/proxy");
+}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
   handleRunningOllamaSelection,
   handleInstallOllamaSelection,
-} = createSetupNimOllamaHandlers({
+} = setupNimOllama.createSetupNimOllamaHandlers({
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
   process,
@@ -3280,6 +3279,9 @@ async function selectAndValidateOllamaModel(
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
+  const confirm = (question: string, defaultIsYes: boolean) =>
+    promptYesNoOrDefault(question, null, defaultIsYes);
+  const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
@@ -3322,7 +3324,7 @@ async function selectAndValidateOllamaModel(
         }
       }
     }
-    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
@@ -3922,18 +3924,7 @@ async function setupNim(
   sandboxName: string | null = null,
   agent: AgentDefinition | null = null,
   recoverProvider = true,
-): Promise<{
-  model: string | null;
-  provider: string;
-  endpointUrl: string | null;
-  credentialEnv: string | null;
-  hermesAuthMethod: HermesAuthMethod | null;
-  hermesToolGateways: string[];
-  preferredInferenceApi: string | null;
-  nimContainer: string | null;
-  allowToolsIncompatible: boolean;
-  skipHostInferenceSmoke: boolean;
-}> {
+): Promise<ProviderSelectionResult> {
   step(3, 8, "Configuring inference provider");
 
   let model: string | typeof BACK_TO_SELECTION | null = null;
@@ -3944,6 +3935,7 @@ async function setupNim(
   let hermesAuthMethod: HermesAuthMethod | null = null;
   let hermesToolGateways: string[] = [];
   let preferredInferenceApi: string | null = null;
+  let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
   let skipHostInferenceSmoke = false;
 
@@ -4076,6 +4068,7 @@ async function setupNim(
           hermesAuthMethod,
           hermesToolGateways,
           preferredInferenceApi,
+          compatibleEndpointReasoning,
           nimContainer,
           allowToolsIncompatible,
         };
@@ -4093,6 +4086,7 @@ async function setupNim(
           preferredInferenceApi,
           allowToolsIncompatible,
         } = state);
+        compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
         skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
         if (result === "retry-selection") continue selectionLoop;
         break;
@@ -4292,6 +4286,8 @@ async function setupNim(
     }
   }
 
+  if (provider !== "compatible-endpoint")
+    compatibleEndpointReasoning = reasoningMode.clearCompatibleEndpointReasoning();
   const selectedModel = isBackToSelection(model) ? null : model;
   await inferenceInputCapability.maybePromptForInferenceInputCapability(selectedModel, {
     isNonInteractive,
@@ -4305,6 +4301,7 @@ async function setupNim(
     hermesAuthMethod,
     hermesToolGateways,
     preferredInferenceApi,
+    compatibleEndpointReasoning,
     nimContainer,
     allowToolsIncompatible,
     skipHostInferenceSmoke,
@@ -4884,6 +4881,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       hermesAuthMethod: normalizeHermesAuthMethod(session?.hermesAuthMethod),
       hermesToolGateways: normalizeHermesToolGatewaySelections(session?.hermesToolGateways),
       preferredInferenceApi: session?.preferredInferenceApi || null,
+      compatibleEndpointReasoning: session?.compatibleEndpointReasoning || null,
       nimContainer: session?.nimContainer || null,
       webSearchConfig: session?.webSearchConfig || null,
       webSearchSupported: false,
@@ -5024,6 +5022,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           recordStateSkipped,
           recordRepairEvent,
           hydrateCredentialEnv,
+          configureCompatibleEndpointReasoning: reasoningMode.configureCompatibleEndpointReasoning,
+          clearCompatibleEndpointReasoning: reasoningMode.clearCompatibleEndpointReasoning,
           repairLocalInferenceSystemdOverrideOrExit,
           isNonInteractive,
           getOpenshellBinary,

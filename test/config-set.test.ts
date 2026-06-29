@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// Build must run before these tests (imports from dist/)
+// The shared source hook preserves the writable CommonJS cache used by these tests.
 const require = createRequire(import.meta.url);
 const {
   extractDotpath,
@@ -18,8 +18,8 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
-} = require("../dist/lib/sandbox/config");
-const { selectDirectSandboxContainer } = require("../dist/lib/sandbox/privileged-exec");
+} = require("../src/lib/sandbox/config");
+const { selectDirectSandboxContainer } = require("../src/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];

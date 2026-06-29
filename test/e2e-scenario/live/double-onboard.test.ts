@@ -75,11 +75,8 @@ function onboardEnv(sandboxName: string, fakeBaseUrl: string, recreate = false):
   });
 }
 
-function staleRebuildEnv(sandboxName: string): NodeJS.ProcessEnv {
-  return {
-    ...onboardEnv(sandboxName, "http://127.0.0.1:9/v1"),
-    NEMOCLAW_MODEL: "ambient-wrong-model",
-  };
+function staleRebuildEnv(sandboxName: string, fakeBaseUrl: string): NodeJS.ProcessEnv {
+  return onboardEnv(sandboxName, fakeBaseUrl);
 }
 
 async function ignoreCleanupError(run: () => Promise<unknown>): Promise<void> {
@@ -685,7 +682,7 @@ liveTest(
 
     const rebuild = await command(host, [SANDBOX_A, "rebuild", "--yes"], {
       artifactName: "phase-5-stale-rebuild-recovery",
-      env: staleRebuildEnv(SANDBOX_A),
+      env: staleRebuildEnv(SANDBOX_A, fake.baseUrl),
       timeoutMs: PHASE_TIMEOUT_MS,
     });
     const rebuildText = resultText(rebuild);

@@ -15,6 +15,7 @@ function createResumeConfig(): RebuildResumeConfig {
     nimContainer: null,
     credentialEnv: "COMPATIBLE_API_KEY",
     preferredInferenceApi: "openai",
+    compatibleEndpointReasoning: "true",
     pinEndpoint: true,
     endpointUrl: "https://new-provider.example/v1",
     ambient: { presentVars: [], agentMismatch: null },
@@ -87,6 +88,7 @@ describe("rewindSessionForRebuildResume", () => {
       endpointUrl: "https://new-provider.example/v1",
       credentialEnv: "COMPATIBLE_API_KEY",
       preferredInferenceApi: "openai",
+      compatibleEndpointReasoning: "true",
       hermesToolGateways: [],
     });
     expect(rewound.machine).toMatchObject({
@@ -109,5 +111,27 @@ describe("rewindSessionForRebuildResume", () => {
         error: null,
       });
     }
+  });
+
+  it("clears reasoning state that came from an unrelated session", () => {
+    const session = createSession({
+      sandboxName: "other",
+      compatibleEndpointReasoning: "true",
+    });
+    const resumeConfig = {
+      ...createResumeConfig(),
+      compatibleEndpointReasoning: null,
+    };
+
+    const rewound = rewindSessionForRebuildResume(session, {
+      sandboxName: "alpha",
+      rebuildAgent: "openclaw",
+      rebuildMessagingPlan: null,
+      rebuildsHermesSandbox: false,
+      rebuildHermesToolGateways: [],
+      resumeConfig,
+    });
+
+    expect(rewound.compatibleEndpointReasoning).toBeNull();
   });
 });

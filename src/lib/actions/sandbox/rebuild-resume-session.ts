@@ -80,6 +80,7 @@ export function rewindSessionForRebuildResume(
   s.nimContainer = resumeConfig.nimContainer;
   s.credentialEnv = resumeConfig.credentialEnv;
   s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
+  s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
   // `onboard --resume` uses the session as the recreate contract. Always
   // overwrite the endpoint from the preflighted registry-derived config, even
   // when the previous session matched this sandbox name: a stale retry session

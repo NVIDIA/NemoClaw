@@ -887,7 +887,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("--audit reports all recognizers as would-apply on fresh fixtures without mutating files", () => {
+  it("reports all recognizers as would-apply on fresh fixtures without mutation for --audit", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-audit-fresh-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -921,7 +921,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("--audit reports all recognizers as already-applied on a patched dist", () => {
+  it("reports all recognizers as already-applied on a patched dist for --audit", () => {
     const tmp = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-audit-applied-"),
     );
@@ -949,7 +949,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("--audit exits non-zero and surfaces a per-recognizer miss without mutating files", () => {
+  it("exits non-zero and surfaces a per-recognizer miss without mutation for --audit", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-audit-miss-"));
     const dist = path.join(tmp, "dist");
     fs.mkdirSync(dist);
@@ -981,7 +981,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("--audit exits non-zero and reports each missing file when selectors fail", () => {
+  it("exits non-zero and reports each missing file for --audit when selectors fail", () => {
     const tmp = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-audit-not-found-"),
     );
@@ -1001,7 +1001,7 @@ describe("OpenClaw chat.send compatibility patch", () => {
     }
   });
 
-  it("--audit rejects extra positional arguments", () => {
+  it("rejects extra positional arguments for --audit", () => {
     const result = spawnSync(process.execPath, [PATCH_SCRIPT, "--audit", "/nonexistent", "extra"], {
       encoding: "utf-8",
       timeout: 10000,

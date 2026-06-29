@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { PARSER_EXIT_CODE, run, runWithEnv } from "./helpers";
 
@@ -100,43 +100,48 @@ describe("CLI onboard compatibility", () => {
     expect(r.out).not.toContain("Nonexistent flag: --yes");
   });
 
-  it("passes onboard sandbox GPU flags to legacy validation", () => {
+  it("lets oclif reject conflicting sandbox GPU flags", () => {
     const r = run(
       "onboard --sandbox-gpu --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
     );
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("--sandbox-gpu and --no-sandbox-gpu are mutually exclusive");
-    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu");
-    expect(r.out).not.toContain("Nonexistent flag: --no-sandbox-gpu");
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("--no-sandbox-gpu=true cannot also be provided");
+    expect(r.out).toContain("--sandbox-gpu");
   });
 
-  it("passes onboard sandbox GPU device flags to legacy validation", () => {
+  it("lets oclif enforce the sandbox GPU device dependency", () => {
     const r = run(
       "onboard --sandbox-gpu-device nvidia.com/gpu=0 --no-sandbox-gpu --non-interactive --yes-i-accept-third-party-software --yes",
     );
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("--sandbox-gpu-device cannot be used with --no-sandbox-gpu");
-    expect(r.out).not.toContain("Nonexistent flag: --sandbox-gpu-device");
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("must be provided when using --sandbox-gpu-device");
+    expect(r.out).toContain("--sandbox-gpu");
   });
 
-  it("setup --help exits 0 and shows onboard usage", () => {
+  it("lets oclif reject privileged control UI ports", () => {
+    const r = run("onboard --control-ui-port 80");
+    expect(r.code).toBe(PARSER_EXIT_CODE);
+    expect(r.out).toContain("Expected an integer greater than or equal to 1024 but received: 80");
+  });
+
+  it("setup --help exits 0 and shows native deprecated-alias usage", () => {
     const r = run("setup --help");
     expect(r.code).toBe(0);
-    expect(r.out.includes("setup` is deprecated")).toBeTruthy();
-    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
-    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
+    expect(r.out).toContain("Deprecated: 'nemoclaw setup' is now 'nemoclaw onboard'");
+    expect(r.out).toContain("$ nemoclaw setup [flags]");
+    expect(r.out).not.toContain("Unknown onboard option");
   });
 
-  it("setup forwards unknown options into onboard parsing", () => {
+  it("setup rejects unknown options through oclif", () => {
     const r = run("setup --non-interactiv");
     expect(r.code).toBe(PARSER_EXIT_CODE);
     expect(r.out).toContain("Nonexistent flag: --non-interactiv");
   });
 
-  it("setup forwards --resume into onboard parsing", () => {
+  it("setup forwards --resume into the shared onboard action", () => {
     const r = run("setup --resume --non-interactive --yes-i-accept-third-party-software --yes");
     expect(r.code).toBe(1);
-    expect(r.out.includes("deprecated")).toBeTruthy();
+    expect(r.out).toContain("Deprecated: 'nemoclaw setup' is now 'nemoclaw onboard'");
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 
@@ -151,7 +156,7 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("nemoclaw onboard")).toBeTruthy();
   });
 
-  it("#2753: refuses non-interactive --resume when sandbox step never completed and no name is provided", () => {
+  it("refuses non-interactive --resume when the sandbox step never completed and no name is provided (#2753)", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-resume-no-name-"));
     const localBin = path.join(home, "bin");
     const nemoclawDir = path.join(home, ".nemoclaw");
@@ -175,7 +180,7 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("--name <sandbox>")).toBeTruthy();
   });
 
-  it("#2753: whitespace-only NEMOCLAW_SANDBOX_NAME does not satisfy the resume guard", () => {
+  it("does not let whitespace-only NEMOCLAW_SANDBOX_NAME satisfy the resume guard (#2753)", () => {
     // The env-var ingest pipeline trims and rejects whitespace-only values
     // before populating requestedSandboxName, so the guard sees no recovered
     // name and fires correctly.
@@ -197,13 +202,12 @@ describe("CLI onboard compatibility", () => {
     expect(r.out.includes("Cannot resume non-interactive onboard")).toBeTruthy();
   });
 
-  it("setup-spark --help exits 0 and shows onboard usage", () => {
+  it("setup-spark --help exits 0 and shows native deprecated-alias usage", () => {
     const r = run("setup-spark --help");
     expect(r.code).toBe(0);
-    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
-    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
-    expect(r.out.includes("Usage: nemoclaw onboard")).toBeTruthy();
-    expect(r.out.includes("Unknown onboard option")).toBeFalsy();
+    expect(r.out).toContain("Deprecated: 'nemoclaw setup-spark' is now 'nemoclaw onboard'");
+    expect(r.out).toContain("$ nemoclaw setup-spark [flags]");
+    expect(r.out).not.toContain("Unknown onboard option");
   });
 
   it("setup-spark is a deprecated compatibility alias for onboard", () => {
@@ -211,8 +215,7 @@ describe("CLI onboard compatibility", () => {
       "setup-spark --resume --non-interactive --yes-i-accept-third-party-software --yes",
     );
     expect(r.code).toBe(1);
-    expect(r.out.includes("setup-spark` is deprecated")).toBeTruthy();
-    expect(r.out.includes("Use `nemoclaw onboard` instead")).toBeTruthy();
+    expect(r.out).toContain("Deprecated: 'nemoclaw setup-spark' is now 'nemoclaw onboard'");
     expect(r.out.includes("No resumable onboarding session was found")).toBeTruthy();
   });
 

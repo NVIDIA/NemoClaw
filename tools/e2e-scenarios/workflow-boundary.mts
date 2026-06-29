@@ -6,6 +6,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
+import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_VITEST_WORKFLOW_PATH = join(
   REPO_ROOT,
@@ -1032,6 +1035,28 @@ function validateNetworkPolicyVitestJob(
     errors.push(
       "network-policy-vitest checkout step must set persist-credentials=false",
     );
+  }
+
+  const installHostDependencies = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Install network-policy host dependencies",
+  );
+  if (installHostDependencies?.uses) {
+    errors.push(
+      "network-policy-vitest host dependency setup must stay inline in trusted workflow YAML",
+    );
+  }
+  for (const fragment of [
+    "for attempt in 1 2 3",
+    "sudo apt-get update",
+    'if [ "$attempt" -eq 3 ]; then',
+    "apt-get update failed after 3 attempts",
+    "sleep $((attempt * 5))",
+    "sudo apt-get install -y --no-install-recommends expect",
+  ]) {
+    requireRunContains(errors, installHostDependencies, fragment);
   }
 
   const setupNode = namedStep(steps, "Set up Node");
@@ -4997,6 +5022,7 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
     );
   }
   for (const secret of [
+    "NVIDIA_API_KEY",
     "NVIDIA_INFERENCE_API_KEY",
     "DOCKERHUB_USERNAME",
     "DOCKERHUB_TOKEN",
@@ -5020,9 +5046,15 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
         errors,
         stepName,
         stepEnv,
-        "NVIDIA_INFERENCE_API_KEY",
+        "NVIDIA_API_KEY",
       );
     }
+    requireEnvDoesNotExposeSecret(
+      errors,
+      stepName,
+      stepEnv,
+      "NVIDIA_INFERENCE_API_KEY",
+    );
     if (step.name !== "Authenticate to Docker Hub") {
       requireEnvDoesNotExposeSecret(
         errors,
@@ -5132,12 +5164,9 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
     "Run Model Router provider-routed inference live test",
   );
   const runVitestEnv = asRecord(runVitest?.env);
-  if (
-    runVitestEnv.NVIDIA_INFERENCE_API_KEY !==
-    "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-  ) {
+  if (runVitestEnv.NVIDIA_API_KEY !== "${{ secrets.NVIDIA_API_KEY }}") {
     errors.push(
-      "model-router-provider-routed-inference-vitest Vitest step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+      "model-router-provider-routed-inference-vitest Vitest step must receive NVIDIA_API_KEY from secrets",
     );
   }
   requireRunContains(
@@ -5206,6 +5235,35 @@ function validateModelRouterProviderRoutedInferenceVitestJob(
   }
   requireRunContains(errors, cleanup, "docker logout docker.io");
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
+}
+
+function validateGatewayDriftPreflightVitestJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "gateway-drift-preflight-vitest";
+  const job = asRecord(jobs[jobName]);
+  validateFreeStandingJobSelector(
+    errors,
+    jobs,
+    jobName,
+    "gateway-drift-preflight",
+  );
+  if (Object.keys(job).length === 0) return;
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    asSteps(job.steps),
+    "Run gateway drift preflight Vitest test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project integration");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/gateway-drift-preflight.test.ts",
+  );
+  requireRunDoesNotContain(errors, runVitest, "--project cli");
 }
 
 function runContainsCloudflaredAptInstall(run: string): boolean {
@@ -7413,6 +7471,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 ): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
+  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -7804,13 +7863,9 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateDiagnosticsVitestJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
   validateSnapshotCommandsVitestJob(errors, jobs);
+  errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateSparkInstallVitestJob(errors, jobs);
-  validateFreeStandingJobSelector(
-    errors,
-    jobs,
-    "gateway-drift-preflight-vitest",
-    "gateway-drift-preflight",
-  );
+  validateGatewayDriftPreflightVitestJob(errors, jobs);
 
   validateFreeStandingJobSelector(
     errors,

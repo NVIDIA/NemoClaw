@@ -11,14 +11,15 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "DOCKER_CERT_PATH",
   "DOCKER_API_VERSION",
   "XDG_RUNTIME_DIR",
+  "NEMOCLAW_OLLAMA_PULL_TIMEOUT",
 ];
 
 export function buildAvailabilityProbeEnv(
   base: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   // Availability probes run outside live scenario phases, but they need
-  // the same child-env and PATH policy. Add only Docker
-  // discovery knobs on top of the shared fixture boundary.
+  // the same child-env and PATH policy. Add Docker discovery knobs and the
+  // workflow-owned local-model pull budget on top of the shared boundary.
   return buildChildEnv(base, {
     additionalAllowedEnv: AVAILABILITY_PROBE_EXTRA_ENV_KEYS,
     fixtureOverlay: {},

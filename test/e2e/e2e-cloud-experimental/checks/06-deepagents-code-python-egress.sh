@@ -34,14 +34,8 @@ sandbox_exec() {
   openshell sandbox exec --name "$SANDBOX_NAME" -- bash -c "$1" 2>&1
 }
 
-python_probe() {
-  local python_bin="$1"
-  local url="$2"
-  if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
-    printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
-    return 0
-  fi
-  sandbox_exec "${python_bin@Q} - ${url@Q} <<'PY'
+python_probe_source() {
+  cat <<'PY'
 import sys
 import urllib.error
 import urllib.request
@@ -95,7 +89,19 @@ except OSError as exc:
 except Exception as exc:
     print(f'ERROR:{type(exc).__name__}:{exc}')
 PY
-"
+}
+
+python_probe() {
+  local python_bin="$1"
+  local url="$2"
+  local encoded remote_cmd
+  if [ -n "${NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_PYTHON_PROBE_FIXTURE"
+    return 0
+  fi
+  encoded="$(python_probe_source | base64 | tr -d '\n')"
+  remote_cmd="${python_bin@Q} -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
+  sandbox_exec "$remote_cmd"
 }
 
 expect_reached() {
@@ -135,6 +141,23 @@ if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "blocked-no-marker" ]; then
   expect_blocked "self-test Python" "fixture host" "https://blocked.example/"
   printf '%s\n' "${PREFIX}: $PASSED passed, $FAILED failed"
   [ "$FAILED" -eq 0 ] || exit 1
+  exit 0
+fi
+
+if [ "${NEMOCLAW_E2E_PYTHON_EGRESS_SELF_TEST:-}" = "probe-command-shape" ]; then
+  sandbox_exec() {
+    case "$1" in
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        return 0
+        ;;
+    esac
+  }
+  python_probe "python3" "https://example.com/"
   exit 0
 fi
 

@@ -3,16 +3,16 @@
 
 import fs from "node:fs";
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
-// Import from compiled dist/ for correct coverage attribution.
+// Import source directly so tests cannot pass against a stale build.
 import {
   getRemoteProviderHealthEndpoint,
-  probeRemoteProviderHealth,
   probeProviderHealth,
-} from "../../../dist/lib/inference/health";
+  probeRemoteProviderHealth,
+} from "./health";
 
-import { BUILD_ENDPOINT_URL } from "../../../dist/lib/inference/provider-models";
+import { BUILD_ENDPOINT_URL } from "./provider-models";
 
 describe("inference health", () => {
   describe("getRemoteProviderHealthEndpoint", () => {

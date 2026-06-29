@@ -86,7 +86,7 @@ function loadFormatter(source: string, env?: Record<string, string>): Formatter 
   return vm.runInNewContext(`${source}\nformatRawAssistantErrorForUi;`, context) as Formatter;
 }
 
-describe("OpenClaw #4434 diagnostics compatibility patch", () => {
+describe("OpenClaw diagnostics compatibility patch (#4434)", () => {
   it("enriches sandbox fetch failures and timeouts with structured diagnostics", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-4434-"));
     const dist = path.join(tmp, "dist");

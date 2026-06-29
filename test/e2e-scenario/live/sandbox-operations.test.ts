@@ -18,6 +18,10 @@ import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import {
+  type HostedInferenceConfig,
+  requireHostedInferenceConfig,
+} from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { ubuntuRepoDocker } from "../scenarios/matrix.ts";
 
@@ -35,10 +39,6 @@ function resultText(result: ProcessResult): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 function outputContainsSandbox(result: ProcessResult, sandboxName: string): boolean {
   const escaped = sandboxName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`, "m").test(resultText(result));
@@ -48,75 +48,30 @@ function expectExitZero(result: ProcessResult, label: string): void {
   expect(result.exitCode, `${label}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`).toBe(0);
 }
 
-function expectJsonStdout(result: ProcessResult, label: string): void {
-  expect(
-    result.stdout.trim(),
-    `${label} produced empty stdout\nstderr:\n${result.stderr}`,
-  ).not.toBe("");
-  expect(
-    () => JSON.parse(result.stdout),
-    `${label} stdout is not JSON:\n${result.stdout}`,
-  ).not.toThrow();
-}
-
-async function cleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  const result = await host.nemoclaw([sandboxName, "destroy", "--yes"], {
-    artifactName: `cleanup-destroy-${sandboxName}`,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 15 * 60_000,
-  });
-  if (result.exitCode === 0) return;
-  const text = resultText(result);
-  if (/Sandbox '.+' does not exist|Run 'nemoclaw onboard' to create one/i.test(text)) return;
-  expectExitZero(result, `cleanup destroy sandbox ${sandboxName}`);
-}
-
-async function bestEffortCleanupSandbox(host: HostCliClient, sandboxName: string): Promise<void> {
-  try {
-    await cleanupSandbox(host, sandboxName);
-  } catch {
-    // Best-effort pre-cleanup mirrors the legacy script's stale sandbox removal.
-  }
-}
-
-async function destroyGateway(host: HostCliClient, artifactName = "cleanup-gateway-destroy") {
-  await host.command("openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-    artifactName,
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 5 * 60_000,
-  });
-}
-
-async function bestEffortDestroyGateway(host: HostCliClient): Promise<void> {
-  try {
-    await destroyGateway(host);
-  } catch {
-    // Mirrors legacy teardown: gateway cleanup must not mask the test failure.
-  }
-}
-
 async function onboardSandbox(
   host: HostCliClient,
   cleanup: CleanupRegistry,
   sandboxName: string,
   artifactName: string,
+  hosted: HostedInferenceConfig,
   extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<ShellProbeResult> {
-  cleanup.add(`destroy sandbox ${sandboxName}`, () => cleanupSandbox(host, sandboxName));
+  cleanup.add(`destroy sandbox ${sandboxName}`, () => host.cleanupSandbox(sandboxName));
   const result = await host.nemoclaw(
     ["onboard", "--non-interactive", "--yes", "--yes-i-accept-third-party-software"],
     {
       artifactName,
       env: {
         ...buildAvailabilityProbeEnv(),
+        // The shared hosted configuration intentionally wins over availability
+        // defaults; extraEnv remains the per-sandbox override boundary.
+        ...hosted.env,
         ...extraEnv,
         NEMOCLAW_AGENT: "openclaw",
-        NEMOCLAW_PROVIDER: "cloud",
         NEMOCLAW_SANDBOX_NAME: sandboxName,
         NEMOCLAW_RECREATE_SANDBOX: "1",
-        NVIDIA_INFERENCE_API_KEY: process.env.NVIDIA_INFERENCE_API_KEY ?? "",
       },
-      redactionValues: [process.env.NVIDIA_INFERENCE_API_KEY ?? ""],
+      redactionValues: [hosted.apiKey],
       timeoutMs: 20 * 60_000,
     },
   );
@@ -279,10 +234,7 @@ async function assertAgentCanAnswer(host: HostCliClient, sandboxName: string): P
   expect(containsInteger42Answer(reply), resultText(result)).toBe(true);
 }
 
-async function assertAgentJsonTransportBoundaries(
-  host: HostCliClient,
-  sandboxName: string,
-): Promise<void> {
+async function assertAgentJsonNonzeroExit(host: HostCliClient, sandboxName: string): Promise<void> {
   const invalidFlag = await host.nemoclaw(
     [sandboxName, "agent", "--json", "--nemoclaw-e2e-invalid-openclaw-agent-flag"],
     {
@@ -295,51 +247,13 @@ async function assertAgentJsonTransportBoundaries(
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBeNull();
   expect(invalidFlag.exitCode, resultText(invalidFlag)).not.toBe(0);
 
-  const stdinPrompt = "What is 6 multiplied by 7? Reply with only the integer, no extra words.";
-  const stdinSessionId = `e2e-sbx-02b-stdin-${Date.now()}-${process.pid}`;
-  const stdinScript = [
-    "set -euo pipefail",
-    `printf '%s\\n' ${shellQuote(stdinPrompt)} | ${shellQuote(host.commandPath)} ${shellQuote(
-      sandboxName,
-    )} agent --agent main --json --session-id ${shellQuote(stdinSessionId)}`,
-  ].join("\n");
-  const stdinResult = await host.command("bash", ["-lc", stdinScript], {
-    artifactName: "tc-sbx-02b-agent-json-stdin",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 120_000,
-  });
-  expectExitZero(stdinResult, `printf prompt | nemoclaw ${sandboxName} agent --json`);
-  expectJsonStdout(stdinResult, "stdin agent --json");
-  expect(parseOpenClawAgentText(stdinResult.stdout), resultText(stdinResult)).toMatch(
-    /(^|[^0-9])42([^0-9]|$)/,
-  );
-
-  const provenanceMarker = `NEMOCLAW_PROVENANCE_E2E_${Date.now()}_${process.pid}`;
-  const failureSessionId = `e2e-sbx-02b-failure-${Date.now()}-${process.pid}`;
-  const failure = await host.nemoclaw(
-    [
-      sandboxName,
-      "agent",
-      "--agent",
-      "main",
-      "--json",
-      "--thinking",
-      "off",
-      "--session-id",
-      failureSessionId,
-      "-m",
-      `Use the exec tool to run exactly: /bin/sh -lc 'echo ${provenanceMarker}; exit 7'. Do not retry the command. Then reply with exactly: observed expected failure.`,
-    ],
-    {
-      artifactName: "tc-sbx-02b-agent-json-failed-tool-provenance",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 180_000,
-    },
-  );
-  expectExitZero(failure, `nemoclaw ${sandboxName} agent --json failed-tool provenance`);
-  expectJsonStdout(failure, "failed-tool agent --json");
-  expect(failure.stderr, resultText(failure)).toContain("[openclaw provenance] failed tool result");
-  expect(failure.stderr, resultText(failure)).toContain(provenanceMarker);
+  // The v0.0.69 legacy job did not exercise piped stdin. That experimental
+  // migration-only assertion was retired instead of expanding the parity lane.
+  // Failed-tool provenance remains covered deterministically by
+  // test/openclaw-agent-json.test.ts; a live prompt cannot require upstream
+  // OpenClaw to emit failed tool-result metadata. Re-add live stdin coverage if
+  // the frozen parity source gains that contract or transport validation is
+  // explicitly added to this lane's scope.
 }
 
 async function assertStatusFields(host: HostCliClient, sandboxName: string): Promise<void> {
@@ -536,7 +450,15 @@ async function assertDestroyRemovesSandbox(
   expect(outputContainsSandbox(openshellList, sandboxName), resultText(openshellList)).toBe(false);
 }
 
-async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): Promise<void> {
+type GatewayRecoveryOutcome =
+  | "recovered-before-status"
+  | "recovered-by-status"
+  | "skipped-gateway-absent";
+
+async function assertGatewayRecovery(
+  host: HostCliClient,
+  sandboxName: string,
+): Promise<GatewayRecoveryOutcome> {
   const running = await host.command(
     "docker",
     ["ps", "-q", "--filter", `name=${GATEWAY_CONTAINER}`],
@@ -547,16 +469,15 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
     },
   );
   if (!running.stdout.trim()) {
-    // Preserve the legacy script's soft-skip when the shared gateway is already
-    // absent before the destructive recovery probe can exercise it.
-    return;
+    return "skipped-gateway-absent";
   }
 
-  await host.command("docker", ["kill", GATEWAY_CONTAINER], {
+  const kill = await host.command("docker", ["kill", GATEWAY_CONTAINER], {
     artifactName: "tc-sbx-06-docker-kill-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 30_000,
   });
+  expectExitZero(kill, "kill shared NemoClaw gateway container");
   await new Promise((resolve) => setTimeout(resolve, 5_000));
 
   const afterKill = await host.command(
@@ -568,19 +489,14 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
       timeoutMs: 15_000,
     },
   );
-  if (afterKill.stdout.trim() === "true") {
-    // Preserve the legacy script's soft-skip when Docker restarts the gateway
-    // before the recovery path can observe a stopped container.
-    return;
-  }
+  const recoveryOutcome =
+    afterKill.stdout.trim() === "true" ? "recovered-before-status" : "recovered-by-status";
 
   const status = await host.nemoclaw([sandboxName, "status"], {
     artifactName: "tc-sbx-06-status-recovers-gateway",
     env: buildAvailabilityProbeEnv(),
     timeoutMs: 10 * 60_000,
   });
-  if (status.exitCode === 0) return;
-
   const afterStatus = await host.command(
     "docker",
     ["inspect", "-f", "{{.State.Running}}", GATEWAY_CONTAINER],
@@ -590,18 +506,15 @@ async function assertGatewayRecovery(host: HostCliClient, sandboxName: string): 
       timeoutMs: 15_000,
     },
   );
-  if (afterStatus.stdout.trim() !== "true") {
-    // Same legacy soft-skip: Docker did not restart the gateway container on
-    // this runner, so there is no recovery signal to assert.
-    return;
-  }
   expectExitZero(status, `nemoclaw ${sandboxName} status after gateway kill`);
+  expect(afterStatus.stdout.trim(), resultText(afterStatus)).toBe("true");
+  return recoveryOutcome;
 }
 
 liveTest(
   "sandbox operations preserve list/status/logs/recovery/multi-sandbox contracts",
   async ({ artifacts, cleanup, environment, host, sandbox, secrets, skip }) => {
-    secrets.required("NVIDIA_INFERENCE_API_KEY");
+    const hosted = requireHostedInferenceConfig(secrets);
 
     await artifacts.writeJson("scenario.json", {
       id: "sandbox-operations",
@@ -611,7 +524,7 @@ liveTest(
       contracts: [
         "TC-SBX-01 list shows onboarded sandbox",
         "TC-SBX-02 nemoclaw <sandbox> agent --json answers through sandbox inference.local",
-        "TC-SBX-02b agent --json preserves stdin, nonzero status, and failed-tool provenance boundaries",
+        "TC-SBX-02b agent --json preserves nonzero transport status",
         "TC-SBX-03 status renders Sandbox/Model/Provider/GPU fields",
         "TC-SBX-04 logs and logs --follow behave as streaming commands",
         "TC-SBX-05 destroy removes NemoClaw and OpenShell entries",
@@ -637,22 +550,27 @@ liveTest(
     }
 
     await environment.assertReady(ENVIRONMENT);
-    cleanup.add("destroy shared NemoClaw gateway", () => bestEffortDestroyGateway(host));
-    await bestEffortCleanupSandbox(host, SANDBOX_B);
-    await bestEffortCleanupSandbox(host, SANDBOX_A);
+    cleanup.add("remove shared NemoClaw gateway registration", () =>
+      host.cleanupGatewayRegistration("nemoclaw", {
+        env: buildAvailabilityProbeEnv(),
+        timeoutMs: 5 * 60_000,
+      }),
+    );
+    await host.cleanupSandbox(SANDBOX_B);
+    await host.cleanupSandbox(SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a");
+    await onboardSandbox(host, cleanup, SANDBOX_A, "onboard-sandbox-a", hosted);
 
     await expectListed(host, SANDBOX_A, "tc-sbx-01-list-sandbox-a");
     await assertAgentCanAnswer(host, SANDBOX_A);
-    await assertAgentJsonTransportBoundaries(host, SANDBOX_A);
+    await assertAgentJsonNonzeroExit(host, SANDBOX_A);
     await assertStatusFields(host, SANDBOX_A);
     await assertLogsStream(host, SANDBOX_A);
     await assertTmuxPtyFlow(sandbox, SANDBOX_A);
     await assertRegistryRebuild(host, SANDBOX_A);
     await assertProcessRecovery(host, sandbox, SANDBOX_A);
 
-    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", {
+    await onboardSandbox(host, cleanup, SANDBOX_B, "tc-sbx-10-onboard-sandbox-b", hosted, {
       CHAT_UI_URL: "http://127.0.0.1:18790",
     });
     await assertMetadataForBothSandboxes(host, SANDBOX_A, SANDBOX_B);
@@ -660,11 +578,12 @@ liveTest(
     await assertNetworkIsolation(sandbox, SANDBOX_B, SANDBOX_A, "tc-sbx-11-b-cannot-reach-a");
     await assertDestroyRemovesSandbox(host, sandbox, SANDBOX_B);
 
-    await assertGatewayRecovery(host, SANDBOX_A);
+    const gatewayRecovery = await assertGatewayRecovery(host, SANDBOX_A);
 
     await artifacts.writeJson("scenario-result.json", {
       id: "sandbox-operations",
       status: "passed",
+      gatewayRecovery,
       legacySource: "test/e2e/test-sandbox-operations.sh",
     });
   },

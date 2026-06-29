@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { setOnboardBrandingAgent } from "./branding";
 import {
   printContainerDnsRemediation,
   printDockerBridgeContainerStartFailure,
-} from "../../../dist/lib/onboard/bridge-dns-preflight";
-import { setOnboardBrandingAgent } from "../../../dist/lib/onboard/branding";
+} from "./bridge-dns-preflight";
 
 describe("printDockerBridgeContainerStartFailure", () => {
   const savedInvokedAs = process.env.NEMOCLAW_INVOKED_AS;
@@ -27,7 +26,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     vi.restoreAllMocks();
   });
 
-  it("uses the active CLI branding in the verify-outside hint (#3630 CodeRabbit)", () => {
+  it("uses the active CLI branding in the verify-outside hint per CodeRabbit review (#3630)", () => {
     setOnboardBrandingAgent("hermes");
     process.env.NEMOCLAW_AGENT = "hermes";
     process.env.NEMOCLAW_INVOKED_AS = "nemohermes";
@@ -50,7 +49,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(verifyLine).not.toContain("Verify outside NemoClaw:");
   });
 
-  it("renders Linux daemon.json remediation without the bare-echo clobber fallback (#3630 CodeRabbit)", () => {
+  it("renders Linux daemon.json remediation without the bare-echo clobber fallback per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
@@ -80,7 +79,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(blob).toMatch(/\{"dns":\["[^"]+"\]\}/);
   });
 
-  it("renders WSL-without-systemd remediation without using systemctl steps (#3630 CodeRabbit)", () => {
+  it("renders WSL-without-systemd remediation without using systemctl steps per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
@@ -104,7 +103,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(blob).toContain("jq -n");
   });
 
-  it("renders WSL-with-systemd remediation with the Linux systemd path (#3630 CodeRabbit)", () => {
+  it("renders WSL-with-systemd remediation with the Linux systemd path per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
@@ -121,7 +120,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(blob).toContain("sudo systemctl restart docker");
   });
 
-  it("uses the pinned BusyBox digest in the manual verify-fix commands (#3630 CodeRabbit)", () => {
+  it("uses the pinned BusyBox digest in manual verify-fix commands per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
@@ -140,7 +139,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(blob).not.toMatch(/docker run --rm busybox\s+nslookup/);
   });
 
-  it("uses the pinned BusyBox digest in the verify-outside hint after a bridge failure (#3630 CodeRabbit)", () => {
+  it("uses the pinned BusyBox digest in the post-failure verify-outside hint per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));
@@ -159,7 +158,7 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(blob).not.toMatch(/busybox:latest true/);
   });
 
-  it("renders macOS Docker Desktop daemon.json remediation without bare-echo clobber (#3630 CodeRabbit)", () => {
+  it("renders macOS Docker Desktop daemon.json remediation without bare-echo clobber per CodeRabbit review (#3630)", () => {
     const messages: string[] = [];
     const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
       messages.push(String(arg ?? ""));

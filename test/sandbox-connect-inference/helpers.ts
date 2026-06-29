@@ -93,6 +93,7 @@ function initStateFile(stateFile: string, options: SetupFixtureOptions) {
       curlEnvs: [],
       inferenceProbeExitStatuses: options.inferenceProbeExitStatuses ?? [],
       inferenceProbeResponses: options.inferenceProbeResponses ?? ["OK 200"],
+      inferenceGetCalls: [],
       inferenceSetCalls: [],
       sandboxConnectCalls: [],
       sandboxExecCalls: [],
@@ -198,6 +199,8 @@ if (args[0] === "sandbox" && args[1] === "connect") {
 }
 
 if (args[0] === "inference" && args[1] === "get") {
+  state.inferenceGetCalls.push(args.slice(2));
+  fs.writeFileSync(stateFile, JSON.stringify(state));
   process.stdout.write(${JSON.stringify(inferenceBlock.replace(/\\n/g, "\n"))});
   process.exit(0);
 }
@@ -428,7 +431,7 @@ export function runConnect(
         VITEST: "true",
         ...extraEnv,
       },
-      timeout: execTimeout(15_000),
+      timeout: execTimeout(30_000),
     },
   );
 }

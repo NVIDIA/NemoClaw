@@ -8,9 +8,9 @@ import {
   assessAmbientRecreateEnv,
   isolateAmbientRecreateEnv,
   sanitizeEnvValueForDisplay,
-} from "../../../../dist/lib/actions/sandbox/rebuild-env-isolation.js";
+} from "./rebuild-env-isolation.js";
 
-describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
+describe("sanitizeEnvValueForDisplay PRA-7 (#5735)", () => {
   it("collapses a multi-line / ANSI value into a single safe line", () => {
     // Untrusted NEMOCLAW_AGENT with a newline + CR + ANSI escape that tries to
     // paint a fake "Installation complete" status line.
@@ -34,7 +34,7 @@ describe("sanitizeEnvValueForDisplay (#5735 PRA-7)", () => {
   });
 });
 
-describe("AMBIENT_RECREATE_ENV_VARS contract (#5735 PRA-4)", () => {
+describe("AMBIENT_RECREATE_ENV_VARS contract PRA-4 (#5735)", () => {
   it("pins the exact onboard-selection env set the recreate must isolate", () => {
     // Mirrors the ambient selection env vars `onboard --resume` reads at its
     // source boundary. Adding a new onboard-selection env var must be a conscious
@@ -47,6 +47,7 @@ describe("AMBIENT_RECREATE_ENV_VARS contract (#5735 PRA-4)", () => {
       "NEMOCLAW_PROVIDER_KEY",
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_MODEL",
+      "NEMOCLAW_REASONING",
     ]);
   });
 });
@@ -62,8 +63,13 @@ describe("assessAmbientRecreateEnv", () => {
     const result = assessAmbientRecreateEnv("openclaw", {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
+      NEMOCLAW_REASONING: "true",
     });
-    expect(result.presentVars).toEqual(["NEMOCLAW_AGENT", "NEMOCLAW_PROVIDER_KEY"]);
+    expect(result.presentVars).toEqual([
+      "NEMOCLAW_AGENT",
+      "NEMOCLAW_PROVIDER_KEY",
+      "NEMOCLAW_REASONING",
+    ]);
     expect(result.agentMismatch).toEqual({
       envAgent: "langchain-deepagents-code",
       registryAgent: "openclaw",
@@ -97,6 +103,7 @@ describe("isolateAmbientRecreateEnv", () => {
       NEMOCLAW_AGENT: "langchain-deepagents-code",
       NEMOCLAW_PROVIDER_KEY: "sk-bogus",
       NEMOCLAW_MODEL: "some-model",
+      NEMOCLAW_REASONING: "false",
       // not part of the selection set — must be left untouched
       NVIDIA_API_KEY: "nvapi-keep-me",
     };
@@ -113,6 +120,7 @@ describe("isolateAmbientRecreateEnv", () => {
     expect(env.NEMOCLAW_AGENT).toBe("langchain-deepagents-code");
     expect(env.NEMOCLAW_PROVIDER_KEY).toBe("sk-bogus");
     expect(env.NEMOCLAW_MODEL).toBe("some-model");
+    expect(env.NEMOCLAW_REASONING).toBe("false");
     expect(env.NVIDIA_API_KEY).toBe("nvapi-keep-me");
     // A var that was never set stays unset after restore.
     expect("NEMOCLAW_PROVIDER" in env).toBe(false);

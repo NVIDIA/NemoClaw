@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /* global fetch */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -23,12 +23,12 @@ const SCRIPT = path.join(
   "tool-gateway-broker.ts",
 );
 const require = createRequire(import.meta.url);
-const DIST_WRAPPER = path.join(
+const BROKER_WRAPPER = path.join(
   import.meta.dirname,
   "..",
-  "dist",
+  "src",
   "lib",
-  "hermes-tool-gateway-broker.js",
+  "hermes-tool-gateway-broker.ts",
 );
 
 let children: ChildProcess[] = [];
@@ -94,8 +94,8 @@ afterEach(() => {
 
 describe("Hermes managed-tool gateway broker", () => {
   it("only auto-recovers for Hermes sandboxes with selected managed tools", () => {
-    delete require.cache[require.resolve(DIST_WRAPPER)];
-    const broker = require(DIST_WRAPPER);
+    delete require.cache[require.resolve(BROKER_WRAPPER)];
+    const broker = require(BROKER_WRAPPER);
 
     expect(
       broker.isHermesManagedToolGatewayEntry({
