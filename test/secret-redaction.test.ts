@@ -184,5 +184,11 @@ describe("secret redaction consistency (#1736)", () => {
       expect(text).not.toContain("sk-test-inference-hub-key");
       expect(text).toBe("NEMOCLAW_PROVIDER_KEY=<REDACTED>");
     });
+
+    it("redacts TAVILY_API_KEY env-var assignments", () => {
+      const text = redactSensitiveText("TAVILY_API_KEY=tvly-redaction-regression-12345");
+      expect(text).not.toContain("tvly-redaction-regression-12345");
+      expect(text).toBe("TAVILY_API_KEY=<REDACTED>");
+    });
   });
 });

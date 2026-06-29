@@ -49,15 +49,28 @@ describe("credentials CLI dispatch", () => {
   it("credentials add without --credential or --from-existing fails with explicit guidance", () => {
     const r = run("credentials add tavily-search --type tavily");
     expect(r.code).not.toBe(0);
-    expect(r.out).toContain(
-      "At least one --credential KEY[=VALUE] or --from-existing is required.",
-    );
+    expect(r.out).toContain("At least one --credential KEY or --from-existing is required.");
   });
 
   it("credentials add rejects --from-existing combined with --credential", () => {
     const r = run("credentials add foo --type generic --from-existing --credential FOO_TOKEN");
     expect(r.code).not.toBe(0);
     expect(r.out).toContain("--from-existing cannot be combined with --credential.");
+  });
+
+  it("credentials add rejects inline KEY=VALUE credentials without echoing the value", () => {
+    const r = run(
+      "credentials add tavily-search --type tavily --credential TAVILY_API_KEY=tvly-secret-12345",
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("--credential expects an env variable name, not 'KEY=VALUE'");
+    expect(r.out).not.toContain("tvly-secret-12345");
+  });
+
+  it("credentials add rejects --credential values that are not uppercase env names", () => {
+    const r = run("credentials add tavily-search --type tavily --credential tavily-api-key");
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("is not a valid env variable name");
   });
 
   it("credentials reset without provider uses oclif required-arg validation", () => {

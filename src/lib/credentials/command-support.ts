@@ -22,7 +22,7 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
     "    list                            List provider credentials registered with the OpenShell gateway",
   );
   log(
-    "    add <PROVIDER> --type <TYPE>    Register a provider credential with the OpenShell gateway",
+    "    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)",
   );
   log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
