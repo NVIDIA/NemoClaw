@@ -6,6 +6,48 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
+type SemverTag = { name: string; major: number; minor: number; patch: number; sha?: string };
+type Threshold = { minDeltaMs: number; minPercent: number };
+type OnboardPerformanceBudget = {
+  schemaVersion: 1;
+  mode: "advisory";
+  scope: string;
+  totalBudgetMs: number;
+  regressionWarning: Threshold;
+  phaseRegressionWarning: Threshold;
+};
+type BudgetLoadResult =
+  | { status: "loaded"; budget: OnboardPerformanceBudget }
+  | { status: "unavailable"; reason: "missing" | "invalid" | "path_traversal" };
+type PhaseDurations = Record<string, number>;
+type OnboardTrace = { artifact?: unknown; totalMs: number; phases: PhaseDurations };
+type PhaseRow = {
+  name: string;
+  label: string;
+  currentMs: number;
+  priorMs: number;
+  deltaMs: number;
+  deltaAbsMs: number;
+};
+type BudgetEvaluation = {
+  exceeded: boolean;
+  status: "config_unavailable" | "exceeded" | "ok";
+  mode: string;
+  scope: string;
+  statusLabel: string;
+  summary: string;
+  summaryLines: string[];
+  warningMessage: string | null;
+};
+type TraceTimingResult = {
+  traceTimingLine: string;
+  traceSummaryLines: string[];
+  budgetExceeded: boolean;
+  budgetWarningMessage: string | null;
+  budgetStatus: string;
+};
+type GitHubDeps = { github: any; context: any; core?: { warning?: (message: string) => void } };
+
 const WORKFLOW_FILE = "nightly-e2e.yaml";
 const TRACE_ARTIFACT_NAME = "cloud-onboard-traces";
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
@@ -23,7 +65,7 @@ const ONBOARD_PHASE_ORDER = [
 ];
 const ONBOARD_PHASE_NAMES = new Set(ONBOARD_PHASE_ORDER);
 
-function parseSemverTag(name) {
+function parseSemverTag(name: string): SemverTag | null {
   const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(name);
   if (!match) return null;
   return {
@@ -34,11 +76,11 @@ function parseSemverTag(name) {
   };
 }
 
-function compareSemverDesc(a, b) {
+function compareSemverDesc(a: SemverTag, b: SemverTag): number {
   return b.major - a.major || b.minor - a.minor || b.patch - a.patch;
 }
 
-function formatDuration(ms) {
+function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) return "unknown";
   if (ms < 1000) return `${ms.toFixed(0)}ms`;
   const seconds = ms / 1000;
@@ -48,7 +90,7 @@ function formatDuration(ms) {
   return `${minutes}m ${remaining.toFixed(1)}s`;
 }
 
-function formatTraceDelta(currentMs, priorMs) {
+function formatTraceDelta(currentMs: number, priorMs: number): string {
   const deltaMs = currentMs - priorMs;
   const pct = priorMs > 0 ? (deltaMs / priorMs) * 100 : 0;
   if (Math.abs(deltaMs) < 1) return "unchanged";
@@ -57,22 +99,23 @@ function formatTraceDelta(currentMs, priorMs) {
   return `${direction} ${sign}${formatDuration(Math.abs(deltaMs))} (${sign}${Math.abs(pct).toFixed(1)}%)`;
 }
 
-function phaseLabel(name) {
+function phaseLabel(name: string): string {
   return name.replace(ONBOARD_PHASE_PREFIX, "").replace(/_/g, " ");
 }
 
-function formatPhaseDelta(currentMs, priorMs) {
+function formatPhaseDelta(currentMs: number, priorMs: number): string {
   const deltaMs = currentMs - priorMs;
   if (Math.abs(deltaMs) < 1) return "±0ms";
   const sign = deltaMs > 0 ? "+" : "-";
   return `${sign}${formatDuration(Math.abs(deltaMs))}`;
 }
 
-function extractPhaseDurations(spans) {
-  const phases = {};
+function extractPhaseDurations(spans: unknown[]): PhaseDurations {
+  const phases: PhaseDurations = {};
   for (const span of spans) {
-    const name = span?.name;
-    const durationMs = Number(span?.duration_ms);
+    const record = span as Record<string, unknown> | null | undefined;
+    const name = record?.name;
+    const durationMs = Number(record?.duration_ms);
     if (
       typeof name !== "string" ||
       !name.startsWith(ONBOARD_PHASE_PREFIX) ||
@@ -86,22 +129,22 @@ function extractPhaseDurations(spans) {
 }
 
 function traceTimingResult(
-  traceTimingLine,
-  traceSummaryLines = [],
+  traceTimingLine: string,
+  traceSummaryLines: string[] = [],
   budgetExceeded = false,
-  budgetWarningMessage = null,
+  budgetWarningMessage: string | null = null,
   budgetStatus = "not_evaluated",
-) {
+): TraceTimingResult {
   return { traceTimingLine, traceSummaryLines, budgetExceeded, budgetWarningMessage, budgetStatus };
 }
 
-function isFiniteNonNegativeNumber(value) {
+function isFiniteNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-function normalizeThreshold(value) {
+function normalizeThreshold(value: unknown): Threshold | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const object = value;
+  const object = value as Record<string, unknown>;
   if (
     !isFiniteNonNegativeNumber(object.minDeltaMs) ||
     !isFiniteNonNegativeNumber(object.minPercent)
@@ -114,9 +157,9 @@ function normalizeThreshold(value) {
   };
 }
 
-function normalizeOnboardPerformanceBudget(value) {
+function normalizeOnboardPerformanceBudget(value: unknown): OnboardPerformanceBudget | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const object = value;
+  const object = value as Record<string, unknown>;
   const regressionWarning = normalizeThreshold(object.regressionWarning);
   const phaseRegressionWarning = normalizeThreshold(object.phaseRegressionWarning);
   if (
@@ -133,23 +176,25 @@ function normalizeOnboardPerformanceBudget(value) {
   return {
     schemaVersion: 1,
     mode: "advisory",
-    scope: object.scope,
+    scope: object.scope as string,
     totalBudgetMs: object.totalBudgetMs,
     regressionWarning,
     phaseRegressionWarning,
   };
 }
 
-function repoRelativePath(baseDir, targetPath) {
+function repoRelativePath(baseDir: string, targetPath: string): string {
   return path.relative(path.resolve(baseDir), path.resolve(targetPath));
 }
 
-function isPathInside(baseDir, targetPath) {
+function isPathInside(baseDir: string, targetPath: string): boolean {
   const relativePath = repoRelativePath(baseDir, targetPath);
   return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
-function readOnboardPerformanceBudget(rootDir = process.env.GITHUB_WORKSPACE || REPO_ROOT) {
+function readOnboardPerformanceBudget(
+  rootDir = process.env.GITHUB_WORKSPACE || REPO_ROOT,
+): BudgetLoadResult {
   const repoRoot = path.resolve(REPO_ROOT);
   const budgetRoot = path.resolve(rootDir);
   if (!isPathInside(repoRoot, budgetRoot)) {
@@ -174,9 +219,9 @@ function readOnboardPerformanceBudget(rootDir = process.env.GITHUB_WORKSPACE || 
   }
 }
 
-function normalizePhaseDurations(value) {
+function normalizePhaseDurations(value: unknown): PhaseDurations | null {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
-  const phases = {};
+  const phases: PhaseDurations = {};
   for (const [name, entry] of Object.entries(value)) {
     if (!ONBOARD_PHASE_NAMES.has(name)) continue;
     const durationMs = Number(entry);
@@ -186,11 +231,11 @@ function normalizePhaseDurations(value) {
   return phases;
 }
 
-function selectOnboardTrace(jsonTexts) {
-  const candidates = [];
+function selectOnboardTrace(jsonTexts: string[]): OnboardTrace | null {
+  const candidates: OnboardTrace[] = [];
   for (const text of jsonTexts) {
     try {
-      const artifact = JSON.parse(text);
+      const artifact = JSON.parse(text) as Record<string, any>;
       const totalMs = Number(artifact?.total_duration_ms);
       const phases = normalizePhaseDurations(artifact.phases);
       if (
@@ -211,7 +256,7 @@ function selectOnboardTrace(jsonTexts) {
   return candidates[0] ?? null;
 }
 
-function buildPhaseRows(currentPhases, priorPhases) {
+function buildPhaseRows(currentPhases: PhaseDurations, priorPhases: PhaseDurations): PhaseRow[] {
   return ONBOARD_PHASE_ORDER.filter(
     (name) => currentPhases[name] !== undefined && priorPhases[name] !== undefined,
   ).map((name) => {
@@ -229,7 +274,7 @@ function buildPhaseRows(currentPhases, priorPhases) {
   });
 }
 
-function formatTopPhaseChanges(phaseRows) {
+function formatTopPhaseChanges(phaseRows: PhaseRow[]): string {
   return phaseRows
     .slice()
     .sort((a, b) => b.deltaAbsMs - a.deltaAbsMs || a.label.localeCompare(b.label))
@@ -238,25 +283,25 @@ function formatTopPhaseChanges(phaseRows) {
     .join("; ");
 }
 
-function currentPhaseRows(phases) {
+function currentPhaseRows(phases?: PhaseDurations): Array<{ label: string; ms: number }> {
   return ONBOARD_PHASE_ORDER.filter((name) => phases?.[name] !== undefined)
     .map((name) => ({ label: phaseLabel(name), ms: phases?.[name] ?? 0 }))
     .sort((a, b) => b.ms - a.ms || a.label.localeCompare(b.label));
 }
 
-function percentDelta(currentMs, priorMs) {
+function percentDelta(currentMs: number, priorMs: number): number {
   return priorMs > 0 ? ((currentMs - priorMs) / priorMs) * 100 : 0;
 }
 
 // Require both an absolute and percentage delta so tiny fast-phase noise does not page maintainers.
-function exceedsThreshold(currentMs, priorMs, threshold) {
+function exceedsThreshold(currentMs: number, priorMs: number, threshold: Threshold): boolean {
   const deltaMs = currentMs - priorMs;
   return (
     deltaMs >= threshold.minDeltaMs && percentDelta(currentMs, priorMs) >= threshold.minPercent
   );
 }
 
-function sanitizeTraceTimingError(error) {
+function sanitizeTraceTimingError(error: unknown): string {
   const errorName = error?.constructor?.name || "Error";
   const rawMessage = error instanceof Error ? error.message : String(error);
   const message = rawMessage
@@ -271,7 +316,12 @@ function evaluateOnboardPerformanceBudget({
   currentTrace,
   priorTrace = null,
   phaseRows = [],
-}) {
+}: {
+  budget: BudgetLoadResult | OnboardPerformanceBudget | null;
+  currentTrace: OnboardTrace;
+  priorTrace?: OnboardTrace | null;
+  phaseRows?: PhaseRow[];
+}): BudgetEvaluation | null {
   if (budget === null) return null;
   if ("status" in budget) {
     if (budget.status === "unavailable") {
@@ -397,12 +447,12 @@ function evaluateOnboardPerformanceBudget({
 }
 
 function buildTraceSummaryLines(
-  currentTrace,
-  priorTrace,
-  priorTag,
-  phaseRows,
-  budgetEvaluation = null,
-) {
+  currentTrace: OnboardTrace,
+  priorTrace: OnboardTrace,
+  priorTag: SemverTag,
+  phaseRows: PhaseRow[],
+  budgetEvaluation: BudgetEvaluation | null = null,
+): string[] {
   if (phaseRows.length === 0 && budgetEvaluation === null) return [];
 
   const lines = [
@@ -433,18 +483,18 @@ function buildTraceSummaryLines(
   return lines;
 }
 
-async function resolvePriorReleaseTag({ github, context }) {
-  const tags = await github.paginate(github.rest.repos.listTags, {
+async function resolvePriorReleaseTag({ github, context }: GitHubDeps): Promise<SemverTag | null> {
+  const tags = (await github.paginate(github.rest.repos.listTags, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     per_page: 100,
-  });
+  })) as Array<{ name: string; commit?: { sha?: string } }>;
   const semverTags = tags
-    .map((tag) => {
+    .map((tag: { name: string; commit?: { sha?: string } }) => {
       const semverTag = parseSemverTag(tag.name);
       return semverTag && tag.commit?.sha ? { ...semverTag, sha: tag.commit.sha } : null;
     })
-    .filter(Boolean)
+    .filter((tag): tag is SemverTag & { sha: string } => Boolean(tag))
     .sort(compareSemverDesc);
   if (semverTags.length === 0) return null;
 
@@ -457,7 +507,10 @@ async function resolvePriorReleaseTag({ github, context }) {
   return index >= 0 ? (semverTags[index + 1] ?? null) : semverTags[0];
 }
 
-async function findLatestCompletedNightlyRunForReleaseTag({ github, context }, tag) {
+async function findLatestCompletedNightlyRunForReleaseTag(
+  { github, context }: GitHubDeps,
+  tag: SemverTag,
+): Promise<any | null> {
   for (let page = 1; page <= 10; page++) {
     const { data } = await github.rest.actions.listWorkflowRuns({
       owner: context.repo.owner,
@@ -468,23 +521,30 @@ async function findLatestCompletedNightlyRunForReleaseTag({ github, context }, t
       per_page: 100,
       page,
     });
-    const run = data.workflow_runs.find(
-      (candidate) => candidate.id !== context.runId && candidate.status === "completed",
+    const workflowRuns = data.workflow_runs as Array<{ id: number; status: string }>;
+    const run = workflowRuns.find(
+      (candidate: { id: number; status: string }) =>
+        candidate.id !== context.runId && candidate.status === "completed",
     );
     if (run) return run;
-    if (data.workflow_runs.length < 100) break;
+    if (workflowRuns.length < 100) break;
   }
   return null;
 }
 
-async function readTraceSummaryFromRun({ github, context }, runId) {
-  const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+async function readTraceSummaryFromRun(
+  { github, context }: GitHubDeps,
+  runId: number,
+): Promise<OnboardTrace | null> {
+  const artifacts = (await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
     owner: context.repo.owner,
     repo: context.repo.repo,
     run_id: runId,
     per_page: 100,
-  });
-  const artifact = artifacts.find((item) => item.name === TRACE_ARTIFACT_NAME);
+  })) as Array<{ id: number; name: string }>;
+  const artifact = artifacts.find(
+    (item: { id: number; name: string }) => item.name === TRACE_ARTIFACT_NAME,
+  );
   if (!artifact) return null;
 
   const download = await github.rest.actions.downloadArtifact({
@@ -508,7 +568,7 @@ async function readTraceSummaryFromRun({ github, context }, runId) {
   }
 }
 
-async function buildTraceTimingResult(deps) {
+async function buildTraceTimingResult(deps: GitHubDeps): Promise<TraceTimingResult> {
   const { context } = deps;
   try {
     const currentTrace = await readTraceSummaryFromRun(deps, context.runId);
