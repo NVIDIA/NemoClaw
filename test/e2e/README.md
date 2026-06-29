@@ -29,8 +29,9 @@ graph as the live targets:
 - `scorecard` writes the scheduled/manual result summary, compares the trusted
   cloud-onboard timing summary with the latest prior-release `e2e.yaml` run,
   and posts to the daily or full-run Slack route.
-- Selective dispatches remain silent unless `post_to_slack=true`, which uses
-  the preview Slack route.
+- Selective dispatches remain silent unless they run on `main` with
+  `post_to_slack=true`, which uses the preview Slack route. Branch-dispatched
+  runs never receive Slack webhook secrets.
 
 Raw cloud-onboard traces stay under the runner temporary directory. Before
 artifact upload, `scripts/e2e/sanitize-trace-timing.py` reduces them to the

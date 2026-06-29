@@ -6444,6 +6444,9 @@ jobs:
             const scorecardJobs = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/summarize-jobs.ts'),
             );
+            const slackBlocks = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
+            );
             const needs = ${{ toJSON(needs) }};
             const safeSelector = /^[A-Za-z0-9_-]+$/;
             const parseSelectors = (value) =>
@@ -6515,7 +6518,7 @@ jobs:
             if (perfect) lines.push('', '🎉 **All jobs passed!**');
             lines.push('', traceTimingLine, ...traceSummaryLines, '', `🔗 [Full run details](${runUrl})`);
             await core.summary.addRaw(lines.join('\n')).write();
-            core.setOutput('scorecardData', JSON.stringify({
+            const scorecardData = {
               today,
               runMode,
               actor: context.actor || '',
@@ -6532,39 +6535,48 @@ jobs:
               failedJobs,
               traceTimingLine,
               runUrl,
+            };
+            core.setOutput('scorecardData', JSON.stringify(scorecardData));
+            core.setOutput('slackData', JSON.stringify({
+              channel: slackBlocks.getSlackChannel(scorecardData),
+              payload: {
+                text: slackBlocks.buildFallbackText(scorecardData),
+                attachments: [{
+                  color: slackBlocks.getStatusColor(scorecardData),
+                  blocks: slackBlocks.buildBlocks(scorecardData),
+                }],
+              },
             }));
 
       - name: Post scorecard to Slack
-        if: ${{ steps.scorecard.outputs.scorecardData != '' }}
+        # Webhook secrets never enter branch-dispatched runs. The payload is
+        # computed in the preceding no-secret step; this fixed publisher does
+        # not load code from the checked-out workflow ref.
+        if: ${{ steps.scorecard.outputs.slackData != '' && github.ref == 'refs/heads/main' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           SLACK_WEBHOOK_URL_DAILY: ${{ secrets.SLACK_WEBHOOK_URL_DAILY }}
           SLACK_WEBHOOK_URL_FULLRUN: ${{ secrets.SLACK_WEBHOOK_URL_FULLRUN }}
           SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
-          SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
+          SLACK_DATA: ${{ steps.scorecard.outputs.slackData }}
           POST_TO_SLACK: ${{ inputs.post_to_slack }}
         with:
           script: |
-            const path = require('path');
-            const {
-              buildBlocks,
-              buildFallbackText,
-              getStatusColor,
-              getSlackChannel,
-            } = require(
-              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.ts'),
-            );
-            const data = JSON.parse(process.env.SCORECARD_DATA);
-            const channel = getSlackChannel(data);
-            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
-              core.info('Selective dispatch without post_to_slack — skipping');
-              return;
-            }
+            const data = JSON.parse(process.env.SLACK_DATA);
             const envByChannel = {
               daily: 'SLACK_WEBHOOK_URL_DAILY',
               fullrun: 'SLACK_WEBHOOK_URL_FULLRUN',
               preview: 'SLACK_WEBHOOK_URL_PREVIEW',
             };
+            const channel = data?.channel;
+            if (!Object.hasOwn(envByChannel, channel) || !data.payload || typeof data.payload !== 'object') {
+              core.setFailed('Invalid precomputed Slack payload');
+              return;
+            }
+            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
+              core.info('Selective dispatch without post_to_slack — skipping');
+              return;
+            }
             const webhookUrl = process.env[envByChannel[channel]];
             if (!webhookUrl) {
               core.info(`Slack webhook for "${channel}" not configured — skipping`);
@@ -6573,10 +6585,7 @@ jobs:
             const response = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                text: buildFallbackText(data),
-                attachments: [{ color: getStatusColor(data), blocks: buildBlocks(data) }],
-              }),
+              body: JSON.stringify(data.payload),
             });
             if (!response.ok) {
               core.setFailed(`Slack webhook returned ${response.status}`);

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,7 +13,6 @@ import {
   validateE2eOperationsWorkflowBoundary,
 } from "../../../tools/e2e/operations-workflow-boundary.mts";
 
-const require = createRequire(import.meta.url);
 const AsyncFunction = Object.getPrototypeOf(async () => undefined).constructor as new (
   ...parameters: string[]
 ) => (...args: unknown[]) => Promise<unknown>;
@@ -63,11 +61,19 @@ describe("E2E operations workflow boundary", () => {
       (step) => step.name === "Delete raw cloud-onboard traces",
     )!;
     cleanup.if = "success()";
+    const slack = workflow.jobs.scorecard.steps!.find(
+      (step) => step.name === "Post scorecard to Slack",
+    )!;
+    slack.if = "${{ steps.scorecard.outputs.slackData != '' }}";
+    slack.with!.script = `${String(slack.with!.script)}\nrequire(process.env.GITHUB_WORKSPACE);`;
 
     expect(validateE2eOperationsWorkflow(workflow)).toEqual(
       expect.arrayContaining([
         "scorecard generator must use the pinned Node 24 github-script runtime",
         "cloud-onboard raw trace cleanup must always run",
+        "scorecard Slack publisher must expose webhook secrets only on main",
+        "scorecard Slack publisher must not execute workflow-ref code via GITHUB_WORKSPACE",
+        "scorecard Slack publisher must not execute workflow-ref code via require(",
       ]),
     );
   });
@@ -116,14 +122,12 @@ describe("E2E operations workflow boundary", () => {
     const info = vi.fn();
     const fetchMock = vi.fn();
     vi.stubEnv(
-      "SCORECARD_DATA",
-      JSON.stringify({ isSelectiveDispatch: true, runMode: "Selective dispatch" }),
+      "SLACK_DATA",
+      JSON.stringify({ channel: "preview", payload: { text: "safe precomputed payload" } }),
     );
-    vi.stubEnv("GITHUB_WORKSPACE", process.cwd());
     vi.stubEnv("POST_TO_SLACK", "false");
     try {
-      await new AsyncFunction("require", "process", "core", "fetch", script)(
-        require,
+      await new AsyncFunction("process", "core", "fetch", script)(
         process,
         { info, setFailed: vi.fn() },
         fetchMock,

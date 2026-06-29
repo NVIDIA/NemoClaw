@@ -160,8 +160,11 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
     "scripts/scorecard/summarize-jobs.ts",
     "scorecardJobs.loadWorkflowRunJobs",
     "scorecardJobs.summarizeJobs",
+    "scripts/scorecard/build-slack-blocks.ts",
+    "slackBlocks.buildBlocks",
     "core.summary",
     "scorecardData",
+    "slackData",
   ]) {
     if (!generateScript.includes(fragment))
       errors.push(`scorecard generator must retain ${fragment}`);
@@ -173,7 +176,12 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   }
 
   const slack = findStep(job, "Post scorecard to Slack");
-  requireNode24GithubScript(errors, slack, "scorecard Slack publisher");
+  requirePinnedAction(errors, slack, "scorecard Slack publisher");
+  if (
+    slack.if !== "${{ steps.scorecard.outputs.slackData != '' && github.ref == 'refs/heads/main' }}"
+  ) {
+    errors.push("scorecard Slack publisher must expose webhook secrets only on main");
+  }
   const expectedSlackEnv = [
     "SLACK_WEBHOOK_URL_DAILY",
     "SLACK_WEBHOOK_URL_FULLRUN",
@@ -187,14 +195,23 @@ function validateScorecard(errors: string[], workflow: OperationsWorkflow): void
   if (slack.env?.POST_TO_SLACK !== "${{ inputs.post_to_slack }}") {
     errors.push("scorecard Slack publisher must honor the post_to_slack opt-in");
   }
+  if (slack.env?.SLACK_DATA !== "${{ steps.scorecard.outputs.slackData }}") {
+    errors.push("scorecard Slack publisher must consume the precomputed Slack payload");
+  }
   const slackScript = String(slack.with?.script ?? "");
   for (const fragment of [
-    "scripts/scorecard/build-slack-blocks.ts",
+    "process.env.SLACK_DATA",
+    "Invalid precomputed Slack payload",
     "Selective dispatch without post_to_slack",
     "SLACK_WEBHOOK_URL_PREVIEW",
   ]) {
     if (!slackScript.includes(fragment))
       errors.push(`scorecard Slack publisher must retain ${fragment}`);
+  }
+  for (const forbidden of ["GITHUB_WORKSPACE", "require(", "scripts/scorecard/"]) {
+    if (slackScript.includes(forbidden)) {
+      errors.push(`scorecard Slack publisher must not execute workflow-ref code via ${forbidden}`);
+    }
   }
 }
 
