@@ -14,6 +14,10 @@ interface ComplianceFixture {
   reason?: string;
 }
 
+interface ComparatorFixture extends ComplianceFixture {
+  checkNames?: string[];
+}
+
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
@@ -80,7 +84,7 @@ esac
   }
 }
 
-function runComparatorGate(fixture: ComplianceFixture) {
+function runComparatorGate(fixture: ComparatorFixture) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "collect-gates-compliance-"));
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
@@ -91,7 +95,9 @@ function runComparatorGate(fixture: ComplianceFixture) {
     state: "OPEN",
     body: fixture.body,
     headRefOid: "abc123",
-    statusCheckRollup: [],
+    statusCheckRollup: (fixture.checkNames ?? ["checks", "commit-lint", "dco-check"]).map(
+      (name) => ({ name, status: "COMPLETED", conclusion: "SUCCESS" }),
+    ),
     mergeable: "MERGEABLE",
     mergeStateStatus: "CLEAN",
     reviewDecision: "APPROVED",
@@ -189,6 +195,7 @@ describe("maintainer PR comparator contributor compliance", () => {
 
     expect(result.status).toBe(0);
     const output = JSON.parse(result.stdout);
+    expect(output.gates.ci_green_latest_sha).toBe(true);
     expect(output.gates.contributor_compliance).toBe(true);
     expect(output.details).toMatchObject({
       dco_declaration_present: true,
@@ -209,5 +216,39 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.contributor_compliance).toBe(false);
     expect(output.details.unverified_commits).toEqual([{ sha: "abc123", reason: "unsigned" }]);
     expect(output.failures).toContain("substantive:contributor_compliance");
+  });
+
+  it("fails closed when the status check rollup is empty", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkNames: [],
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.ci_green_latest_sha).toBe(false);
+    expect(output.details.ci_missing_required_checks).toEqual([
+      "checks",
+      "commit-lint",
+      "dco-check",
+    ]);
+    expect(output.failures).toContain(
+      "substantive:ci_failures=0,pending=0,missing=checks,commit-lint,dco-check",
+    );
+  });
+
+  it("names a missing required check and fails the CI gate", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      checkNames: ["checks", "commit-lint"],
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.ci_green_latest_sha).toBe(false);
+    expect(output.details.ci_missing_required_checks).toEqual(["dco-check"]);
+    expect(output.failures).toContain("substantive:ci_failures=0,pending=0,missing=dco-check");
   });
 });

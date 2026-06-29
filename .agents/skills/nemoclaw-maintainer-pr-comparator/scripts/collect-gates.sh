@@ -42,10 +42,16 @@ state=$(printf '%s' "$raw" | jq -r .state)
 gate_state_open=$([ "$state" = "OPEN" ] && echo true || echo false)
 
 # Gate 2: CI green on latest head SHA. statusCheckRollup contains the latest run.
-# Count failures and pendings; gate passes only when all are SUCCESS or SKIPPED.
-ci_failure_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select((.conclusion // .state) == "FAILURE" or (.conclusion // .state) == "CANCELLED" or (.conclusion // .state) == "TIMED_OUT")] | length')
-ci_pending_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length')
-gate_ci_green=$([ "$ci_failure_count" = "0" ] && [ "$ci_pending_count" = "0" ] && echo true || echo false)
+# Fail closed when required checks are missing, including an empty rollup.
+required_checks='["checks","commit-lint","dco-check"]'
+observed_checks=$(printf '%s' "$raw" | jq -c '[(.statusCheckRollup // [])[] | (.name // .context // empty)] | unique')
+missing_checks=$(jq -cn --argjson required "$required_checks" --argjson observed "$observed_checks" '$required - $observed')
+missing_check_count=$(printf '%s' "$missing_checks" | jq 'length')
+ci_failure_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select((.conclusion // .state) == "FAILURE" or (.conclusion // .state) == "CANCELLED" or (.conclusion // .state) == "TIMED_OUT" or (.state // "") == "ERROR")] | length')
+ci_pending_count=$(printf '%s' "$raw" | jq '[(.statusCheckRollup // [])[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING" or (.state // "") == "PENDING" or (.state // "") == "EXPECTED")] | length')
+gate_ci_green=$(
+  [ "$ci_failure_count" = "0" ] && [ "$ci_pending_count" = "0" ] && [ "$missing_check_count" = "0" ] && echo true || echo false
+)
 
 # Gate 3: mergeable
 mergeable=$(printf '%s' "$raw" | jq -r .mergeable)
@@ -88,7 +94,7 @@ head_sha=$(printf '%s' "$raw" | jq -r .headRefOid)
 # Trivial: stale base only (everything else here is substantive).
 classify_failures=()
 [ "$gate_state_open" = "false" ] && classify_failures+=("substantive:not_open")
-[ "$gate_ci_green" = "false" ] && classify_failures+=("substantive:ci_failures=$ci_failure_count,pending=$ci_pending_count")
+[ "$gate_ci_green" = "false" ] && classify_failures+=("substantive:ci_failures=$ci_failure_count,pending=$ci_pending_count,missing=$(printf '%s' "$missing_checks" | jq -r 'join(",")')")
 [ "$gate_mergeable" = "false" ] && classify_failures+=("substantive:mergeable=$mergeable,state=$merge_state")
 [ "$gate_contributor_compliance" = "false" ] && classify_failures+=("substantive:contributor_compliance")
 [ "$gate_branch_protection" = "false" ] && classify_failures+=("substantive:review=$review_decision")
@@ -110,6 +116,7 @@ cat <<JSON
     "state": "$state",
     "ci_failure_count": $ci_failure_count,
     "ci_pending_count": $ci_pending_count,
+    "ci_missing_required_checks": $missing_checks,
     "mergeable": "$mergeable",
     "merge_state_status": "$merge_state",
     "dco_declaration_present": $dco_declaration_present,
