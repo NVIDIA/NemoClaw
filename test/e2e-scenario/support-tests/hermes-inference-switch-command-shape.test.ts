@@ -87,13 +87,19 @@ describe("Hermes inference switch command shape", () => {
       { openshell } as unknown as SandboxClient,
     );
 
+    expect(command.mock.calls[0]?.[1]).toEqual([
+      expect.stringContaining("nemoclaw.js"),
+      SANDBOX_NAME,
+      "destroy",
+      "--yes",
+      "--cleanup-gateway",
+    ]);
     expect(openshell.mock.calls.map(([args]) => args)).toEqual([
       ["sandbox", "delete", SANDBOX_NAME],
-      ["gateway", "destroy", "-g", "nemoclaw"],
     ]);
   });
 
-  it("resets the configured OpenShell gateway", async () => {
+  it("passes the configured OpenShell gateway to cleanup", async () => {
     vi.stubEnv("OPENSHELL_GATEWAY", "alternate-gateway");
     const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
     const openshell = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
@@ -104,12 +110,9 @@ describe("Hermes inference switch command shape", () => {
     );
 
     expect(openshellGatewayName()).toBe("alternate-gateway");
-    expect(openshell.mock.calls.at(-1)?.[0]).toEqual([
-      "gateway",
-      "destroy",
-      "-g",
-      "alternate-gateway",
-    ]);
+    expect(command.mock.calls[0]?.[2]).toMatchObject({
+      env: { OPENSHELL_GATEWAY: "alternate-gateway" },
+    });
   });
 
   it("falls back to no-verify only after transient route verification fails", async () => {

@@ -120,7 +120,7 @@ export async function cleanupHermesSwitch(
   sandbox: SandboxClient,
 ): Promise<void> {
   await bestEffort(() =>
-    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
       artifactName: "cleanup-nemoclaw-destroy",
       env: env(),
       timeoutMs: 120_000,
@@ -131,13 +131,6 @@ export async function cleanupHermesSwitch(
       artifactName: "cleanup-openshell-delete",
       env: env(),
       timeoutMs: 60_000,
-    }),
-  );
-  await bestEffort(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", openshellGatewayName()], {
-      artifactName: "cleanup-openshell-gateway-destroy",
-      env: env(),
-      timeoutMs: 120_000,
     }),
   );
 }
