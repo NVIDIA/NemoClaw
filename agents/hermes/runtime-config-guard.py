@@ -52,6 +52,10 @@ RESTART_ORPHAN_MARKER_NAME = ".nemoclaw-hermes-restart-seal"
 SHIELDS_TRANSITION_LEASE_SECONDS = 300
 STATE_WORKER_LEASE_SECONDS = 15 * 60
 HERMES_STARTUP_READY_FILE = "/run/nemoclaw/hermes-startup-ready"
+NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
+NEMOCLAW_RUNTIME_DIR_MODE = 0o711
+HERMES_RESTART_STATE_FILE = "/run/nemoclaw/hermes-restart-seal.json"
+HERMES_MUTATION_LOCK_FILE = "/run/nemoclaw/hermes-config-mutation.lock"
 INSTALLED_RUNTIME_CONFIG_GUARD = (
     "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
 )
@@ -1222,6 +1226,72 @@ def _state_file_parent_is_safe(path: str) -> None:
         os.close(parent_fd)
 
 
+def _ensure_private_runtime_directory(
+    runtime_dir: str, expected_uid: int, expected_gid: int, expected_mode: int
+) -> None:
+    """Create one fixed protected runtime directory through a pinned safe parent."""
+
+    parent = os.path.dirname(runtime_dir)
+    basename = os.path.basename(runtime_dir)
+    if not parent or not basename or basename in (".", ".."):
+        raise UnsafePathError("refusing invalid Hermes runtime state directory")
+    try:
+        parent_fd = _open_directory(parent)
+    except OSError as exc:
+        raise UnsafePathError("Hermes runtime state parent is unavailable") from exc
+    child_fd: int | None = None
+    try:
+        parent_st = os.fstat(parent_fd)
+        if (
+            parent_st.st_uid != expected_uid
+            or parent_st.st_gid != expected_gid
+            or stat.S_IMODE(parent_st.st_mode) & 0o022
+        ):
+            raise UnsafePathError("refusing unsafe Hermes runtime state parent")
+        try:
+            os.mkdir(basename, expected_mode, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise UnsafePathError("Hermes runtime state directory is unavailable") from exc
+        try:
+            child_fd = _open_child_directory(parent_fd, basename, runtime_dir)
+        except OSError as exc:
+            raise UnsafePathError("Hermes runtime state directory is unavailable") from exc
+        child_st = os.fstat(child_fd)
+        if (
+            child_st.st_uid != expected_uid
+            or child_st.st_gid != expected_gid
+            or stat.S_IMODE(child_st.st_mode) & 0o022
+        ):
+            raise UnsafePathError("refusing unsafe Hermes runtime state directory")
+        if stat.S_IMODE(child_st.st_mode) != expected_mode:
+            # Managed OpenShell starts the supervisor as the sandbox user. It
+            # must be able to stat the fixed startup-readiness pathname while
+            # remaining unable to list or write this root-owned directory.
+            os.fchmod(child_fd, expected_mode)
+            child_st = os.fstat(child_fd)
+            if stat.S_IMODE(child_st.st_mode) != expected_mode:
+                raise UnsafePathError("could not make Hermes runtime state directory private")
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
+        os.close(parent_fd)
+
+
+def _ensure_production_runtime_directory(lock_path: str, state_file: str) -> None:
+    if (lock_path, state_file) != (
+        HERMES_MUTATION_LOCK_FILE,
+        HERMES_RESTART_STATE_FILE,
+    ):
+        return
+    if os.geteuid() != 0 or os.getegid() != 0:
+        raise UnsafePathError("Hermes production runtime state requires root")
+    _ensure_private_runtime_directory(
+        NEMOCLAW_RUNTIME_DIR, 0, 0, NEMOCLAW_RUNTIME_DIR_MODE
+    )
+
+
 def _acquire_mutation_lock(
     lock_path: str,
     token: str,
@@ -1230,6 +1300,7 @@ def _acquire_mutation_lock(
 ) -> None:
     if not re.fullmatch(r"[0-9a-f]{64}", token):
         raise UnsafePathError("refusing invalid Hermes config mutation lock token")
+    _ensure_production_runtime_directory(lock_path, state_file)
     if os.path.exists(state_file):
         raise UnsafePathError("Hermes config mutation is already in progress")
 

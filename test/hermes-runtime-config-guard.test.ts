@@ -31,6 +31,124 @@ spec.loader.exec_module(guard)
 `;
 
 describe("Hermes runtime config hash refresh race protection", () => {
+  it("creates an absent private runtime directory through its pinned parent", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+import stat
+import tempfile
+
+with tempfile.TemporaryDirectory() as tmp:
+    parent = os.path.join(tmp, "run")
+    runtime = os.path.join(parent, "nemoclaw")
+    os.mkdir(parent, 0o700)
+    guard._ensure_private_runtime_directory(runtime, os.geteuid(), os.getegid(), 0o711)
+    guard._ensure_private_runtime_directory(runtime, os.geteuid(), os.getegid(), 0o711)
+    metadata = os.stat(runtime, follow_symlinks=False)
+    print(json.dumps({
+        "directory": stat.S_ISDIR(metadata.st_mode),
+        "mode": stat.S_IMODE(metadata.st_mode),
+        "uid": metadata.st_uid,
+        "gid": metadata.st_gid,
+    }))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      directory: true,
+      mode: 0o711,
+      uid: process.getuid?.() ?? 0,
+      gid: process.getgid?.() ?? 0,
+    });
+  });
+
+  it("provisions only the fixed production state and lock pair", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+
+calls = []
+guard.os.geteuid = lambda: 0
+guard.os.getegid = lambda: 0
+guard._ensure_private_runtime_directory = (
+    lambda path, uid, gid, mode: calls.append([path, uid, gid, mode])
+)
+guard._ensure_production_runtime_directory(
+    guard.HERMES_MUTATION_LOCK_FILE,
+    guard.HERMES_RESTART_STATE_FILE,
+)
+guard._ensure_production_runtime_directory(
+    "/tmp/attacker.lock",
+    "/tmp/attacker-state.json",
+)
+print(json.dumps(calls))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([["/run/nemoclaw", 0, 0, 0o711]]);
+  });
+
+  it("refuses unsafe runtime parents, children, symlinks, and non-root production", () => {
+    const result = runPythonHarness(`${loadGuardModule}
+import json
+import os
+import tempfile
+
+errors = {}
+with tempfile.TemporaryDirectory() as tmp:
+    parent = os.path.join(tmp, "run")
+    runtime = os.path.join(parent, "nemoclaw")
+    os.mkdir(parent, 0o700)
+    target = os.path.join(tmp, "target")
+    os.mkdir(target, 0o700)
+    os.symlink(target, runtime)
+    try:
+        guard._ensure_private_runtime_directory(
+            runtime, os.geteuid(), os.getegid(), 0o711
+        )
+    except guard.UnsafePathError as exc:
+        errors["symlink"] = str(exc)
+
+    os.unlink(runtime)
+    os.mkdir(runtime, 0o700)
+    os.chmod(runtime, 0o733)
+    try:
+        guard._ensure_private_runtime_directory(
+            runtime, os.geteuid(), os.getegid(), 0o711
+        )
+    except guard.UnsafePathError as exc:
+        errors["writable_child"] = str(exc)
+
+    os.rmdir(runtime)
+    os.chmod(parent, 0o733)
+    try:
+        guard._ensure_private_runtime_directory(
+            runtime, os.geteuid(), os.getegid(), 0o711
+        )
+    except guard.UnsafePathError as exc:
+        errors["writable_parent"] = str(exc)
+
+guard.os.geteuid = lambda: 1000
+guard.os.getegid = lambda: 1000
+try:
+    guard._ensure_production_runtime_directory(
+        guard.HERMES_MUTATION_LOCK_FILE,
+        guard.HERMES_RESTART_STATE_FILE,
+    )
+except guard.UnsafePathError as exc:
+    errors["nonroot"] = str(exc)
+
+print(json.dumps(errors))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      nonroot: "Hermes production runtime state requires root",
+      symlink: "Hermes runtime state directory is unavailable",
+      writable_child: "refusing unsafe Hermes runtime state directory",
+      writable_parent: "refusing unsafe Hermes runtime state parent",
+    });
+  });
+
   it("streams SHA-256 without materializing the entire file", () => {
     const result = runPythonHarness(`${loadGuardModule}
 import json

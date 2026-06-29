@@ -111,7 +111,10 @@ with tempfile.TemporaryDirectory() as root:
 
     control._sandbox_uid = lambda: 1000
     control._http_healthy_in_gateway_namespace = (
-        lambda _reader, _identity, port, path: port == 18642 and path == "/health"
+        lambda _reader, _identity, port, path: (port, path) in {
+            (18642, "/health"),
+            (8642, "/health"),
+        }
     )
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     boundary_path = os.path.join(
@@ -124,7 +127,7 @@ with tempfile.TemporaryDirectory() as root:
 
     with control.ProcReader(proc_root) as reader:
         supervisor = control._discover_supervisor(reader)
-        hermes = control.AgentSpec("hermes", 18642)
+        hermes = control._agent_spec("hermes", reader, supervisor)
         candidates = control._gateway_candidates(reader, supervisor, hermes)
         initial_proof = {
             "supervisor": [supervisor.pid, supervisor.start_time, supervisor.parent_pid],
@@ -275,6 +278,86 @@ with tempfile.TemporaryDirectory() as root:
     try:
         restarted = control._control("restart", "a" * 64)
         recovered = control._control("recover", "b" * 64)
+
+        real_wait_for_healthy = control._wait_for_healthy_gateway
+        timeout_refresh_waits = []
+        timeout_refresh_signals = []
+        def timeout_refresh_wait(
+            reader,
+            _supervisor,
+            _spec,
+            old_identity,
+            timeout_seconds=control.RECOVERY_TIMEOUT_SECONDS,
+            require_auxiliary_health=False,
+        ):
+            timeout_refresh_waits.append([
+                old_identity.pid if old_identity else 0,
+                timeout_seconds,
+                require_auxiliary_health,
+            ])
+            if len(timeout_refresh_waits) == 1:
+                remove_process(proc_root, 43)
+                write_process(
+                    proc_root,
+                    namespace_path,
+                    44,
+                    666,
+                    40,
+                    1000,
+                    b"/usr/local/bin/hermes.real\0gateway\0run\0",
+                    listener_inode="77777",
+                )
+                raise control.ControlError("GATEWAY_HEALTH_TIMEOUT")
+            if len(timeout_refresh_waits) == 2:
+                raise control.ControlError("GATEWAY_HEALTH_TIMEOUT")
+            return reader.capture(45)
+        def terminate_refreshed_gateway(_reader, identity):
+            timeout_refresh_signals.append(identity.pid)
+            assert identity.pid == 44
+            remove_process(proc_root, 44)
+            write_process(
+                proc_root,
+                namespace_path,
+                45,
+                777,
+                40,
+                1000,
+                b"/usr/local/bin/hermes.real\0gateway\0run\0",
+                listener_inode="77777",
+            )
+        control._wait_for_healthy_gateway = timeout_refresh_wait
+        control._terminate_gateway = terminate_refreshed_gateway
+        try:
+            timeout_refresh = control._control("recover", "d" * 64)
+        finally:
+            control._wait_for_healthy_gateway = real_wait_for_healthy
+            control._terminate_gateway = replace_gateway
+            remove_process(proc_root, 45)
+            write_process(
+                proc_root,
+                namespace_path,
+                43,
+                555,
+                40,
+                1000,
+                b"/usr/local/bin/hermes.real\0gateway\0run\0",
+                listener_inode="77777",
+            )
+
+        real_gateway_healthy = control._gateway_healthy
+        inflight_health_attempts = []
+        def inflight_health(*_args):
+            inflight_health_attempts.append("attempt")
+            return len(inflight_health_attempts) >= 2
+        control._gateway_healthy = inflight_health
+        control._terminate_gateway = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("recover must not terminate an in-flight healthy replacement")
+        )
+        try:
+            inflight_recovery = control._control("recover", "c" * 64)
+        finally:
+            control._gateway_healthy = real_gateway_healthy
+            control._terminate_gateway = replace_gateway
         real_gateway_healthy = control._gateway_healthy
         health_attempts = []
         def transient_health(*_args):
@@ -291,6 +374,63 @@ with tempfile.TemporaryDirectory() as root:
                 ).pid
         finally:
             control._gateway_healthy = real_gateway_healthy
+
+        real_http_health = control._http_healthy_in_gateway_namespace
+        public_health_attempts = []
+        def delayed_public_health(_reader, _identity, port, path):
+            if (port, path) == (8642, "/health"):
+                public_health_attempts.append("attempt")
+                return len(public_health_attempts) >= 2
+            return (port, path) == (18642, "/health")
+        control._http_healthy_in_gateway_namespace = delayed_public_health
+        try:
+            with control.ProcReader(proc_root) as readiness_reader:
+                readiness_supervisor = control._discover_supervisor(readiness_reader)
+                readiness_pid = control._wait_for_healthy_gateway(
+                    readiness_reader,
+                    readiness_supervisor,
+                    control.AgentSpec(
+                        "hermes", 18642, readiness_checks=((8642, "/health"),)
+                    ),
+                    None,
+                    1.0,
+                    True,
+                ).pid
+        finally:
+            control._http_healthy_in_gateway_namespace = real_http_health
+
+        auxiliary_attempts = []
+        real_auxiliary_health = control._gateway_auxiliaries_healthy
+        def replace_during_auxiliary_check(_reader, identity, _spec):
+            auxiliary_attempts.append(identity.pid)
+            if identity.pid == 43:
+                remove_process(proc_root, 43)
+                write_process(
+                    proc_root,
+                    namespace_path,
+                    44,
+                    666,
+                    40,
+                    1000,
+                    b"/usr/local/bin/hermes.real\0gateway\0run\0",
+                    listener_inode="77777",
+                )
+                return False
+            return True
+        control._gateway_auxiliaries_healthy = replace_during_auxiliary_check
+        try:
+            with control.ProcReader(proc_root) as auxiliary_reader:
+                auxiliary_supervisor = control._discover_supervisor(auxiliary_reader)
+                auxiliary_replacement = control._wait_for_healthy_gateway(
+                    auxiliary_reader,
+                    auxiliary_supervisor,
+                    control.AgentSpec("hermes", 18642),
+                    None,
+                    1.0,
+                    True,
+                ).pid
+        finally:
+            control._gateway_auxiliaries_healthy = real_auxiliary_health
     finally:
         control._terminate_gateway = real_terminate
         control._proc_root = real_proc_root
@@ -315,7 +455,15 @@ with tempfile.TemporaryDirectory() as root:
         "reused": reused,
         "restarted": restarted,
         "recovered": recovered,
+        "timeout_refresh": [
+            timeout_refresh,
+            timeout_refresh_signals,
+            timeout_refresh_waits,
+        ],
+        "inflight_recovery": [inflight_recovery, len(inflight_health_attempts)],
         "transient_retry": [retried_pid, len(health_attempts)],
+        "public_readiness_retry": [readiness_pid, len(public_health_attempts)],
+        "auxiliary_replacement": [auxiliary_replacement, auxiliary_attempts],
         "source_seams": [source_proc, source_system],
         "installed_seams": [installed_proc, installed_system],
     }))
@@ -360,7 +508,19 @@ describe("managed gateway root control", () => {
       reused: "SUPERVISOR_UNAVAILABLE",
       restarted: ["ok", 41, 43],
       recovered: ["already-running", 43, 43],
+      timeout_refresh: [
+        ["ok", 44, 45],
+        [44],
+        [
+          [0, 10, false],
+          [0, 10, false],
+          [44, 150, true],
+        ],
+      ],
+      inflight_recovery: [["already-running", 43, 43], 4],
       transient_retry: [43, 2],
+      public_readiness_retry: [43, 2],
+      auxiliary_replacement: [44, [43, 44]],
       source_seams: ["/attacker/proc", "/attacker/root"],
       installed_seams: ["/proc", "/"],
     });

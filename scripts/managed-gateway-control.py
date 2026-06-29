@@ -69,6 +69,7 @@ MAX_HASH_BYTES = 64 * 1024
 STOP_GRACE_SECONDS = 5.0
 KILL_GRACE_SECONDS = 5.0
 RECOVERY_TIMEOUT_SECONDS = 150.0
+RECOVER_EXISTING_GRACE_SECONDS = 10.0
 POLL_SECONDS = 0.2
 NONCE_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*\Z")
@@ -116,6 +117,7 @@ class AgentSpec:
     name: str
     port: int
     health_path: str = "/health"
+    readiness_checks: tuple[tuple[int, str], ...] = ()
 
 
 def _source_mode() -> bool:
@@ -525,7 +527,11 @@ def _agent_spec(
     name: str, reader: ProcReader, supervisor: ProcessIdentity
 ) -> AgentSpec:
     if name == "hermes":
-        return AgentSpec(name="hermes", port=18642)
+        return AgentSpec(
+            name="hermes",
+            port=18642,
+            readiness_checks=((8642, "/health"),),
+        )
     return AgentSpec(name="openclaw", port=_openclaw_port(reader, supervisor))
 
 
@@ -718,6 +724,20 @@ def _gateway_healthy(
         )
         and _owns_listener(reader, identity, spec.port)
     )
+
+
+def _gateway_auxiliaries_healthy(
+    reader: ProcReader, identity: ProcessIdentity, spec: AgentSpec
+) -> bool:
+    """Prove the public API relay the host probes before completing control."""
+
+    for port, path in spec.readiness_checks:
+        if not _http_healthy_in_gateway_namespace(reader, identity, port, path):
+            return False
+    # The public probes can take several seconds. Re-prove the exact gateway
+    # after them so a replacement that exited during auxiliary repair is never
+    # reported as the completed child.
+    return _gateway_healthy(reader, identity, spec)
 
 
 def _run_fixed_validator(script: str, arguments: list[str]) -> None:
@@ -924,8 +944,10 @@ def _wait_for_healthy_gateway(
     supervisor: ProcessIdentity,
     spec: AgentSpec,
     old_identity: ProcessIdentity | None,
+    timeout_seconds: float = RECOVERY_TIMEOUT_SECONDS,
+    require_auxiliary_health: bool = False,
 ) -> ProcessIdentity:
-    deadline = time.monotonic() + RECOVERY_TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout_seconds
     while time.monotonic() < deadline:
         try:
             candidates = _gateway_candidates(reader, supervisor, spec)
@@ -938,7 +960,10 @@ def _wait_for_healthy_gateway(
             ) == (old_identity.pid, old_identity.start_time):
                 continue
             try:
-                if _gateway_healthy(reader, candidate, spec):
+                if _gateway_healthy(reader, candidate, spec) and (
+                    not require_auxiliary_health
+                    or _gateway_auxiliaries_healthy(reader, candidate, spec)
+                ):
                     return candidate
             except (FileNotFoundError, ProcessLookupError):
                 continue
@@ -947,6 +972,40 @@ def _wait_for_healthy_gateway(
                     raise
         time.sleep(POLL_SECONDS)
     raise ControlError("GATEWAY_HEALTH_TIMEOUT")
+
+
+def _wait_for_recovery_candidate(
+    reader: ProcReader,
+    supervisor: ProcessIdentity,
+    spec: AgentSpec,
+    initial_identity: ProcessIdentity,
+) -> tuple[ProcessIdentity | None, ProcessIdentity | None]:
+    """Give the observed candidate, and at most one successor, a full grace."""
+
+    observed = initial_identity
+    for _attempt in range(2):
+        try:
+            healthy = _wait_for_healthy_gateway(
+                reader,
+                supervisor,
+                spec,
+                None,
+                RECOVER_EXISTING_GRACE_SECONDS,
+            )
+            return healthy, None
+        except ControlError as error:
+            if error.code != "GATEWAY_HEALTH_TIMEOUT":
+                raise
+
+        candidates = _gateway_candidates(reader, supervisor, spec)
+        current = candidates[0] if candidates else None
+        if current is None:
+            return None, None
+        if current.stable_key() == observed.stable_key():
+            return None, current
+        observed = current
+
+    return None, observed
 
 
 def _control(action: str, nonce: str) -> tuple[str, int, int]:
@@ -960,8 +1019,29 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
         _preflight(spec, reader, supervisor)
 
         if action == "recover" and old_identity is not None:
-            if _gateway_healthy(reader, old_identity, spec):
-                return "already-running", old_identity.pid, old_identity.pid
+            # PID 1 continuously supervises the managed gateway. A host
+            # recovery request can arrive after PID 1 has launched a
+            # replacement but before its listener is healthy. Give that proven
+            # child a short grace period. If its identity changes during that
+            # grace, give the one successor its own bounded grace before any
+            # signal so recovery cannot churn a newly launched replacement.
+            original_identity = old_identity
+            existing, old_identity = _wait_for_recovery_candidate(
+                reader,
+                supervisor,
+                spec,
+                original_identity,
+            )
+            if existing is not None:
+                completed = _wait_for_healthy_gateway(
+                    reader,
+                    supervisor,
+                    spec,
+                    None,
+                    RECOVERY_TIMEOUT_SECONDS,
+                    True,
+                )
+                return "already-running", original_identity.pid, completed.pid
 
         if old_identity is not None:
             _terminate_gateway(reader, old_identity)
@@ -971,6 +1051,8 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
             supervisor,
             spec,
             old_identity,
+            RECOVERY_TIMEOUT_SECONDS,
+            True,
         )
         return "ok", old_identity.pid if old_identity else 0, replacement.pid
 
