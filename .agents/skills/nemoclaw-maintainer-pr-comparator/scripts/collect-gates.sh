@@ -18,6 +18,16 @@ fi
 
 pr="$1"
 shift || true
+
+if [[ ! "$pr" =~ ^[0-9]+$ ]]; then
+  jq -n --arg pr "$pr" '{pr: $pr, error: "invalid_pr_number"}'
+  exit 0
+fi
+
+emit_error() {
+  jq -n --argjson pr "$pr" --arg error "$1" '{pr: $pr, error: $error}'
+}
+
 repo_args=()
 repo_name=""
 if [ "${1:-}" = "--repo" ] && [ -n "${2:-}" ]; then
@@ -25,7 +35,7 @@ if [ "${1:-}" = "--repo" ] && [ -n "${2:-}" ]; then
   repo_name="$2"
 else
   repo_name=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
-    printf '{"pr":%s,"error":"repo_resolution_failed"}\n' "$pr"
+    emit_error "repo_resolution_failed"
     exit 0
   }
 fi
@@ -33,7 +43,7 @@ fi
 raw=$(gh pr view "$pr" "${repo_args[@]}" \
   --json number,state,body,headRefOid,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision \
   2>/dev/null) || {
-  printf '{"pr":%s,"error":"fetch_failed"}\n' "$pr"
+  emit_error "fetch_failed"
   exit 0
 }
 
@@ -129,31 +139,50 @@ classify_failures=()
 
 failures_json=$(printf '%s\n' "${classify_failures[@]:-}" | jq -Rs 'split("\n") | map(select(length > 0))')
 
-cat <<JSON
-{
-  "pr": $pr,
-  "head_sha": "$head_sha",
-  "gates": {
-    "state_open": $gate_state_open,
-    "ci_green_latest_sha": $gate_ci_green,
-    "mergeable": $gate_mergeable,
-    "contributor_compliance": $gate_contributor_compliance,
-    "branch_protection": $gate_branch_protection
-  },
-  "details": {
-    "state": "$state",
-    "ci_failure_count": $ci_failure_count,
-    "ci_pending_count": $ci_pending_count,
-    "ci_failing_checks": $ci_failing_checks,
-    "ci_pending_checks": $ci_pending_checks,
-    "ci_missing_required_checks": $missing_checks,
-    "mergeable": "$mergeable",
-    "merge_state_status": "$merge_state",
-    "dco_declaration_present": $dco_declaration_present,
-    "commit_count": $commit_count,
-    "unverified_commits": $unverified_commits,
-    "review_decision": "$review_decision"
-  },
-  "failures": $failures_json
-}
-JSON
+jq -n \
+  --argjson pr "$pr" \
+  --arg head_sha "$head_sha" \
+  --argjson gate_state_open "$gate_state_open" \
+  --argjson gate_ci_green "$gate_ci_green" \
+  --argjson gate_mergeable "$gate_mergeable" \
+  --argjson gate_contributor_compliance "$gate_contributor_compliance" \
+  --argjson gate_branch_protection "$gate_branch_protection" \
+  --arg state "$state" \
+  --argjson ci_failure_count "$ci_failure_count" \
+  --argjson ci_pending_count "$ci_pending_count" \
+  --argjson ci_failing_checks "$ci_failing_checks" \
+  --argjson ci_pending_checks "$ci_pending_checks" \
+  --argjson missing_checks "$missing_checks" \
+  --arg mergeable "$mergeable" \
+  --arg merge_state "$merge_state" \
+  --argjson dco_declaration_present "$dco_declaration_present" \
+  --argjson commit_count "$commit_count" \
+  --argjson unverified_commits "$unverified_commits" \
+  --arg review_decision "$review_decision" \
+  --argjson failures "$failures_json" \
+  '{
+    pr: $pr,
+    head_sha: $head_sha,
+    gates: {
+      state_open: $gate_state_open,
+      ci_green_latest_sha: $gate_ci_green,
+      mergeable: $gate_mergeable,
+      contributor_compliance: $gate_contributor_compliance,
+      branch_protection: $gate_branch_protection
+    },
+    details: {
+      state: $state,
+      ci_failure_count: $ci_failure_count,
+      ci_pending_count: $ci_pending_count,
+      ci_failing_checks: $ci_failing_checks,
+      ci_pending_checks: $ci_pending_checks,
+      ci_missing_required_checks: $missing_checks,
+      mergeable: $mergeable,
+      merge_state_status: $merge_state,
+      dco_declaration_present: $dco_declaration_present,
+      commit_count: $commit_count,
+      unverified_commits: $unverified_commits,
+      review_decision: $review_decision
+    },
+    failures: $failures
+  }'

@@ -134,7 +134,7 @@ function ghApi(path: string): unknown {
 // Data fetching
 // ---------------------------------------------------------------------------
 
-function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
+function fetchOpenPrs(repo: string): PrData[] {
   // Use gh api --paginate with REST for lightweight pagination (no GraphQL timeout).
   // --jq outputs one JSON object per PR per page; we collect them as NDJSON then parse.
   const out = run(
@@ -172,9 +172,6 @@ function fetchOpenPrs(repo: string, approvedOnly: boolean): PrData[] {
       if (trimmed && trimmed.startsWith("{")) {
         prs.push(JSON.parse(trimmed) as PrData);
       }
-    }
-    if (approvedOnly) {
-      return prs.filter((pr) => pr.reviewDecision === "APPROVED");
     }
     return prs;
   } catch {
@@ -487,7 +484,7 @@ function main(): void {
 
   // 1. Fetch all open PRs via REST (lightweight, paginated, no GraphQL timeout)
   process.stderr.write("Fetching all open PRs via REST...\n");
-  const prs = fetchOpenPrs(repo, false);
+  const prs = fetchOpenPrs(repo);
   if (prs.length === 0) {
     console.error("No open PRs found. GitHub API may be experiencing issues.");
     process.exit(1);
@@ -521,8 +518,13 @@ function main(): void {
     enrichPr(repo, candidates[i]);
   }
 
-  // 4. Classify all PRs (un-enriched ones will be blocked due to empty checks)
-  const classified = prs.map(classifyPr);
+  // 4. Apply --approved-only after enrichment, when reviewDecision is known,
+  // then classify all retained PRs. Un-enriched PRs have an empty review
+  // decision and are excluded in approved-only mode; otherwise they classify
+  // as blocked due to empty checks.
+  const classified = prs
+    .filter((pr) => !approvedOnly || pr.reviewDecision === "APPROVED")
+    .map(classifyPr);
   for (const item of classified) {
     item.projectPriority = projectPriorities.get(item.number) ?? null;
   }

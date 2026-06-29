@@ -17,6 +17,11 @@ interface ComplianceFixture {
 interface ComparatorFixture extends ComplianceFixture {
   checkNames?: string[];
   checkConclusions?: Record<string, string>;
+  headRefOid?: string;
+  state?: string;
+  mergeable?: string;
+  mergeStateStatus?: string;
+  reviewDecision?: string;
 }
 
 function shellSingleQuote(value: string): string {
@@ -85,7 +90,7 @@ esac
   }
 }
 
-function runComparatorGate(fixture: ComparatorFixture) {
+function runComparatorGate(fixture: ComparatorFixture, prNumber = "42") {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "collect-gates-compliance-"));
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
@@ -93,9 +98,9 @@ function runComparatorGate(fixture: ComparatorFixture) {
 
   const pr = {
     number: 42,
-    state: "OPEN",
+    state: fixture.state ?? "OPEN",
     body: fixture.body,
-    headRefOid: "abc123",
+    headRefOid: fixture.headRefOid ?? "abc123",
     statusCheckRollup: (fixture.checkNames ?? ["checks", "commit-lint", "dco-check"]).map(
       (name) => ({
         name,
@@ -103,9 +108,9 @@ function runComparatorGate(fixture: ComparatorFixture) {
         conclusion: fixture.checkConclusions?.[name] ?? "SUCCESS",
       }),
     ),
-    mergeable: "MERGEABLE",
-    mergeStateStatus: "CLEAN",
-    reviewDecision: "APPROVED",
+    mergeable: fixture.mergeable ?? "MERGEABLE",
+    mergeStateStatus: fixture.mergeStateStatus ?? "CLEAN",
+    reviewDecision: fixture.reviewDecision ?? "APPROVED",
   };
   const commit = {
     sha: "abc123",
@@ -131,7 +136,7 @@ esac
       "bash",
       [
         ".agents/skills/nemoclaw-maintainer-pr-comparator/scripts/collect-gates.sh",
-        "42",
+        prNumber,
         "--repo",
         "NVIDIA/NemoClaw",
       ],
@@ -234,6 +239,45 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.gates.contributor_compliance).toBe(false);
     expect(output.details.dco_declaration_present).toBe(false);
     expect(output.failures).toContain("ineligible:contributor_compliance");
+  });
+
+  it("rejects a non-numeric PR argument without emitting malformed JSON", () => {
+    const result = runComparatorGate(
+      {
+        body: "Signed-off-by: Example User <user@example.com>",
+        verified: true,
+      },
+      '42,"injected":true',
+    );
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      pr: '42,"injected":true',
+      error: "invalid_pr_number",
+    });
+    expect(result.stderr).toBe("");
+  });
+
+  it("serializes unusual GitHub string values as valid JSON", () => {
+    const result = runComparatorGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      headRefOid: 'abc"123\\nnext',
+      state: 'OPEN"unexpected',
+      mergeable: 'MERGEABLE"unexpected',
+      mergeStateStatus: 'CLEAN"unexpected',
+      reviewDecision: 'APPROVED"unexpected',
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.head_sha).toBe('abc"123\\nnext');
+    expect(output.details).toMatchObject({
+      state: 'OPEN"unexpected',
+      mergeable: 'MERGEABLE"unexpected',
+      merge_state_status: 'CLEAN"unexpected',
+      review_decision: 'APPROVED"unexpected',
+    });
   });
 
   it("fails closed when the status check rollup is empty", () => {
