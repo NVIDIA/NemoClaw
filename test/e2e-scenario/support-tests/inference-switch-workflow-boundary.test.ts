@@ -4,8 +4,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import YAML from "yaml";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   readInferenceSwitchWorkflow,
   validateInferenceSwitchWorkflow,
