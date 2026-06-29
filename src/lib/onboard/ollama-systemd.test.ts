@@ -8,6 +8,7 @@ import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runt
 import {
   ensureOllamaLoopbackSystemdOverride,
   mergeOllamaLoopbackSystemdOverride,
+  shouldSkipOllamaLoopbackForMissingSudo,
 } from "./ollama-systemd";
 
 const SUDO_MODE_ENV = "NEMOCLAW_NON_INTERACTIVE_SUDO_MODE";
@@ -140,45 +141,33 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
     }
   });
 
-  // Ultra advisor PRA-4: prove the happy path. When passwordless sudo IS
-  // available, the new skip-with-warning gate must NOT fire and must not
-  // emit the "passwordless sudo is not available" warning. Without this
-  // assertion, a regression that inverted the gate condition would still
-  // pass every other test in this block (they all hit the skip path or
-  // an early return). The function continues into the live override path
-  // afterwards, which then fails downstream because we are not on a real
-  // Linux+systemd+Ollama host; we tolerate that downstream failure (via
-  // a process.exit stub) because it is OUT OF SCOPE for this test, which
-  // is solely about the new gate not skipping when sudo IS available.
-  it("does NOT skip the override when passwordless sudo IS available", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const exit = vi.spyOn(process, "exit").mockImplementation((() => {
-      throw new Error("exit-stub");
-    }) as never);
-    const error = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      try {
-        ensureOllamaLoopbackSystemdOverride({
-          platformImpl: () => "linux",
-          hasOllamaSystemdUnitImpl: () => true,
-          isNonInteractive: () => true,
-          hasPasswordlessSudoImpl: () => true,
-        });
-      } catch (err) {
-        // Downstream override (real runShell against a non-existent
-        // systemd unit) throws via our process.exit stub. Anything else
-        // re-raises so the assertion sees the real failure.
-        expect((err as Error).message).toBe("exit-stub");
-      }
-      const passwordlessSudoWarnings = warn.mock.calls
-        .map((c) => c.join(" "))
-        .filter((line) => line.includes("passwordless sudo is not available"));
-      expect(passwordlessSudoWarnings).toHaveLength(0);
-    } finally {
-      warn.mockRestore();
-      exit.mockRestore();
-      error.mockRestore();
-    }
+  // Ultra advisor PRA-4 / CR follow-up: pin every branch of the new gate
+  // via the pure `shouldSkipOllamaLoopbackForMissingSudo` decision so the
+  // happy path is covered without falling through into the real systemd
+  // override. Earlier round of this test called
+  // `ensureOllamaLoopbackSystemdOverride` with
+  // `hasPasswordlessSudoImpl: () => true`; on a Linux CI runner with
+  // passwordless sudo, that would exec the real `sudo install / daemon-
+  // reload / restart` host-boundary commands. CodeRabbit flagged that as
+  // a non-hermetic unit test. The pure helper covers the contract without
+  // any host-boundary touch.
+  it("skips when getSudoPrefix is 'sudo -n' AND passwordless sudo is unavailable", () => {
+    expect(shouldSkipOllamaLoopbackForMissingSudo("sudo -n", () => false)).toBe(true);
+  });
+
+  it("does NOT skip when getSudoPrefix is 'sudo -n' but passwordless sudo IS available", () => {
+    expect(shouldSkipOllamaLoopbackForMissingSudo("sudo -n", () => true)).toBe(false);
+  });
+
+  it("does NOT skip when getSudoPrefix is 'sudo' (interactive), regardless of probe", () => {
+    expect(shouldSkipOllamaLoopbackForMissingSudo("sudo", () => false)).toBe(false);
+    expect(shouldSkipOllamaLoopbackForMissingSudo("sudo", () => true)).toBe(false);
+  });
+
+  it("does not invoke the passwordless-sudo probe when sudoPrefix is 'sudo'", () => {
+    const probe = vi.fn(() => false);
+    shouldSkipOllamaLoopbackForMissingSudo("sudo", probe);
+    expect(probe).not.toHaveBeenCalled();
   });
 
   it("returns before Linux-only probes when not on Linux", () => {

@@ -64,6 +64,32 @@ function getSudoPrefix(isNonInteractive: boolean): "sudo" | "sudo -n" {
   return process.stdin.isTTY ? "sudo" : "sudo -n";
 }
 
+/**
+ * Pure decision for the #5716 sudo-skip gate. The override step requires
+ * root via `sudo -n install / daemon-reload / restart`, so a non-interactive
+ * run that picked the `sudo -n` prefix and has no passwordless sudo cannot
+ * apply it. Returns true when the override MUST be skipped.
+ *
+ * Exposed so tests can pin both branches (skip + happy path) without falling
+ * through into the real systemd code and triggering host-boundary side
+ * effects on a Linux CI runner that happens to have passwordless sudo.
+ */
+export function shouldSkipOllamaLoopbackForMissingSudo(
+  sudoPrefix: "sudo" | "sudo -n",
+  hasPasswordlessSudo: () => boolean,
+): boolean {
+  return sudoPrefix === "sudo -n" && !hasPasswordlessSudo();
+}
+
+function defaultHasPasswordlessSudo(): boolean {
+  const probe = runShell("sudo -n true", {
+    ignoreError: true,
+    suppressOutput: true,
+    timeout: 5_000,
+  });
+  return !probe.error && probe.status === 0;
+}
+
 function hasOllamaCudaV13Library(): boolean {
   const ollamaPath = runCapture(["sh", "-c", "command -v ollama"], { ignoreError: true }).trim();
   const candidates = [
@@ -149,17 +175,8 @@ export function ensureOllamaLoopbackSystemdOverride(
   // prompt and the only signal they get is exit 1 with no actionable next
   // step (#5716 reproduction).
   const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
-  const hasPasswordlessSudo =
-    options.hasPasswordlessSudoImpl ??
-    (() => {
-      const probe = runShell("sudo -n true", {
-        ignoreError: true,
-        suppressOutput: true,
-        timeout: 5_000,
-      });
-      return !probe.error && probe.status === 0;
-    });
-  if (sudoPrefix === "sudo -n" && !hasPasswordlessSudo()) {
+  const hasPasswordlessSudo = options.hasPasswordlessSudoImpl ?? defaultHasPasswordlessSudo;
+  if (shouldSkipOllamaLoopbackForMissingSudo(sudoPrefix, hasPasswordlessSudo)) {
     console.warn(
       "  Skipping Ollama systemd loopback override: passwordless sudo is not available " +
         "on this host. Ollama will keep its current bind; set " +
