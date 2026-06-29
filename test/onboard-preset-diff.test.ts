@@ -412,6 +412,113 @@ console.log = () => {};
     assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
   });
 
+  // Regression for #5967: Discord (and every messaging channel other than
+  // Slack) is not flagged `requiredAtCreate`, so its policy preset is never
+  // injected into the create-time boot policy. The policy finalization step
+  // must still merge the enabled channel's preset into the effective selection
+  // so it is applied to the gateway and persisted to the registry — otherwise
+  // `policy-list` shows `○ discord` even though Discord was configured during
+  // onboard. The Slack tests above pass purely because Slack happens to be
+  // requiredAtCreate; these tests guard the channels that are not.
+  it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        // Discord is not injected at create time, so it is absent from the
+        // already-applied boot presets — unlike Slack.
+        alreadyApplied: [],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      selectedPresets: ["npm", "pypi"],
+      enabledChannels: ["discord"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
+    assert.ok(
+      payload.appliedCalls.includes("discord"),
+      `Discord must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
+  });
+
+  it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm,pypi",
+        alreadyApplied: [],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      enabledChannels: ["discord"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
+    assert.ok(
+      payload.appliedCalls.includes("discord"),
+      `Discord must be applied while Discord messaging is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["discord", "npm", "pypi"]);
+  });
+
+  it("custom non-interactive selection removes disabled Discord while honoring the explicit preset list (#5967)", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm",
+        alreadyApplied: ["npm", "pypi", "discord"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      disabledChannels: ["discord"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls.slice().sort(), ["discord", "pypi"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
   it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
     const script =
       buildPreamble({
