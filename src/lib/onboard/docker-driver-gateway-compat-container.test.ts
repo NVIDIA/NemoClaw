@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertCompatibleDockerDaemonReachable,
   prepareContainerizedDockerDriverGatewayLaunch,
+  shouldUseContainerizedGateway,
 } from "./docker-driver-gateway-compat";
 
 import {
@@ -348,5 +349,17 @@ describe("docker-driver-gateway compatibility container", () => {
       // `?? gatewayBin` would have wrongly restored the host path:
       expect(identity.driftGatewayBin ?? gatewayBin).toBe(gatewayBin);
     });
+  });
+
+  it("throws with opt-in guidance when host glibc is older than gateway requirement (#4760)", () => {
+    expect(() =>
+      shouldUseContainerizedGateway({
+        gatewayBin: "/does-not-exist",
+        platform: "linux",
+        env: {},
+        hostGlibcVersion: "2.17",
+        requiredGlibcVersions: ["2.28"],
+      }),
+    ).toThrow(/NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1/);
   });
 });
