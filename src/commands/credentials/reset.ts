@@ -8,8 +8,10 @@ import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
-import { prompt as askPrompt } from "../../lib/credentials/store";
+import { KNOWN_CREDENTIAL_ENV_KEYS, prompt as askPrompt } from "../../lib/credentials/store";
 import { redact } from "../../lib/security/redact";
+
+const KNOWN_CREDENTIAL_ENV_KEY_SET = new Set(KNOWN_CREDENTIAL_ENV_KEYS);
 
 export default class CredentialsResetCommand extends NemoClawCommand {
   static id = "credentials:reset";
@@ -74,12 +76,14 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     }
 
     const rawStderr = String(result.stderr || "").trim();
-    const looksLikeEnvName = /^[A-Z][A-Z0-9_]+$/.test(key);
+    const looksLikeEnvName = KNOWN_CREDENTIAL_ENV_KEY_SET.has(key);
     const alreadyAbsent = /not found|does not exist|already absent/i.test(rawStderr);
     if (alreadyAbsent && !looksLikeEnvName) {
-      forgetExtraProvider(key);
+      const removedLocal = forgetExtraProvider(key);
       this.log(
-        `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`,
+        removedLocal
+          ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
+          : `  Provider '${key}' is already absent from the OpenShell gateway.`,
       );
       this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
       return;

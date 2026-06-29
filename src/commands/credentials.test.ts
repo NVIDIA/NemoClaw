@@ -11,7 +11,10 @@ const mocks = vi.hoisted(() => ({
   forgetExtraProvider: vi.fn(),
 }));
 
-vi.mock("../lib/credentials/store", () => ({ prompt: mocks.prompt }));
+vi.mock("../lib/credentials/store", () => ({
+  KNOWN_CREDENTIAL_ENV_KEYS: ["NVIDIA_INFERENCE_API_KEY"],
+  prompt: mocks.prompt,
+}));
 vi.mock("../lib/actions/global", () => ({
   recoverNamedGatewayRuntime: mocks.recoverNamedGatewayRuntime,
   runOpenshellProviderCommand: mocks.runOpenshellProviderCommand,

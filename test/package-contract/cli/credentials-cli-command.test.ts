@@ -683,4 +683,24 @@ describe("credentials oclif commands", () => {
     expect(output.stdout).toContain("already absent");
     expect(output.stdout).toContain("Local state was cleaned up");
   });
+
+  it("credentials reset cleans uppercase provider names when the gateway provider is already absent", async () => {
+    const forgetCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: () => ({ status: 1, stderr: "provider not found" }),
+      forgetExtraProvider: (name) => {
+        forgetCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      CredentialsResetCommand.run(["TAVILY_SEARCH", "--yes"]),
+    );
+
+    expect(forgetCalls).toEqual(["TAVILY_SEARCH"]);
+    expect(output.stdout).toContain("already absent");
+    expect(output.stdout).toContain("Local state was cleaned up");
+  });
 });
