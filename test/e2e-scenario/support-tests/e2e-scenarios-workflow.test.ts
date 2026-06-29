@@ -972,7 +972,7 @@ jobs:
           "workflow_dispatch missing input: scenarios",
           "workflow_dispatch missing input: jobs",
           "workflow_dispatch missing input: openshell_channel",
-          "workflow_dispatch openshell_channel input must default to dev",
+          "workflow_dispatch openshell_channel input must default to stable",
           "workflow env must propagate openshell_channel to the entire E2E fan-out",
           "workflow_dispatch must not expose legacy test_filter input",
           "workflow missing generate-matrix job",

@@ -53,22 +53,22 @@ function dockerHubAuthStep(job: Job): Step | undefined {
 }
 
 describe("MCP OpenShell workflow boundary", () => {
-  it("targets the current OpenShell main dev build by default", () => {
+  it("defaults to stable while keeping current-main dev coverage selectable", () => {
     const nightly = workflow(".github/workflows/nightly-e2e.yaml");
     const reusable = workflow(".github/workflows/e2e-script.yaml");
     const vitest = workflow(".github/workflows/e2e-vitest-scenarios.yaml");
     const nightlyInstall = installStep(nightly.jobs["mcp-bridge-e2e"]);
 
-    expect(nightly.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("dev");
-    expect(vitest.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("dev");
-    expect(nightly.env?.NEMOCLAW_OPENSHELL_CHANNEL).toContain("|| 'dev'");
+    expect(nightly.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("stable");
+    expect(vitest.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("stable");
+    expect(nightly.env?.NEMOCLAW_OPENSHELL_CHANNEL).toContain("|| 'stable'");
     expect(reusable.jobs.run.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe(
-      "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'dev' }}",
+      "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'stable' }}",
     );
     expect(vitest.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe("${{ inputs.openshell_channel }}");
     expect(nightlyInstall?.env).not.toHaveProperty("NEMOCLAW_OPENSHELL_CHANNEL");
     const nightlyChannel =
-      "${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'dev' }}";
+      "${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'stable' }}";
     expect(JSON.stringify(nightly).split(nightlyChannel)).toHaveLength(2);
     expect(nightlyInstall?.env?.NEMOCLAW_OPENSHELL_FORCE_INSTALL).toBe("1");
     expect(
@@ -78,9 +78,9 @@ describe("MCP OpenShell workflow boundary", () => {
     for (const candidate of [nightly, vitest]) {
       const description =
         candidate.on?.workflow_dispatch?.inputs?.openshell_channel?.description ?? "";
-      expect(description).toContain("stable advertises all required MCP/lifecycle capabilities");
-      expect(description).toContain("passes the lifecycle probe");
-      expect(description).toContain("switch to stable");
+      expect(description).toContain("Defaults to the pinned stable release");
+      expect(description).toContain("required MCP/lifecycle capabilities");
+      expect(description).toContain("dev for current-main compatibility coverage");
     }
   });
 

@@ -7715,8 +7715,8 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
   }
-  if (openshellChannelInput.default !== "dev") {
-    errors.push("workflow_dispatch openshell_channel input must default to dev");
+  if (openshellChannelInput.default !== "stable") {
+    errors.push("workflow_dispatch openshell_channel input must default to stable");
   }
   const workflowEnv = asRecord(workflow.env);
   if (

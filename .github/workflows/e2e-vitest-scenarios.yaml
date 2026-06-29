@@ -22,9 +22,9 @@ on:
         type: string
         default: ""
       openshell_channel:
-        description: "OpenShell integration target. Default stays dev until stable advertises all required MCP/lifecycle capabilities and passes the lifecycle probe; then switch to stable."
+        description: "OpenShell integration target. Defaults to the pinned stable release now that it advertises the required MCP/lifecycle capabilities; select dev for current-main compatibility coverage."
         required: false
-        default: "dev"
+        default: "stable"
         type: choice
         options:
           - stable
@@ -36,7 +36,7 @@ permissions:
 
 env:
   # A dispatch selects one OpenShell integration target for the entire fan-out.
-  # Individual jobs must not silently fall back to an unreleased stable pin.
+  # Individual jobs must not silently select a different release channel.
   NEMOCLAW_OPENSHELL_CHANNEL: ${{ inputs.openshell_channel }}
 
 concurrency:

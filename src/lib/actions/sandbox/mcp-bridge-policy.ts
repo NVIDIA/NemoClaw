@@ -101,6 +101,10 @@ function allowedIpsForEndpoint(
     // protocol, allowed MCP methods, and adapter binaries.
     return ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
   }
+  // OpenShell resolves this hostname for every new connection, validates every
+  // current answer against allowed_ips, and connects to those same validated
+  // socket addresses. Retaining the add-time public answers here makes a DNS
+  // change fail closed rather than creating a resolve/check/connect gap.
   return resolvedAddresses && resolvedAddresses.length > 0 ? [...resolvedAddresses] : undefined;
 }
 

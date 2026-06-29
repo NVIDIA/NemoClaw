@@ -120,8 +120,8 @@ jobs:
     timeout-minutes: ${{ inputs.timeout_minutes }}
     env:
       # Reusable workflows do not inherit caller workflow env. Read the caller
-      # event selection explicitly and keep scheduled lanes on current dev.
-      NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'dev' }}
+      # event selection explicitly and keep scheduled lanes on the pinned stable release.
+      NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'stable' }}
     steps:
       - name: Checkout target ref
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

@@ -9,6 +9,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { normalizeMcpServerUrl } from "../src/lib/actions/sandbox/mcp-bridge-validation";
+
 const TRANSACTION = path.resolve(
   import.meta.dirname,
   "..",
@@ -48,6 +50,66 @@ if len(errors) != len(bad):
 
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toHaveLength(3);
+  });
+
+  it("keeps Hermes and host MCP URL rejection boundaries in parity", () => {
+    const cases = [
+      { url: "https://mcp.example.com/mcp", accepted: true },
+      { url: "https://host.openshell.internal:31337/mcp", accepted: true },
+      { url: "https://8.8.8.8/mcp", accepted: true },
+      { url: "http://mcp.example.com/mcp", accepted: false },
+      { url: "https://localhost/mcp", accepted: false },
+      { url: "https://service.internal/mcp", accepted: false },
+      { url: "https://127.0.0.1/mcp", accepted: false },
+      { url: "https://10.0.0.1/mcp", accepted: false },
+      { url: "https://100.64.0.1/mcp", accepted: false },
+      { url: "https://169.254.169.254/mcp", accepted: false },
+      { url: "https://192.0.2.1/mcp", accepted: false },
+      { url: "https://198.18.0.1/mcp", accepted: false },
+      { url: "https://224.0.0.1/mcp", accepted: false },
+      { url: "https://[::1]/mcp", accepted: false },
+      { url: "https://2130706433/mcp", accepted: false },
+      { url: "https://mcp.example.com/%2f", accepted: false },
+      { url: "https://mcp.example.com/mcp?token=x", accepted: false },
+    ];
+    const expected = cases.map(({ accepted }) => accepted);
+    const hostResults = cases.map(({ url }) => {
+      try {
+        normalizeMcpServerUrl(url);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    const result = runPython(
+      `
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+results = []
+for url in json.loads(sys.argv[3]):
+    payload = {
+        "server": "fake",
+        "url": url,
+        "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
+        "replace_existing": False,
+    }
+    try:
+        module._validate_payload("add", payload)
+    except ValueError:
+        results.append(False)
+    else:
+        results.append(True)
+print(json.dumps(results))
+`,
+      [JSON.stringify(cases.map(({ url }) => url))],
+    );
+
+    expect(hostResults).toEqual(expected);
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(expected);
   });
 
   it("refuses a locked config snapshot", () => {

@@ -180,10 +180,10 @@ on:
         type: boolean
         default: false
       openshell_channel:
-        description: "OpenShell integration target. Default stays dev until stable advertises all required MCP/lifecycle capabilities and passes the lifecycle probe; then switch to stable."
+        description: "OpenShell integration target. Defaults to the pinned stable release now that it advertises the required MCP/lifecycle capabilities; select dev for current-main compatibility coverage."
         required: false
         type: choice
-        default: "dev"
+        default: "stable"
         options:
           - stable
           - dev
@@ -195,7 +195,7 @@ permissions:
 env:
   # Scheduled and manually selected lanes must exercise one OpenShell target.
   # Reusable e2e-script jobs mirror this expression inside their own workflow.
-  NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'dev' }}
+  NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'stable' }}
 
 concurrency:
   group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.ref, inputs.pr_number || 'manual') || 'schedule' }}

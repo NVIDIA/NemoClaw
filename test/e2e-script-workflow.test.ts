@@ -669,6 +669,7 @@ describe("E2E reusable workflow contract", () => {
       "token-rotation-e2e",
       "sandbox-operations-e2e",
       "credential-migration-e2e",
+      "mcp-bridge-e2e",
       "openshell-gateway-upgrade-e2e",
       "double-onboard-e2e",
       "onboard-repair-e2e",

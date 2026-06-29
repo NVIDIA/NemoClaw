@@ -13,7 +13,7 @@ import {
 } from "./mcp-bridge";
 
 describe("MCP OpenShell policy", () => {
-  it("mcporter Node binary grant requires full MCP endpoint compensating controls", () => {
+  it("pins DNS answers while constraining the generic mcporter Node grant", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
       buildMcpBridgePolicyYaml("GitHub_Server", "https://api.githubcopilot.com/mcp", "mcporter", [
