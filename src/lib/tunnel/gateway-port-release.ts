@@ -95,14 +95,14 @@ function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean 
 }
 
 function lazyGetSandbox(name: string): SandboxGatewayBinding | null {
-  try {
-    const registry = require("../state/registry") as {
-      getSandbox: (name: string) => SandboxGatewayBinding | null;
-    };
-    return registry.getSandbox(name);
-  } catch {
-    return null;
-  }
+  // Intentionally does not swallow lookup errors: a registry read that throws
+  // (e.g. a corrupt registry file) must reach resolveStopGatewayPort's
+  // fail-closed handling rather than being treated as a clean "no entry",
+  // which would fall back to destructive default-port cleanup.
+  const registry = require("../state/registry") as {
+    getSandbox: (name: string) => SandboxGatewayBinding | null;
+  };
+  return registry.getSandbox(name);
 }
 
 function isValidPort(value: number | undefined): value is number {
@@ -130,7 +130,14 @@ export function resolveStopGatewayPort(
 ): number | null {
   if (isValidPort(options.port)) return options.port;
   if (options.sandboxName) {
-    const entry = getSandbox(options.sandboxName);
+    let entry: SandboxGatewayBinding | null;
+    try {
+      entry = getSandbox(options.sandboxName);
+    } catch {
+      // Registry lookup itself failed (e.g. corrupt registry). Fail closed
+      // rather than falling back to default-port cleanup.
+      return null;
+    }
     if (entry) {
       // Honor the persisted binding as the source of truth. Fail closed when
       // it does not validate rather than guessing the default port.
@@ -193,12 +200,13 @@ export function releaseManagedGatewayPort(
 
   const port = resolveStopGatewayPort(options, getSandbox);
   if (port === null) {
-    // Fail closed: the sandbox has a persisted gateway binding that does not
-    // validate. Skip the destructive path entirely rather than default-port
-    // cleanup that could stop another sandbox's gateway.
+    // Fail closed: the sandbox's persisted gateway binding is invalid or its
+    // registry entry could not be read. Skip the destructive path entirely
+    // rather than default-port cleanup that could stop another sandbox's
+    // gateway.
     warn(
       `Skipping gateway port release for sandbox ${JSON.stringify(options.sandboxName)}: ` +
-        "its persisted gateway binding is invalid. Resolve the registry entry, " +
+        "its gateway binding is invalid or unreadable. Resolve the registry entry, " +
         "then re-run stop.",
     );
     return {

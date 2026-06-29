@@ -117,6 +117,15 @@ describe("resolveStopGatewayPort (#5968)", () => {
       null,
     );
   });
+
+  it("fails closed (null) when the registry lookup itself throws", () => {
+    // A corrupt registry that throws on read must not be treated as a clean
+    // "no entry" and fall back to the default port.
+    const port = resolveStopGatewayPort({ sandboxName: "alpha" }, () => {
+      throw new Error("corrupt registry");
+    });
+    expect(port).toBe(null);
+  });
 });
 
 describe("releaseManagedGatewayPort (#5968)", () => {
@@ -250,8 +259,32 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     expect(stop.lastOptions()).toBeUndefined();
     expect(lsof.calls).toBe(0);
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
-      "persisted gateway binding is invalid",
+      "gateway binding is invalid or unreadable",
     );
+  });
+
+  it("skips the destructive path when the registry lookup throws", () => {
+    const lsof = lsofResponder(ok("888\n"));
+    const stop = stopSpy(emptyStopResult());
+    const warn = vi.fn();
+
+    const result = releaseManagedGatewayPort(
+      { sandboxName: "nemoclaw-5968" },
+      {
+        ...baseDeps,
+        warn,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => {
+          throw new Error("corrupt registry");
+        },
+      },
+    );
+
+    expect(result.skipped).toBe(true);
+    expect(result.released).toBe(false);
+    expect(stop.lastOptions()).toBeUndefined();
+    expect(lsof.calls).toBe(0);
   });
 
   it("leaves a non-matching listener alone without sudo pkill remediation", () => {
