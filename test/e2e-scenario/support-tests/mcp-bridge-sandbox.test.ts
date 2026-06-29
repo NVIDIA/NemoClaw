@@ -5,7 +5,11 @@ import fs from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { isExpectedMcpCurlPolicyDenial } from "../live/mcp-bridge-sandbox.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
+import {
+  isExpectedMcpCurlPolicyDenial,
+  restoreDnsRebindingHostsFixture,
+} from "../live/mcp-bridge-sandbox.ts";
 
 function denialResult(
   overrides: {
@@ -77,5 +81,30 @@ describe("MCP curl policy denial classification", () => {
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);
     expect(remove).toBeGreaterThan(restore);
+  });
+
+  it("restores host DNS strictly while treating the ephemeral sandbox as best effort", async () => {
+    let restoreScript = "";
+    const host = {
+      command: async (_command: string, args: string[]) => {
+        restoreScript = args[1] ?? "";
+        return denialResult();
+      },
+    } as unknown as HostCliClient;
+
+    await restoreDnsRebindingHostsFixture(host, "test-sandbox", {
+      hostname: "mcp-rebind.example.test",
+      hostBackupPath: "/tmp/host-backup",
+      sandboxBackupPath: "/tmp/sandbox-backup",
+    });
+
+    expect(restoreScript).toContain('if ! sudo -n tee /etc/hosts < "$host_backup"');
+    expect(restoreScript).toContain('if ! cmp -s "$host_backup" /etc/hosts');
+    expect(restoreScript).toContain("for attempt in 1 2 3; do");
+    expect(restoreScript).toContain('docker exec --user 0 -i "$container_id"');
+    expect(restoreScript).toContain(
+      "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox",
+    );
+    expect(restoreScript).toContain("failed to remove DNS rebinding hosts backups");
   });
 });
