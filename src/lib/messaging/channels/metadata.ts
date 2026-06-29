@@ -15,6 +15,15 @@ export interface MessagingManifestMetadataOptions {
   readonly manifests?: readonly ChannelManifest[];
 }
 
+const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
+  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
+  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
+  MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
+  MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
+  TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
+  MSTEAMS_PORT: ["TEAMS_PORT"],
+};
+
 export interface MessagingCredentialMetadata {
   readonly channelId: string;
   readonly credentialId: string;
@@ -30,7 +39,6 @@ export interface MessagingConfigEnvMetadata {
   readonly channelId: string;
   readonly inputId: string;
   readonly envKey: string;
-  readonly envAliases: readonly string[];
   readonly statePath?: string;
   readonly validValues?: readonly string[];
 }
@@ -162,7 +170,6 @@ export function listMessagingConfigEnvMetadata(
           channelId: manifest.id,
           inputId: input.id,
           envKey: input.envKey,
-          envAliases: input.envAliases ?? [],
           ...(input.statePath ? { statePath: input.statePath } : {}),
           ...(input.validValues ? { validValues: input.validValues } : {}),
         },
@@ -177,13 +184,12 @@ export function listMessagingConfigEnvKeys(
   return uniqueStrings(listMessagingConfigEnvMetadata(options).map((input) => input.envKey));
 }
 
-export function getMessagingConfigEnvAliases(
+export function getMessagingConfigCompatEnvKeys(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
+  const configKeys = new Set(listMessagingConfigEnvKeys(options));
   return Object.fromEntries(
-    listMessagingConfigEnvMetadata(options)
-      .filter((input) => input.envAliases.length > 0)
-      .map((input) => [input.envKey, input.envAliases]),
+    Object.entries(CONFIG_COMPAT_ENV_KEYS).filter(([canonical]) => configKeys.has(canonical)),
   );
 }
 
@@ -287,9 +293,10 @@ export function listOpenClawManagedChannelNames(
   options: MessagingManifestMetadataOptions = {},
 ): string[] {
   return uniqueStrings(
-    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) =>
-      manifest.runtime?.openclaw?.channelName ? [manifest.runtime.openclaw.channelName] : [],
-    ),
+    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
+      const runtime = manifest.runtime?.openclaw;
+      return runtime ? [runtime.channelName ?? manifest.id] : [];
+    }),
   );
 }
 
@@ -297,7 +304,7 @@ export function listOpenClawRuntimeChannelMetadata(
   options: MessagingManifestMetadataOptions = {},
 ): OpenClawRuntimeChannelMetadata[] {
   return selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
-    const visibility = manifest.runtime?.openclaw?.visibility;
+    const visibility = openClawRuntimeVisibility(manifest);
     if (!visibility) return [];
     if (visibility.configKeys.length === 0 || visibility.logPatterns.length === 0) return [];
     return [
@@ -326,6 +333,19 @@ export function listMessagingPackageInstallSpecs(
       ];
     }),
   );
+}
+
+function openClawRuntimeVisibility(
+  manifest: ChannelManifest,
+): { readonly configKeys: readonly string[]; readonly logPatterns: readonly string[] } | undefined {
+  const runtime = manifest.runtime?.openclaw;
+  if (!runtime) return undefined;
+  if (runtime.visibility) return runtime.visibility;
+  const channelName = runtime.channelName ?? manifest.id;
+  return {
+    configKeys: [channelName],
+    logPatterns: [channelName],
+  };
 }
 
 function selectManifests(options: MessagingManifestMetadataOptions): ChannelManifest[] {

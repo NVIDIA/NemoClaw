@@ -1,8 +1,7 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -23,11 +22,7 @@ function messagingRuntimeSetupSection(src: string, planPath: string): string {
     );
 }
 
-function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown>): string {
-  const withChannelId = (entries: unknown) =>
-    Array.isArray(entries)
-      ? entries.map((entry) => ({ channelId, ...(entry as Record<string, unknown>) }))
-      : [];
+function encodeRuntimeSetupPlan(channelId: string): string {
   return Buffer.from(
     JSON.stringify({
       schemaVersion: 1,
@@ -48,15 +43,22 @@ function encodeRuntimeSetupPlan(channelId: string, value: Record<string, unknown
         },
       ],
       disabledChannels: [],
-      credentialBindings: [],
+      credentialBindings: [
+        {
+          channelId,
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+        {
+          channelId,
+          providerEnvKey: "SLACK_APP_TOKEN",
+          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        },
+      ],
       networkPolicy: { presets: [], entries: [] },
       agentRender: [],
       buildSteps: [],
-      runtimeSetup: {
-        nodePreloads: withChannelId(value.nodePreloads),
-        envAliases: withChannelId(value.envAliases),
-        secretScans: withChannelId(value.secretScans),
-      },
+      runtimeSetup: { nodePreloads: [], secretScans: [] },
       stateUpdates: [],
       healthChecks: [],
     }),
@@ -69,29 +71,11 @@ describe("Slack runtime env normalization (#4274)", () => {
   function runNormalize(env: Record<string, string | undefined> = {}): {
     bot: string;
     app: string;
-    result: ReturnType<typeof spawnSync>;
+    result: SpawnSyncReturns<string>;
   } {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-slack-runtime-env-"));
     const planPath = path.join(tmpDir, "runtime-plan.json");
     const scriptPath = path.join(tmpDir, "run.sh");
-    const runtimeValue = {
-      envAliases: [
-        {
-          envKey: "SLACK_BOT_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
-          value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          message:
-            "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-        {
-          envKey: "SLACK_APP_TOKEN",
-          match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
-          value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-          message:
-            "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
-        },
-      ],
-    };
     fs.writeFileSync(
       scriptPath,
       [
@@ -99,10 +83,10 @@ describe("Slack runtime env normalization (#4274)", () => {
         "set -euo pipefail",
         'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", runtimeValue))}`,
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack"))}`,
         messagingRuntimeSetupSection(src, planPath),
         "write_messaging_runtime_setup_plan",
-        "apply_messaging_runtime_env_aliases",
+        "apply_messaging_runtime_provider_placeholders",
         'printf "BOT=%s\\n" "${SLACK_BOT_TOKEN-__UNSET__}"',
         'printf "APP=%s\\n" "${SLACK_APP_TOKEN-__UNSET__}"',
       ].join("\n"),
@@ -117,14 +101,14 @@ describe("Slack runtime env normalization (#4274)", () => {
       encoding: "utf-8",
       env: childEnv,
       timeout: 5000,
-    });
+    }) as SpawnSyncReturns<string>;
     fs.rmSync(tmpDir, { recursive: true, force: true });
     const bot = (result.stdout.match(/^BOT=(.*)$/m)?.[1] ?? "").trimEnd();
     const app = (result.stdout.match(/^APP=(.*)$/m)?.[1] ?? "").trimEnd();
     return { bot, app, result };
   }
 
-  it("normalizes revision-scoped Slack placeholders to Bolt-compatible aliases", () => {
+  it("normalizes revision-scoped Slack placeholders to SDK-shaped placeholders", () => {
     const run = runNormalize({
       SLACK_BOT_TOKEN: "openshell:resolve:env:v51_SLACK_BOT_TOKEN",
       SLACK_APP_TOKEN: "openshell:resolve:env:v51_SLACK_APP_TOKEN",
@@ -160,7 +144,7 @@ describe("Slack runtime env normalization (#4274)", () => {
     expect(run.app).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
   });
 
-  it("leaves already-aliased Slack tokens unchanged", () => {
+  it("leaves SDK-shaped Slack placeholders unchanged", () => {
     const run = runNormalize({
       SLACK_BOT_TOKEN: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
       SLACK_APP_TOKEN: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",

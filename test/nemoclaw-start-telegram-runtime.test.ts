@@ -85,7 +85,6 @@ function encodeRuntimeSetupPlan(
       buildSteps: [],
       runtimeSetup: {
         nodePreloads: withChannelId(runtimeSetup.nodePreloads),
-        envAliases: withChannelId(runtimeSetup.envAliases),
         secretScans: withChannelId(runtimeSetup.secretScans),
       },
       stateUpdates: [],

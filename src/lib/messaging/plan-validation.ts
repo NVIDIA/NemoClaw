@@ -188,10 +188,8 @@ function isRuntimeSetup(value: unknown): boolean {
   return (
     isObject(value) &&
     Array.isArray(value.nodePreloads) &&
-    Array.isArray(value.envAliases) &&
     Array.isArray(value.secretScans) &&
     value.nodePreloads.every(isObject) &&
-    value.envAliases.every(isObject) &&
     value.secretScans.every(isObject)
   );
 }

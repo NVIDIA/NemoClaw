@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
-const OPENSHELL_ALIAS_PLACEHOLDER_RE = /^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/;
+const OPENSHELL_SCOPED_PLACEHOLDER_RE = /^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/;
 
 export function normalizeProviderPlaceholderForEnvKey(
   value: string,
@@ -16,8 +16,8 @@ export function normalizeProviderPlaceholderForEnvKey(
       ? `${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${envKey}`
       : null;
   }
-  const aliasMatch = value.match(OPENSHELL_ALIAS_PLACEHOLDER_RE);
-  if (!aliasMatch || !placeholderSuffixMatchesEnvKey(aliasMatch[1] as string, envKey)) {
+  const scopedMatch = value.match(OPENSHELL_SCOPED_PLACEHOLDER_RE);
+  if (!scopedMatch || !placeholderSuffixMatchesEnvKey(scopedMatch[1] as string, envKey)) {
     return null;
   }
   return value.replace(/-OPENSHELL-RESOLVE-ENV-.+$/, `-OPENSHELL-RESOLVE-ENV-${envKey}`);

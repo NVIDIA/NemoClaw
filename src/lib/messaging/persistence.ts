@@ -384,7 +384,7 @@ function normalizePersistedCredentialBindings(
     networkPolicy: { presets: [], entries: [] },
     agentRender: [],
     buildSteps: [],
-    runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
+    runtimeSetup: { nodePreloads: [], secretScans: [] },
     stateUpdates: [],
     healthChecks: [],
   };
@@ -596,12 +596,7 @@ function selectHookInputs(
 }
 
 function runtimeSetupHasEntries(setup: SandboxMessagingRuntimeSetupPlan | undefined): boolean {
-  return Boolean(
-    setup &&
-      (setup.nodePreloads.length > 0 ||
-        setup.envAliases.length > 0 ||
-        setup.secretScans.length > 0),
-  );
+  return Boolean(setup && (setup.nodePreloads.length > 0 || setup.secretScans.length > 0));
 }
 
 function normalizeRuntimeSetup(
@@ -609,7 +604,6 @@ function normalizeRuntimeSetup(
 ): SandboxMessagingRuntimeSetupPlan {
   return {
     nodePreloads: Array.isArray(setup?.nodePreloads) ? [...setup.nodePreloads] : [],
-    envAliases: Array.isArray(setup?.envAliases) ? [...setup.envAliases] : [],
     secretScans: Array.isArray(setup?.secretScans) ? [...setup.secretScans] : [],
   };
 }

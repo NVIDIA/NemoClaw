@@ -1513,9 +1513,10 @@ PYPLACEHOLDERS
 
 # ── Messaging runtime setup from manifest metadata ───────────────
 # Channel-owned runtime setup is compiled from manifests at image build time.
-# The entrypoint consumes only generic declarations: envAliases, nodePreloads,
-# and secretScans. Prefer a forwarded env plan when present; otherwise load the
-# reduced image artifact written by the messaging build applier.
+# The entrypoint consumes credential placeholders plus generic runtime
+# declarations: nodePreloads and secretScans. Prefer a forwarded env plan when
+# present; otherwise load the reduced image artifact written by the messaging
+# build applier.
 _MESSAGING_RUNTIME_PLAN_ARTIFACT="${NEMOCLAW_MESSAGING_RUNTIME_PLAN_PATH:-/usr/local/share/nemoclaw/messaging-runtime-plan.json}"
 _MESSAGING_RUNTIME_SETUP_PLAN="/tmp/nemoclaw-messaging-runtime-setup.json"
 _MESSAGING_CONNECT_PRELOADS_FILE="/tmp/nemoclaw-messaging-connect-preloads.list"
@@ -1528,7 +1529,9 @@ import os
 import re
 import sys
 
-EMPTY = {"nodePreloads": [], "envAliases": [], "secretScans": []}
+EMPTY = {"credentialBindings": [], "nodePreloads": [], "secretScans": []}
+PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+SCOPED_PROVIDER_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
 PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
 PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
@@ -1559,6 +1562,41 @@ def clean_message(value, field):
     return value
 
 
+def placeholder_suffix_matches_env_key(suffix, env_key):
+    if suffix == env_key:
+        return True
+    revision = re.match(r"^v[0-9]+_", suffix)
+    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
+
+
+def provider_placeholder_matches_env_key(value, env_key):
+    if not isinstance(value, str):
+        return False
+    if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
+        return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
+    marker_index = value.find(SCOPED_PROVIDER_PLACEHOLDER_MARKER)
+    if marker_index <= 0:
+        return False
+    return placeholder_suffix_matches_env_key(
+        value[marker_index + len(SCOPED_PROVIDER_PLACEHOLDER_MARKER) :], env_key
+    )
+
+
+def clean_credential_binding(entry, index):
+    if not isinstance(entry, dict):
+        fail(f"credentialBindings[{index}] must be an object")
+    env_key = clean_string(entry.get("providerEnvKey"), f"credentialBindings[{index}].providerEnvKey")
+    if not ENV_KEY_RE.match(env_key):
+        fail(f"credentialBindings[{index}].providerEnvKey is not a safe environment key")
+    placeholder = entry.get("placeholder")
+    if placeholder is None:
+        return {"providerEnvKey": env_key}
+    placeholder = clean_string(placeholder, f"credentialBindings[{index}].placeholder")
+    if not provider_placeholder_matches_env_key(placeholder, env_key):
+        fail(f"credentialBindings[{index}].placeholder is not a provider placeholder for {env_key}")
+    return {"providerEnvKey": env_key, "placeholder": placeholder}
+
+
 def clean_node_preload(entry, index):
     if not isinstance(entry, dict):
         fail(f"nodePreloads[{index}] must be an object")
@@ -1587,25 +1625,6 @@ def clean_node_preload(entry, index):
         "optional": optional,
         "installMessage": clean_message(entry.get("installMessage"), f"nodePreloads[{index}].installMessage"),
         "installedMessage": clean_message(entry.get("installedMessage"), f"nodePreloads[{index}].installedMessage"),
-    }
-
-
-def clean_env_alias(entry, index):
-    if not isinstance(entry, dict):
-        fail(f"envAliases[{index}] must be an object")
-    env_key = clean_string(entry.get("envKey"), f"envAliases[{index}].envKey")
-    if not ENV_KEY_RE.match(env_key):
-        fail(f"envAliases[{index}].envKey is not a safe environment key")
-    pattern = clean_string(entry.get("match"), f"envAliases[{index}].match")
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        fail(f"envAliases[{index}].match is not a valid regex: {exc}")
-    return {
-        "envKey": env_key,
-        "match": pattern,
-        "value": clean_string(entry.get("value"), f"envAliases[{index}].value", allow_empty=True),
-        "message": clean_message(entry.get("message"), f"envAliases[{index}].message"),
     }
 
 
@@ -1692,12 +1711,27 @@ def runtime_setup_entries(key):
         yield entry
 
 
+credential_bindings = []
 node_preloads = []
-env_aliases = []
 secret_scans = []
+seen_credential_bindings = set()
 seen_node_preloads = set()
-seen_aliases = set()
 seen_scans = set()
+
+credential_binding_entries = plan.get("credentialBindings", [])
+if not isinstance(credential_binding_entries, list):
+    fail("credentialBindings must be a list")
+for index, entry in enumerate(credential_binding_entries):
+    if not isinstance(entry, dict):
+        fail(f"credentialBindings[{index}] must be an object")
+    channel_id = entry.get("channelId")
+    if not isinstance(channel_id, str) or channel_id not in active_channel_ids:
+        continue
+    binding = clean_credential_binding(entry, index)
+    binding_key = (binding["providerEnvKey"], binding.get("placeholder", ""))
+    if binding_key not in seen_credential_bindings:
+        seen_credential_bindings.add(binding_key)
+        credential_bindings.append(binding)
 
 for entry in runtime_setup_entries("nodePreloads"):
     preload = clean_node_preload(entry, len(node_preloads))
@@ -1705,12 +1739,6 @@ for entry in runtime_setup_entries("nodePreloads"):
     if preload_key not in seen_node_preloads:
         seen_node_preloads.add(preload_key)
         node_preloads.append(preload)
-for entry in runtime_setup_entries("envAliases"):
-    alias = clean_env_alias(entry, len(env_aliases))
-    alias_key = (alias["envKey"], alias["match"], alias["value"])
-    if alias_key not in seen_aliases:
-        seen_aliases.add(alias_key)
-        env_aliases.append(alias)
 for entry in runtime_setup_entries("secretScans"):
     scan = clean_secret_scan(entry, len(secret_scans))
     scan_key = (scan["path"], scan["pattern"])
@@ -1718,38 +1746,63 @@ for entry in runtime_setup_entries("secretScans"):
         seen_scans.add(scan_key)
         secret_scans.append(scan)
 
-print(json.dumps({"nodePreloads": node_preloads, "envAliases": env_aliases, "secretScans": secret_scans}, sort_keys=True))
+print(json.dumps({"credentialBindings": credential_bindings, "nodePreloads": node_preloads, "secretScans": secret_scans}, sort_keys=True))
 PYMESSAGINGRUNTIME
 }
 
-apply_messaging_runtime_env_aliases() {
+apply_messaging_runtime_provider_placeholders() {
   [ -f "$_MESSAGING_RUNTIME_SETUP_PLAN" ] || return 0
   local _rows
   _rows="$(
-    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGALIASES'
+    python3 - "$_MESSAGING_RUNTIME_SETUP_PLAN" <<'PYMESSAGINGPROVIDERS'
 import json
 import os
 import re
 import sys
 
+PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
+SCOPED_PROVIDER_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
+
+
+def placeholder_suffix_matches_env_key(suffix, env_key):
+    if suffix == env_key:
+        return True
+    revision = re.match(r"^v[0-9]+_", suffix)
+    return bool(revision and suffix[len(revision.group(0)) :] == env_key)
+
+
+def provider_placeholder_matches_env_key(value, env_key):
+    if not isinstance(value, str):
+        return False
+    if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
+        return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
+    marker_index = value.find(SCOPED_PROVIDER_PLACEHOLDER_MARKER)
+    if marker_index <= 0:
+        return False
+    return placeholder_suffix_matches_env_key(
+        value[marker_index + len(SCOPED_PROVIDER_PLACEHOLDER_MARKER) :], env_key
+    )
+
+
 with open(sys.argv[1], encoding="utf-8") as handle:
     plan = json.load(handle)
-for alias in plan.get("envAliases", []):
-    if not re.search(alias["match"], os.environ.get(alias["envKey"], "")):
+for binding in plan.get("credentialBindings", []):
+    env_key = binding.get("providerEnvKey")
+    placeholder = binding.get("placeholder")
+    if not provider_placeholder_matches_env_key(placeholder, env_key):
         continue
-    print("\t".join([
-        alias["envKey"],
-        alias["value"],
-        alias.get("message", ""),
-    ]))
-PYMESSAGINGALIASES
+    if not provider_placeholder_matches_env_key(os.environ.get(env_key, ""), env_key):
+        continue
+    if os.environ.get(env_key) == placeholder:
+        continue
+    print("\t".join([env_key, placeholder]))
+PYMESSAGINGPROVIDERS
   )" || return $?
   [ -n "$_rows" ] || return 0
 
-  local _env_key _value _message
-  while IFS=$'\t' read -r _env_key _value _message; do
+  local _env_key _value
+  while IFS=$'\t' read -r _env_key _value; do
     export "$_env_key=$_value"
-    [ -n "$_message" ] && printf '%s\n' "$_message" >&2
   done <<<"$_rows"
 }
 
@@ -3863,9 +3916,9 @@ if [ "$(id -u)" -ne 0 ]; then
   write_runtime_shell_env
   ensure_runtime_shell_env_shim
   lock_rc_files "$_SANDBOX_HOME" || true
-  # Apply manifest-declared runtime env aliases before any child inherits the
+  # Apply manifest-declared runtime provider placeholders before any child inherits the
   # env. This covers both one-shot commands and the gateway launch.
-  apply_messaging_runtime_env_aliases
+  apply_messaging_runtime_provider_placeholders
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     install_messaging_runtime_preloads
@@ -4018,10 +4071,10 @@ write_messaging_runtime_setup_plan
 write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
-# Apply manifest-declared runtime env aliases before any child (the one-shot
+# Apply manifest-declared runtime provider placeholders before any child (the one-shot
 # "${NEMOCLAW_CMD[@]}" exec or the stepped-down gateway) inherits the env.
 # gosu/setpriv preserve the environment, so the export reaches the gateway user.
-apply_messaging_runtime_env_aliases
+apply_messaging_runtime_provider_placeholders
 
 # Messaging channel config was announced before placeholder refresh so the
 # baseline captures the same provider placeholders the gateway will use.

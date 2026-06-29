@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
-  getMessagingConfigEnvAliases,
+  getMessagingConfigCompatEnvKeys,
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
   getMessagingPolicyKeysByChannel,
@@ -67,7 +67,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
-  it("resolves config env keys and aliases from manifest inputs", () => {
+  it("resolves config env keys and compatibility env keys", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
       "TELEGRAM_REQUIRE_MENTION",
@@ -88,7 +88,7 @@ describe("built-in messaging channel metadata", () => {
       "MSTEAMS_PORT",
       "TEAMS_REQUIRE_MENTION",
     ]);
-    expect(getMessagingConfigEnvAliases()).toEqual({
+    expect(getMessagingConfigCompatEnvKeys()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
       DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
       MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],

@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { BUILT_IN_CHANNEL_MANIFESTS, getMessagingConfigEnvAliases } from "./messaging/channels";
+import { BUILT_IN_CHANNEL_MANIFESTS, getMessagingConfigCompatEnvKeys } from "./messaging/channels";
+import { planStateUpdates } from "./messaging/compiler/engines/state-update-engine";
 import { listChannels } from "./sandbox/channels";
 
 export type MessagingChannelConfig = Record<string, string>;
@@ -31,11 +32,11 @@ for (const key of channels.map((channel) => channel.requireMentionEnvKey)) {
   if (key && !validValuesByKey.has(key)) validValuesByKey.set(key, new Set(["0", "1"]));
 }
 
-const configKeyAliases = getMessagingConfigEnvAliases();
+const configCompatEnvKeys = getMessagingConfigCompatEnvKeys();
 
-const aliasToCanonical = new Map(
-  Object.entries(configKeyAliases).flatMap(([canonical, aliases]) =>
-    aliases.map((alias) => [alias, canonical] as const),
+const compatEnvToCanonical = new Map(
+  Object.entries(configCompatEnvKeys).flatMap(([canonical, compatEnvKeys]) =>
+    compatEnvKeys.map((compatEnvKey) => [compatEnvKey, canonical] as const),
   ),
 );
 
@@ -49,8 +50,10 @@ export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
         channel.requireMentionEnvKey,
       ]),
       ...manifestConfigInputs.map((input) => input.envKey),
-      ...BUILT_IN_CHANNEL_MANIFESTS.flatMap(
-        (manifest) => manifest.state.rebuildHydration?.map((hydration) => hydration.env) ?? [],
+      ...BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) =>
+        planStateUpdates(manifest).flatMap((update) =>
+          update.kind === "rebuild-hydration" ? [update.env] : [],
+        ),
       ),
     ].filter((key): key is string => typeof key === "string" && key.length > 0),
   ),
@@ -74,13 +77,13 @@ function normalizeValue(value: unknown): string | null {
 }
 
 export function getCanonicalMessagingChannelConfigKey(key: string): string | null {
-  return knownConfigKeys.has(key) ? key : (aliasToCanonical.get(key) ?? null);
+  return knownConfigKeys.has(key) ? key : (compatEnvToCanonical.get(key) ?? null);
 }
 
 export function getMessagingChannelConfigEnvKeys(key: string): readonly string[] {
   const canonical = getCanonicalMessagingChannelConfigKey(key);
   if (!canonical) return [];
-  return [canonical, ...(configKeyAliases[canonical] ?? [])];
+  return [canonical, ...(configCompatEnvKeys[canonical] ?? [])];
 }
 
 export type InvalidMessagingChannelConfigEnvEntry = {

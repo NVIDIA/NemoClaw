@@ -136,30 +136,7 @@ export const wechatManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      wechatConfig: ["accountId", "baseUrl", "userId"],
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
-      },
-      {
-        statePath: "wechatConfig.baseUrl",
-        env: "WECHAT_BASE_URL",
-      },
-      {
-        statePath: "wechatConfig.userId",
-        env: "WECHAT_USER_ID",
-      },
-      {
-        statePath: "allowedIds.wechat",
-        env: "WECHAT_ALLOWED_IDS",
-      },
-    ],
-  },
+  state: {},
   hooks: [
     {
       id: "wechat-host-qr",

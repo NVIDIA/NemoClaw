@@ -181,8 +181,8 @@ Important plan sections are:
 | `networkPolicy` | `manifest.policyPresets`. | Policy application during onboard and channel lifecycle changes. |
 | `agentRender` | `manifest.render` after template and credential placeholder resolution. | Host config applier and build-time config applier. |
 | `buildSteps` | `manifest.agentPackages` and hook outputs of kind `build-arg`, `build-file`, or `package-install`. | Image build and post-agent-install application. |
-| `runtimeSetup` | `manifest.runtime`. | Runtime preload, env alias, secret scan, and reduced runtime artifact generation. |
-| `stateUpdates` | `manifest.state`. | Registry persistence and rebuild hydration. |
+| `runtimeSetup` | `manifest.runtime` and `credentialBindings.placeholder`. | Runtime preload, secret scan, provider placeholder refresh, and reduced runtime artifact generation. |
+| `stateUpdates` | Config input `statePath` values, plus any explicit `manifest.state` compatibility rules. | Registry persistence and rebuild hydration. |
 | `healthChecks` | Health-check hook declarations. | Lifecycle success gates. |
 
 Disabled channels must not produce side effects.
@@ -289,34 +289,33 @@ It is a serializable declaration for one channel and one set of supported agents
 | `description`, `enrollmentHelp`, `enrollmentNotes` | Optional operator-facing guidance. |
 | `supportedAgents` | Agents that can consume this channel, such as `openclaw` or `hermes`. |
 | `auth` | High-level enrollment mode: `none`, `token-paste`, `host-qr`, or `in-sandbox-qr`. |
-| `inputs` | Secret and config inputs, env keys, prompts, validation, aliases, and persistence paths. |
+| `inputs` | Secret and config inputs, canonical env keys, prompts, validation, and persistence paths. |
 | `credentials` | Provider bindings derived from secret inputs. |
 | `policyPresets` | Optional network policy presets and policy keys required by the channel. |
 | `render` | Agent config fragments or env-file lines to render when the channel is active. |
 | `hostForward` | Optional host-side forward for inbound webhooks. |
-| `runtime` | Optional runtime visibility, preload, env alias, and secret scan metadata. |
+| `runtime` | Optional runtime visibility, preload, and secret scan metadata. |
 | `agentPackages` | Optional build-time agent package installs. |
-| `state` | Persisted config keys and rebuild hydration rules. |
+| `state` | Compatibility state rules. Keep this empty for new manifests when config inputs already declare `statePath`. |
 | `hooks` | Hook references for enrollment, checks, render, apply, status, and diagnostics. |
 
 Secret inputs cannot declare `statePath` or defaults.
 Plans may carry `credentialAvailable`, `credentialHash`, and placeholders, but they must not carry raw tokens.
 
-## Manifest Cleanup Direction
+## Manifest Authoring Rules
 
 `ChannelManifest` is the external channel authoring contract.
-Cleanup work should make that public shape simpler while preserving the current compiled plan and applier behavior.
+Keep the input declaration as the source of truth.
 
-Prefer making the input declaration the source of truth.
-
-- Put env names, aliases, prompts, validation, persistence, and rebuild hydration on `inputs` when they describe the same value.
+- Put canonical env names, prompts, validation, persistence, and rebuild hydration on `inputs` when they describe the same value.
+- Keep compatibility env names out of channel manifests; handle them in internal resolver tables.
 - Derive credential bindings from secret inputs when provider name, placeholder, and env key follow the standard channel pattern.
 - Derive state persistence and rebuild hydration from config inputs instead of repeating `statePath`, `state.persist`, and `state.rebuildHydration` in separate sections.
-- Derive routine runtime visibility and env alias data from the active agent channel name unless the channel needs an explicit override.
+- Derive routine runtime visibility from the active agent channel name; handle provider placeholder refresh through credential bindings, not a second runtime manifest section.
 - Keep advanced behavior explicit for host forwards, agent render, package installs, network policy presets, and channel-specific hooks.
 
-The registry or compiler can normalize the simpler authoring shape into the existing internal manifest and plan structure.
-That keeps existing v1 manifests accepted during migration and avoids forcing lifecycle, persistence, build-applier, or policy code to understand two behavior models.
+The compiler normalizes the manifest into the internal plan.
+`runtimeSetup` carries only `nodePreloads` and `secretScans`; runtime provider placeholder refresh reads active `credentialBindings.placeholder` values during sandbox startup.
 
 ## Manifest Skeleton
 
@@ -376,17 +375,7 @@ export const exampleManifest = {
       },
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedUsers"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.example",
-        env: "EXAMPLE_ALLOWED_USERS",
-      },
-    ],
-  },
+  state: {},
   hooks: [
     {
       id: "example-token-paste",

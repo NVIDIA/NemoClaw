@@ -87,11 +87,6 @@ export const whatsappManifest = {
   ],
   runtime: {
     openclaw: {
-      channelName: "whatsapp",
-      visibility: {
-        configKeys: ["whatsapp"],
-        logPatterns: ["whatsapp"],
-      },
       nodePreloads: [
         {
           module: "whatsapp-qr-compact",
@@ -113,16 +108,6 @@ export const whatsappManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      allowedIds: ["allowedIds"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "allowedIds.whatsapp",
-        env: "WHATSAPP_ALLOWED_IDS",
-      },
-    ],
-  },
+  state: {},
   hooks: [],
 } as const satisfies ChannelManifest;

@@ -151,7 +151,7 @@ describe("resolveProviderCredential — canonical credential resolution (#2306)"
   });
 
   it("maps legacy NVIDIA_API_KEY env to NVIDIA_INFERENCE_API_KEY", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-env-alias-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2306-env-rewrite-"));
     tmpFixtures.push(tmpDir);
     delete process.env["NVIDIA_INFERENCE_API_KEY"];
     vi.stubEnv("NVIDIA_API_KEY", "nvapi-legacy-env");
