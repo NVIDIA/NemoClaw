@@ -617,7 +617,7 @@ export async function runInferenceSet(
     const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
     const combined = `${stderr}\n${stdout}`;
     if (/provider.*not found/i.test(combined) || /not found.*provider/i.test(combined)) {
-      let providerList = "No providers registered";
+      let providerList: string | null = null;
       try {
         const registeredProviders = [
           ...new Set(
@@ -627,15 +627,16 @@ export async function runInferenceSet(
               .filter((p): p is string => typeof p === "string" && p.length > 0),
           ),
         ];
-        if (registeredProviders.length > 0) {
-          providerList = `Registered providers: ${registeredProviders.join(", ")}`;
-        }
+        providerList =
+          registeredProviders.length > 0
+            ? `Registered providers: ${registeredProviders.join(", ")}`
+            : "No providers registered";
       } catch {
         // Registry unavailable — still show the onboard tip without provider details.
       }
       throw new InferenceSetError(
         `OpenShell inference route update failed with exit ${setResult.status ?? 1}.\n` +
-          `${providerList}\n` +
+          `${providerList ? `${providerList}\n` : ""}` +
           `Tip: register a new provider with \`${CLI_NAME} onboard\`.`,
         setResult.status ?? 1,
       );

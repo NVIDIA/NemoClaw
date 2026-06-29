@@ -1178,6 +1178,28 @@ describe("runInferenceSet", () => {
     expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
 
+  it("omits provider list and still shows onboard tip when listSandboxes throws (#5924)", async () => {
+    const deps = createDeps({ config: {}, openshellStatus: 1 });
+    deps.calls.runOpenshell.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "error: provider 'openai-api' not found in gateway",
+    });
+    deps.listSandboxes = () => {
+      throw new Error("registry corrupted");
+    };
+
+    const err = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      deps,
+    ).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).not.toMatch(/Registered providers/);
+    expect(err.message).not.toMatch(/No providers registered/);
+    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+  });
+
   it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
     const deps = createDeps({ config: {}, session: baseSession() });
     deps.calls.readSandboxConfig.mockImplementation(() => {
