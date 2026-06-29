@@ -443,6 +443,7 @@ describe("onboard session", () => {
       endpointUrl: "https://example.com/v1",
       credentialEnv: "NVIDIA_INFERENCE_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-123",
       policyPresets: ["pypi", "npm"],
       apiKey: "nvapi-secret",
@@ -460,8 +461,12 @@ describe("onboard session", () => {
     expect(loaded.endpointUrl).toBe("https://example.com/v1");
     expect(loaded.credentialEnv).toBe("NVIDIA_INFERENCE_API_KEY");
     expect(loaded.preferredInferenceApi).toBe("openai-completions");
+    expect(loaded.compatibleEndpointReasoning).toBe("true");
     expect(loaded.nimContainer).toBe("nim-123");
     expect(loaded.policyPresets).toEqual(["pypi", "npm"]);
+    expect(requireDebugSummary(session.summarizeForDebug()).compatibleEndpointReasoning).toBe(
+      "true",
+    );
     expect("apiKey" in loaded).toBe(false);
     expect(loaded.metadata.gatewayName).toBe("nemoclaw");
     expect("token" in loaded.metadata).toBe(false);
@@ -591,7 +596,7 @@ describe("onboard session", () => {
   });
 
   it("accepts null as an explicit clear for every nullable string field", () => {
-    // All six nullable fields that travel through filterSafeUpdates must
+    // All nullable fields that travel through filterSafeUpdates must
     // support the null-clear contract. If any regresses to the old
     // string-only guard, the test below catches it.
     session.saveSession(session.createSession());
@@ -602,6 +607,7 @@ describe("onboard session", () => {
       endpointUrl: "https://api.openai.com/v1",
       credentialEnv: "OPENAI_API_KEY",
       preferredInferenceApi: "openai-completions",
+      compatibleEndpointReasoning: "true",
       nimContainer: "nim-abc",
     });
 
@@ -612,6 +618,7 @@ describe("onboard session", () => {
       endpointUrl: null,
       credentialEnv: null,
       preferredInferenceApi: null,
+      compatibleEndpointReasoning: null,
       nimContainer: null,
     });
 
@@ -622,6 +629,7 @@ describe("onboard session", () => {
     expect(loaded.endpointUrl).toBeNull();
     expect(loaded.credentialEnv).toBeNull();
     expect(loaded.preferredInferenceApi).toBeNull();
+    expect(loaded.compatibleEndpointReasoning).toBeNull();
     expect(loaded.nimContainer).toBeNull();
   });
 

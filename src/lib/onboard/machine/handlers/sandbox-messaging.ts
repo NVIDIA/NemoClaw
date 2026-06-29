@@ -150,7 +150,7 @@ function selectionFromReusablePlan<Agent>(
   if (writeToEnv || refreshed.changed || filtered !== refreshed.plan) deps.writePlanToEnv(filtered);
   return {
     plan: filtered,
-    selectedChannels: getActiveChannelsFromPlan(filtered) ?? [],
+    selectedChannels: getActiveChannelsFromPlan(filtered),
   };
 }
 
@@ -176,7 +176,7 @@ async function selectionFromMessagingSetup<Agent>(
   options.deps.writePlanToEnv(filtered);
   return {
     plan: filtered,
-    selectedChannels: getActiveChannelsFromPlan(filtered) ?? [],
+    selectedChannels: getActiveChannelsFromPlan(filtered),
   };
 }
 
@@ -206,7 +206,7 @@ function channelsForRegistryPlanRefresh(
   agent: unknown,
 ): string[] | null {
   const activeChannels = filterChannelNamesForCurrentAgent(
-    getActiveChannelsFromPlan(registryPlan) ?? [],
+    getActiveChannelsFromPlan(registryPlan),
     agent,
   );
   if (activeChannels.length > 0) return null;
@@ -245,7 +245,7 @@ export function reconcileReusedSandboxMessaging<Agent>(
   if (filtered !== plan) deps.clearPlanEnv();
   return {
     plan: filtered,
-    selectedChannels: getActiveChannelsFromPlan(filtered) ?? [],
+    selectedChannels: getActiveChannelsFromPlan(filtered),
     changed: filtered !== plan,
   };
 }

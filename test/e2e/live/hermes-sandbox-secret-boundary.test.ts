@@ -117,6 +117,10 @@ def parse_platform_toolsets(text: str) -> dict[str, list[str]]:
 
 env_path = Path("/sandbox/.hermes/.env")
 config_path = Path("/sandbox/.hermes/config.yaml")
+for retired_path in (Path("/sandbox/.openclaw"), Path("/sandbox/.hermes-data")):
+    if retired_path.exists() or retired_path.is_symlink():
+        print(f"retired Hermes sandbox state is present: {retired_path}", file=sys.stderr)
+        sys.exit(1)
 if env_path.is_symlink():
     print(f"{env_path} is a symlink", file=sys.stderr)
     sys.exit(1)

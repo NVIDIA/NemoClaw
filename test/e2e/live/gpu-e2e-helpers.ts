@@ -25,9 +25,12 @@ function tcpPort(value: string | undefined, fallback: string): string {
   return raw;
 }
 
-export function env(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+export function env(
+  extra: NodeJS.ProcessEnv = {},
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
   return {
-    ...buildAvailabilityProbeEnv(),
+    ...buildAvailabilityProbeEnv(base),
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_PROVIDER: "ollama",

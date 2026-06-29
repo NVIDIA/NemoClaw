@@ -519,6 +519,12 @@ export async function runChannelsStopStartTarget({
   await expectAgentConfig(sandbox, "absent", redactions);
   await expectProvidersExist(host, env, redactions, "after-stop");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "disabled");
+  for (const channel of CHANNELS) {
+    expect(
+      await policyPresetActive(host, env, redactions, channel),
+      `${channel} policy inactive after stop+rebuild`,
+    ).toBe(false);
+  }
 
   for (const channel of CHANNELS) await runChannelCommand(host, env, redactions, "start", channel);
   expectChannelInputs();
@@ -534,4 +540,10 @@ export async function runChannelsStopStartTarget({
   await expectAgentConfig(sandbox, "present", redactions);
   await expectProvidersExist(host, env, redactions, "after-start");
   for (const channel of CHANNELS) expectPlanChannelState(channel, "active");
+  for (const channel of CHANNELS) {
+    expect(
+      await policyPresetActive(host, env, redactions, channel),
+      `${channel} policy active after start+rebuild`,
+    ).toBe(true);
+  }
 }
