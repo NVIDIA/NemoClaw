@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,6 +24,13 @@ type SpawnSyncFn = (
 
 export interface RunUpdateOptions {
   check?: boolean;
+  /**
+   * Reinstall the maintained build even when already up to date. The installer
+   * re-clones `~/.nemoclaw/source`, so this repairs a broken-but-current
+   * install. Does not reset onboarding state (distinct from the installer's
+   * onboard-scoped `--fresh`/`NEMOCLAW_FRESH`).
+   */
+  fresh?: boolean;
   yes?: boolean;
 }
 
@@ -256,7 +263,7 @@ export async function runUpdateAction(
     };
   }
 
-  if (available === false) {
+  if (available === false && !options.fresh) {
     log(`  ${branding.displayName} is already up to date.`);
     return {
       currentVersion,
@@ -266,6 +273,12 @@ export async function runUpdateAction(
       status: 0,
       updateAvailable: available,
     };
+  }
+
+  if (available === false && options.fresh) {
+    log(
+      `  ${branding.displayName} is already up to date; reinstalling anyway (--fresh) for a clean re-clone.`,
+    );
   }
 
   if (!options.yes) {
