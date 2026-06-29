@@ -210,6 +210,7 @@ async function addBridgeAndReadStatus(
     support: { supported: boolean; adapter: string };
     server: string;
     url: string;
+    warnings: string[];
     env: { names: string[]; ready: boolean; missing: string[] };
     provider: {
       name: string;
@@ -231,6 +232,9 @@ async function addBridgeAndReadStatus(
     policy: { gatewayPresent: true },
     adapter: { registered: true },
   });
+  expect(statusJson.warnings).toEqual([
+    expect.stringMatching(/provider at sandbox scope.*endpoint-exclusive credential binding/i),
+  ]);
   expect(status.stdout).not.toContain(HOST_SECRET);
   expect(statusJson.provider.name).toMatch(
     new RegExp(`^${options.sandboxName}-mcp-${SERVER_NAME}-[a-f0-9]{16}$`),

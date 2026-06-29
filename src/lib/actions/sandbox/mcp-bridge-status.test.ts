@@ -26,6 +26,102 @@ afterEach(() => {
 });
 
 describe("cross-agent MCP status", () => {
+  it("reports sandbox-scoped provider risk in JSON and text status", () => {
+    const home = createTempHome("nemoclaw-mcp-status-risk-");
+    const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+process.env.EXPECTED_TOKEN = "host-only-secret";
+const registry = require("./src/lib/state/registry.js");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const globalActions = require("./src/lib/actions/global.js");
+const policies = require("./src/lib/policy/index.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+globalActions.runOpenshellProviderCommand = (args) => {
+  if (args[0] === "provider" && args[1] === "get") {
+    return {
+      status: 0,
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    return {
+      status: 0,
+      stdout: "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n",
+      stderr: "",
+    };
+  }
+  throw new Error("Unexpected OpenShell call: " + args.join(" "));
+};
+policies.getPresetContentGatewayState = () => "match";
+processRecovery.executeSandboxCommand = () => ({
+  status: 0,
+  stdout: "registered\n",
+  stderr: "",
+});
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  mcp: { bridges: { fake: {
+    server: "fake",
+    agent: "openclaw",
+    adapter: "mcporter",
+    url: "https://mcp.example.test/mcp",
+    env: ["EXPECTED_TOKEN"],
+    providerName: "alpha-mcp-fake",
+    providerId: "11111111-2222-4333-8444-555555555555",
+    policyName: "mcp-bridge-fake",
+    addedAt: "2026-06-01T00:00:00.000Z",
+  } } },
+});
+registry.addCustomPolicy("alpha", {
+  name: "mcp-bridge-fake",
+  content: "network_policies: {}\n",
+  sourcePath: "generated:nemoclaw-mcp-bridge",
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  const [status] = await bridge.statusMcpBridge("alpha", "fake");
+  const lines = [];
+  const originalLog = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    await bridge.dispatchMcpBridgeCommand("alpha", ["status", "fake"]);
+  } finally {
+    console.log = originalLog;
+  }
+  process.stdout.write(JSON.stringify({ status, text: lines.join("\n") }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
+    });
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      status: { warnings: string[]; provider: { attached: boolean | null } };
+      text: string;
+    };
+    expect(payload.status.provider.attached).toBe(true);
+    expect(payload.status.warnings).toEqual([
+      expect.stringMatching(/provider at sandbox scope.*endpoint-exclusive credential binding/i),
+    ]);
+    expect(payload.text).toMatch(
+      /warning: OpenShell currently attaches this credential provider at sandbox scope/i,
+    );
+  });
+
   it("reports Hermes bridge support in status JSON without requiring servers", () => {
     const home = createTempHome("nemoclaw-mcp-status-");
     const script = `

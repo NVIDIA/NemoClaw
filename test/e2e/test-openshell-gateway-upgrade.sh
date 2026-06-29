@@ -58,7 +58,9 @@ OLD_NEMOCLAW_REF="${NEMOCLAW_OLD_NEMOCLAW_REF:-v0.0.36}"
 OLD_OPENSHELL_VERSION="${NEMOCLAW_OLD_OPENSHELL_VERSION:-0.0.36}"
 OLD_SANDBOX_BASE_IMAGE_REF="${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:-ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6}"
 OLD_OPENCLAW_VERSION="${NEMOCLAW_OLD_OPENCLAW_VERSION:-2026.4.24}"
-CURRENT_OPENSHELL_VERSION="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-0.0.44}"
+CURRENT_OPENSHELL_VERSION_OVERRIDE="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-}"
+CURRENT_OPENSHELL_VERSION="${CURRENT_OPENSHELL_VERSION_OVERRIDE:-0.0.72}"
+OPENSHELL_CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
 SURVIVOR_MARKER_PATH="/sandbox/.openclaw/workspace/nemoclaw-gateway-upgrade-marker"
@@ -78,6 +80,27 @@ load_shell_path() {
   fi
   if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
+  fi
+}
+
+extract_openshell_version() {
+  grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z]+)*' | head -1
+}
+
+current_openshell_version_matches() {
+  local version="$1"
+  if [ -n "$CURRENT_OPENSHELL_VERSION_OVERRIDE" ] || [ "$OPENSHELL_CHANNEL" != "dev" ]; then
+    [ "$version" = "$CURRENT_OPENSHELL_VERSION" ]
+  else
+    grep -Eiq '^[0-9]+\.[0-9]+\.[0-9]+[.-]dev[0-9]*([.+-][0-9A-Za-z]+)*$' <<<"$version"
+  fi
+}
+
+expected_current_openshell_version_label() {
+  if [ -z "$CURRENT_OPENSHELL_VERSION_OVERRIDE" ] && [ "$OPENSHELL_CHANNEL" = "dev" ]; then
+    printf '%s' 'a dev-channel build'
+  else
+    printf '%s' "$CURRENT_OPENSHELL_VERSION"
   fi
 }
 
@@ -292,12 +315,13 @@ EOF
 #!/usr/bin/env bash
 # request-body-credential-rewrite
 # websocket-credential-rewrite
+# allow_all_known_mcp_methods
 if [ "${1:-}" = "--version" ]; then
-  printf 'openshell 0.0.44\n'
+  printf 'openshell 0.0.72\n'
   exit 0
 fi
 exit 99
-# request-body-credential-rewrite websocket-credential-rewrite
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
 EOF
 
   cat >"$fake_bin/gh" <<'EOF'
@@ -382,12 +406,13 @@ EOF
 #!/usr/bin/env bash
 # request-body-credential-rewrite
 # websocket-credential-rewrite
+# allow_all_known_mcp_methods
 if [ "${1:-}" = "--version" ]; then
-  printf 'openshell 0.0.44\n'
+  printf 'openshell 0.0.72\n'
   exit 0
 fi
 exit 99
-# request-body-credential-rewrite websocket-credential-rewrite
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
 EOF
 
   cat >"$fake_bin/openshell-gateway" <<'EOF'
@@ -631,19 +656,24 @@ install_current_nemoclaw_upgrade() {
   grep -Fq "Accepted experimental OpenShell gateway upgrade" "$CURRENT_INSTALL_LOG" \
     || fail "current installer did not exercise the experimental OpenShell gateway upgrade acceptance path"
 
-  if ! openshell --version 2>&1 | grep -q "$CURRENT_OPENSHELL_VERSION"; then
-    fail "current NemoClaw install did not upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)"
+  local version_output observed_version expected_version
+  version_output="$(openshell --version 2>&1 || true)"
+  observed_version="$(extract_openshell_version <<<"$version_output" || true)"
+  expected_version="$(expected_current_openshell_version_label)"
+  if [ -z "$observed_version" ] || ! current_openshell_version_matches "$observed_version"; then
+    fail "current NemoClaw install did not upgrade OpenShell to ${expected_version}: ${version_output}"
   fi
   pass "Current NemoClaw install selected $(openshell --version)"
 
-  local status_output
+  local status_output status_version
   status_output="$(openshell status 2>&1 || true)"
-  if ! grep -q "Version:.*${CURRENT_OPENSHELL_VERSION}" <<<"$status_output"; then
+  status_version="$(grep -m1 'Version:' <<<"$status_output" | extract_openshell_version || true)"
+  if [ -z "$status_version" ] || [ "$status_version" != "$observed_version" ]; then
     diag "openshell status after current install:"
     printf '%s\n' "$status_output"
-    fail "gateway server did not report OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
+    fail "gateway server did not report the CLI build ${observed_version} after upgrade"
   fi
-  pass "Gateway server reports OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade"
+  pass "Gateway server reports the same OpenShell build ${observed_version} as the CLI"
 
   if grep -Fq "Pre-upgrade backup: 1 backed up, 0 failed, 0 skipped" "$CURRENT_INSTALL_LOG"; then
     pass "Current installer backed up the old running claw before replacing OpenShell"
@@ -711,7 +741,7 @@ start_survivor_agent_in_existing_claw
 info "Running current NemoClaw installer/onboard against old working claw"
 install_current_nemoclaw_upgrade
 assert_survivor_sandbox_after_upgrade
-pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}"
+pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell $(expected_current_openshell_version_label)"
 
 exercise_macos_gateway_installer_regression
 exercise_macos_vm_driver_entitlement_not_required

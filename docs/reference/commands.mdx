@@ -1319,6 +1319,7 @@ unset GITHUB_MCP_TOKEN
 
 Inspect MCP server state for one server or for all configured servers.
 Status includes OpenShell provider presence and credential-key shape, provider attachment, generated policy content match, adapter registration, current host-variable availability, and the selected agent's MCP support mode.
+While a managed provider is attached, text and JSON status warn that its credential is sandbox-scoped until OpenShell supports endpoint-exclusive binding plus Host, scheme, and query enforcement.
 
 ```bash
 $$nemoclaw my-assistant mcp status [server] [--json]

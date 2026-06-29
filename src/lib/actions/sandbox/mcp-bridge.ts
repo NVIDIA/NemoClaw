@@ -1458,6 +1458,7 @@ function renderStatus(
     console.log(
       `    env: ${status.env.ready ? "ready" : status.env.missing.length > 0 ? `missing ${status.env.missing.join(", ")}` : "not ready"}`,
     );
+    for (const warning of status.warnings) console.log(`    warning: ${warning}`);
   }
   console.log("");
 }

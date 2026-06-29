@@ -37,6 +37,9 @@ export interface McpBridgeJsonSummary {
   bridges: McpBridgeStatus[];
 }
 
+const SANDBOX_SCOPED_PROVIDER_WARNING =
+  "OpenShell currently attaches this credential provider at sandbox scope, not exclusively to this MCP endpoint. Keep other inspected routes for the same adapter binary at least as restrictive until OpenShell supports endpoint-exclusive credential binding plus Host, scheme, and query enforcement.";
+
 function getAdapterRegistration(
   sandboxName: string,
   adapter: AgentMcpAdapter | undefined,
@@ -89,6 +92,7 @@ export async function statusMcpBridge(
       {
         server,
         agent: agent.name,
+        warnings: [],
         support: {
           supported: agent.mcpCapability.support === "bridge",
           mode: agent.mcpCapability.support,
@@ -134,9 +138,11 @@ export async function statusMcpBridge(
       expectedCredential,
       entry?.providerId,
     );
+    const attached = providerAttached(sandboxName, entry?.providerName);
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
+      warnings: attached === true ? [SANDBOX_SCOPED_PROVIDER_WARNING] : [],
       support,
       ...(entry ? { url: entry.url } : {}),
       ...(entry?.addState ? { addState: entry.addState } : {}),
@@ -152,7 +158,7 @@ export async function statusMcpBridge(
         name: entry?.providerName,
         registryPresent: !!entry?.providerName,
         gatewayPresent: entry?.providerName ? providerInspection.exists : null,
-        attached: providerAttached(sandboxName, entry?.providerName),
+        attached,
         credentialReady: entry ? providerCredentialReady : null,
         ...(providerDetail ? { detail: providerDetail } : {}),
       },

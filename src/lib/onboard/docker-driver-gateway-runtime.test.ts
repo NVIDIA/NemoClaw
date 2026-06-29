@@ -112,6 +112,22 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
+  it("uses the moving dev supervisor image for an explicit or detected dev runtime", () => {
+    const explicit = makeHelpers({ shouldUseOpenshellDevChannel: () => true });
+    expect(
+      explicit.helpers.getDockerDriverGatewayEnv("openshell 0.0.72", "linux")
+        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+
+    const detected = makeHelpers({
+      isOpenshellDevVersion: (versionOutput) => String(versionOutput).includes("-dev."),
+    });
+    expect(
+      detected.helpers.getDockerDriverGatewayEnv("openshell 0.0.72-dev.8+g7bce1223", "linux")
+        .OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+    ).toBe("ghcr.io/nvidia/openshell/supervisor:dev");
+  });
+
   it("clears custom state-dir PID and marker files when the recorded PID is not the gateway", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
     const pid = 9_876_543;

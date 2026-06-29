@@ -13,9 +13,11 @@ type Step = {
 type Job = {
   env?: Record<string, string>;
   steps?: Step[];
+  uses?: string;
   with?: Record<string, unknown>;
 };
 type Workflow = {
+  env?: Record<string, string>;
   on?: {
     workflow_dispatch?: {
       inputs?: Record<string, { default?: unknown; description?: string; options?: unknown[] }>;
@@ -53,12 +55,21 @@ function dockerHubAuthStep(job: Job): Step | undefined {
 describe("MCP OpenShell workflow boundary", () => {
   it("targets the current OpenShell main dev build by default", () => {
     const nightly = workflow(".github/workflows/nightly-e2e.yaml");
+    const reusable = workflow(".github/workflows/e2e-script.yaml");
     const vitest = workflow(".github/workflows/e2e-vitest-scenarios.yaml");
     const nightlyInstall = installStep(nightly.jobs["mcp-bridge-e2e"]);
 
     expect(nightly.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("dev");
     expect(vitest.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("dev");
-    expect(nightlyInstall?.env?.NEMOCLAW_OPENSHELL_CHANNEL).toContain("|| 'dev'");
+    expect(nightly.env?.NEMOCLAW_OPENSHELL_CHANNEL).toContain("|| 'dev'");
+    expect(reusable.jobs.run.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'dev' }}",
+    );
+    expect(vitest.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe("${{ inputs.openshell_channel }}");
+    expect(nightlyInstall?.env).not.toHaveProperty("NEMOCLAW_OPENSHELL_CHANNEL");
+    const nightlyChannel =
+      "${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'dev' }}";
+    expect(JSON.stringify(nightly).split(nightlyChannel)).toHaveLength(2);
     expect(nightlyInstall?.env?.NEMOCLAW_OPENSHELL_FORCE_INSTALL).toBe("1");
     expect(
       installStep(workflow(".github/workflows/e2e-vitest-scenarios.yaml").jobs["mcp-bridge-vitest"])
@@ -70,6 +81,16 @@ describe("MCP OpenShell workflow boundary", () => {
       expect(description).toContain("stable advertises all required MCP/lifecycle capabilities");
       expect(description).toContain("passes the lifecycle probe");
       expect(description).toContain("switch to stable");
+    }
+  });
+
+  it("keeps reusable lane configuration from overriding the selected channel", () => {
+    const nightly = workflow(".github/workflows/nightly-e2e.yaml");
+
+    for (const [name, job] of Object.entries(nightly.jobs)) {
+      if (job.uses !== "./.github/workflows/e2e-script.yaml") continue;
+      const laneEnv = JSON.parse(String(job.with?.env_json ?? "{}")) as Record<string, unknown>;
+      expect(laneEnv.NEMOCLAW_OPENSHELL_CHANNEL, name).toBeUndefined();
     }
   });
 

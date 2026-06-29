@@ -550,6 +550,18 @@ exit 0`,
     expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
   });
 
+  it("keeps auto on the stable release-selection contract", () => {
+    const result = runWithInstalledVersion("0.0.36", {
+      NEMOCLAW_OPENSHELL_CHANNEL: "auto",
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain(
+      `Installing OpenShell from release 'v${REQUIRED_OPENSHELL_VERSION}'`,
+    );
+    expect(result.stdout).not.toContain("Installing OpenShell from release 'dev'");
+  });
+
   it("preserves the rebuild Hermes requested channel through the real installer boundary", () => {
     const childEnv = buildRebuildHermesChildEnv(
       {

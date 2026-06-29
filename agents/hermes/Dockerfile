@@ -126,7 +126,14 @@ COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
 # Managed recovery rebuilds the critical Node guard chain from immutable image
-# copies before it relaunches nemoclaw-start. Hermes does not otherwise consume
+# copies before it relaunches nemoclaw-start. The invalid state is a supervisor
+# or container recovery after the ephemeral /tmp proxy env or preload files are
+# missing, incomplete, or unsafe; cold-start generation cannot rule that out
+# across the runtime lifecycle boundary. runtime-recovery-preload.test.ts and
+# runtime-hermes-secret-boundary-behavioural.test.ts lock the fail-closed repair
+# contract. Remove these copies once the minimum supported OpenShell runtime
+# guarantees every recovery re-enters immutable image startup or provides an
+# atomic trusted-preload reconstruction hook. Hermes does not otherwise consume
 # the OpenClaw preload bundle, so package only the two recovery trust anchors.
 COPY nemoclaw-blueprint/scripts/sandbox-safety-net.js /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js
 COPY nemoclaw-blueprint/scripts/ciao-network-guard.js /usr/local/lib/nemoclaw/preloads/ciao-network-guard.js

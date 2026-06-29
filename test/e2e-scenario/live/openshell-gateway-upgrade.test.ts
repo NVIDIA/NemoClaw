@@ -45,7 +45,10 @@ const STATE_DIR = path.join(
 const PID_FILE = path.join(STATE_DIR, "openshell-gateway.pid");
 const OLD_NEMOCLAW_REF = process.env.NEMOCLAW_OLD_NEMOCLAW_REF ?? "v0.0.36";
 const OLD_OPENSHELL_VERSION = process.env.NEMOCLAW_OLD_OPENSHELL_VERSION ?? "0.0.36";
-const CURRENT_OPENSHELL_VERSION = process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION ?? "0.0.44";
+const CURRENT_OPENSHELL_VERSION_OVERRIDE =
+  process.env.NEMOCLAW_CURRENT_OPENSHELL_VERSION?.trim() || undefined;
+const CURRENT_OPENSHELL_VERSION = CURRENT_OPENSHELL_VERSION_OVERRIDE ?? "0.0.72";
+const OPENSHELL_CHANNEL = process.env.NEMOCLAW_OPENSHELL_CHANNEL ?? "auto";
 const OLD_SANDBOX_BASE_IMAGE_REF =
   process.env.NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF ??
   "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6";
@@ -114,6 +117,23 @@ function expectOutputContains(result: ShellProbeResult, value: string, label: st
 
 function escapeRegExpLiteral(value: string): string {
   return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+function expectedCurrentOpenShellVersionPattern(): RegExp {
+  if (!CURRENT_OPENSHELL_VERSION_OVERRIDE && OPENSHELL_CHANNEL === "dev") {
+    return /^\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*$/i;
+  }
+  return new RegExp(`^${escapeRegExpLiteral(CURRENT_OPENSHELL_VERSION)}$`, "i");
+}
+
+function expectedCurrentOpenShellVersionLabel(): string {
+  return !CURRENT_OPENSHELL_VERSION_OVERRIDE && OPENSHELL_CHANNEL === "dev"
+    ? "a dev-channel build"
+    : CURRENT_OPENSHELL_VERSION;
+}
+
+function extractOpenShellVersion(output: string): string | undefined {
+  return output.match(/\b\d+\.\d+\.\d+(?:[.+-][0-9A-Za-z]+)*/i)?.[0];
 }
 
 async function bash(
@@ -544,19 +564,24 @@ async function installCurrentNemoclawUpgrade(
     timeoutMs: 30_000,
   });
   expectExitZero(openshellVersion, "current openshell --version");
-  expectOutputContains(
-    openshellVersion,
-    CURRENT_OPENSHELL_VERSION,
-    `current NemoClaw install must upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}`,
-  );
+  const observedVersion = extractOpenShellVersion(resultText(openshellVersion));
+  expect(observedVersion, "current openshell --version must report a version token").toBeDefined();
+  expect(
+    observedVersion,
+    `current NemoClaw install must upgrade OpenShell to ${expectedCurrentOpenShellVersionLabel()}`,
+  ).toMatch(expectedCurrentOpenShellVersionPattern());
 
   const status = await bash(host, `openshell status`, {
     artifactName: "current-openshell-status",
     timeoutMs: 60_000,
   });
   expectExitZero(status, "openshell status after current install");
-  expect(resultText(status)).toMatch(
-    new RegExp(`Version:.*${escapeRegExpLiteral(CURRENT_OPENSHELL_VERSION)}`),
+  const statusVersionLine = resultText(status)
+    .split(/\r?\n/)
+    .find((line) => /\bVersion:/i.test(line));
+  const gatewayVersion = extractOpenShellVersion(statusVersionLine ?? "");
+  expect(gatewayVersion, "gateway and CLI must report the same OpenShell build").toBe(
+    observedVersion,
   );
 }
 
@@ -636,12 +661,13 @@ function writeFakeCurrentOpenshell(fakeBin: string): void {
     `#!/usr/bin/env bash
 # request-body-credential-rewrite
 # websocket-credential-rewrite
+# allow_all_known_mcp_methods
 if [ "\${1:-}" = "--version" ]; then
   printf 'openshell ${CURRENT_OPENSHELL_VERSION}\n'
   exit 0
 fi
 exit 99
-# request-body-credential-rewrite websocket-credential-rewrite
+# request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods
 `,
   );
 }
@@ -668,7 +694,7 @@ runLinuxOpenShellGatewayUpgrade(
       legacySource: "test/e2e/test-openshell-gateway-upgrade.sh",
       oldNemoclawRef: OLD_NEMOCLAW_REF,
       oldOpenShellVersion: OLD_OPENSHELL_VERSION,
-      currentOpenShellVersion: CURRENT_OPENSHELL_VERSION,
+      currentOpenShellVersion: expectedCurrentOpenShellVersionLabel(),
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 

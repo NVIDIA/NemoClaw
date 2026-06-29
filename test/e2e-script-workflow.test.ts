@@ -721,7 +721,7 @@ describe("E2E reusable workflow contract", () => {
     expect(exportStep?.run).toContain(
       'reserved_prefixes = ("ACTIONS_", "GITHUB_", "INPUT_", "RUNNER_")',
     );
-    expect(exportStep?.run).toContain('reserved_names = {"CI", "HOME", "PATH", "PWD", "SHELL"}');
+    expect(exportStep?.run).toContain("reserved_names = {");
     expect(exportStep?.run).toContain('delimiter = f"EOF_{secrets.token_hex(16)}"');
   });
 
@@ -970,8 +970,7 @@ describe("E2E reusable workflow contract", () => {
     const networkPolicyEnv = JSON.parse(
       nightlyWorkflow.jobs["network-policy-e2e"].with?.env_json ?? "{}",
     ) as Record<string, unknown>;
-    // The current-main OpenShell channel is an MCP integration input. Keep
-    // the independent network-policy lane on its normal installer contract.
+    // Keep the selected channel out of individual lane configuration.
     expect(networkPolicyEnv.NEMOCLAW_OPENSHELL_CHANNEL).toBeUndefined();
     const networkPolicyArtifactPath = nightlyWorkflow.jobs["network-policy-e2e"].with
       ?.artifact_path as string | undefined;

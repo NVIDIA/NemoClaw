@@ -7696,6 +7696,11 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   const dispatchInputs = asRecord(workflowDispatch.inputs);
   requireInput(errors, dispatchInputs, "scenarios");
   const jobsInput = requireInput(errors, dispatchInputs, "jobs");
+  const openshellChannelInput = requireInput(
+    errors,
+    dispatchInputs,
+    "openshell_channel",
+  );
   const jobsDescription = stringValue(jobsInput.description);
   if (!jobsDescription.includes("default-enabled jobs")) {
     errors.push(
@@ -7709,6 +7714,18 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   }
   if (Object.hasOwn(dispatchInputs, "test_filter")) {
     errors.push("workflow_dispatch must not expose legacy test_filter input");
+  }
+  if (openshellChannelInput.default !== "dev") {
+    errors.push("workflow_dispatch openshell_channel input must default to dev");
+  }
+  const workflowEnv = asRecord(workflow.env);
+  if (
+    workflowEnv.NEMOCLAW_OPENSHELL_CHANNEL !==
+    "${{ inputs.openshell_channel }}"
+  ) {
+    errors.push(
+      "workflow env must propagate openshell_channel to the entire E2E fan-out",
+    );
   }
 
   const permissions = asRecord(workflow.permissions);

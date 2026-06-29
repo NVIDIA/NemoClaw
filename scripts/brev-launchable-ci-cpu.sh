@@ -26,9 +26,11 @@
 #
 # Usage (Brev launchable startup script — one-liner that curls this):
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
+#   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
 #
 # Environment overrides:
-#   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.72)
+#   OPENSHELL_VERSION     — Explicit OpenShell CLI release tag override
+#   NEMOCLAW_OPENSHELL_CHANNEL — stable/dev/auto release selection when no explicit tag is set
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
@@ -40,7 +42,7 @@
 set -euo pipefail
 
 # ── Configuration ────────────────────────────────────────────────────
-OPENSHELL_VERSION="${OPENSHELL_VERSION:-v0.0.72}"
+OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
@@ -71,6 +73,18 @@ fail() {
   printf '\033[0;31m[%s ci-cpu]\033[0m %s\n' "$(_ts)" "$1"
   exit 1
 }
+
+if [ -z "$OPENSHELL_VERSION" ]; then
+  case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
+    dev) OPENSHELL_VERSION="dev" ;;
+    stable | auto) OPENSHELL_VERSION="v0.0.72" ;;
+    *) fail "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto" ;;
+  esac
+fi
+if [ "${1:-}" = "--print-openshell-version" ]; then
+  printf '%s\n' "$OPENSHELL_VERSION"
+  exit 0
+fi
 
 # ── Retry helper ─────────────────────────────────────────────────────
 # Usage: retry 3 10 "description" command arg1 arg2

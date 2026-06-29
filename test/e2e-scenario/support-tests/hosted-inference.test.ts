@@ -195,11 +195,13 @@ describe("hosted inference E2E config", () => {
       HOME: "/tmp/home",
       PATH: "/usr/bin",
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+      NEMOCLAW_OPENSHELL_CHANNEL: "dev",
       NVIDIA_INFERENCE_API_KEY: "repo-hosted-key",
       RANDOM_NON_SECRET: "not-allowlisted",
     });
 
     expect(env.NEMOCLAW_E2E_USE_HOSTED_INFERENCE).toBe("1");
+    expect(env.NEMOCLAW_OPENSHELL_CHANNEL).toBe("dev");
     expect(env).not.toHaveProperty("NVIDIA_INFERENCE_API_KEY");
     expect(env).not.toHaveProperty("RANDOM_NON_SECRET");
   });

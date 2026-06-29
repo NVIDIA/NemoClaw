@@ -314,6 +314,11 @@ runLaunchableSmokeTest(
       timeoutMs: 30_000,
     });
     expectExitZero(openshellVersion, "openshell is on PATH and --version works");
+    if (process.env.NEMOCLAW_OPENSHELL_CHANNEL === "dev") {
+      expect(`${openshellVersion.stdout}\n${openshellVersion.stderr}`).toMatch(
+        /\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*/i,
+      );
+    }
 
     const nodeVersion = await host.command(
       "node",

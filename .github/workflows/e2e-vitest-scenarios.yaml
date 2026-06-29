@@ -34,6 +34,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # A dispatch selects one OpenShell integration target for the entire fan-out.
+  # Individual jobs must not silently fall back to an unreleased stable pin.
+  NEMOCLAW_OPENSHELL_CHANNEL: ${{ inputs.openshell_channel }}
+
 concurrency:
   group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
   cancel-in-progress: false

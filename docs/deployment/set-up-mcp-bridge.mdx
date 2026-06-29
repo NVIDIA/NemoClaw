@@ -143,6 +143,7 @@ $$nemoclaw my-sandbox mcp remove github
 
 `list --json` and `status --json` never include environment values.
 They report provider presence, provider attachment, whether the live generated policy content still matches the registered policy, environment readiness, and adapter registration state.
+The per-server `warnings` array reports the current sandbox-scoped provider risk while the managed provider is attached and states the OpenShell enforcement capabilities required to remove that warning.
 The `env.missing` field reports whether the original host variable is currently exported.
 An existing valid provider can remain ready when that host variable is unset because OpenShell retains the credential.
 The JSON value `support.mode: "bridge"` identifies the agent's config-adapter capability, not a host-side traffic bridge.

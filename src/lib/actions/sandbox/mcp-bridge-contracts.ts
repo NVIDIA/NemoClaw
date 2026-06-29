@@ -30,6 +30,7 @@ export interface McpBridgeAddOptions extends ParsedMcpAddArgs {}
 export interface McpBridgeStatus {
   server: string;
   agent: string;
+  warnings: string[];
   support: {
     supported: boolean;
     mode: "bridge" | "disabled";
