@@ -149,6 +149,16 @@ describe("readRecentShieldsAutoRestore", () => {
     expect(result?.timeoutSeconds).toBeNull();
   });
 
+  it("returns null when the shields_auto_restore entry is future-dated (#5922)", () => {
+    const future = new Date(Date.now() + 60 * 1000).toISOString();
+    fs.appendFileSync(
+      auditPath,
+      JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: future }) + "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result).toBeNull();
+  });
+
   it("returns null when the most recent shields_auto_restore entry is older than the window (#5922)", () => {
     const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
     fs.appendFileSync(

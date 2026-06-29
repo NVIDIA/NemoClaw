@@ -103,35 +103,37 @@ export function readRecentShieldsAutoRestore(
     return null;
   }
 
+  const now = Date.now();
   // Scan backwards for the most recent shields_auto_restore within the window.
   for (let i = lines.length - 1; i >= 0; i--) {
     const entry = parseEntry(lines[i]);
     if (
-      entry?.action === "shields_auto_restore" &&
-      entry.sandbox === sandboxName &&
-      typeof entry.timestamp === "string" &&
-      new Date(entry.timestamp).getTime() >= cutoff
-    ) {
-      const restoreTs = entry.timestamp;
-      // Continue backwards to find the preceding shields_down to get timeout_seconds.
-      let timeoutSeconds: number | null = null;
-      for (let j = i - 1; j >= 0; j--) {
-        const prev = parseEntry(lines[j]);
-        if (prev?.action === "shields_down" && prev.sandbox === sandboxName) {
-          if (
-            typeof prev.timeout_seconds === "number" &&
-            Number.isFinite(prev.timeout_seconds) &&
-            Number.isInteger(prev.timeout_seconds) &&
-            prev.timeout_seconds >= 1 &&
-            prev.timeout_seconds <= 1800
-          ) {
-            timeoutSeconds = prev.timeout_seconds;
-          }
-          break;
+      entry?.action !== "shields_auto_restore" ||
+      entry.sandbox !== sandboxName ||
+      typeof entry.timestamp !== "string"
+    )
+      continue;
+    const restoreMs = new Date(entry.timestamp).getTime();
+    if (!Number.isFinite(restoreMs) || restoreMs < cutoff || restoreMs > now) continue;
+    const restoreTs = entry.timestamp;
+    // Continue backwards to find the preceding shields_down to get timeout_seconds.
+    let timeoutSeconds: number | null = null;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = parseEntry(lines[j]);
+      if (prev?.action === "shields_down" && prev.sandbox === sandboxName) {
+        if (
+          typeof prev.timeout_seconds === "number" &&
+          Number.isFinite(prev.timeout_seconds) &&
+          Number.isInteger(prev.timeout_seconds) &&
+          prev.timeout_seconds >= 1 &&
+          prev.timeout_seconds <= 1800
+        ) {
+          timeoutSeconds = prev.timeout_seconds;
         }
+        break;
       }
-      return { timestamp: restoreTs, timeoutSeconds };
     }
+    return { timestamp: restoreTs, timeoutSeconds };
   }
   return null;
 }
