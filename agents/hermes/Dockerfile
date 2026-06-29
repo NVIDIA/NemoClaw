@@ -128,12 +128,20 @@ COPY agents/hermes/validate-env-secret-boundary.py /usr/local/lib/nemoclaw/valid
 COPY agents/hermes/seed-dashboard-config.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py
 COPY agents/hermes/runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py
 COPY agents/hermes/mcp-config-transaction.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py
+# Managed recovery rebuilds the critical Node guard chain from immutable image
+# copies before it relaunches nemoclaw-start. Hermes does not otherwise consume
+# the OpenClaw preload bundle, so package only the two recovery trust anchors.
+COPY nemoclaw-blueprint/scripts/sandbox-safety-net.js /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js
+COPY nemoclaw-blueprint/scripts/ciao-network-guard.js /usr/local/lib/nemoclaw/preloads/ciao-network-guard.js
 # Dockerfile.base is the source of truth for rlimit hooks. This Hermes replay
 # only repairs stale bases predating the v0.0.69 base layer, which may lack the
 # profile hook, bashrc hook, or root-owned helper mode. Remove it once the
 # minimum supported Hermes sandbox base tag guarantees those artifacts and
 # test/sandbox-rlimit-hooks.test.ts covers that base.
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init.sh /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py /usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py /usr/local/lib/nemoclaw/hermes-runtime-config-guard.py /usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py \
+    && chown root:root /usr/local/lib/nemoclaw/preloads /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js /usr/local/lib/nemoclaw/preloads/ciao-network-guard.js \
+    && chmod 755 /usr/local/lib/nemoclaw/preloads \
+    && chmod 444 /usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js /usr/local/lib/nemoclaw/preloads/ciao-network-guard.js \
     && chmod 444 /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && mkdir -p /etc/profile.d \
     && printf '%s\n' \

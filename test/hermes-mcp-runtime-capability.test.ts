@@ -68,6 +68,24 @@ function runHermesMcpRuntimeValidation({
 }
 
 describe("Hermes managed MCP runtime capability", () => {
+  it("packages immutable guard sources required by managed recovery", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const safetyNet = "/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js";
+    const ciaoGuard = "/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js";
+
+    expect(dockerfile).toContain(
+      `COPY nemoclaw-blueprint/scripts/sandbox-safety-net.js ${safetyNet}`,
+    );
+    expect(dockerfile).toContain(
+      `COPY nemoclaw-blueprint/scripts/ciao-network-guard.js ${ciaoGuard}`,
+    );
+    expect(dockerfile).toContain(
+      `chown root:root /usr/local/lib/nemoclaw/preloads ${safetyNet} ${ciaoGuard}`,
+    );
+    expect(dockerfile).toContain("chmod 755 /usr/local/lib/nemoclaw/preloads");
+    expect(dockerfile).toContain(`chmod 444 ${safetyNet} ${ciaoGuard}`);
+  });
+
   it("fails the final image build without native MCP Streamable HTTP support", () => {
     const complete = runHermesMcpRuntimeValidation({
       mcpAvailable: true,
