@@ -122,8 +122,10 @@ export const SCORE_NEAR_MISS = 30;
 export const SCORE_SECURITY_ACTIONABLE = 20;
 /** PR carries the "security" GitHub label */
 export const SCORE_LABEL_SECURITY = 15;
-/** PR carries a "priority: high" GitHub label */
-export const SCORE_LABEL_PRIORITY_HIGH = 10;
+/** PR has Urgent Project Priority */
+export const SCORE_PROJECT_PRIORITY_URGENT = 15;
+/** PR has High Project Priority */
+export const SCORE_PROJECT_PRIORITY_HIGH = 10;
 /** PR has been stale > 7 days — mild priority bump to prevent rot */
 export const SCORE_STALE_AGE = 5;
 

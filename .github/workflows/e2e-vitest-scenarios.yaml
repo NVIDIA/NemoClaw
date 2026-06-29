@@ -969,18 +969,40 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',hermes-inference-switch-vitest,') || contains(format(',{0},', inputs.scenarios), ',hermes-inference-switch,') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: hosted
+            sandbox_name: e2e-hermes-inference-switch
+            switch_provider: compatible-endpoint
+            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_inference_api: openai-completions
+            switch_mock_anthropic: "0"
+          - mode: anthropic
+            sandbox_name: e2e-hermes-anthropic-inference-switch
+            switch_provider: compatible-anthropic-endpoint
+            switch_model: mock-anthropic-model
+            switch_inference_api: anthropic-messages
+            switch_mock_anthropic: "1"
     env:
       FREE_STANDING_VITEST_JOB: "1"
       FREE_STANDING_SCENARIO_ID: "hermes-inference-switch"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-inference-switch
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-inference-switch/${{ matrix.mode }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: "hermes"
-      NEMOCLAW_SANDBOX_NAME: "e2e-hermes-inference-switch"
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
+      NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
+      NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
+      NEMOCLAW_SWITCH_INFERENCE_API: ${{ matrix.switch_inference_api }}
+      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -1009,8 +1031,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-vitest-scenarios-hermes-inference-switch
-          path: e2e-artifacts/vitest/hermes-inference-switch/
+          name: e2e-vitest-scenarios-hermes-inference-switch-${{ matrix.mode }}
+          path: e2e-artifacts/vitest/hermes-inference-switch/${{ matrix.mode }}/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -4640,22 +4662,66 @@ jobs:
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch-vitest,') || contains(format(',{0},', inputs.scenarios), ',openclaw-inference-switch,') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: hosted
+            sandbox_name: e2e-openclaw-inference-switch
+            switch_provider: compatible-endpoint
+            switch_model: nvidia/nvidia/nemotron-3-super-v3
+            switch_inference_api: openai-completions
+            switch_mock_anthropic: "0"
+          - mode: anthropic
+            sandbox_name: e2e-openclaw-anthropic-inference-switch
+            switch_provider: compatible-anthropic-endpoint
+            switch_model: mock-anthropic-model
+            switch_inference_api: anthropic-messages
+            switch_mock_anthropic: "1"
     env:
       FREE_STANDING_VITEST_JOB: "1"
       FREE_STANDING_SCENARIO_ID: "openclaw-inference-switch"
-      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-inference-switch
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-inference-switch/${{ matrix.mode }}
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_E2E_SCENARIOS: "1"
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-inference-switch"
+      NEMOCLAW_AGENT: "openclaw"
+      NEMOCLAW_SANDBOX_NAME: ${{ matrix.sandbox_name }}
+      NEMOCLAW_SWITCH_PROVIDER: ${{ matrix.switch_provider }}
+      NEMOCLAW_SWITCH_MODEL: ${{ matrix.switch_model }}
+      NEMOCLAW_SWITCH_INFERENCE_API: ${{ matrix.switch_inference_api }}
+      NEMOCLAW_SWITCH_MOCK_ANTHROPIC: ${{ matrix.switch_mock_anthropic }}
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Configure isolated Docker auth directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker_config="${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}"
+          mkdir -p "${docker_config}"
+          chmod 700 "${docker_config}"
+          echo "DOCKER_CONFIG=${docker_config}" >> "${GITHUB_ENV}"
 
       - name: Authenticate to Docker Hub
         env:
@@ -4683,18 +4749,6 @@ jobs:
             echo "::warning::Docker Hub login failed after 3 attempts; continuing with anonymous pulls."
           fi
 
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install root dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Build CLI
-        run: npm run build:cli
-
       - name: Run OpenClaw inference switch live test
         # Migrated from test/e2e/test-openclaw-inference-switch.sh. Preserves
         # the real install.sh/OpenShell/Docker/live-provider boundary while
@@ -4708,23 +4762,26 @@ jobs:
             test/e2e-scenario/live/openclaw-inference-switch.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload OpenClaw inference switch artifacts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: e2e-vitest-scenarios-openclaw-inference-switch
-          path: |
-            e2e-artifacts/vitest/openclaw-inference-switch/
-            /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
-          include-hidden-files: false
-          if-no-files-found: ignore
-          retention-days: 14
-
       - name: Clean up Docker auth
         if: always()
         shell: bash
         run: |
-          docker logout docker.io >/dev/null 2>&1 || true
+          set -euo pipefail
+          docker_config="${DOCKER_CONFIG:-${RUNNER_TEMP}/docker-config-openclaw-inference-switch-${{ matrix.mode }}}"
+          DOCKER_CONFIG="${docker_config}" docker logout docker.io >/dev/null 2>&1 || true
+          rm -rf "${docker_config}"
+
+      - name: Upload OpenClaw inference switch artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-openclaw-inference-switch-${{ matrix.mode }}
+          path: |
+            e2e-artifacts/vitest/openclaw-inference-switch/${{ matrix.mode }}/
+            /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Focused coverage slice for the Bedrock Runtime compatible Anthropic
   # endpoint contract. The retained legacy bash lane remains the source for
