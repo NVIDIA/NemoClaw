@@ -118,7 +118,13 @@ export function readRecentShieldsAutoRestore(
       for (let j = i - 1; j >= 0; j--) {
         const prev = parseEntry(lines[j]);
         if (prev?.action === "shields_down" && prev.sandbox === sandboxName) {
-          if (typeof prev.timeout_seconds === "number") {
+          if (
+            typeof prev.timeout_seconds === "number" &&
+            Number.isFinite(prev.timeout_seconds) &&
+            Number.isInteger(prev.timeout_seconds) &&
+            prev.timeout_seconds >= 1 &&
+            prev.timeout_seconds <= 1800
+          ) {
             timeoutSeconds = prev.timeout_seconds;
           }
           break;

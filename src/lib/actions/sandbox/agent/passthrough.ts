@@ -74,7 +74,8 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout.
+// machine-readable stdout, plus shields auto-relock warning with timeout,
+// null-timeout fallback, and no-warning path.
 //
 // Removal conditions:
 //
@@ -86,6 +87,10 @@
 //     missing selector with a clean exit 2 and an actionable message.
 //   - Drop the simple-token parser when terminal runtime manifests expose
 //     argv arrays natively.
+//   - Drop the shields-relock warning when OpenClaw exposes the relock cause
+//     directly (e.g., a distinct exit code or structured error field for
+//     missing-scope-after-relock), or when NemoClaw implements
+//     extend-on-activity so the scope never lapses mid-session.
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";

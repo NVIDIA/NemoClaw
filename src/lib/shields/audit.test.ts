@@ -174,4 +174,25 @@ describe("readRecentShieldsAutoRestore", () => {
     const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
     expect(result).toBeNull();
   });
+
+  it("returns null timeoutSeconds for out-of-bounds timeout values in shields_down entry (#5922)", () => {
+    const now = new Date().toISOString();
+    for (const bad of [0, -1, 1801, 9999, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+      fs.writeFileSync(
+        auditPath,
+        JSON.stringify({
+          action: "shields_down",
+          sandbox: "alpha",
+          timestamp: new Date(Date.now() - 25 * 1000).toISOString(),
+          timeout_seconds: bad,
+        }) +
+          "\n" +
+          JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: now }) +
+          "\n",
+      );
+      const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+      expect(result?.timestamp, `bad value ${String(bad)}`).toBe(now);
+      expect(result?.timeoutSeconds, `bad value ${String(bad)}`).toBeNull();
+    }
+  });
 });

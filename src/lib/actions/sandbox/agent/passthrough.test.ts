@@ -32,6 +32,9 @@ vi.mock("../../../agent/defs", () => ({
   listAgents: listAgentsMock,
   loadAgent: loadAgentMock,
 }));
+// Default to no recent shields auto-restore so tests that don't inject
+// getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
+vi.mock("../../../shields/audit", () => ({ readRecentShieldsAutoRestore: vi.fn(() => null) }));
 
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
 
