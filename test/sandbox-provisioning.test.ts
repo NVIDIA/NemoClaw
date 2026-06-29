@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -17,6 +16,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  hermesDockerShellPrelude,
+  precreateHermesStaleOpenclawLayout,
+} from "./helpers/hermes-dockerfile-run";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const DOCKERFILE = path.join(ROOT, "Dockerfile");
@@ -97,7 +100,7 @@ function runDockerShell(command: string, sandboxRoot: string) {
   const rewritten = command.replaceAll("/sandbox", sandboxRoot);
   const script = [
     "#!/usr/bin/env bash",
-    "set -euo pipefail",
+    hermesDockerShellPrelude(),
     `call_log=${JSON.stringify(logPath)}`,
     'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
     rewritten,
@@ -1268,7 +1271,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
-
   function runHermesUserSetupBlock() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-users-"));
@@ -1286,12 +1288,14 @@ describe("Hermes sandbox provisioning", () => {
     ]);
     return { ...result, tmp, sandboxRoot };
   }
-
   function runHermesLayoutBlock(
     dockerfilePath: string,
     startMarker: string,
     endMarker: string,
-    { precreateConfig = false }: { precreateConfig?: boolean } = {},
+    {
+      precreateConfig = false,
+      precreateStaleOpenclaw = false,
+    }: { precreateConfig?: boolean; precreateStaleOpenclaw?: boolean | "symlink" } = {},
   ) {
     const dockerfile = fs.readFileSync(dockerfilePath, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-layout-"));
@@ -1302,6 +1306,9 @@ describe("Hermes sandbox provisioning", () => {
       fs.writeFileSync(path.join(hermesDir, "config.yaml"), "model: test\n");
       fs.writeFileSync(path.join(hermesDir, ".env"), "TOKEN=test\n");
     }
+    const openclawDir = path.join(sandboxRoot, ".openclaw");
+    const staleOpenclawTarget = path.join(tmp, "stale-openclaw-target");
+    precreateHermesStaleOpenclawLayout(precreateStaleOpenclaw, openclawDir, staleOpenclawTarget);
     const command = dockerRunCommandBetween(dockerfile, startMarker, endMarker).replaceAll(
       "/root/.cache/pip",
       path.join(tmp, "root-cache", "pip"),
@@ -1309,13 +1316,11 @@ describe("Hermes sandbox provisioning", () => {
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }
-
   it("final image validates and runs the manifest-declared hermes binary path", () => {
     const result = runHermesPathValidation();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("hermes manifest version");
   });
-
   function runHermesUvExtrasExpansion() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
@@ -1357,7 +1362,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");
@@ -1373,7 +1377,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
@@ -1384,18 +1387,15 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Published base images can lag Dockerfile.base",
       "# Harden: remove unnecessary build tools",
     ).replaceAll("/opt/hermes", hermesRoot);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
       ]);
-
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
@@ -1406,7 +1406,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {
@@ -1419,7 +1418,23 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
+  it("refuses symlinked stale OpenClaw state during Hermes final image cleanup", () => {
+    const run = runHermesLayoutBlock(
+      HERMES_DOCKERFILE,
+      "# Flatten stale published base images",
+      "# Pin config hash at build time",
+      { precreateConfig: true, precreateStaleOpenclaw: "symlink" },
+    );
+    try {
+      expect(run.result.status).toBe(1);
+      expect(run.result.stderr).toContain(".openclaw is a symlink");
+      const sentinel = path.join(run.tmp, "stale-openclaw-target", "sentinel");
+      const sentinelContent = fs.readFileSync(sentinel, "utf-8");
+      expect(sentinelContent).toBe("keep\n");
+    } finally {
+      fs.rmSync(run.tmp, { recursive: true, force: true });
+    }
+  });
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(
@@ -1431,10 +1446,9 @@ describe("Hermes sandbox provisioning", () => {
         HERMES_DOCKERFILE,
         "# Flatten stale published base images",
         "# Pin config hash at build time",
-        { precreateConfig: true },
+        { precreateConfig: true, precreateStaleOpenclaw: true },
       ),
     ];
-
     try {
       for (const run of runs) {
         expect(run.result.status).toBe(0);
@@ -1463,6 +1477,7 @@ describe("Hermes sandbox provisioning", () => {
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
+        expect(fs.existsSync(path.join(run.sandboxRoot, ".openclaw"))).toBe(false);
         expect(fs.readlinkSync(path.join(hermesDir, "gateway_state.json"))).toBe(
           "runtime/gateway_state.json",
         );
