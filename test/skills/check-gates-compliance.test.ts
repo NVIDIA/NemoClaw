@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 interface ComplianceFixture {
   body: string;
+  commitOutput?: string;
   verified: boolean;
   reason?: string;
 }
@@ -17,7 +18,6 @@ interface ComplianceFixture {
 interface ComparatorFixture extends ComplianceFixture {
   checkNames?: string[];
   checkConclusions?: Record<string, string>;
-  commitOutput?: string;
   headRefOid?: string;
   state?: string;
   mergeable?: string;
@@ -55,6 +55,7 @@ function runGate(fixture: ComplianceFixture) {
     verified: fixture.verified,
     reason: fixture.reason ?? (fixture.verified ? "valid" : "unsigned"),
   };
+  const commitOutput = fixture.commitOutput ?? JSON.stringify(commit);
 
   fs.writeFileSync(
     ghPath,
@@ -64,7 +65,7 @@ case "$1 $2" in
   "pr view") printf '%s' ${shellSingleQuote(JSON.stringify(pr))} ;;
   "api graphql") printf '%s' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}' ;;
   "api repos/NVIDIA/NemoClaw/issues/42/comments") printf '%s' '{"id":1,"body":"ordinary comment","user":{"login":"reviewer"},"updated_at":"2026-01-01T00:00:00Z"}' ;;
-  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(JSON.stringify(commit))} ;;
+  "api repos/NVIDIA/NemoClaw/pulls/42/commits") printf '%s' ${shellSingleQuote(commitOutput)} ;;
   *) echo "unexpected gh args: $*" >&2; exit 9 ;;
 esac
 `,
@@ -193,6 +194,26 @@ describe("maintainer merge-gate contributor compliance", () => {
       pass: false,
       dcoDeclarationPresent: true,
       unverifiedCommits: [{ sha: "abc123", reason: "unsigned" }],
+    });
+    expect(output.allPass).toBe(false);
+  });
+
+  it("fails closed for type-skewed commit verification data", () => {
+    const result = runGate({
+      body: "Signed-off-by: Example User <user@example.com>",
+      verified: true,
+      commitOutput: JSON.stringify({
+        sha: "abc123",
+        verified: "false",
+        reason: "unsigned",
+      }),
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.contributorCompliance).toMatchObject({
+      pass: false,
+      unverifiedCommits: [{ sha: "abc123", reason: "malformed_commit_verification_data" }],
     });
     expect(output.allPass).toBe(false);
   });

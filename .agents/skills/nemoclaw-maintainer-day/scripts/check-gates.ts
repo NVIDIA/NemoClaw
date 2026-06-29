@@ -361,6 +361,33 @@ function checkRiskyCodeTested(
 
 const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/mu;
 
+interface CommitVerificationRecord {
+  sha: string;
+  verified: boolean;
+  reason: string;
+}
+
+function normalizeCommitVerification(value: unknown): CommitVerificationRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { sha: "(unknown)", verified: false, reason: "malformed_commit_verification_data" };
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.sha !== "string" ||
+    typeof record.verified !== "boolean" ||
+    typeof record.reason !== "string"
+  ) {
+    return {
+      sha: typeof record.sha === "string" ? record.sha : "(unknown)",
+      verified: false,
+      reason: "malformed_commit_verification_data",
+    };
+  }
+
+  return { sha: record.sha, verified: record.verified, reason: record.reason };
+}
+
 function checkContributorCompliance(
   repo: string,
   number: number,
@@ -386,11 +413,11 @@ function checkContributorCompliance(
     };
   }
 
-  const commits: Array<{ sha: string; verified: boolean; reason: string }> = [];
+  const commits: CommitVerificationRecord[] = [];
   try {
     for (const line of raw.split("\n")) {
       const trimmed = line.trim();
-      if (trimmed) commits.push(JSON.parse(trimmed) as (typeof commits)[number]);
+      if (trimmed) commits.push(normalizeCommitVerification(JSON.parse(trimmed) as unknown));
     }
   } catch {
     return {
@@ -409,7 +436,7 @@ function checkContributorCompliance(
   }
 
   const unverifiedCommits = commits
-    .filter((commit) => !commit.verified)
+    .filter((commit) => commit.verified !== true)
     .map(({ sha, reason }) => ({ sha, reason }));
   if (!dcoDeclarationPresent || unverifiedCommits.length > 0) {
     const failures = [
