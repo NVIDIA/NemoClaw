@@ -106,6 +106,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
 export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
+  extraProviders?: string[];
 }
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
@@ -322,8 +323,18 @@ export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
+function normalizeExtraProviders(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  const cleaned = input.filter(
+    (value): value is string => typeof value === "string" && value !== "",
+  );
+  const deduped = [...new Set(cleaned)].sort();
+  return deduped.length > 0 ? deduped : undefined;
+}
+
 function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
-  return {
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
@@ -332,10 +343,13 @@ function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
       ]),
     ),
   };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
 }
 
 function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
-  return {
+  const extraProviders = normalizeExtraProviders(data.extraProviders);
+  const base: SandboxRegistry = {
     defaultSandbox: data.defaultSandbox ?? null,
     sandboxes: Object.fromEntries(
       sandboxRegistryEntries(data).map(([name, entry]) => [
@@ -344,6 +358,8 @@ function serializeRegistryForDisk(data: SandboxRegistry): SandboxRegistry {
       ]),
     ),
   };
+  if (extraProviders) base.extraProviders = extraProviders;
+  return base;
 }
 
 function sandboxRegistryEntries(data: SandboxRegistry): Array<[string, SandboxEntry]> {
@@ -534,6 +550,35 @@ export function setDefault(name: string): boolean {
 export function clearAll(): void {
   withLock(() => {
     save({ sandboxes: {}, defaultSandbox: null });
+  });
+}
+
+export function listExtraProviders(): string[] {
+  return [...(load().extraProviders ?? [])];
+}
+
+export function addExtraProvider(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const existing = new Set(data.extraProviders ?? []);
+    if (existing.has(name)) return false;
+    existing.add(name);
+    data.extraProviders = [...existing].sort();
+    save(data);
+    return true;
+  });
+}
+
+export function removeExtraProvider(name: string): boolean {
+  return withLock(() => {
+    const data = load();
+    const existing = new Set(data.extraProviders ?? []);
+    if (!existing.delete(name)) return false;
+    const sorted = [...existing].sort();
+    if (sorted.length > 0) data.extraProviders = sorted;
+    else delete data.extraProviders;
+    save(data);
+    return true;
   });
 }
 

@@ -5,7 +5,7 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../credentials/command-support";
 import { redact } from "../security/redact";
-import { runOpenshellProviderCommand } from "./global";
+import { recordExtraProvider, runOpenshellProviderCommand } from "./global";
 
 export type CredentialsAddInput = {
   provider: string;
@@ -122,6 +122,7 @@ export async function runCredentialsAddAction(
   });
 
   if (result.status === 0) {
+    recordExtraProvider(provider);
     return ok([
       `  Registered provider '${provider}' with the OpenShell gateway.`,
       `  Verify with '${CLI_NAME} credentials list'.`,

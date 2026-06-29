@@ -39,6 +39,7 @@ type RuntimeBridgeRunOptions = {
 type RuntimeBridge = {
   recoverNamedGatewayRuntime: () => Promise<RuntimeRecovery>;
   runOpenshell: (args: string[], opts?: RuntimeBridgeRunOptions) => SpawnLikeResult;
+  recordExtraProvider: (name: string) => boolean;
 };
 type OpenshellCall = { args: string[]; opts?: RuntimeBridgeRunOptions };
 
@@ -62,6 +63,7 @@ function installRuntimeBridge(bridge: Partial<RuntimeBridge> = {}): OpenshellCal
       calls.push({ args, opts });
       return { status: 0, stdout: "", stderr: "" };
     },
+    recordExtraProvider: () => true,
     ...bridge,
   };
   const globalActions = require(GLOBAL_ACTIONS_PATH) as {
@@ -294,10 +296,15 @@ describe("credentials oclif commands", () => {
 
   it("credentials add forwards env-key-only --credential to OpenShell provider create", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const extraProviderCalls: string[] = [];
     const calls = installRuntimeBridge({
       runOpenshell: (args, opts) => {
         calls.push({ args, opts });
         return { status: 0, stdout: "" };
+      },
+      recordExtraProvider: (name) => {
+        extraProviderCalls.push(name);
+        return true;
       },
     });
     const { CredentialsAddCommand } = loadCommands();
@@ -328,8 +335,42 @@ describe("credentials oclif commands", () => {
           opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
         },
       ]);
+      expect(extraProviderCalls).toEqual(["tavily-search"]);
       expect(output.stdout).toContain("Registered provider 'tavily-search'");
       expect(output.stdout).toContain("rebuild");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add does not record an extra provider when the gateway rejects the call", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const extraProviderCalls: string[] = [];
+    installRuntimeBridge({
+      runOpenshell: () => ({ status: 1, stderr: "gateway unavailable" }),
+      recordExtraProvider: (name) => {
+        extraProviderCalls.push(name);
+        return true;
+      },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(extraProviderCalls).toEqual([]);
     } finally {
       delete process.env.TAVILY_API_KEY;
     }

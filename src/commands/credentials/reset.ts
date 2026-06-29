@@ -9,6 +9,7 @@ import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
 import { prompt as askPrompt } from "../../lib/credentials/store";
+import { removeExtraProvider } from "../../lib/state/registry";
 
 export default class CredentialsResetCommand extends NemoClawCommand {
   static id = "credentials:reset";
@@ -66,6 +67,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status === 0) {
+      removeExtraProvider(key);
       this.log(`  Removed provider '${key}' from the OpenShell gateway.`);
       this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
       return;
