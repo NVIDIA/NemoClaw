@@ -59,10 +59,11 @@ function lsofResponder(...responses: RunResult[]): {
 } {
   const state = { calls: 0 };
   const run: NonNullable<HostGatewayProcessDeps["run"]> = (command) => {
-    if (command !== "lsof") return ok();
+    const isLsof = command === "lsof";
     const idx = Math.min(state.calls, responses.length - 1);
-    state.calls += 1;
-    return responses[idx] ?? ok();
+    const response = isLsof ? (responses[idx] ?? ok()) : ok();
+    state.calls += isLsof ? 1 : 0;
+    return response;
   };
   return {
     run,
