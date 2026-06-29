@@ -711,8 +711,19 @@ exit 0
         export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
-        tar() { return 0; }; export -f tar
-        install() { return 0; }; export -f install
+        tar() {
+          local dest="\${!#}"
+          for name in openshell openshell-gateway openshell-sandbox; do
+            printf '#!/usr/bin/env bash\nexit 0\n' > "$dest/$name"
+            chmod 755 "$dest/$name"
+          done
+        }
+        export -f tar
+        install() {
+          cp "$3" "$4"
+          chmod 755 "$4"
+        }
+        export -f install
         source "${scriptPath}"
       `;
       try {
@@ -749,14 +760,37 @@ exit 0
       const stub = `
         #!/usr/bin/env bash
         export PATH="${tmpBin}:/usr/bin:/bin"
-        curl() { echo "CURL_FALLBACK $*"; return 0; }
+        curl() {
+          echo "CURL_FALLBACK $*"
+          printf '%s\n' \
+            'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
+            'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
+            'ignored  openshell-x86_64-apple-darwin.tar.gz' \
+            'ignored  openshell-aarch64-apple-darwin.tar.gz' \
+            'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+            'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+            'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' \
+            'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+            'ignored  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "\${!#}"
+        }
         export -f curl
-        sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
+        sha256sum() { cat >/dev/null; echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
         export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"; }
         export -f strings
-        tar() { return 0; }; export -f tar
-        install() { return 0; }; export -f install
+        tar() {
+          local dest="\${!#}"
+          for name in openshell openshell-gateway openshell-sandbox; do
+            printf '#!/usr/bin/env bash\nexit 0\n' > "$dest/$name"
+            chmod 755 "$dest/$name"
+          done
+        }
+        export -f tar
+        install() {
+          cp "$3" "$4"
+          chmod 755 "$4"
+        }
+        export -f install
         source "${scriptPath}"
       `;
       try {
@@ -765,6 +799,7 @@ exit 0
           timeout: 5000,
         });
         const out = (result.stdout || "") + (result.stderr || "");
+        expect(result.status, out).toBe(0);
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
         expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
