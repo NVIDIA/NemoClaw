@@ -52,7 +52,10 @@ import {
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  pruneDisabledMessagingPolicyPresets,
+} from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -1011,10 +1014,29 @@ export async function rebuildSandbox(
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
-    const savedPresets = pruneDisabledMessagingPolicyPresets(
+    const prunedPresets = pruneDisabledMessagingPolicyPresets(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
     );
+    // Recover channel presets for currently-enabled channels that may be absent
+    // from sb.policies after a prior stop+rebuild (#5596): a stop+rebuild prunes
+    // channel presets from savedPresets (correct — disabled channels must not have
+    // egress policy), but applyPreset() only adds a preset to sb.policies when it
+    // is actually applied. After stop+rebuild, sb.policies therefore lacks all
+    // channel presets. On the next start+rebuild the backup is taken from that
+    // reduced sb.policies, so no channel preset survives into savedPresets and
+    // they are silently skipped. Only presets with requiredAtCreate=true (currently
+    // slack only) are re-added by the onboard's mergeRequiredMessagingChannelPolicyPresets
+    // step during sandbox recreation; all other channel presets (telegram, discord,
+    // whatsapp, wechat) are lost. Fix: merge in all presets for enabled channels so
+    // they are applied in step 5.5 regardless of what survived in sb.policies.
+    const rebuildEnabledChannelIds = (rebuildMessagingPlan?.channels ?? [])
+      .filter((ch) => !ch.disabled)
+      .map((ch) => ch.channelId);
+    const savedPresets = [...prunedPresets];
+    for (const preset of allMessagingChannelPolicyPresets(rebuildEnabledChannelIds)) {
+      if (!savedPresets.includes(preset)) savedPresets.push(preset);
+    }
     const restoredPresets: string[] = [];
     const failedPresets: string[] = [];
     if (savedPresets.length > 0) {
