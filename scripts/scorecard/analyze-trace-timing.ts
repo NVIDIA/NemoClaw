@@ -183,28 +183,8 @@ function normalizeOnboardPerformanceBudget(value: unknown): OnboardPerformanceBu
   };
 }
 
-function repoRelativePath(baseDir: string, targetPath: string): string {
-  return path.relative(path.resolve(baseDir), path.resolve(targetPath));
-}
-
-function isPathInside(baseDir: string, targetPath: string): boolean {
-  const relativePath = repoRelativePath(baseDir, targetPath);
-  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
-}
-
-function readOnboardPerformanceBudget(
-  rootDir = process.env.GITHUB_WORKSPACE || REPO_ROOT,
-): BudgetLoadResult {
-  const repoRoot = path.resolve(REPO_ROOT);
-  const budgetRoot = path.resolve(rootDir);
-  if (!isPathInside(repoRoot, budgetRoot)) {
-    return { status: "unavailable", reason: "path_traversal" };
-  }
-
-  const filePath = path.resolve(budgetRoot, ONBOARD_PERFORMANCE_BUDGET_FILE);
-  if (!isPathInside(budgetRoot, filePath)) {
-    return { status: "unavailable", reason: "path_traversal" };
-  }
+function readOnboardPerformanceBudget(): BudgetLoadResult {
+  const filePath = path.resolve(REPO_ROOT, ONBOARD_PERFORMANCE_BUDGET_FILE);
   if (!fs.existsSync(filePath)) {
     return { status: "unavailable", reason: "missing" };
   }
@@ -293,7 +273,7 @@ function percentDelta(currentMs: number, priorMs: number): number {
   return priorMs > 0 ? ((currentMs - priorMs) / priorMs) * 100 : 0;
 }
 
-// Require both an absolute and percentage delta so tiny fast-phase noise does not page maintainers.
+// Require both an absolute and percentage delta so tiny fast-phase noise does not page maintainers; percentage-only changes are too small to affect warm-onboard UX unless they also clear the millisecond floor.
 function exceedsThreshold(currentMs: number, priorMs: number, threshold: Threshold): boolean {
   const deltaMs = currentMs - priorMs;
   return (
@@ -301,13 +281,21 @@ function exceedsThreshold(currentMs: number, priorMs: number, threshold: Thresho
   );
 }
 
+function redactSensitiveTraceText(value: string): string {
+  return value
+    .replace(/Authorization:\s*(Bearer|Basic)\s+\S+/gi, "Authorization: $1 [redacted]")
+    .replace(/https?:\/\/([^:\s/@]+):([^@\s]+)@/gi, "https://$1:[redacted]@")
+    .replace(/\b(?:ghp|github_pat)_[A-Za-z0-9_]+\b/g, "github_token_[redacted]")
+    .replace(
+      /(["']?(?:api[_-]?key|token|secret|password)["']?\s*[:=]\s*["']?)[^"'\s,}]+/gi,
+      "$1[redacted]",
+    );
+}
+
 function sanitizeTraceTimingError(error: unknown): string {
-  const errorName = error?.constructor?.name || "Error";
+  const errorName = error instanceof Error ? error.name || error.constructor.name : "Error";
   const rawMessage = error instanceof Error ? error.message : String(error);
-  const message = rawMessage
-    .replace(/(token|key|secret|password)=\S+/gi, "$1=[redacted]")
-    .replace(/(token|key|secret|password):\S+/gi, "$1:[redacted]")
-    .slice(0, 200);
+  const message = redactSensitiveTraceText(rawMessage).slice(0, 200);
   return `${errorName}: ${message}`;
 }
 
@@ -532,6 +520,29 @@ async function findLatestCompletedNightlyRunForReleaseTag(
   return null;
 }
 
+function listZipEntries(zipPath: string): string[] {
+  return execFileSync("unzip", ["-Z1", zipPath], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  })
+    .split(/\r?\n/)
+    .map((entry: string) => entry.trim())
+    .filter(Boolean);
+}
+
+function isExpectedTraceZipEntry(entry: string): boolean {
+  return entry === TRACE_SUMMARY_FILE && !entry.includes("\\") && !path.isAbsolute(entry);
+}
+
+function readValidatedTraceSummaryZip(zipPath: string): string | null {
+  const entries = listZipEntries(zipPath);
+  if (entries.length !== 1 || !isExpectedTraceZipEntry(entries[0])) return null;
+  return execFileSync("unzip", ["-p", zipPath, TRACE_SUMMARY_FILE], {
+    encoding: "utf8",
+    maxBuffer: 1024 * 1024,
+  });
+}
+
 async function readTraceSummaryFromRun(
   { github, context }: GitHubDeps,
   runId: number,
@@ -558,11 +569,8 @@ async function readTraceSummaryFromRun(
     const zipPath = path.join(tempDir, `${TRACE_ARTIFACT_NAME}.zip`);
     fs.writeFileSync(zipPath, Buffer.from(download.data), { mode: 0o600 });
 
-    const summaryText = execFileSync("unzip", ["-p", zipPath, TRACE_SUMMARY_FILE], {
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024,
-    });
-    return selectOnboardTrace([summaryText]);
+    const summaryText = readValidatedTraceSummaryZip(zipPath);
+    return summaryText === null ? null : selectOnboardTrace([summaryText]);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -687,6 +695,8 @@ module.exports = {
   formatTopPhaseChanges,
   readOnboardPerformanceBudget,
   readTraceSummaryFromRun,
+  readValidatedTraceSummaryZip,
+  redactSensitiveTraceText,
   resolvePriorReleaseTag,
   sanitizeTraceTimingError,
   selectOnboardTrace,

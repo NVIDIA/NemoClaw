@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,7 +24,9 @@ type TraceTimingAnalyzer = {
   evaluateOnboardPerformanceBudget: (...args: any[]) => any;
   exceedsThreshold: (...args: any[]) => boolean;
   formatTopPhaseChanges: (...args: any[]) => string;
-  readOnboardPerformanceBudget: (rootDir?: string) => unknown;
+  readOnboardPerformanceBudget: () => unknown;
+  readValidatedTraceSummaryZip: (zipPath: string) => string | null;
+  redactSensitiveTraceText: (value: string) => string;
   selectOnboardTrace: (
     ...args: any[]
   ) => { totalMs: number; phases: Record<string, number> } | null;
@@ -63,6 +65,23 @@ function zippedTimingSummary(text: string): Buffer {
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+function zipEntries(entries: Record<string, string>): string {
+  const tempDir = mkdtempSync(path.join(tmpdir(), "nemoclaw-trace-summary-zip-"));
+  const zipPath = path.join(tempDir, "artifact.zip");
+  const payload = JSON.stringify(entries);
+  execFileSync(
+    "python3",
+    [
+      "-c",
+      "import json, sys, zipfile; entries=json.loads(sys.argv[2]); z=zipfile.ZipFile(sys.argv[1], 'w'); [z.writestr(name, text) for name, text in entries.items()]; z.close()",
+      zipPath,
+      payload,
+    ],
+    { encoding: "utf8" },
+  );
+  return zipPath;
 }
 
 function traceGithubFixture(options: {
@@ -290,9 +309,24 @@ describe("cloud onboard scorecard trace timing", () => {
     expect(summary).toContain("- preflight: 20.0s");
   });
 
-  it("scorecard warns budget config unavailable without saying performance budget exceeded", async () => {
-    const tempRoot = mkdtempSync(path.join(process.cwd(), ".tmp-nemoclaw-budget-config-"));
+  it("reports budget config unavailable without saying performance budget exceeded", () => {
+    const unavailable = traceTiming.evaluateOnboardPerformanceBudget({
+      budget: { status: "unavailable", reason: "invalid" },
+      currentTrace: { totalMs: 1_000, phases: { "nemoclaw.onboard.phase.preflight": 1_000 } },
+    });
+
+    expect(unavailable).toMatchObject({ exceeded: false, status: "config_unavailable" });
+    expect(unavailable?.warningMessage).toContain("budget config unavailable");
+    expect(unavailable?.warningMessage).not.toContain("performance budget exceeded");
+    expect(unavailable?.summary).toContain("Budget: config unavailable");
+    expect(unavailable?.summaryLines.join("\n")).toContain(
+      "the budget config is invalid or unreadable",
+    );
+  });
+
+  it("reads the budget only from the repository root", () => {
     const previousWorkspace = process.env.GITHUB_WORKSPACE;
+    const outsideRepo = mkdtempSync(path.join(tmpdir(), "nemoclaw-budget-outside-"));
     const restoreWorkspace =
       previousWorkspace === undefined
         ? () => {
@@ -301,44 +335,12 @@ describe("cloud onboard scorecard trace timing", () => {
         : () => {
             process.env.GITHUB_WORKSPACE = previousWorkspace;
           };
+    process.env.GITHUB_WORKSPACE = outsideRepo;
     try {
-      mkdirSync(path.join(tempRoot, "ci"));
-      writeFileSync(
-        path.join(tempRoot, "ci", "onboard-performance-budget.json"),
-        "{not-json",
-        "utf8",
-      );
-      process.env.GITHUB_WORKSPACE = tempRoot;
-
-      const result = await traceTiming.buildTraceTimingResult({
-        context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1, ref: "refs/heads/main" },
-        github: traceGithubFixture({ summariesByRunId: { 1: timingSummary() } }),
-      });
-
-      expect(result.budgetExceeded).toBe(false);
-      expect(result.budgetStatus).toBe("config_unavailable");
-      expect(result.budgetWarningMessage).toContain("budget config unavailable");
-      expect(result.budgetWarningMessage).not.toContain("performance budget exceeded");
-      expect(result.traceTimingLine).toContain("Trace: cloud-onboard total 1.0s");
-      expect(result.traceTimingLine).toContain("Budget: config unavailable");
-      expect(result.traceSummaryLines.join("\n")).toContain(
-        "the budget config is invalid or unreadable",
-      );
-    } finally {
-      restoreWorkspace();
-      rmSync(tempRoot, { recursive: true, force: true });
-    }
-  });
-
-  it("rejects budget roots outside the repository", () => {
-    const outsideRepo = mkdtempSync(path.join(tmpdir(), "nemoclaw-budget-outside-"));
-    try {
-      expect(traceTiming.readOnboardPerformanceBudget(outsideRepo)).toMatchObject({
-        status: "unavailable",
-        reason: "path_traversal",
-      });
+      expect(traceTiming.readOnboardPerformanceBudget()).toMatchObject({ status: "loaded" });
     } finally {
       rmSync(outsideRepo, { recursive: true, force: true });
+      restoreWorkspace();
     }
   });
 
@@ -400,14 +402,36 @@ describe("cloud onboard scorecard trace timing", () => {
       github: {
         rest: { actions: { listWorkflowRunArtifacts } },
         paginate: async () => {
-          throw new Error("download failed with token=secret");
+          throw new Error(
+            'download failed with token=secret Authorization: Bearer abc ghp_123 https://user:pass@example.invalid {"api_key":"abc"}',
+          );
         },
       },
     });
 
     expect(result.traceTimingLine).toBe("Trace: ⊘ comparison unavailable");
     expect(result.traceTimingLine).not.toContain("secret");
-    expect(warnings).toEqual(["Trace timing failed: Error: download failed with token=[redacted]"]);
+    expect(warnings.join("\n")).not.toContain("Bearer abc");
+    expect(warnings.join("\n")).not.toContain("ghp_123");
+    expect(warnings.join("\n")).not.toContain("user:pass");
+    expect(warnings.join("\n")).not.toContain('"abc"');
+  });
+
+  it("validates trace summary zip entries before extraction", () => {
+    const validZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary() });
+    const extraEntryZip = zipEntries({ [TRACE_SUMMARY_FILE]: timingSummary(), "extra.txt": "x" });
+    const traversalZip = zipEntries({ [`../${TRACE_SUMMARY_FILE}`]: timingSummary() });
+    try {
+      expect(traceTiming.readValidatedTraceSummaryZip(validZip)).toContain(
+        "nemoclaw.trace_timing.v1",
+      );
+      expect(traceTiming.readValidatedTraceSummaryZip(extraEntryZip)).toBeNull();
+      expect(traceTiming.readValidatedTraceSummaryZip(traversalZip)).toBeNull();
+    } finally {
+      rmSync(path.dirname(validZip), { recursive: true, force: true });
+      rmSync(path.dirname(extraEntryZip), { recursive: true, force: true });
+      rmSync(path.dirname(traversalZip), { recursive: true, force: true });
+    }
   });
 
   it("covers trace timing fallback branches with mocked GitHub data", async () => {
