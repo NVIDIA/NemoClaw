@@ -840,6 +840,28 @@ fi
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
 printf "OPENCLAW_GATEWAY_URL=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+case "${OPENCLAW_GATEWAY_URL:-}" in
+  ws://127.0.0.1:*|ws://localhost:*)
+    echo "GATEWAY_URL_VALID"
+    ;;
+  ws://*:*)
+    gateway_host="${OPENCLAW_GATEWAY_URL#ws://}"
+    gateway_host="${gateway_host%%:*}"
+    sandbox_addresses="$(hostname -I 2>/dev/null || true)"
+    sandbox_host="${sandbox_addresses%% *}"
+    if [ -n "$sandbox_host" ] && [ "$gateway_host" = "$sandbox_host" ] \
+      && [ "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" = "1" ]; then
+      echo "GATEWAY_URL_VALID"
+    else
+      echo "BAD_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-unset}" >&2
+      exit 4
+    fi
+    ;;
+  *)
+    echo "BAD_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-unset}" >&2
+    exit 4
+    ;;
+esac
 type openclaw 2>/dev/null | sed -n "1,12p"
 grep -F "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
   && echo "APPROVE_GUARD_PRESENT"
@@ -850,7 +872,7 @@ if [ "$guard_rc" -ne 0 ]; then
   fail "Could not source /tmp/nemoclaw-proxy-env.sh: ${guard_probe:0:400}"
   exit 1
 fi
-if grep -q '^OPENCLAW_GATEWAY_URL=ws://127\.0\.0\.1:' <<<"$guard_probe" \
+if grep -q '^GATEWAY_URL_VALID$' <<<"$guard_probe" \
   && grep -q '^APPROVE_GUARD_PRESENT$' <<<"$guard_probe"; then
   pass "proxy env preserves gateway URL and contains devices approve guard"
 else

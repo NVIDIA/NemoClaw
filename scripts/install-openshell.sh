@@ -136,6 +136,21 @@ required_driver_bins_present() {
   esac
 }
 
+required_driver_bins_installed_in_dir() {
+  local dir="$1"
+  case "$OS" in
+    Linux)
+      [ -x "$dir/openshell-gateway" ] && [ -x "$dir/openshell-sandbox" ]
+      ;;
+    Darwin)
+      [ -x "$dir/openshell-gateway" ]
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 OPENSHELL_FEATURE_CHECK_ERROR=""
 OPENSHELL_SANDBOX_MCP_FEATURE="allow_all_known_mcp_methods"
 
@@ -224,8 +239,9 @@ openshell_has_required_messaging_features() {
     # VM drivers embed a compressed supervisor, so scanning the host driver is
     # not authoritative. Docker/VM packaging can also keep the supervisor out
     # of the host filesystem entirely.
-    # The MCP lifecycle probes the installed runtime inside the sandbox before
-    # it creates or updates any provider or policy.
+    # The MCP lifecycle's authoritative runtime check loads the exact generated
+    # protocol:mcp policy with --wait and exact-matches the effective state
+    # before it creates or updates any credential provider.
     return 0
   fi
   sandbox_strings="$(strings "$sandbox_bin" 2>/dev/null || true)"
@@ -331,7 +347,7 @@ if command -v openshell >/dev/null 2>&1; then
   if [ "$RESOLVED_CHANNEL" = "dev" ]; then
     if version_gte "$INSTALLED_VERSION" "$DEV_MIN_VERSION" \
       && printf '%s\n' "$INSTALLED_VERSION_OUTPUT" | grep -qi 'dev'; then
-      if openshell_has_required_messaging_features; then
+      if required_driver_bins_present && openshell_has_required_messaging_features; then
         if [ "$FORCE_INSTALL" != "1" ]; then
           info "openshell already installed: $INSTALLED_VERSION_OUTPUT (dev channel)"
           exit 0
@@ -521,6 +537,8 @@ else
   fi
 fi
 
+required_driver_bins_installed_in_dir "$target_dir" \
+  || fail "OpenShell release '$RELEASE_TAG' did not install the required Docker-driver binaries."
 require_openshell_messaging_features "$target_dir/openshell"
 
 info "$("$target_dir/openshell" --version 2>&1 || echo openshell) installed"

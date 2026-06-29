@@ -22,6 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { stripAnsi } from "../../../src/lib/adapters/openshell/client";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
@@ -575,9 +576,9 @@ async function installCurrentNemoclawUpgrade(
     timeoutMs: 60_000,
   });
   expectExitZero(status, "openshell status after current install");
-  const statusVersionLine = resultText(status)
+  const statusVersionLine = stripAnsi(resultText(status))
     .split(/\r?\n/)
-    .find((line) => /\bVersion:/i.test(line));
+    .find((line) => /^\s*Version:/i.test(line));
   const gatewayVersion = extractOpenShellVersion(statusVersionLine ?? "");
   expect(gatewayVersion, "gateway and CLI must report the same OpenShell build").toBe(
     observedVersion,
@@ -697,6 +698,13 @@ runLinuxOpenShellGatewayUpgrade(
       survivorSandbox: SURVIVOR_SANDBOX,
     });
 
+    cleanup.add("remove user-local OpenShell binaries installed by the scenario", async () => {
+      await bash(
+        host,
+        'rm -f "$HOME/.local/bin/openshell" "$HOME/.local/bin/openshell-gateway" "$HOME/.local/bin/openshell-sandbox" "$HOME/.local/bin/openshell-driver-vm"',
+        { artifactName: "cleanup-user-local-openshell", timeoutMs: 30_000 },
+      );
+    });
     cleanup.add("remove openshell gateway upgrade survivor sandbox", async () => {
       await bash(
         host,

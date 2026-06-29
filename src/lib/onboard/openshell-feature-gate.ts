@@ -90,7 +90,8 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   // VM drivers embed a compressed supervisor, so scanning their host binary is
   // neither sufficient nor reliable. Some VM/Docker installations expose no
   // supervisor host file at all.
-  // The MCP command performs the in-sandbox runtime probe before any provider
-  // or policy mutation.
+  // The MCP command's authoritative runtime check loads the exact generated
+  // protocol:mcp policy with --wait and exact-matches the effective state
+  // before any credential or provider side effect.
   return !foundRuntimeArtifact;
 }

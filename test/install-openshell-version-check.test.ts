@@ -316,6 +316,22 @@ exit 0`,
       writeExecutable(
         path.join(fakeBin, "tar"),
         `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then
+    outdir="$arg"
+    break
+  fi
+  prev="$arg"
+done
+[ -n "$outdir" ] || exit 1
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"
 exit 0`,
       );
       writeExecutable(
@@ -537,6 +553,37 @@ exit 0`,
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/dev channel/);
+  });
+
+  it("refreshes a dev build when Docker-driver binaries are missing", () => {
+    const result = runWithInstalledVersion(
+      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
+      { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
+      { driverBins: false, os: "Linux" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/required dev-channel messaging-rewrite\/MCP-L7 build/);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("refreshes a Linux dev build when the sandbox binary alone is missing", () => {
+    const result = runWithInstalledVersion(
+      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
+      { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
+      { driverBins: "gateway", os: "Linux" },
+    );
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toContain("Installing OpenShell from release 'dev'");
+  });
+
+  it("reuses a macOS dev build with its required standalone gateway", () => {
+    const result = runWithInstalledVersion(
+      `${LEGACY_OPENSHELL_VERSION}.dev84+g6b2180425`,
+      { NEMOCLAW_OPENSHELL_CHANNEL: "dev" },
+      { driverBins: "gateway", os: "Darwin", arch: "arm64" },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
   });
 

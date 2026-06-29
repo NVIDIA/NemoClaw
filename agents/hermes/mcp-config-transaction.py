@@ -8,6 +8,14 @@ This helper never proxies MCP traffic and never handles raw service
 credentials. NemoClaw invokes it as a one-shot ordinary OpenShell sandbox exec
 command in the Hermes sandbox namespaces. No persistent control listener or
 host-side MCP data-plane process is exposed.
+
+Hermes currently has no managed MCP mutation API, so direct config edits would
+otherwise expose a partial-write/reload race. The upstream Hermes boundary
+cannot be changed by NemoClaw; this helper owns the atomic write, ownership
+checks, and reload acknowledgement instead. hermes-mcp-config-transaction.test.ts
+locks that contract. Remove this helper when the minimum supported Hermes
+release provides native add, remove, and list operations with equivalent
+transactional reload and ownership guarantees.
 """
 
 from __future__ import annotations

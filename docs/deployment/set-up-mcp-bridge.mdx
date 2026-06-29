@@ -205,7 +205,9 @@ Resolve the reported OpenShell ownership or content mismatch, then retry.
 `remove --force` can continue cleaning other independently owned resources, but it does not claim or delete the drifted resource.
 
 If NemoClaw reports that MCP policy capability is unavailable, install the required OpenShell build and rerun onboarding.
-NemoClaw checks the installed OpenShell binary for the `protocol: mcp` capability and does not enable managed MCP from a version number alone.
+NemoClaw checks inspectable installed OpenShell artifacts for the `protocol: mcp` capability and does not enable managed MCP from a version number alone.
+For image-backed or compressed supervisors without an inspectable host runtime artifact, that onboarding check is provisional.
+Before any credential or provider side effect, the MCP command loads the exact generated policy with `policy set --wait` and exact-matches the effective state; a runtime that rejects `protocol: mcp` therefore fails closed.
 
 If a Hermes sandbox is alive but its gateway is not running after a supervisor or container restart, run `$$nemoclaw <sandbox> recover` before retrying the MCP command.
 Recovery re-establishes the managed Hermes service lifecycle, API forwarding, and the exit-75 reload loop used for transactional MCP configuration changes.

@@ -82,6 +82,17 @@ fi
 . /tmp/nemoclaw-proxy-env.sh
 case "\${OPENCLAW_GATEWAY_URL:-}" in
   ws://127.0.0.1:*|ws://localhost:*) ;;
+  ws://*:*)
+    gateway_host="\${OPENCLAW_GATEWAY_URL#ws://}"
+    gateway_host="\${gateway_host%%:*}"
+    sandbox_addresses="$(hostname -I 2>/dev/null || true)"
+    sandbox_host="\${sandbox_addresses%% *}"
+    if [ -z "$sandbox_host" ] || [ "$gateway_host" != "$sandbox_host" ] \
+      || [ "\${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}" != "1" ]; then
+      echo "BAD_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL:-unset}" >&2
+      exit 4
+    fi
+    ;;
   *) echo "BAD_GATEWAY_URL=\${OPENCLAW_GATEWAY_URL:-unset}" >&2; exit 4 ;;
 esac
 
@@ -236,7 +247,7 @@ liveTest(
       sandboxName: SANDBOX_NAME,
       contracts: [
         "install.sh creates a real OpenClaw sandbox",
-        "proxy env exposes a loopback gateway and contains the devices approve guard",
+        "proxy env exposes the derived sandbox gateway or loopback fallback and contains the devices approve guard",
         "CLI scope upgrade is approved without operator.admin",
         "final openclaw agent turn stays on the gateway path and answers 42",
       ],
