@@ -121,8 +121,8 @@ if (args[0] === "api" && args[1] === "--paginate" && args[2]?.startsWith("repos/
     ".agents/skills/nemoclaw-maintainer-day/scripts/triage.ts",
     "--limit",
     "10",
+    ...(fixture.approvedOnly ? ["--approved-only"] : []),
   ];
-  if (fixture.approvedOnly) args.push("--approved-only");
 
   try {
     return spawnSync(process.execPath, args, {
