@@ -17,22 +17,23 @@ import { resolve } from "node:path";
 
 import {
   isRiskyFile,
-  run,
-  parseStringArg,
-  parseIntArg,
-  REQUIRED_CHECK_NAMES,
-  type StatusCheck,
-  SCORE_MERGE_NOW,
-  SCORE_REVIEW_READY,
-  SCORE_NEAR_MISS,
-  SCORE_SECURITY_ACTIONABLE,
-  SCORE_LABEL_SECURITY,
-  SCORE_LABEL_PRIORITY_HIGH,
-  SCORE_STALE_AGE,
-  PENALTY_DRAFT_OR_CONFLICT,
-  PENALTY_CODERABBIT_MAJOR,
   PENALTY_BROAD_CI_RED,
+  PENALTY_CODERABBIT_MAJOR,
+  PENALTY_DRAFT_OR_CONFLICT,
   PENALTY_MERGE_BLOCKED,
+  parseIntArg,
+  parseStringArg,
+  REQUIRED_CHECK_NAMES,
+  run,
+  SCORE_LABEL_SECURITY,
+  SCORE_MERGE_NOW,
+  SCORE_NEAR_MISS,
+  SCORE_PROJECT_PRIORITY_HIGH,
+  SCORE_PROJECT_PRIORITY_URGENT,
+  SCORE_REVIEW_READY,
+  SCORE_SECURITY_ACTIONABLE,
+  SCORE_STALE_AGE,
+  type StatusCheck,
 } from "./shared.ts";
 
 // ---------------------------------------------------------------------------
@@ -73,6 +74,7 @@ interface ClassifiedPr {
   createdAt: string;
   draft: boolean;
   labels: string[];
+  projectPriority: string | null;
 }
 
 interface QueueItem {
@@ -90,6 +92,7 @@ interface QueueItem {
   nextAction: string;
   ageHours: number;
   labels: string[];
+  projectPriority: string | null;
 }
 
 interface HotCluster {
@@ -299,6 +302,7 @@ function classifyPr(pr: PrData): ClassifiedPr {
     createdAt: pr.createdAt,
     draft,
     labels: (pr.labels ?? []).map((l) => l.name),
+    projectPriority: null,
   };
 }
 
@@ -308,6 +312,49 @@ function fetchPrFiles(repo: string, number: number): string[] {
   }> | null;
   if (!Array.isArray(data)) return [];
   return data.map((f) => f.filename);
+}
+
+function fetchProjectPriorities(repo: string): Map<number, string> {
+  if (repo !== "NVIDIA/NemoClaw") return new Map();
+
+  const out = run("gh", [
+    "project",
+    "item-list",
+    "199",
+    "--owner",
+    "NVIDIA",
+    "--limit",
+    "1000",
+    "--format",
+    "json",
+  ]);
+  if (!out) return new Map();
+
+  try {
+    const data = JSON.parse(out) as {
+      items?: Array<{
+        content?: { number?: number; repository?: string; type?: string };
+        priority?: string;
+      }>;
+    };
+    const priorities = new Map<number, string>();
+    for (const item of data.items ?? []) {
+      if (
+        item.content?.repository === repo &&
+        item.content.type === "PullRequest" &&
+        typeof item.content.number === "number" &&
+        typeof item.priority === "string"
+      ) {
+        priorities.set(item.content.number, item.priority);
+      }
+    }
+    return priorities;
+  } catch {
+    process.stderr.write(
+      "Could not parse Project 199 item data; continuing without priority boosts.\n",
+    );
+    return new Map();
+  }
 }
 
 function loadState(): StateFile | null {
@@ -356,10 +403,11 @@ function scoreItem(
     nextAction = bucket === "merge-now" ? "security-sweep → merge-gate" : "security-sweep → review";
   }
 
-  // GitHub label boosts
+  // Canonical routing-label and Project Priority boosts
   const labelSet = new Set(item.labels.map((l) => l.toLowerCase()));
   if (labelSet.has("security")) score += SCORE_LABEL_SECURITY;
-  if (labelSet.has("priority: high")) score += SCORE_LABEL_PRIORITY_HIGH;
+  if (item.projectPriority === "Urgent") score += SCORE_PROJECT_PRIORITY_URGENT;
+  if (item.projectPriority === "High") score += SCORE_PROJECT_PRIORITY_HIGH;
 
   if (item.updatedAt) {
     const age = Date.now() - new Date(item.updatedAt).getTime();
@@ -442,6 +490,10 @@ function main(): void {
 
   // 3. Classify all PRs (un-enriched ones will be blocked due to empty checks)
   const classified = prs.map(classifyPr);
+  const projectPriorities = fetchProjectPriorities(repo);
+  for (const item of classified) {
+    item.projectPriority = projectPriorities.get(item.number) ?? null;
+  }
   process.stderr.write(
     `Classified: ${classified.filter((c) => c.mergeNow).length} merge-now, ` +
       `${classified.filter((c) => c.reviewReady).length} review-ready, ` +
@@ -492,6 +544,7 @@ function main(): void {
         ? Math.floor((Date.now() - new Date(item.createdAt).getTime()) / 3_600_000)
         : 0,
       labels: item.labels,
+      projectPriority: item.projectPriority,
     });
   }
 

@@ -75,7 +75,7 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 **PR #A — fix to merge:**
 - Substantive: Rebase against current main (3 conflicts in `<file>`)
-- Trivial: Push DCO sign-off
+- Ineligible: PR-body DCO declaration or GitHub Verified commit history is missing; contributor must replace the branch with compliant history
 
 **PR #B — issues to address:**
 - Substantive: 5 unresolved CodeRabbit threads at `<thread-ids>`
@@ -83,6 +83,6 @@ If the verdict is **degraded mode** ("Neither mergeable yet"), substitute the ve
 
 ### Suggested action
 
-1. Coordinate with PR #A author: rebase + sign-off (~30 min)
+1. Ask the PR #A author to provide a compliant PR body and clean GitHub Verified commit history; do not repair or approve the PR on their behalf
 2. After PR #A is mergeable, re-run this skill to confirm winner
 ```
