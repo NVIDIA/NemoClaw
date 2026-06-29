@@ -694,6 +694,71 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
+  it.each([
+    {
+      name: "control characters",
+      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\nFORGED=1",
+      error: "credentialBindings.placeholder contains a control character",
+    },
+    {
+      name: "non-Slack scoped prefixes",
+      placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+      error: "credentialBindings.placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
+    },
+  ])("rejects runtime plan placeholders with $name before refreshing .env", ({
+    placeholder,
+    error,
+  }) => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+      },
+      runtimePlan: baseMessagingRuntimePlan({
+        credentialBindings: [
+          {
+            channelId: "slack",
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            placeholder,
+          },
+        ],
+      }),
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(error);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it("rejects conflicting runtime plan placeholders for one provider env key", () => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+      },
+      runtimePlan: baseMessagingRuntimePlan({
+        credentialBindings: [
+          slackBotCredentialBinding(),
+          {
+            channelId: "slack",
+            providerEnvKey: "SLACK_BOT_TOKEN",
+            placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+          },
+        ],
+      }),
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(
+      "messaging runtime plan has conflicting placeholders for SLACK_BOT_TOKEN",
+    );
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
   it("refresh_hermes_provider_placeholders passes --runtime-plan only for regular artifacts", () => {
     const present = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "regular" });
     const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "absent" });
@@ -769,6 +834,49 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
     expect(rejected.status).toBe(1);
     expect(rejected.stderr).toContain(`runtime plan contains unreduced key ${key}`);
+  });
+
+  it.each([
+    {
+      name: "non-array credential bindings",
+      credentialBindings: {},
+      error: "runtime plan missing reduced credentialBindings shape",
+    },
+    {
+      name: "non-object credential binding entries",
+      credentialBindings: ["not-an-object"],
+      error: "runtime plan credentialBindings[0] has invalid reduced shape",
+    },
+    {
+      name: "missing provider env keys",
+      credentialBindings: [{ channelId: "slack" }],
+      error: "runtime plan credentialBindings[0] has invalid reduced shape",
+    },
+    {
+      name: "non-string placeholders",
+      credentialBindings: [
+        { channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN", placeholder: 123 },
+      ],
+      error: "runtime plan credentialBindings[0] has invalid placeholder",
+    },
+    {
+      name: "malformed scoped placeholders",
+      credentialBindings: [
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+      error: "runtime plan credentialBindings[0] has invalid placeholder",
+    },
+  ])("Hermes Dockerfile runtime-plan guard rejects $name", ({ credentialBindings, error }) => {
+    const rejected = runHermesDockerfileRuntimePlanGuard(
+      baseMessagingRuntimePlan({ credentialBindings }),
+    );
+
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr).toContain(error);
   });
 
   it.each([

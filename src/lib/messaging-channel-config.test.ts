@@ -7,6 +7,7 @@ import {
   hydrateMessagingChannelConfig,
   MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
   readMessagingChannelConfigFromEnv,
+  resolveMessagingChannelConfigEnvValue,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
 
@@ -100,6 +101,22 @@ describe("messaging channel config", () => {
     });
     expect(env.DISCORD_SERVER_ID).toBe("1491590992753590594");
     expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
+  });
+
+  it("prefers canonical config env values over compatibility aliases", () => {
+    const env: NodeJS.ProcessEnv = {
+      DISCORD_SERVER_ID: "canonical-server",
+      DISCORD_SERVER_IDS: "compat-server",
+    };
+
+    expect(resolveMessagingChannelConfigEnvValue("DISCORD_SERVER_IDS", env)).toEqual({
+      canonicalKey: "DISCORD_SERVER_ID",
+      sourceKey: "DISCORD_SERVER_ID",
+      value: "canonical-server",
+    });
+    expect(readMessagingChannelConfigFromEnv(env)).toMatchObject({
+      DISCORD_SERVER_ID: "canonical-server",
+    });
   });
 
   it("normalizes Teams port compatibility aliases to canonical channel config", () => {

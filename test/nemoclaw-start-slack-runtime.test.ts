@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,7 +22,31 @@ function messagingRuntimeSetupSection(src: string, planPath: string): string {
     );
 }
 
-function encodeRuntimeSetupPlan(channelId: string): string {
+type RuntimeCredentialBinding = {
+  channelId: string;
+  providerEnvKey: string;
+  placeholder?: string;
+};
+
+function slackRuntimeCredentialBindings(channelId: string): RuntimeCredentialBinding[] {
+  return [
+    {
+      channelId,
+      providerEnvKey: "SLACK_BOT_TOKEN",
+      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    },
+    {
+      channelId,
+      providerEnvKey: "SLACK_APP_TOKEN",
+      placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    },
+  ];
+}
+
+function encodeRuntimeSetupPlan(
+  channelId: string,
+  credentialBindings: RuntimeCredentialBinding[] = slackRuntimeCredentialBindings(channelId),
+): string {
   return Buffer.from(
     JSON.stringify({
       schemaVersion: 1,
@@ -43,18 +67,7 @@ function encodeRuntimeSetupPlan(channelId: string): string {
         },
       ],
       disabledChannels: [],
-      credentialBindings: [
-        {
-          channelId,
-          providerEnvKey: "SLACK_BOT_TOKEN",
-          placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        },
-        {
-          channelId,
-          providerEnvKey: "SLACK_APP_TOKEN",
-          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-        },
-      ],
+      credentialBindings,
       networkPolicy: { presets: [], entries: [] },
       agentRender: [],
       buildSteps: [],
@@ -68,7 +81,10 @@ function encodeRuntimeSetupPlan(channelId: string): string {
 describe("Slack runtime env normalization (#4274)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
-  function runNormalize(env: Record<string, string | undefined> = {}): {
+  function runNormalize(
+    env: Record<string, string | undefined> = {},
+    credentialBindings: RuntimeCredentialBinding[] = slackRuntimeCredentialBindings("slack"),
+  ): {
     bot: string;
     app: string;
     result: SpawnSyncReturns<string>;
@@ -83,7 +99,7 @@ describe("Slack runtime env normalization (#4274)", () => {
         "set -euo pipefail",
         'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
-        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack"))}`,
+        `export NEMOCLAW_MESSAGING_PLAN_B64=${JSON.stringify(encodeRuntimeSetupPlan("slack", credentialBindings))}`,
         messagingRuntimeSetupSection(src, planPath),
         "write_messaging_runtime_setup_plan",
         "apply_messaging_runtime_provider_placeholders",
@@ -194,5 +210,50 @@ describe("Slack runtime env normalization (#4274)", () => {
     expect(run.result.status, run.result.stderr).toBe(0);
     expect(run.bot).toBe("openshell:resolve:env:v51_NOT_SLACK_BOT_TOKEN");
     expect(run.app).toBe("openshell:resolve:env:MY_SLACK_APP_TOKEN");
+  });
+
+  it("rejects conflicting placeholders for one provider env key", () => {
+    const run = runNormalize(
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+      [
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(
+      "credentialBindings[1] conflicts with an earlier placeholder for SLACK_BOT_TOKEN",
+    );
+  });
+
+  it("rejects non-Slack scoped placeholder prefixes", () => {
+    const run = runNormalize(
+      {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:SLACK_BOT_TOKEN",
+      },
+      [
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+    );
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(
+      "credentialBindings[0].placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
+    );
   });
 });

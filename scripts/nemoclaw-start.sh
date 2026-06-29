@@ -1194,7 +1194,7 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
-alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+scoped_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 revision_re = re.compile(r"^v[0-9]+_")
 keys = set()
@@ -1211,9 +1211,9 @@ def walk(value):
     if isinstance(value, str):
         if value.startswith(prefix):
             add_key(value[len(prefix) :])
-        alias_index = value.find(alias_marker)
-        if alias_index > 0:
-            add_key(value[alias_index + len(alias_marker) :])
+        alias_match = scoped_alias_re.fullmatch(value)
+        if alias_match:
+            add_key(alias_match.group(2))
         return
     if isinstance(value, list):
         for item in value:
@@ -1363,7 +1363,7 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
-alias_marker = "-OPENSHELL-RESOLVE-ENV-"
+scoped_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
 warnings = []
@@ -1447,10 +1447,10 @@ def walk_for_warnings(value, path):
                         f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
                     )
                 break
-        alias_index = value.find(alias_marker)
-        if alias_index > 0:
-            alias_env_key = value[alias_index + len(alias_marker) :]
-            token_scheme = value[:alias_index] + "-"
+        alias_match = scoped_alias_re.fullmatch(value)
+        if alias_match:
+            alias_env_key = alias_match.group(2)
+            token_scheme = alias_match.group(1) + "-"
             for env_key in keys:
                 if env_key != alias_env_key:
                     continue
@@ -1531,7 +1531,7 @@ import sys
 
 EMPTY = {"credentialBindings": [], "nodePreloads": [], "secretScans": []}
 PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SCOPED_PROVIDER_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
+SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
 PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
@@ -1574,12 +1574,10 @@ def provider_placeholder_matches_env_key(value, env_key):
         return False
     if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
         return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
-    marker_index = value.find(SCOPED_PROVIDER_PLACEHOLDER_MARKER)
-    if marker_index <= 0:
+    scoped_match = SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
+    if not scoped_match:
         return False
-    return placeholder_suffix_matches_env_key(
-        value[marker_index + len(SCOPED_PROVIDER_PLACEHOLDER_MARKER) :], env_key
-    )
+    return placeholder_suffix_matches_env_key(scoped_match.group(2), env_key)
 
 
 def clean_credential_binding(entry, index):
@@ -1714,7 +1712,7 @@ def runtime_setup_entries(key):
 credential_bindings = []
 node_preloads = []
 secret_scans = []
-seen_credential_bindings = set()
+seen_credential_bindings = {}
 seen_node_preloads = set()
 seen_scans = set()
 
@@ -1728,10 +1726,13 @@ for index, entry in enumerate(credential_binding_entries):
     if not isinstance(channel_id, str) or channel_id not in active_channel_ids:
         continue
     binding = clean_credential_binding(entry, index)
-    binding_key = (binding["providerEnvKey"], binding.get("placeholder", ""))
+    binding_key = binding["providerEnvKey"]
+    binding_placeholder = binding.get("placeholder")
     if binding_key not in seen_credential_bindings:
-        seen_credential_bindings.add(binding_key)
+        seen_credential_bindings[binding_key] = binding_placeholder
         credential_bindings.append(binding)
+    elif seen_credential_bindings[binding_key] != binding_placeholder:
+        fail(f"credentialBindings[{index}] conflicts with an earlier placeholder for {binding_key}")
 
 for entry in runtime_setup_entries("nodePreloads"):
     preload = clean_node_preload(entry, len(node_preloads))
@@ -1761,7 +1762,7 @@ import re
 import sys
 
 PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SCOPED_PROVIDER_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
+SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 
 
 def placeholder_suffix_matches_env_key(suffix, env_key):
@@ -1776,12 +1777,10 @@ def provider_placeholder_matches_env_key(value, env_key):
         return False
     if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
         return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
-    marker_index = value.find(SCOPED_PROVIDER_PLACEHOLDER_MARKER)
-    if marker_index <= 0:
+    scoped_match = SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
+    if not scoped_match:
         return False
-    return placeholder_suffix_matches_env_key(
-        value[marker_index + len(SCOPED_PROVIDER_PLACEHOLDER_MARKER) :], env_key
-    )
+    return placeholder_suffix_matches_env_key(scoped_match.group(2), env_key)
 
 
 with open(sys.argv[1], encoding="utf-8") as handle:

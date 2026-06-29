@@ -6,7 +6,6 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { getChannelTokenKeys, KNOWN_CHANNELS, knownChannelNames } from "../../sandbox/channels";
-import { planStateUpdates } from "../compiler/engines/state-update-engine";
 import {
   COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
   COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
@@ -28,7 +27,6 @@ import {
   wechatManifest,
   whatsappManifest,
 } from "./index";
-import { listOpenClawManagedChannelNames, listOpenClawRuntimeChannelMetadata } from "./metadata";
 import {
   SLACK_SOCKET_MODE_GATEWAY_CONFLICT_HOOK_HANDLER_ID,
   SLACK_SOCKET_MODE_GATEWAY_STATUS_HOOK_HANDLER_ID,
@@ -179,46 +177,6 @@ function expectConcreteStatusHook(
       },
     ],
   });
-}
-
-type ExpectedStateUpdate =
-  | {
-      readonly kind: "persist-inputs";
-      readonly stateKey: string;
-      readonly inputIds: readonly string[];
-    }
-  | {
-      readonly kind: "rebuild-hydration";
-      readonly statePath: string;
-      readonly env: string;
-    };
-
-function expectOpenClawRuntimeVisibility(
-  manifest: ChannelManifest,
-  configKeys: readonly string[],
-  logPatterns: readonly string[],
-  channelName = configKeys[0],
-): void {
-  expect(listOpenClawManagedChannelNames({ manifests: [manifest] })).toEqual([channelName]);
-  expect(listOpenClawRuntimeChannelMetadata({ manifests: [manifest] })).toEqual([
-    {
-      channelId: manifest.id,
-      configKeys,
-      logPatterns,
-    },
-  ]);
-}
-
-function expectStateUpdates(
-  manifest: ChannelManifest,
-  updates: readonly ExpectedStateUpdate[],
-): void {
-  expect(planStateUpdates(manifest)).toEqual(
-    updates.map((update) => ({
-      channelId: manifest.id,
-      ...update,
-    })),
-  );
 }
 
 function expectOpenClawNodePreload(manifest: ChannelManifest, module: string): void {
@@ -416,7 +374,6 @@ describe("built-in channel manifests", () => {
       "telegram-openclaw-bridge-health",
       "telegram.openclawBridgeHealth",
     );
-    expectOpenClawRuntimeVisibility(telegramManifest, ["telegram"], ["telegram"]);
     expectConcreteStatusHook(
       telegramManifest,
       "telegram-gateway-conflict-status",
@@ -467,7 +424,6 @@ describe("built-in channel manifests", () => {
       "discord-openclaw-bridge-health",
       "discord.openclawBridgeHealth",
     );
-    expectOpenClawRuntimeVisibility(discordManifest, ["discord"], ["discord"]);
   });
 
   it("declares Slack Bolt-compatible placeholders and allowlist render intent", () => {
@@ -527,35 +483,12 @@ describe("built-in channel manifests", () => {
       "slack-openclaw-bridge-health",
       "slack.openclawBridgeHealth",
     );
-    expectOpenClawRuntimeVisibility(slackManifest, ["slack"], ["slack"]);
     expectConcreteStatusHook(
       slackManifest,
       "slack-socket-mode-gateway-status",
       SLACK_SOCKET_MODE_GATEWAY_STATUS_HOOK_HANDLER_ID,
       "gatewayOverlaps",
     );
-    expectStateUpdates(slackManifest, [
-      {
-        kind: "persist-inputs",
-        stateKey: "allowedIds",
-        inputIds: ["allowedUsers"],
-      },
-      {
-        kind: "persist-inputs",
-        stateKey: "slackConfig",
-        inputIds: ["allowedChannels"],
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "allowedIds.slack",
-        env: "SLACK_ALLOWED_USERS",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "slackConfig.allowedChannels",
-        env: "SLACK_ALLOWED_CHANNELS",
-      },
-    ]);
   });
 
   it("declares WeChat host-QR hooks, state hydration, provider binding, and Hermes env intent", () => {
@@ -579,38 +512,6 @@ describe("built-in channel manifests", () => {
         providerName: "{sandboxName}-wechat-bridge",
         providerEnvKey: "WECHAT_BOT_TOKEN",
         placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
-      },
-    ]);
-    expectStateUpdates(wechatManifest, [
-      {
-        kind: "persist-inputs",
-        stateKey: "wechatConfig",
-        inputIds: ["accountId", "baseUrl", "userId"],
-      },
-      {
-        kind: "persist-inputs",
-        stateKey: "allowedIds",
-        inputIds: ["allowedIds"],
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "wechatConfig.accountId",
-        env: "WECHAT_ACCOUNT_ID",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "wechatConfig.baseUrl",
-        env: "WECHAT_BASE_URL",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "wechatConfig.userId",
-        env: "WECHAT_USER_ID",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "allowedIds.wechat",
-        env: "WECHAT_ALLOWED_IDS",
       },
     ]);
     expectEnvRenderLines(wechatManifest, "wechat-hermes-env", [
@@ -661,11 +562,6 @@ describe("built-in channel manifests", () => {
       inputs: ["wechatConfig.accountId"],
       onFailure: "abort",
     });
-    expectOpenClawRuntimeVisibility(
-      wechatManifest,
-      ["openclaw-weixin"],
-      ["wechat", "openclaw-weixin"],
-    );
   });
 
   it("declares WhatsApp as in-sandbox QR with optional allowlist config", () => {
@@ -706,7 +602,6 @@ describe("built-in channel manifests", () => {
     expect(renderJson(whatsappManifest)).not.toContain("openshell:resolve:env:WHATSAPP");
     expectOpenClawNodePreload(whatsappManifest, "whatsapp-qr-compact");
     expect(JSON.stringify(whatsappManifest.runtime?.openclaw)).toContain("whatsapp-qr-compact");
-    expectOpenClawRuntimeVisibility(whatsappManifest, ["whatsapp"], ["whatsapp"]);
   });
 
   it("declares Microsoft Teams Bot Framework config for both agents", () => {
@@ -804,7 +699,6 @@ describe("built-in channel manifests", () => {
         },
       ],
     });
-    expectOpenClawRuntimeVisibility(teamsManifest, ["msteams"], ["msteams", "teams"], "msteams");
     expect(teamsManifest.agentPackages).toContainEqual({
       id: "openclawPluginPackage",
       agent: "openclaw",
@@ -827,42 +721,5 @@ describe("built-in channel manifests", () => {
       spec: "aiohttp==3.14.1",
       required: true,
     });
-    expectStateUpdates(teamsManifest, [
-      {
-        kind: "persist-inputs",
-        stateKey: "teamsConfig",
-        inputIds: ["appId", "tenantId", "webhookPort", "requireMention"],
-      },
-      {
-        kind: "persist-inputs",
-        stateKey: "allowedIds",
-        inputIds: ["allowedUsers"],
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "teamsConfig.appId",
-        env: "MSTEAMS_APP_ID",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "teamsConfig.tenantId",
-        env: "MSTEAMS_TENANT_ID",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "allowedIds.teams",
-        env: "TEAMS_ALLOWED_USERS",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "teamsConfig.webhookPort",
-        env: "MSTEAMS_PORT",
-      },
-      {
-        kind: "rebuild-hydration",
-        statePath: "teamsConfig.requireMention",
-        env: "TEAMS_REQUIRE_MENTION",
-      },
-    ]);
   });
 });

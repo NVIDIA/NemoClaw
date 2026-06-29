@@ -24,11 +24,15 @@ API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
 SCOPED_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
+SCOPED_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+PLACEHOLDER_CONTROL_CHARS = "\x00\r\n\t"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 # Restrictive compatibility fallback for provider placeholders persisted before
 # Hermes messaging runtime-plan metadata existed. New channels must flow through
 # runtime-plan credentialBindings; do not broaden this set without a
 # migration plan and source-of-truth review.
+# TODO: Remove when the minimum supported Hermes sandbox base tag guarantees
+# the messaging runtime plan artifact for at least one full release.
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
     {
         "TELEGRAM_BOT_TOKEN",
@@ -423,21 +427,39 @@ def _placeholder_suffix_matches_env_key(suffix: str, env_key: str) -> bool:
     return revision_match is not None and revision_match.group(1) == env_key
 
 
-def _normalize_provider_placeholder_for_env_key(value: object, env_key: str) -> str | None:
+def _normalize_provider_placeholder_for_env_key(
+    value: object,
+    env_key: str,
+    *,
+    reject_malformed: bool = False,
+    label: str = "provider placeholder",
+) -> str | None:
+    def reject(message: str) -> None:
+        if reject_malformed:
+            raise UnsafePathError(f"messaging runtime plan {label} {message}")
+
     if not isinstance(value, str):
+        if value is not None:
+            reject("must be a string")
+        return None
+    if any(ch in value for ch in PLACEHOLDER_CONTROL_CHARS):
+        reject("contains a control character")
         return None
     if value.startswith(SCOPED_PLACEHOLDER_PREFIX):
         suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
         if not _placeholder_suffix_matches_env_key(suffix, env_key):
+            reject(f"is not a provider placeholder for {env_key}")
             return None
         return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
-    marker_index = value.find(SCOPED_PLACEHOLDER_MARKER)
-    if marker_index <= 0:
+    scoped_match = SCOPED_PLACEHOLDER_RE.fullmatch(value)
+    if scoped_match is None:
+        reject(f"is not a provider placeholder for {env_key}")
         return None
-    suffix = value[marker_index + len(SCOPED_PLACEHOLDER_MARKER) :]
+    suffix = scoped_match.group(2)
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
+        reject(f"is not a provider placeholder for {env_key}")
         return None
-    return f"{value[: marker_index + len(SCOPED_PLACEHOLDER_MARKER)]}{env_key}"
+    return f"{scoped_match.group(1)}{SCOPED_PLACEHOLDER_MARKER}{env_key}"
 
 
 def _validate_runtime_plan_env_key(value: object, label: str) -> str:
@@ -527,14 +549,26 @@ def _runtime_plan_replacements_and_provider_keys(
             binding.get("providerEnvKey"), "credentialBindings.providerEnvKey"
         )
         provider_env_keys.add(provider_env_key)
-        placeholder = _normalize_provider_placeholder_for_env_key(
-            binding.get("placeholder"), provider_env_key
-        )
+        placeholder_value = binding.get("placeholder")
+        placeholder = None
+        if placeholder_value is not None:
+            placeholder = _normalize_provider_placeholder_for_env_key(
+                placeholder_value,
+                provider_env_key,
+                reject_malformed=True,
+                label="credentialBindings.placeholder",
+            )
         runtime_placeholder = _normalize_provider_placeholder_for_env_key(
             os.environ.get(provider_env_key, ""), provider_env_key
         )
-        if placeholder and runtime_placeholder and provider_env_key not in replacements:
-            replacements[provider_env_key] = (placeholder, "")
+        if placeholder and runtime_placeholder:
+            existing = replacements.get(provider_env_key)
+            if existing is None:
+                replacements[provider_env_key] = (placeholder, "")
+            elif existing[0] != placeholder:
+                raise UnsafePathError(
+                    f"messaging runtime plan has conflicting placeholders for {provider_env_key}"
+                )
     return replacements, provider_env_keys, True
 
 def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:

@@ -1044,8 +1044,8 @@ function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean 
   if (value.startsWith(openShellPrefix)) {
     return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
   }
-  const scopedMatch = value.match(/^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/);
-  return scopedMatch ? placeholderSuffixMatchesEnvKey(scopedMatch[1] as string, envKey) : false;
+  const scopedMatch = value.match(/^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/);
+  return scopedMatch ? placeholderSuffixMatchesEnvKey(scopedMatch[2] as string, envKey) : false;
 }
 
 function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {

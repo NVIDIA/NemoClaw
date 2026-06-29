@@ -15,6 +15,8 @@ export interface MessagingManifestMetadataOptions {
   readonly manifests?: readonly ChannelManifest[];
 }
 
+// TODO: Remove these aliases after QA automation and public templates stop
+// exporting the legacy names for at least one full release.
 const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
   DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
