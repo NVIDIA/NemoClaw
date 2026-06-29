@@ -794,7 +794,15 @@ runOpenShellGatewayUpgrade(
       fs.mkdirSync(path.dirname(signLog), { recursive: true });
       writeFakeDarwinUname(fakeBin);
       writeFakeCurrentOpenshell(fakeBin);
-      writeExecutable(path.join(fakeBin, "openshell-gateway"), "#!/usr/bin/env bash\nexit 0\n");
+      writeExecutable(
+        path.join(fakeBin, "openshell-gateway"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openshell-gateway ${CURRENT_OPENSHELL_VERSION}\n'
+fi
+exit 0
+`,
+      );
       writeExecutable(path.join(fakeBin, "openshell-driver-vm"), "#!/usr/bin/env bash\nexit 0\n");
       writeExecutable(
         path.join(fakeBin, "codesign"),

@@ -417,6 +417,9 @@ EOF
 
   cat >"$fake_bin/openshell-gateway" <<'EOF'
 #!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+  printf 'openshell-gateway 0.0.72\n'
+fi
 exit 0
 EOF
 
