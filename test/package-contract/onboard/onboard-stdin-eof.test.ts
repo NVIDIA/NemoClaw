@@ -6,9 +6,13 @@
  * provider menu, hit EOF on the first prompt read, and exited 0 silently
  * instead of reporting cancellation.
  *
- * This drives the real `prompt()` and `runOnboardCommand()` against an
- * EOF stdin in a subprocess (no Docker/gateway required) and asserts the
- * flow now prints "Installation cancelled" and exits non-zero.
+ * Drives the real `prompt()` and `runOnboardCommand()` against an EOF stdin
+ * in a subprocess (no Docker/gateway required) and asserts the flow now
+ * prints "Installation cancelled" and exits non-zero. The subprocess requires
+ * the *compiled* artifacts (`dist/lib/...js`) so it exercises the shipped CLI
+ * path on the repo's minimum supported Node runtime — `node -e` has no
+ * TypeScript loader, so requiring the `.ts` sources would only work on Node
+ * versions with native type stripping.
  */
 
 import { spawnSync } from "node:child_process";
@@ -16,9 +20,9 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
-const COMMAND_PATH = path.join(REPO_ROOT, "src", "lib", "onboard", "command.ts");
-const STORE_PATH = path.join(REPO_ROOT, "src", "lib", "credentials", "store.ts");
+const REPO_ROOT = path.join(import.meta.dirname, "..", "..", "..");
+const COMMAND_PATH = path.join(REPO_ROOT, "dist", "lib", "onboard", "command.js");
+const STORE_PATH = path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js");
 
 describe("onboard with stdin EOF (#5976)", () => {
   it("reports cancellation and exits non-zero when a prompt hits EOF", () => {
