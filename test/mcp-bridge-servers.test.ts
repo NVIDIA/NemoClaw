@@ -176,32 +176,41 @@ describe("authenticated MCP live fixtures", () => {
       },
     };
 
-    for (const [index, rpcMethod] of MCP_BRIDGE_ALLOWED_METHODS.entries()) {
-      const notification = rpcMethod.startsWith("notifications/");
-      const id = index + 1;
+    for (const rpcMethod of MCP_BRIDGE_ALLOWED_METHODS.filter((method) =>
+      method.startsWith("notifications/"),
+    )) {
       const params = paramsByMethod[rpcMethod];
-      const payload = {
+      const response = await request("POST", {
         jsonrpc: "2.0",
-        ...(!notification ? { id } : {}),
         method: rpcMethod,
         ...(params !== undefined ? { params } : {}),
-      };
-      const response = await request("POST", payload);
+      });
 
-      if (notification) {
-        expect({ status: response.status, body: response.body }, rpcMethod).toEqual({
-          status: 202,
-          body: "",
-        });
-      } else {
-        expect(response.status, rpcMethod).toBe(200);
-        expect(JSON.parse(response.body), rpcMethod).toMatchObject({
-          jsonrpc: "2.0",
-          id,
-        });
-        expect(JSON.parse(response.body), rpcMethod).not.toHaveProperty("error");
-        expect(JSON.parse(response.body), rpcMethod).toHaveProperty("result");
-      }
+      expect({ status: response.status, body: response.body }, rpcMethod).toEqual({
+        status: 202,
+        body: "",
+      });
+    }
+
+    for (const [index, rpcMethod] of MCP_BRIDGE_ALLOWED_METHODS.filter(
+      (method) => !method.startsWith("notifications/"),
+    ).entries()) {
+      const id = index + 1;
+      const params = paramsByMethod[rpcMethod];
+      const response = await request("POST", {
+        jsonrpc: "2.0",
+        id,
+        method: rpcMethod,
+        ...(params !== undefined ? { params } : {}),
+      });
+
+      expect(response.status, rpcMethod).toBe(200);
+      expect(JSON.parse(response.body), rpcMethod).toMatchObject({
+        jsonrpc: "2.0",
+        id,
+      });
+      expect(JSON.parse(response.body), rpcMethod).not.toHaveProperty("error");
+      expect(JSON.parse(response.body), rpcMethod).toHaveProperty("result");
     }
 
     expect(
