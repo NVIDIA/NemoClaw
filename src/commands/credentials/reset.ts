@@ -2,14 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
-import { runOpenshellProviderCommand } from "../../lib/actions/global";
+import { forgetExtraProvider, runOpenshellProviderCommand } from "../../lib/actions/global";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
 import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
 import { prompt as askPrompt } from "../../lib/credentials/store";
-import { removeExtraProvider } from "../../lib/state/registry";
 
 export default class CredentialsResetCommand extends NemoClawCommand {
   static id = "credentials:reset";
@@ -67,7 +66,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status === 0) {
-      removeExtraProvider(key);
+      forgetExtraProvider(key);
       this.log(`  Removed provider '${key}' from the OpenShell gateway.`);
       this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
       return;
