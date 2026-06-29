@@ -30,8 +30,13 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
 }
 
 afterEach(() => {
-  if (originalGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-  else process.env.OPENSHELL_GATEWAY = originalGateway;
+  switch (originalGateway) {
+    case undefined:
+      delete process.env.OPENSHELL_GATEWAY;
+      break;
+    default:
+      process.env.OPENSHELL_GATEWAY = originalGateway;
+  }
 });
 
 describe("authoritative rebuild gateway binding", () => {

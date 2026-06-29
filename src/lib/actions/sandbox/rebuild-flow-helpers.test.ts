@@ -83,8 +83,13 @@ describe("rebuild target gateway preflight", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    if (priorGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
-    else process.env.OPENSHELL_GATEWAY = priorGateway;
+    switch (priorGateway) {
+      case undefined:
+        delete process.env.OPENSHELL_GATEWAY;
+        break;
+      default:
+        process.env.OPENSHELL_GATEWAY = priorGateway;
+    }
   });
 
   it("health-checks and pins the sandbox's persisted gateway", async () => {

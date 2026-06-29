@@ -341,11 +341,9 @@ describe("generated MCP policy transitions", () => {
       policies: Array<{ content: string; sourcePath: string }>;
     };
     expect(payload.skipRegistryUpdate).toBe(true);
-    expect(payload.message === "").toBe(!preservesOwnership);
-    expect(payload.policies).toHaveLength(preservesOwnership ? 1 : 0);
-    if (preservesOwnership) {
-      expect(payload.message).toMatch(/effective state: match/);
-      expect(payload.policies[0]?.sourcePath).toBe("generated:nemoclaw-mcp-bridge");
-    }
+    expect(payload.message).toMatch(preservesOwnership ? /effective state: match/ : /^$/);
+    expect(payload.policies.map((policy) => policy.sourcePath)).toEqual(
+      preservesOwnership ? ["generated:nemoclaw-mcp-bridge"] : [],
+    );
   });
 });

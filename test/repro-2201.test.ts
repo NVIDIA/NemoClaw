@@ -107,9 +107,9 @@ function createFixture({
   const durableFromDockerfile = fromDockerfile
     ? path.join(tmpDir, "custom-image", "Dockerfile")
     : null;
-  if (durableFromDockerfile) {
-    fs.mkdirSync(path.dirname(durableFromDockerfile), { recursive: true });
-    fs.writeFileSync(durableFromDockerfile, "FROM scratch\n");
+  for (const dockerfilePath of durableFromDockerfile ? [durableFromDockerfile] : []) {
+    fs.mkdirSync(path.dirname(dockerfilePath), { recursive: true });
+    fs.writeFileSync(dockerfilePath, "FROM scratch\n");
   }
   const rebuildTargetMessagingPlan = rebuildTarget.messagingPlanChannels
     ? makeMessagingPlan(

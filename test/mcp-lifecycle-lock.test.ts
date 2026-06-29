@@ -333,13 +333,12 @@ const releasePath = process.argv[3];
     let injectedAmbiguousReply = false;
     const linkSpy = vi.spyOn(fs.promises, "link").mockImplementation(async (from, to) => {
       await link(from, to);
-      if (
-        !injectedAmbiguousReply &&
-        String(to) === lockPath &&
-        String(from).includes(".candidate-")
-      ) {
-        injectedAmbiguousReply = true;
-        throw Object.assign(new Error("simulated replayed LINK response"), { code: "EEXIST" });
+      const shouldInject =
+        !injectedAmbiguousReply && String(to) === lockPath && String(from).includes(".candidate-");
+      switch (shouldInject) {
+        case true:
+          injectedAmbiguousReply = true;
+          throw Object.assign(new Error("simulated replayed LINK response"), { code: "EEXIST" });
       }
     });
 
@@ -359,9 +358,11 @@ const releasePath = process.argv[3];
     const rm = fs.promises.rm.bind(fs.promises);
     let injectedCleanupFailure = false;
     const rmSpy = vi.spyOn(fs.promises, "rm").mockImplementation(async (target, options) => {
-      if (!injectedCleanupFailure && String(target).includes(".candidate-")) {
-        injectedCleanupFailure = true;
-        throw Object.assign(new Error("simulated candidate cleanup failure"), { code: "EIO" });
+      const shouldInject = !injectedCleanupFailure && String(target).includes(".candidate-");
+      switch (shouldInject) {
+        case true:
+          injectedCleanupFailure = true;
+          throw Object.assign(new Error("simulated candidate cleanup failure"), { code: "EIO" });
       }
       return rm(target, options);
     });
@@ -522,10 +523,12 @@ const releasePath = process.argv[3];
     const rename = fs.promises.rename.bind(fs.promises);
     let injectedReplacement = false;
     const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
-      if (!injectedReplacement && String(from) === lockPath) {
-        injectedReplacement = true;
-        fs.unlinkSync(lockPath);
-        fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+      const shouldInject = !injectedReplacement && String(from) === lockPath;
+      switch (shouldInject) {
+        case true:
+          injectedReplacement = true;
+          fs.unlinkSync(lockPath);
+          fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
       }
       return rename(from, to);
     });
