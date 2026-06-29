@@ -124,13 +124,13 @@ function runHermesStartupReadiness(gatewayInitStatus: 0 | 1) {
 }
 
 describe("Hermes PID 1 supervisor recovery", () => {
-  it("publishes startup readiness even when gateway-control initialization fails", () => {
+  it("publishes startup readiness through isolated Python when gateway-control init fails", () => {
     const result = runHermesStartupReadiness(1);
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim().split("\n")).toEqual(["gateway-control-init", "dashboard-urls"]);
     expect(result.stderr).toContain(
-      "publish:runtime-guard publish-startup-ready --hermes-dir /sandbox/.hermes --startup-owner",
+      "publish:-I runtime-guard publish-startup-ready --hermes-dir /sandbox/.hermes --startup-owner",
     );
     expect(result.stderr).toContain("privileged gateway control unavailable");
   });
@@ -225,7 +225,9 @@ describe("Hermes PID 1 supervisor recovery", () => {
         fs.writeFileSync(
           fakePython,
           `#!/usr/bin/env bash
-case "$2" in
+[ "$1" = "-I" ] || { echo "runtime guard did not use isolated Python" >&2; exit 98; }
+[ "$2" = "/trusted/runtime-config-guard.py" ] || { echo "unexpected guard path: $2" >&2; exit 98; }
+case "$3" in
   seal-restart) echo "Hermes config mutation is already in progress" >&2; exit 1 ;;
   inspect-mutation-owner) echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_safe=1" ;;
   *) exit 99 ;;
@@ -313,7 +315,9 @@ describe("Hermes startup mutation ownership", () => {
         fs.writeFileSync(
           fakePython,
           `#!/usr/bin/env bash
-case "$2" in
+[ "$1" = "-I" ] || { echo "runtime guard did not use isolated Python" >&2; exit 98; }
+[ "$2" = "/trusted/runtime-config-guard.py" ] || { echo "unexpected guard path: $2" >&2; exit 98; }
+case "$3" in
   inspect-mutation-owner)
     echo inspect >>"$TRACE_FILE"
     echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_safe=0 resumable_lock=1"
@@ -328,7 +332,7 @@ case "$2" in
     echo finish >>"$TRACE_FILE"
     rm -f "$STATE_PATH" "$LOCK_PATH"
     ;;
-  *) echo "unexpected action: $2" >&2; exit 99 ;;
+  *) echo "unexpected action: $3" >&2; exit 99 ;;
 esac
 `,
           { mode: 0o700 },

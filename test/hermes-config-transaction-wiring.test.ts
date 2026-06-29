@@ -28,6 +28,7 @@ function installMock(filename, exports) {
 
 const rawConfig = ${JSON.stringify(rawConfig)};
 let captured = null;
+let capturedPrivilegedExec = null;
 installMock(source("runner.js"), { validateName: () => undefined, ROOT: root });
 installMock(source("state", "registry.js"), {
   getSandbox: () => ({ name: "alpha", agent: "hermes" }),
@@ -42,9 +43,10 @@ installMock(source("adapters", "openshell", "client.js"), {
   runOpenshellCommand: () => ({ status: 0 }),
 });
 installMock(source("sandbox", "privileged-exec.js"), {
-  privilegedSandboxExecArgv: (sandboxName, command, stdin) => [
-    "docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command,
-  ],
+  privilegedSandboxExecArgv: (sandboxName, command, stdin, sanitizeEnvironment) => {
+    capturedPrivilegedExec = { command, sanitizeEnvironment };
+    return ["docker", "exec", ...(stdin ? ["-i"] : []), sandboxName, ...command];
+  },
 });
 installMock(source("adapters", "docker", "exec.js"), {
   dockerExecFileSync: (argv, options) => {
@@ -58,7 +60,7 @@ const target = config.resolveAgentConfig("alpha");
 const parsed = config.readSandboxConfig("alpha", target);
 parsed.model.default = "trusted-model-v2";
 config.writeSandboxConfig("alpha", target, parsed);
-process.stdout.write(JSON.stringify(captured));
+process.stdout.write(JSON.stringify({ ...captured, privilegedExec: capturedPrivilegedExec }));
 `;
 
     const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, "-e", script], {
@@ -72,6 +74,7 @@ process.stdout.write(JSON.stringify(captured));
     const captured = JSON.parse(result.stdout) as {
       argv: string[];
       options: { input: string; timeout: number; stdio: string[] };
+      privilegedExec: { command: string[]; sanitizeEnvironment: boolean };
     };
     const digestFlag = captured.argv.indexOf("--expected-config-sha256");
     expect(captured.argv).toEqual(
@@ -81,6 +84,9 @@ process.stdout.write(JSON.stringify(captured));
         "--signal=TERM",
         "--kill-after=5s",
         "2m",
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
         "write-config",
         "--hermes-dir",
         "/sandbox/.hermes",
@@ -95,5 +101,14 @@ process.stdout.write(JSON.stringify(captured));
     expect(captured.options.input).toContain("default: trusted-model-v2");
     expect(captured.options.timeout).toBe(150000);
     expect(captured.options.stdio).toEqual(["pipe", "pipe", "pipe"]);
+    expect(captured.privilegedExec.sanitizeEnvironment).toBe(true);
+    expect(captured.privilegedExec.command).toEqual(
+      expect.arrayContaining([
+        "/opt/hermes/.venv/bin/python",
+        "-I",
+        "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py",
+        "write-config",
+      ]),
+    );
   });
 });

@@ -239,11 +239,36 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25]);
   });
 
+  it("reconciles inconclusive recovery transport through direct health", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    const directProbe = vi.fn(() => true);
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      probeImpl: makeProbe([null]),
+      directProbeImpl: directProbe,
+      sleepImpl: () => {},
+    });
+    expect(ok).toBe(true);
+    expect(directProbe).toHaveBeenCalledOnce();
+  });
+
   it("uses direct health to reconcile a stale post-settle stopped result", () => {
     const sleeps: number[] = [];
     const directProbe = vi.fn(() => true);
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, false]),
+      directProbeImpl: directProbe,
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(true);
+    expect(directProbe).toHaveBeenCalledOnce();
+    expect(sleeps).toEqual([25]);
+  });
+
+  it("uses direct health to reconcile inconclusive post-settle transport", () => {
+    const sleeps: number[] = [];
+    const directProbe = vi.fn(() => true);
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      probeImpl: makeProbe([true, null]),
       directProbeImpl: directProbe,
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });

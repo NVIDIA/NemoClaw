@@ -168,7 +168,7 @@ function privilegedSandboxExec(
   opts: { input?: string | Buffer; timeout?: number } = {},
 ): string {
   const hasInput = opts.input !== undefined;
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput), {
+  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, hasInput, true), {
     input: opts.input,
     stdio: hasInput ? ["pipe", "pipe", "pipe"] : ["ignore", "pipe", "pipe"],
     timeout: opts.timeout ?? 30000,
@@ -179,7 +179,7 @@ function openClawConfigGuardExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) => {
       const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined),
+        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
         {
           encoding: "utf-8",
           input,
@@ -523,6 +523,7 @@ function writeSandboxConfig(
         "--kill-after=5s",
         "2m",
         HERMES_PYTHON,
+        "-I",
         HERMES_RUNTIME_CONFIG_GUARD,
         "write-config",
         "--hermes-dir",

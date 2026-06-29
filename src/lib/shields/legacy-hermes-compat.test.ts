@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } fr
 
 const requireSource = createRequire(import.meta.url);
 const INDEX_MODULE = "./index.js";
+const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
 const LOCK_TOKEN = "a".repeat(64);
 const OLD_GUARD_HELP = "usage: guard {ensure-api-key,refresh-hashes,provider-placeholders}";
@@ -46,12 +47,21 @@ function isGuardAction(cmd: string[], action: string): boolean {
   return guardIndex >= 0 && cmd[guardIndex + 1] === action;
 }
 
+function isInlinePython(cmd: string[]): boolean {
+  return cmd[0] === "python3" && cmd.includes("-c");
+}
+
+function isIsolatedInlinePython(cmd: string[]): boolean {
+  return isInlinePython(cmd) && cmd[1] === "-I" && cmd[2] === "-c";
+}
+
 describe("legacy Hermes shields compatibility", () => {
   let homeDir: string;
   let shields: ShieldsModule;
   let spies: MockInstance[];
   let runSpy: MockInstance;
   let dockerExecSpy: MockInstance;
+  let privilegedExecArgvSpy: MockInstance;
   let applyStateDirLockModeSpy: MockInstance;
 
   beforeEach(() => {
@@ -73,6 +83,9 @@ describe("legacy Hermes shields compatibility", () => {
     runSpy = vi.spyOn(runner, "run").mockReturnValue({ status: 0 });
     dockerExecSpy = vi.spyOn(dockerExec, "dockerExecFileSync");
     applyStateDirLockModeSpy = vi.spyOn(stateDirLock, "applyStateDirLockMode").mockReturnValue([]);
+    privilegedExecArgvSpy = vi
+      .spyOn(privilegedExec, "privilegedSandboxExecArgv")
+      .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]);
     spies.push(
       runSpy,
       vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n"),
@@ -90,9 +103,7 @@ describe("legacy Hermes shields compatibility", () => {
       vi.spyOn(policy, "parseCurrentPolicy").mockImplementation((raw: unknown) => String(raw)),
       vi.spyOn(policy, "resolvePermissivePolicyPath").mockReturnValue("/mock/permissive.yaml"),
       vi.spyOn(config, "resolveAgentConfig").mockImplementation(() => hermesTarget()),
-      vi
-        .spyOn(privilegedExec, "privilegedSandboxExecArgv")
-        .mockImplementation((_sandboxName: unknown, cmd: unknown) => cmd as string[]),
+      privilegedExecArgvSpy,
       dockerExecSpy,
       applyStateDirLockModeSpy,
       vi.spyOn(stateDirLock, "preflightStateDirLock").mockReturnValue([]),
@@ -207,11 +218,11 @@ describe("legacy Hermes shields compatibility", () => {
     ).not.toThrow();
 
     const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    const descriptorUnlock = commands.find((cmd) => cmd[0] === "python3" && cmd[1] === "-c");
+    const descriptorUnlock = commands.find(isIsolatedInlinePython);
     expect(descriptorUnlock?.join(" ")).toContain("O_NOFOLLOW");
-    expect(descriptorUnlock?.[2]).toContain("strict hash verification failed");
-    expect(descriptorUnlock?.[2]).toContain("compat hash verification failed");
-    expect(descriptorUnlock?.[2]).toMatch(/os\.(?:replace|rename)\(/);
+    expect(descriptorUnlock?.[3]).toContain("strict hash verification failed");
+    expect(descriptorUnlock?.[3]).toContain("compat hash verification failed");
+    expect(descriptorUnlock?.[3]).toMatch(/os\.(?:replace|rename)\(/);
     expect(commands.some((cmd) => isGuardAction(cmd, "begin-shields-transition"))).toBe(false);
   });
 
@@ -225,8 +236,8 @@ describe("legacy Hermes shields compatibility", () => {
 
     const legacyTransitions = dockerExecSpy.mock.calls
       .map(commandFromCall)
-      .filter((cmd) => cmd[0] === "python3" && cmd[1] === "-c")
-      .map((cmd) => cmd[3]);
+      .filter(isIsolatedInlinePython)
+      .map((cmd) => cmd[4]);
     expect(legacyTransitions).toEqual(["unlock", "lock"]);
   });
 
@@ -250,7 +261,30 @@ describe("legacy Hermes shields compatibility", () => {
     ).toBe(true);
     expect(commands.some((cmd) => isGuardAction(cmd, "apply-shields-transition"))).toBe(true);
     expect(commands.some((cmd) => isGuardAction(cmd, "finish-shields-transition"))).toBe(true);
-    expect(commands.some((cmd) => cmd[0] === "python3" && cmd[1] === "-c")).toBe(false);
+    expect(commands.some(isInlinePython)).toBe(false);
+  });
+
+  it("isolates Hermes guard Python and scrubs every privileged shields exec", () => {
+    installExecResponses(CURRENT_GUARD_HELP);
+
+    expect(() =>
+      shields.unlockAgentConfig("current-hermes", hermesTarget(), true, true),
+    ).not.toThrow();
+
+    const guardCommands = dockerExecSpy.mock.calls
+      .map(commandFromCall)
+      .filter((cmd) => cmd.includes(HERMES_GUARD));
+    expect(guardCommands.length).toBeGreaterThan(0);
+    for (const command of guardCommands) {
+      const pythonIndex = command.indexOf(HERMES_PYTHON);
+      expect(pythonIndex).toBeGreaterThanOrEqual(0);
+      expect(command[pythonIndex + 1]).toBe("-I");
+      expect(command[pythonIndex + 2]).toBe(HERMES_GUARD);
+    }
+    expect(privilegedExecArgvSpy).toHaveBeenCalled();
+    for (const call of privilegedExecArgvSpy.mock.calls) {
+      expect(call[3]).toBe(true);
+    }
   });
 
   it("pins one capability decision across policy and config mutation", () => {
@@ -298,14 +332,15 @@ describe("legacy Hermes shields compatibility", () => {
     const descriptorLock = commands.find(
       (cmd) =>
         cmd[0] === "python3" &&
-        cmd[1] === "-c" &&
-        cmd[2]?.includes("O_NOFOLLOW") &&
-        cmd[2]?.includes("0o1775"),
+        cmd[1] === "-I" &&
+        cmd[2] === "-c" &&
+        cmd[3]?.includes("O_NOFOLLOW") &&
+        cmd[3]?.includes("0o1775"),
     );
     expect(descriptorLock).toBeDefined();
-    expect(descriptorLock?.[2]).toContain("strict hash verification failed");
-    expect(descriptorLock?.[2]).toContain("compat hash verification failed");
-    expect(descriptorLock?.[2]).toMatch(/os\.(?:replace|rename)\(/);
+    expect(descriptorLock?.[3]).toContain("strict hash verification failed");
+    expect(descriptorLock?.[3]).toContain("compat hash verification failed");
+    expect(descriptorLock?.[3]).toMatch(/os\.(?:replace|rename)\(/);
     expect(commands.some((cmd) => cmd[0] === "stat" && cmd.at(-1) === "/sandbox")).toBe(true);
   });
 
@@ -349,7 +384,7 @@ describe("legacy Hermes shields compatibility", () => {
     ).toThrow(/temporary Docker exec failure|capability/i);
 
     const commands = dockerExecSpy.mock.calls.map(commandFromCall);
-    expect(commands.some((cmd) => cmd[0] === "python3" && cmd[1] === "-c")).toBe(false);
+    expect(commands.some(isInlinePython)).toBe(false);
     expect(applyStateDirLockModeSpy).not.toHaveBeenCalled();
   });
 });

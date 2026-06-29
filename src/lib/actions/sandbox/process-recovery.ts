@@ -715,8 +715,8 @@ export function waitForRecoveredSandboxGateway(
 
   const probeDuringRecoveryWait = () => {
     const result = probe(sandboxName);
-    if (result !== false || !directProbe) return result;
-    return directProbe(sandboxName) === true;
+    if (result === true || !directProbe) return result;
+    return directProbe(sandboxName);
   };
 
   const recovered = waitUntil(() => probeDuringRecoveryWait() === true, {

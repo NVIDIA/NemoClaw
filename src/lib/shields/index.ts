@@ -300,14 +300,14 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
 // ---------------------------------------------------------------------------
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
-  dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd), {
+  dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   });
 }
 
 function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeout = 15000): string {
-  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd), {
+  return dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd, false, true), {
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   }).trim();
@@ -325,6 +325,7 @@ function hermesShieldsGuardArgs(
     "--kill-after=5s",
     timeout,
     HERMES_PYTHON,
+    "-I",
     HERMES_RUNTIME_CONFIG_GUARD,
     action,
     "--hermes-dir",
@@ -365,6 +366,7 @@ function inspectHermesShieldsProtocol(
       "--kill-after=5s",
       "10m",
       HERMES_PYTHON,
+      "-I",
       HERMES_RUNTIME_CONFIG_GUARD,
       "--help",
     ],
@@ -832,7 +834,7 @@ function stateDirLockExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) => {
       const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined),
+        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
         {
           encoding: "utf-8",
           input,
@@ -855,7 +857,7 @@ function openClawConfigGuardExec(sandboxName: string) {
   return {
     run: (cmd: string[], input?: string) => {
       const result = dockerSpawnSync(
-        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined),
+        privilegedSandboxExecArgv(sandboxName, cmd, input !== undefined, true),
         {
           encoding: "utf-8",
           input,
@@ -1404,6 +1406,7 @@ function transitionLegacyHermesConfig(
 ): void {
   privilegedSandboxExec(sandboxName, [
     "python3",
+    "-I",
     "-c",
     LEGACY_HERMES_CONFIG_TRANSITION_SCRIPT,
     action,
@@ -1422,6 +1425,7 @@ function unlockConfigPathsNoSymlinkFollow(
 ): void {
   privilegedSandboxExec(sandboxName, [
     "python3",
+    "-I",
     "-c",
     CONFIG_UNLOCK_NOFOLLOW_SCRIPT,
     fileMode,

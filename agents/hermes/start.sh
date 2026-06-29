@@ -1625,14 +1625,14 @@ refresh_hermes_provider_placeholders() {
   if [ -f "$runtime_plan" ]; then
     args+=(--runtime-plan "$runtime_plan")
   fi
-  "$_HERMES_PYTHON" "${args[@]}"
+  "$_HERMES_PYTHON" -I "${args[@]}"
   validate_hermes_env_secret_boundary
 }
 
 refresh_hermes_runtime_config_hashes() {
   local mode="${1:-strict}"
   local cmd=(
-    "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
+    "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
     --hermes-dir "$HERMES_DIR"
     --hash-file "$HERMES_HASH_FILE"
     --mode "$mode"
@@ -1665,7 +1665,7 @@ ensure_hermes_runtime_api_server_key() {
   # Keep the guard as PID 1's direct child: --startup-owner is authenticated by
   # exact parent identity. The guard's own alarm bounds this startup-only call;
   # wrapping it in `timeout` would interpose a different parent process.
-  if "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" ensure-api-key \
+  if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" ensure-api-key \
     --hermes-dir "$HERMES_DIR" \
     --hash-file "$HERMES_HASH_FILE" \
     --mode "$mode" \
@@ -1793,7 +1793,7 @@ seal_hermes_restart_inputs() {
   HERMES_RESTART_SEALED=0
   install_hermes_restart_seal_traps
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
+    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
       --hermes-dir "$HERMES_DIR" \
       --hash-file "$HERMES_HASH_FILE" \
       --state-file "$HERMES_RESTART_SEAL_STATE" \
@@ -1810,7 +1810,7 @@ seal_hermes_restart_inputs() {
     # gateway.
     original_failure_code="$HERMES_RESTART_FAILURE_CODE"
     if owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" \
         --lock-token "$GATEWAY_CONTROL_NONCE" 2>&1
@@ -1853,7 +1853,7 @@ unseal_hermes_restart_inputs() {
   HERMES_RESTART_UNSEALING=1
   trap 'HERMES_RESTART_SIGNAL_PENDING=1' SIGTERM SIGINT HUP
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
+    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
       --hermes-dir "$HERMES_DIR" \
       --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
   )"; then
@@ -1930,7 +1930,7 @@ resume_startup_hermes_shields_lock() {
   # These guard calls must remain direct PID 1 children. The internal Python
   # alarm is their deadline; the recursive helper is separately wrapped by the
   # container-side timeout because it has no startup-owner parent contract.
-  if ! "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" begin-shields-transition \
+  if ! "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" begin-shields-transition \
     --hermes-dir "$HERMES_DIR" \
     --hash-file "$HERMES_HASH_FILE" \
     --state-file "$HERMES_RESTART_SEAL_STATE" \
@@ -1962,18 +1962,18 @@ resume_startup_hermes_shields_lock() {
       ;;
   esac
 
-  "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" run-state-dir-transition \
+  "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" run-state-dir-transition \
     --hermes-dir "$HERMES_DIR" \
     --state-file "$HERMES_RESTART_SEAL_STATE" \
     --state-action lock \
     --lock-token "$lock_token" \
     --startup-owner || return 1
-  "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" apply-shields-transition \
+  "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" apply-shields-transition \
     --hermes-dir "$HERMES_DIR" \
     --state-file "$HERMES_RESTART_SEAL_STATE" \
     --lock-token "$lock_token" \
     --startup-owner >/dev/null || return 1
-  "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" finish-shields-transition \
+  "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" finish-shields-transition \
     --hermes-dir "$HERMES_DIR" \
     --hash-file "$HERMES_HASH_FILE" \
     --state-file "$HERMES_RESTART_SEAL_STATE" \
@@ -1987,7 +1987,7 @@ recover_startup_hermes_mutation() {
 
   while [ -e "$HERMES_CONFIG_MUTATION_LOCK" ] || [ -e "$HERMES_RESTART_SEAL_STATE" ]; do
     if ! owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
     )"; then
@@ -2035,7 +2035,7 @@ recover_startup_hermes_mutation() {
         unseal_hermes_restart_inputs || return 1
         ;;
       *"lock=1"*)
-        if "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" recover-prestate-lock \
+        if "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" recover-prestate-lock \
           --hermes-dir "$HERMES_DIR" \
           --state-file "$HERMES_RESTART_SEAL_STATE" \
           --startup-owner >/dev/null; then
@@ -2639,7 +2639,7 @@ trap hermes_cleanup_on_signal SIGTERM SIGINT
 if ! gateway_control_init; then
   echo "[gateway-control] privileged gateway control unavailable" >&2
 fi
-if ! "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" publish-startup-ready \
+if ! "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" publish-startup-ready \
   --hermes-dir "$HERMES_DIR" \
   --startup-owner >/dev/null; then
   echo "[gateway-control] failed to publish Hermes startup readiness" >&2

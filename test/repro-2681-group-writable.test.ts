@@ -101,8 +101,8 @@ function withMockedDockerExecFileSync<T>(
       default:
         return hermesResponse;
     }
-    if (command[0] === "python3" && command[1] === "-c") {
-      for (const target of command.slice(6)) {
+    if (command[0] === "python3" && command[1] === "-I" && command[2] === "-c") {
+      for (const target of command.slice(7)) {
         if (options.symlinkedPaths?.has(target)) {
           throw new Error(`refusing symlink path: ${target}`);
         }

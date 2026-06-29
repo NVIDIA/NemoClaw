@@ -226,6 +226,10 @@ if (a[0]==="exec") {
         index += 2;
         continue;
       }
+      if (a[index] === "--env") {
+        index += 2;
+        continue;
+      }
       break;
     }
     index++; // container name
@@ -268,7 +272,7 @@ if (a[0]==="exec") {
   //   lsattr → "----i------"
   // We are testing the auto-unlock path: shields-down is called on a locked sandbox,
   // verification should look like 660 sandbox:sandbox / 2770 sandbox:sandbox.
-  if (cmd[0]==="python3" && cmd[1]==="-c") { writeLockState("unlocked"); process.exit(0); }
+  if (cmd[0]==="python3" && cmd[1]==="-I" && cmd[2]==="-c") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="-i") { writeLockState("unlocked"); process.exit(0); }
   if (cmd[0]==="chattr" && cmd[1]==="+i") { writeLockState("locked"); process.exit(0); }
   if (cmd[0]==="test" && cmd[1]==="-L") { process.exit(1); }
