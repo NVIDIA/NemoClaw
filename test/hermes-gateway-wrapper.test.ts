@@ -314,9 +314,58 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       },
     );
 
-    expect(run.status).not.toBe(0);
+    expect(run.status).toBe(2);
     expect(run.stderr).toContain("output masker failed");
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+  });
+
+  it("masks YAML block-scalar secrets across continuation lines", () => {
+    const fixture = [
+      "providers:",
+      "  nemoclaw-inference:",
+      "    api_key: |",
+      "      sk-OPENSHELL-PROXY-REWRITE",
+      "      additional-secret-line",
+      "    base_url: https://inference.local/v1",
+      "  fallback:",
+      "    secret: >",
+      "      multi",
+      "      line",
+      "      bearer-token",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).not.toContain("additional-secret-line");
+    expect(run.stdout).not.toContain("bearer-token");
+    expect(run.stdout).toContain("api_key: |");
+    expect(run.stdout).toContain("secret: >");
+    expect(run.stdout).toContain("base_url: https://inference.local/v1");
+  });
+
+  it("masks quoted secrets even when values contain escaped delimiters", () => {
+    const fixture = [
+      "{'api_key': 'sk-leak\\'ed-secret-12345'}",
+      '{"api_key": "sk-quoted\\"leak-secret-12345"}',
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-leak\\'ed-secret-12345");
+    expect(run.stdout).not.toContain('sk-quoted\\"leak-secret-12345');
+    expect(run.stdout).toContain("'api_key': 'sk-****'");
+    expect(run.stdout).toContain('"api_key": "sk-****"');
+  });
+
+  it("preserves inline trailing comments on YAML secret lines", () => {
+    const fixture = "api_key: sk-OPENSHELL-PROXY-REWRITE  # routed via OpenShell";
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain("api_key: sk-****");
+    expect(run.stdout).toContain("# routed via OpenShell");
   });
 
   it("does not mask api_key mentions inside YAML comments", () => {

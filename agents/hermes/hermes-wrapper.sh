@@ -3,7 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Wrapper installed at /usr/local/bin/hermes that enforces the runtime
-# environment secret boundary for `hermes gateway` (NVIDIA/NemoClaw#4975).
+# environment secret boundary for `hermes gateway` (NVIDIA/NemoClaw#4975) and
+# masks credential-shaped values in `hermes config show` output.
+#
+# Source-of-truth note for the `config show` masking layer: the upstream Hermes
+# CLI emits the resolved configuration (including `api_key`) verbatim because
+# the seed pipeline (`agents/hermes/seed-dashboard-config.py:_route_api_key`)
+# and the runtime config guard (`agents/hermes/runtime-config-guard.py:
+# ensure_api_key`) require an `sk-`-prefixed value before LiteLLM issues a
+# request — the placeholder `sk-OPENSHELL-PROXY-REWRITE` is substituted at the
+# OpenShell egress boundary, not in-process. A source-level fix would require
+# Hermes CLI native env-var reference support (an upstream change). Until that
+# lands, this wrapper post-filters `config show` stdout through the Python
+# masker. Remove the `config show` branch and this comment once Hermes CLI
+# redacts credential-shaped fields natively.
 #
 # The same guard runs in the nemoclaw-start entrypoint
 # (agents/hermes/start.sh: validate_hermes_runtime_env_secret_boundary) and in

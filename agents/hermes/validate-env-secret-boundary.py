@@ -191,16 +191,21 @@ _SECRET_FIELD_RE = re.compile(
     r"authorization|bearer|credential|password|secret|token)\b"
 )
 _MASK_PY = "sk-****"
-# Python dict ('key': 'value'), JSON ("key": "value"), and unquoted YAML/env (key: value or key=value).
+# Quoted variants accept escaped delimiters via `(?:[^'\\]|\\.)*`.
+# Unquoted variant covers YAML/env (key: value or key=value) and preserves trailing comments.
 _PY_DICT_RE = re.compile(
-    r"(?P<lead>'(?P<key>[A-Za-z_][A-Za-z0-9_-]*)'[ \t]*:[ \t]*)'[^']*'"
+    r"(?P<lead>'(?P<key>[A-Za-z_][A-Za-z0-9_-]*)'[ \t]*:[ \t]*)'(?:[^'\\]|\\.)*'"
 )
 _JSON_RE = re.compile(
-    r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\"[ \t]*:[ \t]*)\"[^\"]*\""
+    r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\"[ \t]*:[ \t]*)\"(?:[^\"\\]|\\.)*\""
 )
 _UNQUOTED_RE = re.compile(
     r"(?P<lead>(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*)"
-    r"(?P<value>\"[^\"]*\"|'[^']*'|[^ \t\r\n#][^\r\n#]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+    r"(?P<value>\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|[^ \t\r\n#][^\r\n#]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+)
+# YAML block scalar header: `key: |` / `key: >` with optional chomping (`|-`, `|+`) and indent indicator.
+_MULTILINE_HEADER_RE = re.compile(
+    r"(?P<indent>[ \t]*)(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*[|>][-+]?\d?[ \t]*$"
 )
 
 
@@ -222,9 +227,26 @@ def _mask_unquoted(match: "re.Match[str]") -> str:
 
 
 def mask_config_output(stream_in: "object", stream_out: "object") -> int:
+    # Tracks indentation of an in-flight YAML block scalar that begins with a
+    # secret-shaped key (key: | or key: >). Every continuation line — indented
+    # past the header or blank — is replaced with the placeholder so multi-line
+    # secrets cannot leak.
+    block_indent: int | None = None
     for line in stream_in:
         stripped = line.lstrip()
+        rstripped = line.rstrip("\r\n")
+        line_indent = len(line) - len(stripped)
+        if block_indent is not None:
+            if rstripped == "" or line_indent > block_indent:
+                stream_out.write(f"{' ' * (block_indent + 2)}{_MASK_PY}\n")
+                continue
+            block_indent = None
         if stripped.startswith("#"):
+            stream_out.write(line)
+            continue
+        header = _MULTILINE_HEADER_RE.match(line.rstrip("\r\n"))
+        if header and _is_secret_field(header.group("key")):
+            block_indent = len(header.group("indent"))
             stream_out.write(line)
             continue
         masked = _PY_DICT_RE.sub(_mask_pyjson, line)
