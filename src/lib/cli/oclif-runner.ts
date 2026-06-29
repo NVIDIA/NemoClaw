@@ -95,18 +95,23 @@ export async function runOclifCommandById(
   } catch (error) {
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0) {
-      // #2666: only oclif's own ExitError(0) is an intentional graceful
-      // exit (e.g. Command.exit(0) — message is the synthetic "EEXIT: 0").
-      // Any OTHER error that happens to carry oclif.exit === 0 used to be
-      // silently swallowed here, producing exit 0 + completely empty
-      // stdout/stderr. Surface its message — and fall back to a generic
-      // line if formatOclifError() returns empty so we never reintroduce
-      // the silent path for an error whose message happens to be blank.
-      if (!isOclifExitError(error)) {
-        const message = formatOclifError(error) || "Command exited with no output.";
-        errorLine(`  ${message}`);
+      // Only oclif's own ExitError(0) is an intentional graceful exit (e.g.
+      // Command.exit(0) / --help — its message is the synthetic "EEXIT: 0",
+      // which must stay silent). Keep that path at exit 0.
+      if (isOclifExitError(error)) {
+        process.exitCode = 0;
+        return;
       }
-      process.exitCode = 0;
+      // #5974: any OTHER error that merely happens to carry oclif.exit === 0
+      // is a genuine failure that bubbled out of a command's run(). #2666
+      // stopped it being silently swallowed (exit 0 + empty output); here we
+      // also refuse to report success for it — surface its message AND exit
+      // non-zero so `$?` stays scriptable. Fall back to a generic line if
+      // formatOclifError() returns empty so a blank message never reintroduces
+      // the silent path.
+      const message = formatOclifError(error) || "Command exited with no output.";
+      errorLine(`  ${message}`);
+      process.exitCode = 1;
       return;
     }
 

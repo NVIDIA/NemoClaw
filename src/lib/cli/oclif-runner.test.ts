@@ -195,11 +195,12 @@ describe("runOclifCommandById", () => {
     expect(errorLine).not.toHaveBeenCalled();
   });
 
-  it("surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them (#2666)", async () => {
-    // Before #2666 this branch silently set exit 0 and produced no output.
-    // The bug was an arbitrary error riding the same `oclif.exit === 0`
-    // channel, e.g. propagated from inside a command's run(). Surface the
-    // message so the user gets signal.
+  it("surfaces AND fails on errors that merely carry oclif.exit === 0 (#2666, #5974)", async () => {
+    // #2666 stopped this branch silently swallowing an arbitrary error that
+    // rode the same `oclif.exit === 0` channel (e.g. propagated from inside a
+    // command's run()) — but it still reported success. #5974: such an error
+    // is a genuine failure, so surface the message AND exit non-zero so `$?`
+    // stays scriptable. Only a real oclif ExitError(0) stays exit 0.
     class WeirdError extends Error {
       oclif = { exit: 0 };
     }
@@ -210,16 +211,17 @@ describe("runOclifCommandById", () => {
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(1);
     expect(errorLine).toHaveBeenCalledWith(
       "  Could not verify sandbox 'my-assist' against the live OpenShell gateway",
     );
   });
 
-  it("falls back to a generic line when the error message is empty (#2666)", async () => {
+  it("falls back to a generic line and still fails when the message is empty (#2666, #5974)", async () => {
     // Closes the residual silent path: if a non-ExitError(0) carries an
-    // empty message (or one that trims to empty), still emit *something*
-    // so the user is never left looking at exit 0 + blank stdout/stderr.
+    // empty message (or one that trims to empty), still emit *something* and
+    // exit non-zero so the user is never left looking at exit 0 + blank
+    // stdout/stderr.
     class BlankError extends Error {
       oclif = { exit: 0 };
     }
@@ -228,7 +230,7 @@ describe("runOclifCommandById", () => {
 
     await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
-    expect(process.exitCode).toBe(0);
+    expect(process.exitCode).toBe(1);
     expect(errorLine).toHaveBeenCalledOnce();
     const [line] = errorLine.mock.calls[0];
     expect(String(line).trim().length).toBeGreaterThan(0);
