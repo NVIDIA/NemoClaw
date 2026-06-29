@@ -222,12 +222,15 @@ export function applyGeneratedPolicy(
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
   const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   const policyKey = buildMcpBridgePolicyKey(entry.server);
-  const registeredPolicy = registry
+  const sameNamePolicy = registry
     .getCustomPolicies(sandboxName)
-    .find(
-      (policy) =>
-        policy.name === entry.policyName && policy.sourcePath === MCP_BRIDGE_POLICY_SOURCE,
+    .find((policy) => policy.name === entry.policyName);
+  if (sameNamePolicy && sameNamePolicy.sourcePath !== MCP_BRIDGE_POLICY_SOURCE) {
+    throw new McpBridgeError(
+      `Generated MCP policy '${entry.policyName}' conflicts with an unowned same-name registry record. Refusing to replace operator-owned policy state.`,
     );
+  }
+  const registeredPolicy = sameNamePolicy;
   let previousPolicy: registry.CustomPolicyEntry | undefined;
   let previousPolicyConfirmed = false;
   let ownsExistingPolicyKey = false;
@@ -318,14 +321,11 @@ export function assertGeneratedPolicyMutationSafe(
   sandboxName: string,
   entry: McpBridgeEntry,
 ): void {
-  const registeredPolicy = registry
-    .getCustomPolicies(sandboxName)
-    .find((policy) => policy.name === entry.policyName);
-  const owned = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
-  const reconciled =
-    registeredPolicy && owned
-      ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
-      : undefined;
+  const registeredPolicy = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
+  const owned = registeredPolicy !== undefined;
+  const reconciled = registeredPolicy
+    ? reconcileGeneratedPolicyRegistration(sandboxName, registeredPolicy)
+    : undefined;
   const content = reconciled?.policy.content ?? generatedPolicyContent(entry);
   const state = reconciled?.state ?? policies.getPresetContentGatewayState(sandboxName, content);
   if (state === "absent") return;
@@ -334,6 +334,23 @@ export function assertGeneratedPolicyMutationSafe(
       `Generated MCP policy '${entry.policyName}' is unowned, unreachable, or drifted. Refusing to mutate the adapter, provider, or same-key live policy until ownership is resolved.`,
     );
   }
+}
+
+/** Check registry ownership without consulting a sandbox already proven absent. */
+export function assertGeneratedPolicyRegistrationMutationSafe(
+  sandboxName: string,
+  entry: McpBridgeEntry,
+): registry.CustomPolicyEntry | undefined {
+  const registeredPolicy = registry
+    .getCustomPolicies(sandboxName)
+    .find((policy) => policy.name === entry.policyName);
+  const owned = registeredPolicy?.sourcePath === MCP_BRIDGE_POLICY_SOURCE;
+  if (registeredPolicy && !owned) {
+    throw new McpBridgeError(
+      `Generated MCP policy '${entry.policyName}' conflicts with an unowned same-name registry record. Refusing to mutate the adapter, provider, or live policy.`,
+    );
+  }
+  return owned ? registeredPolicy : undefined;
 }
 
 export function removeGeneratedPolicy(
@@ -366,12 +383,27 @@ export function removeGeneratedPolicy(
       `Generated MCP policy '${policyName}' is unowned, unreachable, or no longer matches its registered content. Refusing to delete same-key policy state.`,
     );
   }
-  const ok = policies.removePreset(sandboxName, policyName, { nonFatal: true });
-  if (!ok) {
-    if (options.bestEffort) return;
-    throw new McpBridgeError(`Failed to remove generated MCP policy '${policyName}'.`);
+  const ok = policies.removePreset(sandboxName, policyName, {
+    nonFatal: true,
+    // Keep ownership durable across a crash or superseded OpenShell revision.
+    // It is cleared only after the exact live key is proven absent below.
+    skipRegistryUpdate: true,
+  });
+  // OpenShell can acknowledge a superseded policy revision as success. Confirm
+  // the exact generated key is absent before discarding its ownership record.
+  const activeState = policies.getPresetContentGatewayState(sandboxName, content);
+  if (activeState === "absent") {
+    registry.removeCustomPolicyByName(sandboxName, policyName);
+    return;
   }
-  registry.removeCustomPolicyByName(sandboxName, policyName);
+  // Keep (or defensively restore) the last reconciled ownership record when
+  // exact post-state is not proven.
+  if (ownsRegistration && effectiveRegistration) {
+    persistGeneratedPolicyRegistration(sandboxName, effectiveRegistration);
+  }
+  if (options.bestEffort) return;
+  const detail = ok ? `effective state: ${activeState}` : "the removal command failed";
+  throw new McpBridgeError(`Failed to remove generated MCP policy '${policyName}' (${detail}).`);
 }
 
 export function getRegisteredGeneratedPolicy(

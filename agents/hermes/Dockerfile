@@ -22,11 +22,11 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
-# Managed MCP is a required Hermes runtime capability. A published base can
+# Managed MCP requires the packaged Hermes client surface. A published base can
 # carry the expected Hermes version while still having been built without the
 # optional `mcp` dependency group, in which case Hermes silently disables both
-# MCP discovery and Streamable HTTP support. Fail the final image build instead
-# of shipping an agent that accepts managed MCP configuration but cannot use it.
+# MCP discovery and Streamable HTTP support. This is a build-time import guard;
+# the live MCP E2E proves authenticated HTTPS execution through OpenShell.
 RUN /opt/hermes/.venv/bin/python -c \
     'import mcp; from tools import mcp_tool; assert getattr(mcp_tool, "_MCP_AVAILABLE", False), "Hermes MCP client runtime is unavailable"; assert getattr(mcp_tool, "_MCP_HTTP_AVAILABLE", False), "Hermes MCP Streamable HTTP runtime is unavailable"'
 

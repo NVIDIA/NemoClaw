@@ -24,6 +24,7 @@ import {
 import {
   applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe,
+  assertGeneratedPolicyRegistrationMutationSafe,
   buildMcpBridgePolicyKey,
   buildMcpBridgePolicyName,
   buildMcpBridgePolicyYaml,
@@ -636,6 +637,7 @@ function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boo
 async function discardSafeIncompleteMcpAdds(
   sandboxName: string,
   sandbox: SandboxEntry,
+  options: { sandboxAbsent?: boolean } = {},
 ): Promise<SandboxEntry> {
   const bridges = bridgeState(sandbox);
   const providerlessCandidates = Object.values(bridges).filter(
@@ -660,7 +662,14 @@ async function discardSafeIncompleteMcpAdds(
   if (Object.keys(remaining).length === Object.keys(bridges).length) {
     return sandbox;
   }
-  for (const entry of providerlessPreflighted) removeGeneratedPolicy(sandboxName, entry);
+  for (const entry of providerlessPreflighted) {
+    if (options.sandboxAbsent) {
+      const ownedRegistration = assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
+      if (ownedRegistration) registry.removeCustomPolicyByName(sandboxName, entry.policyName);
+    } else {
+      removeGeneratedPolicy(sandboxName, entry);
+    }
+  }
   // A prepared add precedes all external side effects, so destroy must drop
   // only its local manifest and must not inspect/delete same-name global state.
   setBridgeState(sandboxName, remaining);
@@ -731,7 +740,9 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
   options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName), {
+    sandboxAbsent: true,
+  });
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
@@ -1033,9 +1044,16 @@ export interface McpRebuildPreparation {
   scrubbedAdapterEntries: McpBridgeEntry[];
 }
 
-async function getCompleteMcpRebuildEntries(sandboxName: string): Promise<McpBridgeEntry[]> {
+async function getCompleteMcpRebuildEntries(
+  sandboxName: string,
+  options: { sandboxAbsent?: boolean } = {},
+): Promise<McpBridgeEntry[]> {
   validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
+  const sandbox = await discardSafeIncompleteMcpAdds(
+    sandboxName,
+    getSandboxOrThrow(sandboxName),
+    options,
+  );
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const incompleteAdd = entries.find((entry) => entry.addState);
   if (incompleteAdd) {
@@ -1055,7 +1073,7 @@ async function getCompleteMcpRebuildEntries(sandboxName: string): Promise<McpBri
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
 ): Promise<McpRebuildPreparation> {
-  const entries = await getCompleteMcpRebuildEntries(sandboxName);
+  const entries = await getCompleteMcpRebuildEntries(sandboxName, { sandboxAbsent: true });
   if (entries.length === 0) {
     return {
       entries: [],
@@ -1065,6 +1083,9 @@ export async function prepareMcpBridgesForAbsentSandboxRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
+  for (const entry of entries) {
+    assertGeneratedPolicyRegistrationMutationSafe(sandboxName, entry);
+  }
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   return {
     entries,
@@ -1087,6 +1108,7 @@ export async function prepareMcpBridgesForRebuild(
   }
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
+  for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
   assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   const detached: McpBridgeEntry[] = [];

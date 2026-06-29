@@ -16,6 +16,8 @@ const requireDist = createRequire(import.meta.url);
 const lockModulePath = requireDist.resolve("../src/lib/state/mcp-lifecycle-lock.js");
 const lifecycleLock = requireDist(lockModulePath) as LifecycleLockModule;
 const currentProcessIdentity = lifecycleLock.readMcpLockProcessIdentity(process.pid);
+const currentHostIdentity = lifecycleLock.readMcpLockHostIdentity();
+const currentPidNamespaceIdentity = lifecycleLock.readMcpLockPidNamespaceIdentity();
 
 let stateDir: string;
 const children = new Set<ChildProcess>();
@@ -250,6 +252,8 @@ const releasePath = process.argv[3];
         sandboxName: "alpha",
         pid: 2_147_483_647,
         processIdentity: "dead-process",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
         token: "stale-token",
         acquiredAt: "2026-01-01T00:00:00.000Z",
       })}\n`,
@@ -267,6 +271,147 @@ const releasePath = process.argv[3];
     expect(fs.existsSync(lockPath)).toBe(false);
   });
 
+  it("waits for a foreign-host owner instead of reaping it with local PID checks", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sandboxName: "alpha",
+        pid: 2_147_483_647,
+        processIdentity: "foreign-process",
+        hostIdentity: `${currentHostIdentity}-foreign`,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
+        token: "foreign-host-token",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      })}\n`,
+    );
+    const old = new Date("2020-01-01T00:00:00.000Z");
+    fs.utimesSync(lockPath, old, old);
+
+    await expect(
+      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
+    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("foreign-host-token");
+  });
+
+  it.each([
+    ["unknown legacy host", {}],
+    [
+      "foreign PID namespace",
+      {
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: `${currentPidNamespaceIdentity ?? "unknown"}-foreign`,
+      },
+    ],
+  ])("fails closed for an owner from an %s", async (_label, ownerLocation) => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sandboxName: "alpha",
+        pid: 2_147_483_647,
+        processIdentity: "unknown-process",
+        ...ownerLocation,
+        token: "untrusted-owner-token",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      })}\n`,
+    );
+
+    await expect(
+      lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 40 })),
+    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("untrusted-owner-token");
+  });
+
+  it("accepts ownership when LINK succeeded but its NFS reply reports EEXIST", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    const link = fs.promises.link.bind(fs.promises);
+    let injectedAmbiguousReply = false;
+    const linkSpy = vi.spyOn(fs.promises, "link").mockImplementation(async (from, to) => {
+      await link(from, to);
+      if (
+        !injectedAmbiguousReply &&
+        String(to) === lockPath &&
+        String(from).includes(".candidate-")
+      ) {
+        injectedAmbiguousReply = true;
+        throw Object.assign(new Error("simulated replayed LINK response"), { code: "EEXIST" });
+      }
+    });
+
+    try {
+      await expect(
+        lifecycleLock.withMcpLifecycleLock("alpha", () => "acquired", options()),
+      ).resolves.toBe("acquired");
+    } finally {
+      linkSpy.mockRestore();
+    }
+    expect(injectedAmbiguousReply).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("does not strand a canonical self-lock when candidate cleanup fails", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    const rm = fs.promises.rm.bind(fs.promises);
+    let injectedCleanupFailure = false;
+    const rmSpy = vi.spyOn(fs.promises, "rm").mockImplementation(async (target, options) => {
+      if (!injectedCleanupFailure && String(target).includes(".candidate-")) {
+        injectedCleanupFailure = true;
+        throw Object.assign(new Error("simulated candidate cleanup failure"), { code: "EIO" });
+      }
+      return rm(target, options);
+    });
+
+    let entered = false;
+    try {
+      await expect(
+        lifecycleLock.withMcpLifecycleLock(
+          "alpha",
+          () => {
+            entered = true;
+          },
+          options(),
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      rmSpy.mockRestore();
+    }
+    expect(injectedCleanupFailure).toBe(true);
+    expect(entered).toBe(true);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it("waits for grace then recovers a stable truncated owner record", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, '{"version":1,"sandboxName":"alpha"');
+
+    await expect(
+      lifecycleLock.withMcpLifecycleLock(
+        "alpha",
+        () => undefined,
+        options({ timeoutMs: 30, corruptLockGraceMs: 100 }),
+      ),
+    ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    expect(fs.readFileSync(lockPath, "utf8")).toContain('"sandboxName":"alpha"');
+
+    const future = new Date(Date.now() + 24 * 60 * 60_000);
+    fs.utimesSync(lockPath, future, future);
+
+    await expect(
+      lifecycleLock.withMcpLifecycleLock(
+        "alpha",
+        () => "acquired",
+        options({ timeoutMs: 200, corruptLockGraceMs: 20 }),
+      ),
+    ).resolves.toBe("acquired");
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
   it("recovers a reaper whose owner was killed during stale-lock cleanup", async () => {
     const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
     const reaperPath = `${lockPath}.reaper`;
@@ -278,6 +423,8 @@ const releasePath = process.argv[3];
         sandboxName: "alpha",
         pid: 2_147_483_647,
         processIdentity: "killed-reaper",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
         token: "stale-reaper-token",
         acquiredAt: "2026-01-01T00:00:00.000Z",
       })}\n`,
@@ -307,6 +454,8 @@ const releasePath = process.argv[3];
         sandboxName: "alpha",
         pid: 2_147_483_647,
         processIdentity: "dead-reaper",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
         token: "observed-stale-token",
         acquiredAt: "2026-01-01T00:00:00.000Z",
       })}\n`,
@@ -316,6 +465,8 @@ const releasePath = process.argv[3];
       sandboxName: "alpha",
       pid: process.pid,
       processIdentity: lifecycleLock.readMcpLockProcessIdentity(process.pid),
+      hostIdentity: currentHostIdentity,
+      pidNamespaceIdentity: currentPidNamespaceIdentity,
       token: "replacement-reaper-token",
       acquiredAt: new Date().toISOString(),
     };
@@ -342,6 +493,53 @@ const releasePath = process.argv[3];
     expect(JSON.parse(fs.readFileSync(reaperPath, "utf8")).token).toBe("replacement-reaper-token");
   });
 
+  it("does not delete a replacement main lock during stale recovery", async () => {
+    const lockPath = lifecycleLock.getMcpLifecycleLockPath("alpha", stateDir);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(
+      lockPath,
+      `${JSON.stringify({
+        version: 1,
+        sandboxName: "alpha",
+        pid: 2_147_483_647,
+        processIdentity: "dead-process",
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
+        token: "observed-stale-token",
+        acquiredAt: "2026-01-01T00:00:00.000Z",
+      })}\n`,
+    );
+    const replacement = {
+      version: 1,
+      sandboxName: "alpha",
+      pid: process.pid,
+      processIdentity: lifecycleLock.readMcpLockProcessIdentity(process.pid),
+      hostIdentity: currentHostIdentity,
+      pidNamespaceIdentity: currentPidNamespaceIdentity,
+      token: "replacement-main-token",
+      acquiredAt: new Date().toISOString(),
+    };
+    const rename = fs.promises.rename.bind(fs.promises);
+    let injectedReplacement = false;
+    const renameSpy = vi.spyOn(fs.promises, "rename").mockImplementation(async (from, to) => {
+      if (!injectedReplacement && String(from) === lockPath) {
+        injectedReplacement = true;
+        fs.unlinkSync(lockPath);
+        fs.writeFileSync(lockPath, `${JSON.stringify(replacement)}\n`);
+      }
+      return rename(from, to);
+    });
+
+    try {
+      await expect(
+        lifecycleLock.withMcpLifecycleLock("alpha", () => undefined, options({ timeoutMs: 50 })),
+      ).rejects.toThrow("Timed out waiting for MCP lifecycle lock");
+    } finally {
+      renameSpy.mockRestore();
+    }
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).token).toBe("replacement-main-token");
+  });
+
   it.skipIf(currentProcessIdentity === null)(
     "recovers a recycled PID by comparing process-start identity",
     async () => {
@@ -354,6 +552,8 @@ const releasePath = process.argv[3];
           sandboxName: "alpha",
           pid: process.pid,
           processIdentity: `${String(currentProcessIdentity)}-different-start`,
+          hostIdentity: currentHostIdentity,
+          pidNamespaceIdentity: currentPidNamespaceIdentity,
           token: "recycled-token",
           acquiredAt: "2026-01-01T00:00:00.000Z",
         })}\n`,
@@ -376,6 +576,8 @@ const releasePath = process.argv[3];
         sandboxName: "alpha",
         pid: process.pid,
         processIdentity: lifecycleLock.readMcpLockProcessIdentity(process.pid),
+        hostIdentity: currentHostIdentity,
+        pidNamespaceIdentity: currentPidNamespaceIdentity,
         token: "active-token",
         acquiredAt: "2020-01-01T00:00:00.000Z",
       })}\n`,

@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import dns from "node:dns/promises";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -13,8 +15,41 @@ import {
   redactCredentialValuesForDisplay,
   resolveCredentialEnv,
 } from "./mcp-bridge";
+import { validateMcpServerUrlResolvedTarget } from "./mcp-bridge-validation";
 
 describe("MCP CLI parsing", () => {
+  it("sorts and deduplicates public DNS pins deterministically", async () => {
+    const lookup = vi.spyOn(dns, "lookup").mockResolvedValue([
+      { address: "2606:4700:4700::1111", family: 6 },
+      { address: "8.8.8.8", family: 4 },
+      { address: "8.8.8.8", family: 4 },
+    ] as never);
+    try {
+      await expect(
+        validateMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+      ).resolves.toEqual(["2606:4700:4700::1111", "8.8.8.8"]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects a private DNS answer and skips DNS for an explicit OpenShell host alias", async () => {
+    const lookup = vi
+      .spyOn(dns, "lookup")
+      .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
+    try {
+      await expect(
+        validateMcpServerUrlResolvedTarget(new URL("https://mcp.example.test/mcp")),
+      ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
+      await expect(
+        validateMcpServerUrlResolvedTarget(new URL("https://host.openshell.internal:31337/mcp")),
+      ).resolves.toBeUndefined();
+      expect(lookup).toHaveBeenCalledOnce();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("parses server, URL, and env references", () => {
     const parsed = parseMcpAddArgs([
       "github",
@@ -62,15 +97,11 @@ describe("MCP CLI parsing", () => {
       ).toThrow(/materialized as a raw child-process value/);
     }
 
-    expect(() =>
-      parseMcpAddArgs([
-        "github",
-        "--url",
-        "https://mcp.example.test/mcp",
-        "--env",
-        "GCE_METADATA_HOST",
-      ]),
-    ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);
+    for (const name of ["GCE_METADATA_HOST", "GCE_METADATA_IP", "METADATA_SERVER_DETECTION"]) {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+      ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);
+    }
   });
 
   it("rejects host subprocess control and allowlist names as MCP credentials", () => {
@@ -94,7 +125,11 @@ describe("MCP CLI parsing", () => {
   it("rejects sandbox runtime-control names as MCP credentials", () => {
     for (const name of [
       "BASH_ENV",
+      "ALL_PROXY",
+      "all_proxy",
       "API_SERVER_KEY",
+      "DENO_CERT",
+      "grpc_proxy",
       "NEMOCLAW_DASHBOARD_PORT",
       "OPENCLAW_GATEWAY_URL",
       "OPENAI_BASE_URL",
@@ -248,6 +283,12 @@ describe("MCP CLI parsing", () => {
       /IPv6-literal MCP server URLs are not supported/,
     );
     expect(() => normalizeMcpServerUrl("https://[::ffff:a00:1]:31337/mcp")).toThrow(
+      /IPv6-literal MCP server URLs are not supported/,
+    );
+    expect(() => normalizeMcpServerUrl("https://[::ffff:127.0.0.1]:31337/mcp")).toThrow(
+      /IPv6-literal MCP server URLs are not supported/,
+    );
+    expect(() => normalizeMcpServerUrl("https://[::ffff:7f00:1]:31337/mcp")).toThrow(
       /IPv6-literal MCP server URLs are not supported/,
     );
     expect(() => normalizeMcpServerUrl("http://mcp.example.test/mcp")).toThrow(/must use https/);

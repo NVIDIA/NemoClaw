@@ -56,10 +56,12 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
   );
 }
 
-// OpenShell current main has no structured installed-feature response. Scan the
-// installed artifacts before onboarding; the running supervisor is validated
-// later by applying the actual generated MCP policy with `policy set --wait`.
-// Version alone is insufficient for mixed-component installations.
+// OpenShell current main has no structured installed-feature response. This is
+// an artifact/install-repair preflight only; it never authorizes an MCP
+// mutation. The running supervisor is validated by applying and exact-matching
+// the actual generated MCP policy with `policy set --wait` before provider
+// credentials are created or updated. Version alone is insufficient for
+// mixed-component installations.
 
 export function hasRequiredOpenshellMessagingFeatures(options: {
   openshellBin: string | null;
@@ -155,8 +157,9 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   // VM drivers embed a compressed supervisor, so scanning their host binary is
   // neither sufficient nor reliable. Some VM/Docker installations expose no
   // supervisor host file at all.
-  // The MCP command's authoritative runtime check loads the exact generated
-  // protocol:mcp policy with --wait and exact-matches the effective state
-  // before any credential or provider side effect.
+  // Returning true here means only that no install repair can be justified
+  // from host artifacts. The MCP command's authoritative runtime check loads
+  // the exact generated protocol:mcp policy with --wait and exact-matches the
+  // effective state before any credential or provider side effect.
   return true;
 }

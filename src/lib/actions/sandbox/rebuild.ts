@@ -106,6 +106,7 @@ import {
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
+import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -236,16 +237,17 @@ function preflightHermesProviderCredentials(
   if (binding.exists) {
     const matches =
       binding.credentialKeys?.length === 1 && binding.credentialKeys[0] === expectedCredentialEnv;
-    log(
-      `Hermes Provider rebuild preflight: expected ${expectedCredentialEnv}; observed ${binding.credentialKeys?.join(",") || "unavailable"}`,
-    );
-    if (matches) return true;
+    if (matches) {
+      log("Hermes Provider rebuild preflight: credential binding matches");
+      return true;
+    }
+    log("Hermes Provider rebuild preflight: credential binding does not match");
     console.error("");
     console.error(
       `  ${_RD}Rebuild preflight failed:${R} the shared Hermes Provider credential binding has changed.`,
     );
     console.error(
-      `  Expected exactly ${expectedCredentialEnv}; re-run Hermes onboarding to reconcile it.`,
+      "  Expected exactly the credential binding recorded for this sandbox; re-run Hermes onboarding to reconcile it.",
     );
     console.error("  Sandbox is untouched — no data was lost.");
     return false;
@@ -1227,15 +1229,10 @@ async function rebuildSandboxUnlocked(
     if (!targetConfig) return;
     const {
       resumeConfig,
-      sessionSnapshot: rebuildSessionSnapshot,
-      sessionMatchesSandbox: rebuildSessionMatchesSandbox,
       durableConfig: rebuildDurableConfig,
-      hermesToolGateways: rebuildHermesToolGateways,
-      hasHermesToolGateways: hasRebuildHermesToolGateways,
       credentialEnv: rebuildCredentialEnv,
       fromDockerfile: storedFromDockerfile,
     } = targetConfig;
-    const rebuildsHermesSandbox = rebuildAgent === "hermes";
     const recreateOptions = prepareRebuildRecreateOptions(
       sb,
       rebuildAgent,
@@ -1397,20 +1394,20 @@ async function rebuildSandboxUnlocked(
     log(
       `Registry entry: agent=${sbMeta?.agent}, agentVersion=${sbMeta?.agentVersion}, nimContainer=${sbMeta?.nimContainer}`,
     );
-    if (sbMeta && sbMeta.nimContainer) {
-      log(`Stopping NIM container: ${sbMeta.nimContainer}`);
-      nim.stopNimContainerByName(sbMeta.nimContainer);
-    } else {
-      // Best-effort cleanup — see comment in sandboxDestroy.
-      nim.stopNimContainer(sandboxName, { silent: true });
-    }
-
-    const mcpPreparation = await prepareMcpForRebuild(
-      sandboxName,
-      staleRecovery,
-      relockShieldsIfNeeded,
-      bail,
-    );
+    const mcpPreparation = await prepareMcpBeforeBestEffortNimStop({
+      prepareMcp: () =>
+        prepareMcpForRebuild(sandboxName, staleRecovery, relockShieldsIfNeeded, bail),
+      stopNim: () => {
+        if (sbMeta && sbMeta.nimContainer) {
+          log(`Stopping NIM container: ${sbMeta.nimContainer}`);
+          nim.stopNimContainerByName(sbMeta.nimContainer);
+        } else {
+          // Best-effort cleanup — see comment in sandboxDestroy.
+          nim.stopNimContainer(sandboxName, { silent: true });
+        }
+      },
+      log,
+    });
     if (!mcpPreparation) return;
     // MCP preparation removes only adapter entries whose exact ownership
     // fingerprints match the registry. Probe afterward so a Deep Agents

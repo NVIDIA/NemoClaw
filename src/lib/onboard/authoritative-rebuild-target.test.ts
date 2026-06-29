@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   type AuthoritativeRebuildTargetDeps,
   preflightAuthoritativeRebuildTarget,
+  resolveAuthoritativeOnboardGatewayBinding,
 } from "./authoritative-rebuild-target";
 
 const target = {
@@ -31,6 +32,54 @@ function deps(overrides: Partial<AuthoritativeRebuildTargetDeps> = {}) {
 afterEach(() => {
   if (originalGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
   else process.env.OPENSHELL_GATEWAY = originalGateway;
+});
+
+describe("authoritative rebuild gateway binding", () => {
+  const resolve = resolveAuthoritativeOnboardGatewayBinding;
+
+  it("accepts only a paired canonical gateway name and port", () => {
+    expect(
+      resolve({
+        authoritativeResumeConfig: true,
+        targetGatewayName: " nemoclaw-8081 ",
+        targetGatewayPort: 8081,
+      }),
+    ).toEqual({ name: "nemoclaw-8081", port: 8081 });
+    expect(resolve({})).toBeNull();
+  });
+
+  it.each([
+    { authoritativeResumeConfig: true, targetGatewayName: "nemoclaw-8081" },
+    { authoritativeResumeConfig: true, targetGatewayPort: 8081 },
+    { targetGatewayName: "nemoclaw-8081", targetGatewayPort: 8081 },
+  ])("rejects partial or non-authoritative target options", (options) => {
+    expect(() => resolve(options)).toThrow(/only together for an authoritative rebuild resume/);
+  });
+
+  it("rejects a non-canonical name or invalid target port", () => {
+    expect(() =>
+      resolve({
+        authoritativeResumeConfig: true,
+        targetGatewayName: "nemoclaw-9090",
+        targetGatewayPort: 8081,
+      }),
+    ).toThrow(/does not match port 8081/);
+    for (const port of [0, 65536, 8081.5]) {
+      expect(() =>
+        resolve({
+          authoritativeResumeConfig: true,
+          targetGatewayName: "nemoclaw-8081",
+          targetGatewayPort: port,
+        }),
+      ).toThrow(/Invalid authoritative rebuild gateway port/);
+    }
+  });
+
+  it("requires a complete authoritative target when the outer lifecycle owns the lock", () => {
+    expect(() => resolve({ onboardLockAlreadyHeld: true })).toThrow(
+      /lock handoff requires an authoritative rebuild resume/,
+    );
+  });
 });
 
 describe("authoritative rebuild target preflight", () => {

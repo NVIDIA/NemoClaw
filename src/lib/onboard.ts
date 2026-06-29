@@ -352,7 +352,6 @@ const {
 const {
   getFutureShellPathHint,
   getPortConflictServiceHints,
-  printRemediationActions,
 }: typeof import("./onboard/remediation") = require("./onboard/remediation");
 const resumeConfig: typeof import("./onboard/resume-config") = require("./onboard/resume-config");
 const {
@@ -475,9 +474,8 @@ const {
 const {
   advanceTo,
 }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
-const {
-  getOnboardProgressStep,
-}: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
+const { skippedStepMessage }: typeof import("./onboard/skipped-step-message") =
+  require("./onboard/skipped-step-message");
 const policies: typeof import("./policy") = require("./policy");
 const policyPresetCarry: typeof import("./onboard/policy-preset-persistence") = require("./onboard/policy-preset-persistence");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
@@ -527,10 +525,11 @@ const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const gatewayBinding: typeof import("./onboard/gateway-binding") = require("./onboard/gateway-binding");
+const fatalRuntimePreflight: typeof import("./onboard/fatal-runtime-preflight") =
+  require("./onboard/fatal-runtime-preflight");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
-const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo, planHostRemediation } =
-  preflightUtils;
+const { assessHost, checkPortAvailable, ensureSwap, getMemoryInfo } = preflightUtils;
 const {
   assertDockerBridgeAndContainerDnsHealthy,
 }: typeof import("./onboard/bridge-dns-preflight") = require("./onboard/bridge-dns-preflight");
@@ -601,7 +600,7 @@ import {
 } from "./onboard/sandbox-gpu-mode";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
-import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
+import type { ModelValidationResult, OnboardOptions, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
 import { listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
@@ -645,30 +644,6 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
-
-type OnboardOptions = {
-  nonInteractive?: boolean;
-  recreateSandbox?: boolean;
-  authoritativeResumeConfig?: boolean;
-  /** Internal authoritative rebuild target; never exposed as a public CLI option. */
-  targetGatewayName?: string | null;
-  /** Internal authoritative rebuild target; must match targetGatewayName. */
-  targetGatewayPort?: number | null;
-  /** Internal rebuild handoff: the outer destructive lifecycle owns the onboard lock. */
-  onboardLockAlreadyHeld?: boolean;
-  resume?: boolean;
-  fresh?: boolean;
-  fromDockerfile?: string | null;
-  sandboxName?: string | null;
-  sandboxGpu?: "enable" | "disable" | null;
-  sandboxGpuDevice?: string | null;
-  acceptThirdPartySoftware?: boolean;
-  agent?: string | null;
-  controlUiPort?: number | null;
-  gpu?: boolean;
-  noGpu?: boolean;
-  autoYes?: boolean;
-};
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -724,6 +699,24 @@ async function promptYesNoOrDefault(
 // ── Helpers ──────────────────────────────────────────────────────
 
 const {
+  getDockerDriverGatewayEndpoint,
+  getGatewayClusterImageDrift,
+  isGatewayHttpReady,
+  isDockerDriverGatewayHttpReady,
+  waitForGatewayHttpReady,
+  isGatewayTcpReady,
+} = gatewayBinding.createDynamicGatewayRuntimeHelpers({
+  getGatewayName: () => GATEWAY_NAME,
+  getGatewayPort: () => GATEWAY_PORT,
+  getDockerDriverGatewayEndpoint: dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint,
+  getGatewayClusterImageDrift: getGatewayClusterImageDriftForName,
+  probeGatewayHttpReady,
+  probeDockerDriverGatewayHttpReady,
+  waitForGatewayHttpReadyBase,
+  probeGatewayTcpReady,
+});
+
+const {
   getOpenshellBinary,
   openshellShellCommand,
   openshellArgv,
@@ -752,47 +745,6 @@ const { getGatewayReuseSnapshot, selectNamedGatewayForReuseIfNeeded } =
     runOpenshell,
     cliDisplayName,
   });
-
-function getDockerDriverGatewayEndpoint(): string {
-  return dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(GATEWAY_PORT);
-}
-
-function getGatewayClusterImageDrift() {
-  return getGatewayClusterImageDriftForName({ gatewayName: GATEWAY_NAME });
-}
-
-function isGatewayHttpReady(
-  timeoutMs?: number,
-  url?: string,
-  method?: "GET" | "POST",
-): Promise<boolean> {
-  return probeGatewayHttpReady(
-    timeoutMs,
-    url ?? `${dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(GATEWAY_PORT)}/`,
-    method,
-  );
-}
-
-function isDockerDriverGatewayHttpReady(timeoutMs?: number, url?: string): Promise<boolean> {
-  return probeDockerDriverGatewayHttpReady(
-    timeoutMs,
-    url ??
-      `${dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
-  );
-}
-
-function waitForGatewayHttpReady(
-  opts: import("./onboard/gateway-http-readiness").WaitForGatewayHttpReadyOpts = {},
-): Promise<boolean> {
-  return waitForGatewayHttpReadyBase({
-    ...opts,
-    probe: opts.probe ?? (() => isGatewayHttpReady()),
-  });
-}
-
-function isGatewayTcpReady(timeoutMs?: number): Promise<boolean> {
-  return probeGatewayTcpReady(GATEWAY_PORT, timeoutMs);
-}
 
 const { getSandboxReuseState, repairRecordedSandbox } = sandboxReuse.createSandboxReuseHelpers({
   runCaptureOpenshell,
@@ -1638,118 +1590,25 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-type PreflightOptions = Pick<
-  OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "gpu" | "noGpu"
-> & {
-  optedOutGpuPassthrough?: boolean;
-};
-
-// Reject unsupported container runtimes (currently only Podman with the
-// Linux Docker-driver gateway) before any Docker-specific probes. Both
-// the fresh preflight and `--resume` backstop call this — if `docker`
-// resolves to Podman, surface the unsupported-runtime message instead of
-// running bridge/DNS diagnostics that would be misleading.
-function rejectUnsupportedContainerRuntime(
-  host: ReturnType<typeof assessHost>,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-): void {
-  if (isLinuxDockerDriverGatewayEnabled() && host.runtime === "podman") {
-    console.error(`  ✗ ${cliDisplayName()} onboarding now uses OpenShell's Docker driver.`);
-    console.error(`    Podman is not supported for this ${cliDisplayName()} integration path.`);
-    console.error("    Switch to Docker Engine and rerun onboarding.");
-    exitProcess(1);
-  }
-}
-
-function runFatalOnboardRuntimePreflight(
-  preflightOpts: PreflightOptions,
-  exitProcess: (code: number) => never = (code) => process.exit(code),
-) {
-  const host = assessHost();
-  if (!host.dockerReachable) {
-    console.error("  Docker is not reachable. Please fix Docker and try again.");
-    printRemediationActions(planHostRemediation(host));
-    exitProcess(1);
-  }
-  rejectUnsupportedContainerRuntime(host, exitProcess);
-  console.log("  ✓ Docker is running");
-  require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
-  const gpu = nim.detectGpu();
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
-    device: preflightOpts.sandboxGpuDevice ?? null,
-  });
-  const explicitlyOptedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
-  preflightUtils.assertCdiNvidiaGpuSpecPresent(
-    host,
-    explicitlyOptedOutGpuPassthrough,
-    sandboxGpuConfig.hostGpuPlatform,
-    exitProcess,
-  );
-  assertDockerBridgeAndContainerDnsHealthy(host, isNonInteractive(), exitProcess);
-  validateSandboxGpuPreflight(sandboxGpuConfig, {}, exitProcess);
-  if (host.runtime !== "unknown") console.log(`  ✓ Container runtime: ${host.runtime}`);
-  if (host.notes.includes("Running under WSL")) console.log("  ⓘ Running under WSL");
-  return { gpu, host, sandboxGpuConfig };
-}
+type PreflightOptions = import("./onboard/fatal-runtime-preflight").FatalRuntimePreflightOptions;
 
 async function preflight(
   preflightOpts: PreflightOptions = {},
 ): Promise<ReturnType<typeof nim.detectGpu>> {
   step(1, 8, "Preflight checks");
 
-  const { gpu, host, sandboxGpuConfig } = runFatalOnboardRuntimePreflight(preflightOpts);
+  const { gpu, host, sandboxGpuConfig } = fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
+    preflightOpts,
+    {
+      nonInteractive: isNonInteractive(),
+    },
+  );
 
-  if (
-    host.isContainerRuntimeUnderProvisioned &&
-    process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES !== "1"
-  ) {
-    const detected: string[] = [];
-    if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
-    if (typeof host.dockerMemTotalBytes === "number") {
-      const gib = host.dockerMemTotalBytes / 1024 ** 3;
-      detected.push(`${gib.toFixed(1)} GiB`);
-    }
-    const detectedStr = detected.length > 0 ? detected.join(" / ") : "unknown";
-    console.warn(
-      `  ⚠ Container runtime under-provisioned: ${detectedStr} detected ` +
-        `(recommended: ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} vCPU / ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB} GiB).`,
-    );
-    console.warn("    The sandbox build will be slow and may stall on default Colima settings.");
-    if (host.runtime === "colima") {
-      console.warn(
-        `    Suggested: colima stop && colima start --cpu ${preflightUtils.MIN_RECOMMENDED_DOCKER_CPUS} --memory ${preflightUtils.MIN_RECOMMENDED_DOCKER_MEM_GIB}`,
-      );
-    } else if (host.runtime === "docker-desktop") {
-      console.warn("    Suggested: Docker Desktop → Settings → Resources, raise CPU/memory.");
-    }
-    console.warn("    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.");
-    if (isNonInteractive()) {
-      console.warn(
-        "    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.",
-      );
-    } else {
-      const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, false);
-      if (!proceed) {
-        console.error(
-          "  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.",
-        );
-        process.exit(1);
-      }
-    }
-  } else if (host.dockerReachable) {
-    const detected: string[] = [];
-    if (typeof host.dockerCpus === "number") detected.push(`${host.dockerCpus} vCPU`);
-    if (typeof host.dockerMemTotalBytes === "number") {
-      const gib = host.dockerMemTotalBytes / 1024 ** 3;
-      detected.push(`${gib.toFixed(1)} GiB`);
-    }
-    if (detected.length > 0) {
-      console.log(`  ✓ Container runtime resources: ${detected.join(" / ")}`);
-    }
-  }
+  await preflightUtils.checkContainerRuntimeResources(host, {
+    ignored: process.env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1",
+    nonInteractive: isNonInteractive(),
+    confirm: () => promptYesNoOrDefault("  Continue with onboarding?", null, false),
+  });
 
   ensureOpenshellForOnboard();
 
@@ -4700,75 +4559,12 @@ const recordCompatibleStateResult =
 const recordPostVerifyStarted =
   onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
-function skippedStepMessage(
-  stepName: string,
-  detail?: string | null,
-  reason: "resume" | "reuse" = "resume",
-): void {
-  const progressStep = getOnboardProgressStep(stepName);
-  const stepInfo =
-    progressStep && stepName === "openclaw"
-      ? { ...progressStep, title: `Setting up ${agentProductName()} inside sandbox` }
-      : progressStep;
-  if (stepInfo) {
-    step(stepInfo.number, stepInfo.total, stepInfo.title);
-  }
-  const prefix = reason === "reuse" ? "[reuse]" : "[resume]";
-  console.log(`  ${prefix} Skipping ${stepName}${detail ? ` (${detail})` : ""}`);
-}
-
-type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
-
-function resolveAuthoritativeOnboardGatewayBinding(
-  opts: OnboardOptions,
-): AuthoritativeOnboardGatewayBinding | null {
-  const hasName =
-    typeof opts.targetGatewayName === "string" && opts.targetGatewayName.trim() !== "";
-  const hasPort = opts.targetGatewayPort !== undefined && opts.targetGatewayPort !== null;
-  if (
-    opts.onboardLockAlreadyHeld === true &&
-    (!opts.authoritativeResumeConfig || !hasName || !hasPort)
-  ) {
-    throw new Error(
-      "The internal onboard lock handoff requires an authoritative rebuild resume with a target gateway.",
-    );
-  }
-  if (!hasName && !hasPort) return null;
-  if (!opts.authoritativeResumeConfig || !hasName || !hasPort) {
-    throw new Error(
-      "An internal target gateway name and port may be supplied only together for an authoritative rebuild resume.",
-    );
-  }
-  const name = opts.targetGatewayName?.trim() ?? "";
-  const port = Number(opts.targetGatewayPort);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error(
-      `Invalid authoritative rebuild gateway port '${String(opts.targetGatewayPort)}'.`,
-    );
-  }
-  if (gatewayBinding.resolveGatewayName(port) !== name) {
-    throw new Error(`Authoritative rebuild gateway '${name}' does not match port ${port}.`);
-  }
-  return { name, port };
-}
-
-type AuthoritativeRebuildPreflightOptions = Pick<
-  OnboardOptions,
-  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
-> & {
-  authoritativeResumeConfig: true;
-  model: string;
-  provider: string;
-  sandboxName: string;
-  targetGatewayName: string;
-  targetGatewayPort: number;
-};
-
 /** Run only non-mutating fatal onboard gates while the rebuild target is still intact. */
 async function preflightAuthoritativeRebuildTarget(
-  opts: AuthoritativeRebuildPreflightOptions,
+  opts: import("./onboard/authoritative-rebuild-target").AuthoritativeRebuildPreflightOptions,
 ): Promise<void> {
-  const authoritativeGateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+  const authoritativeGateway =
+    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   if (!authoritativeGateway) throw new Error("Authoritative rebuild preflight has no gateway");
   const previous = {
     dashboardPort: _preflightDashboardPort,
@@ -4788,13 +4584,17 @@ async function preflightAuthoritativeRebuildTarget(
       { ...opts, controlUiPort: opts.controlUiPort ?? null },
       {
         runFatalRuntimePreflight: () =>
-          runFatalOnboardRuntimePreflight(
+          fatalRuntimePreflight.runFatalOnboardRuntimePreflight(
             {
               sandboxGpu: opts.sandboxGpu,
               sandboxGpuDevice: opts.sandboxGpuDevice,
               noGpu: opts.noGpu,
             },
-            (code) => fail(`onboard runtime preflight exited with code ${String(code)}`),
+            {
+              nonInteractive: true,
+              exitProcess: (code) =>
+                fail(`onboard runtime preflight exited with code ${String(code)}`),
+            },
           ),
         ensureOpenshell: () =>
           ensureOpenshellForOnboard((code) =>
@@ -4815,7 +4615,8 @@ async function preflightAuthoritativeRebuildTarget(
 
 // ── Main ─────────────────────────────────────────────────────────
 async function onboard(opts: OnboardOptions = {}): Promise<void> {
-  const authoritativeGateway = resolveAuthoritativeOnboardGatewayBinding(opts);
+  const authoritativeGateway =
+    authoritativeRebuildTarget.resolveAuthoritativeOnboardGatewayBinding(opts);
   const previousGatewayBinding = { name: GATEWAY_NAME, port: GATEWAY_PORT };
   const previousOpenshellGateway = process.env.OPENSHELL_GATEWAY;
   setOnboardBrandingAgent(opts.agent || process.env.NEMOCLAW_AGENT || null);
@@ -5089,7 +4890,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         runPreflight: (preflightOptions) => preflight({ ...opts, ...preflightOptions }),
         assessHost,
         assertCdiNvidiaGpuSpecPresent: preflightUtils.assertCdiNvidiaGpuSpecPresent,
-        rejectUnsupportedContainerRuntime,
+        rejectUnsupportedContainerRuntime: fatalRuntimePreflight.rejectUnsupportedContainerRuntime,
         assertDockerBridgeAndContainerDnsHealthy,
         resolveSandboxGpuConfig,
         validateSandboxGpuPreflight,

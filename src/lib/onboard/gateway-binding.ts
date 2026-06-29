@@ -214,3 +214,51 @@ export function createGatewayNameBoundClassifiers(
       ),
   };
 }
+
+export interface DynamicGatewayRuntimeDeps {
+  getGatewayName(): string;
+  getGatewayPort(): number;
+  getDockerDriverGatewayEndpoint: typeof import("./docker-driver-gateway-env").getDockerDriverGatewayEndpoint;
+  getGatewayClusterImageDrift: typeof import("../adapters/openshell/gateway-drift").getGatewayClusterImageDrift;
+  probeGatewayHttpReady: typeof import("./gateway-http-readiness").isGatewayHttpReady;
+  probeDockerDriverGatewayHttpReady: typeof import("./gateway-http-readiness").isDockerDriverGatewayHttpReady;
+  waitForGatewayHttpReadyBase: typeof import("./gateway-http-readiness").waitForGatewayHttpReady;
+  probeGatewayTcpReady: typeof import("./gateway-tcp-readiness").isGatewayTcpReady;
+}
+
+/** Bind gateway probes and drift checks to the process-local dynamic gateway target. */
+export function createDynamicGatewayRuntimeHelpers(deps: DynamicGatewayRuntimeDeps) {
+  const getDockerDriverGatewayEndpoint = () =>
+    deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort());
+  const getGatewayClusterImageDrift = () =>
+    deps.getGatewayClusterImageDrift({ gatewayName: deps.getGatewayName() });
+  const isGatewayHttpReady = (timeoutMs?: number, url?: string, method?: "GET" | "POST") =>
+    deps.probeGatewayHttpReady(
+      timeoutMs,
+      url ?? `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/`,
+      method,
+    );
+  const isDockerDriverGatewayHttpReady = (timeoutMs?: number, url?: string) =>
+    deps.probeDockerDriverGatewayHttpReady(
+      timeoutMs,
+      url ??
+        `${deps.getDockerDriverGatewayEndpoint(deps.getGatewayPort())}/openshell.v1.OpenShell/Health`,
+    );
+  const waitForGatewayHttpReady = (
+    opts: import("./gateway-http-readiness").WaitForGatewayHttpReadyOpts = {},
+  ) =>
+    deps.waitForGatewayHttpReadyBase({
+      ...opts,
+      probe: opts.probe ?? (() => isGatewayHttpReady()),
+    });
+  const isGatewayTcpReady = (timeoutMs?: number) =>
+    deps.probeGatewayTcpReady(deps.getGatewayPort(), timeoutMs);
+  return {
+    getDockerDriverGatewayEndpoint,
+    getGatewayClusterImageDrift,
+    isGatewayHttpReady,
+    isDockerDriverGatewayHttpReady,
+    waitForGatewayHttpReady,
+    isGatewayTcpReady,
+  };
+}

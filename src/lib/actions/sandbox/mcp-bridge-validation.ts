@@ -35,7 +35,11 @@ const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set([
   "ANTHROPIC_VERTEX_PROJECT_ID",
   "VERTEX_LOCATION",
 ]);
-const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(["GCE_METADATA_HOST"]);
+const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set([
+  "GCE_METADATA_HOST",
+  "GCE_METADATA_IP",
+  "METADATA_SERVER_DETECTION",
+]);
 // OpenShell attaches provider keys to every fresh sandbox exec. A placeholder
 // under one of these names can alter a loader, shell, or supported agent
 // runtime before the requested command starts (for example, PYTHONHOME makes
@@ -43,15 +47,19 @@ const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(["GCE_METADATA_HOST"]);
 // service credential alias instead of a process-control name.
 const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set([
   "_JAVA_OPTIONS",
+  "ALL_PROXY",
+  "all_proxy",
   "API_SERVER_KEY",
   "BASH_ENV",
   "BASHOPTS",
   "CDPATH",
   "CLASSPATH",
   "CONDA_PREFIX",
+  "DENO_CERT",
   "ENV",
   "GCONV_PATH",
   "GLOBIGNORE",
+  "grpc_proxy",
   "IFS",
   "LOCPATH",
   "NLSPATH",
@@ -267,7 +275,7 @@ export async function validateMcpServerUrlResolvedTarget(
       );
     }
   }
-  return [...new Set(addresses.map(({ address }) => address.toLowerCase()))];
+  return [...new Set(addresses.map(({ address }) => address.toLowerCase()))].sort();
 }
 
 export function parseMcpUrl(rawUrl: string): URL {

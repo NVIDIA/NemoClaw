@@ -9,13 +9,17 @@ credentials. NemoClaw invokes it as a one-shot ordinary OpenShell sandbox exec
 command in the Hermes sandbox namespaces. No persistent control listener or
 host-side MCP data-plane process is exposed.
 
-Hermes currently has no managed MCP mutation API, so direct config edits would
-otherwise expose a partial-write/reload race. The upstream Hermes boundary
-cannot be changed by NemoClaw; this helper owns the atomic write, ownership
-checks, and reload acknowledgement instead. hermes-mcp-config-transaction.test.ts
-locks that contract. Remove this helper when the minimum supported Hermes
-release provides native add, remove, and list operations with equivalent
-transactional reload and ownership guarantees.
+Pinned Hermes exposes interactive ``hermes mcp add/remove/list`` commands, but
+they prompt, write service credentials into Hermes-owned environment state, and
+do not provide NemoClaw's noninteractive ownership/hash transaction with an
+acknowledged managed gateway reload/restart (https://github.com/NousResearch/hermes-agent/issues/690
+and https://github.com/NousResearch/hermes-agent/issues/52417). Direct config
+edits would therefore expose a partial-write/reload race and violate the
+OpenShell provider boundary. This helper owns the atomic write, ownership
+checks, and reload acknowledgement instead; hermes-mcp-config-transaction.test.ts
+locks that contract. Remove it when the minimum supported Hermes capability
+provides equivalent noninteractive mutation, credential isolation, ownership,
+and acknowledged reload guarantees.
 """
 
 from __future__ import annotations

@@ -165,6 +165,12 @@ RUN set -eu; \
         rm -rf /usr/local/lib/node_modules/mcporter /usr/local/bin/mcporter; \
         npm install -g --ignore-scripts --no-audit --no-fund --no-progress "mcporter@${MCPORTER_VERSION}"; \
     fi; \
+    # mcporter publishes ranged transitive dependencies and no shrinkwrap.
+    # Capture and audit the exact installed graph, including registry signatures,
+    # whether this layer installed it or inherited the expected version from base.
+    npm --prefix /usr/local/lib/node_modules/mcporter shrinkwrap --ignore-scripts --silent; \
+    npm --prefix /usr/local/lib/node_modules/mcporter audit --omit=dev --audit-level=low; \
+    npm --prefix /usr/local/lib/node_modules/mcporter audit signatures; \
     # Pre-install the codex-acp package so the embedded ACPx runtime can
     # call the local binary instead of `npx @zed-industries/codex-acp`.
     # The sandbox's L7 proxy denies @zed-industries/* package URLs

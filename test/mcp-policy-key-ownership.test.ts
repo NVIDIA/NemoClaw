@@ -153,6 +153,52 @@ process.stdout.write("\\n__RESULT__" + JSON.stringify({
   return result;
 }
 
+function runSuccessfulPolicyRemoval(skipRegistryUpdate: boolean) {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-policy-remove-success-"));
+  const binDir = path.join(home, ".local", "bin");
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(binDir, "openshell"),
+    `#!/bin/sh
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\nnetwork_policies:\n  example:\n    name: generated-policy\n    endpoints: []\n'
+fi
+exit 0
+`,
+    { mode: 0o755 },
+  );
+  const script = `
+const registry = require("./src/lib/state/registry.js");
+const policies = require("./src/lib/policy/index.js");
+registry.registerSandbox({ name: "alpha" });
+registry.addCustomPolicy("alpha", {
+  name: "mcp-bridge-example",
+  content: ${JSON.stringify(PRESET)},
+  sourcePath: "generated:nemoclaw-mcp-bridge",
+});
+const result = policies.removePreset("alpha", "mcp-bridge-example", {
+  nonFatal: true,
+  skipRegistryUpdate: ${JSON.stringify(skipRegistryUpdate)},
+});
+process.stdout.write("\\n__RESULT__" + JSON.stringify({
+  result,
+  policies: registry.getCustomPolicies("alpha").map((policy) => policy.name),
+}));
+`;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: home,
+      NEMOCLAW_OPENSHELL_BIN: path.join(binDir, "openshell"),
+      PATH: `${binDir}:/usr/bin:/bin`,
+    },
+  });
+  fs.rmSync(home, { recursive: true, force: true });
+  return result;
+}
+
 describe("MCP-generated network policy ownership", () => {
   it("refuses to replace a same-key policy the bridge does not own", () => {
     const { calls, result } = runApply([]);
@@ -190,6 +236,17 @@ describe("MCP-generated network policy ownership", () => {
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     expect(result.stdout).toContain('__RESULT__{"result":false,"policies":["mcp-bridge-example"]}');
     expect(result.stderr).toContain("Failed to update policy");
+  });
+
+  it.each([
+    [false, []],
+    [true, ["mcp-bridge-example"]],
+  ] as const)("supports ownership-preserving policy removal (skipRegistryUpdate=%s)", (skipRegistryUpdate, expectedPolicies) => {
+    const result = runSuccessfulPolicyRemoval(skipRegistryUpdate);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(
+      `__RESULT__${JSON.stringify({ result: true, policies: expectedPolicies })}`,
+    );
   });
 
   it("does not delete an operator-owned same-key policy when add rolls back", () => {

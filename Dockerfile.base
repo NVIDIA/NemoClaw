@@ -242,6 +242,9 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     fi; \
     npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}" \
     && npm install -g --ignore-scripts --no-audit --no-fund --no-progress "mcporter@${MCPORTER_VERSION}" \
+    && npm --prefix /usr/local/lib/node_modules/mcporter shrinkwrap --ignore-scripts --silent \
+    && npm --prefix /usr/local/lib/node_modules/mcporter audit --omit=dev --audit-level=low \
+    && npm --prefix /usr/local/lib/node_modules/mcporter audit signatures \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
 
 

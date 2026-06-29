@@ -23,6 +23,7 @@ const expectedId = "11111111-2222-4333-8444-555555555555";
 const foreignId = "99999999-8888-4777-8666-555555555555";
 let liveId = expectedId;
 let attached = true;
+let policyState = "match";
 const calls = [];
 agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
@@ -58,9 +59,10 @@ globalActions.runOpenshellProviderCommand = (args) => {
   }
   return { status: 0, stdout: "", stderr: "" };
 };
-policies.getPresetContentGatewayState = () => "match";
+policies.getPresetContentGatewayState = () => policyState;
 policies.removePreset = () => {
   if (swapAt === "delete") liveId = foreignId;
+  policyState = "absent";
   return true;
 };
 processRecovery.executeSandboxCommand = () => {

@@ -33,7 +33,7 @@ function dockerRunCommandBetween(
     .replace(/\\\n/g, " ");
 }
 
-function runHermesMcpRuntimeValidation({
+function runHermesMcpClientImportValidation({
   mcpAvailable,
   httpAvailable,
 }: {
@@ -45,7 +45,7 @@ function runHermesMcpRuntimeValidation({
   const toolsDir = path.join(tmp, "tools");
   const command = dockerRunCommandBetween(
     dockerfile,
-    "# Managed MCP is a required Hermes runtime capability",
+    "# Managed MCP requires the packaged Hermes client surface",
     "# Published base images can lag Dockerfile.base",
   ).replaceAll("/opt/hermes/.venv/bin/python", "python3");
   try {
@@ -67,15 +67,15 @@ function runHermesMcpRuntimeValidation({
   }
 }
 
-describe("Hermes managed MCP runtime capability", () => {
-  it("fails the final image build without native MCP Streamable HTTP support", () => {
-    const complete = runHermesMcpRuntimeValidation({
+describe("Hermes managed MCP client import capability", () => {
+  it("fails the final image build without packaged Streamable HTTP client support", () => {
+    const complete = runHermesMcpClientImportValidation({
       mcpAvailable: true,
       httpAvailable: true,
     });
     expect(complete.status, complete.stderr).toBe(0);
 
-    const missingHttp = runHermesMcpRuntimeValidation({
+    const missingHttp = runHermesMcpClientImportValidation({
       mcpAvailable: true,
       httpAvailable: false,
     });

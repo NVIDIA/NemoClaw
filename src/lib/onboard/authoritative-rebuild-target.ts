@@ -2,8 +2,62 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { findDashboardForwardOwner } from "./dashboard-port";
+import { resolveGatewayName } from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import { assertDashboardPortNotReserved } from "./preflight-ports";
+import type { OnboardOptions } from "./types";
+
+export type AuthoritativeOnboardGatewayBinding = { name: string; port: number };
+
+export type AuthoritativeGatewayOptions = Pick<
+  OnboardOptions,
+  "authoritativeResumeConfig" | "targetGatewayName" | "targetGatewayPort" | "onboardLockAlreadyHeld"
+>;
+
+export type AuthoritativeRebuildPreflightOptions = Pick<
+  OnboardOptions,
+  "sandboxGpu" | "sandboxGpuDevice" | "noGpu" | "controlUiPort"
+> & {
+  authoritativeResumeConfig: true;
+  model: string;
+  provider: string;
+  sandboxName: string;
+  targetGatewayName: string;
+  targetGatewayPort: number;
+};
+
+export function resolveAuthoritativeOnboardGatewayBinding(
+  opts: AuthoritativeGatewayOptions,
+): AuthoritativeOnboardGatewayBinding | null {
+  const hasName =
+    typeof opts.targetGatewayName === "string" && opts.targetGatewayName.trim() !== "";
+  const hasPort = opts.targetGatewayPort !== undefined && opts.targetGatewayPort !== null;
+  if (
+    opts.onboardLockAlreadyHeld === true &&
+    (!opts.authoritativeResumeConfig || !hasName || !hasPort)
+  ) {
+    throw new Error(
+      "The internal onboard lock handoff requires an authoritative rebuild resume with a target gateway.",
+    );
+  }
+  if (!hasName && !hasPort) return null;
+  if (!opts.authoritativeResumeConfig || !hasName || !hasPort) {
+    throw new Error(
+      "An internal target gateway name and port may be supplied only together for an authoritative rebuild resume.",
+    );
+  }
+  const name = opts.targetGatewayName?.trim() ?? "";
+  const port = Number(opts.targetGatewayPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(
+      `Invalid authoritative rebuild gateway port '${String(opts.targetGatewayPort)}'.`,
+    );
+  }
+  if (resolveGatewayName(port) !== name) {
+    throw new Error(`Authoritative rebuild gateway '${name}' does not match port ${port}.`);
+  }
+  return { name, port };
+}
 
 export type AuthoritativeRebuildTarget = {
   sandboxName: string;

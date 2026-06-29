@@ -613,7 +613,7 @@ function removePresetFromPolicy(
 function removePreset(
   sandboxName: string,
   presetName: string,
-  options: { nonFatal?: boolean } = {},
+  options: { nonFatal?: boolean; skipRegistryUpdate?: boolean } = {},
 ): boolean {
   // Guard against truncated sandbox names — WSL can truncate hyphenated
   // names during argument parsing, e.g. "my-assistant" → "m"
@@ -700,7 +700,7 @@ function removePreset(
     }
   }
 
-  const sandbox = registry.getSandbox(sandboxName);
+  const sandbox = options.skipRegistryUpdate ? undefined : registry.getSandbox(sandboxName);
   if (sandbox) {
     if (isCustom) {
       registry.removeCustomPolicyByName(sandboxName, presetName);

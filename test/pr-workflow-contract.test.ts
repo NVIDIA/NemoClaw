@@ -679,7 +679,8 @@ describe("pull request and main workflow contracts", () => {
 
     expect(runs).toContain("docker image inspect");
     expect(runs).toContain("${image}@sha256:");
-    expect(runs).toContain("mcp_runtime_ok");
+    expect(runs).toContain("mcp_client_imports_ok");
+    expect(runs).toContain("Build-time package/import guard only");
     expect(runs).toContain("_MCP_HTTP_AVAILABLE");
     expect(runs).toContain("layout_ok");
     expect(runs).toContain("HERMES_BASE_IMAGE=${digest_ref}");

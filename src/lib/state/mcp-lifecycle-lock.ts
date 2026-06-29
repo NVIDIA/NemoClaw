@@ -5,7 +5,9 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 
 import { isErrnoException } from "../core/errno";
 import { resolveNemoclawStateDir } from "./paths";
@@ -23,6 +25,10 @@ interface McpLifecycleLockOwner {
   sandboxName: string;
   pid: number;
   processIdentity: string | null;
+  /** Stable machine identity. A foreign owner is never reaped by local PID checks. */
+  hostIdentity?: string | null;
+  /** Linux PID namespace identity. Cross-namespace owners fail closed. */
+  pidNamespaceIdentity?: string | null;
   token: string;
   acquiredAt: string;
 }
@@ -30,6 +36,13 @@ interface McpLifecycleLockOwner {
 interface LockObservation {
   owner: McpLifecycleLockOwner | null;
   mtimeMs: number;
+  dev: number;
+  ino: number;
+}
+
+interface CorruptGenerationTracker {
+  generation: string | null;
+  firstSeenAt: number;
 }
 
 interface AcquiredMcpLifecycleLock {
@@ -63,6 +76,12 @@ function isLockOwner(value: unknown): value is McpLifecycleLockOwner {
     Number.isSafeInteger(candidate.pid) &&
     (candidate.pid as number) > 0 &&
     (candidate.processIdentity === null || typeof candidate.processIdentity === "string") &&
+    (candidate.hostIdentity === undefined ||
+      candidate.hostIdentity === null ||
+      typeof candidate.hostIdentity === "string") &&
+    (candidate.pidNamespaceIdentity === undefined ||
+      candidate.pidNamespaceIdentity === null ||
+      typeof candidate.pidNamespaceIdentity === "string") &&
     typeof candidate.token === "string" &&
     candidate.token.length > 0 &&
     typeof candidate.acquiredAt === "string"
@@ -84,10 +103,15 @@ function processIsAlive(pid: number): boolean {
  * process. Linux exposes the kernel boot id plus /proc start ticks; macOS and
  * other supported POSIX hosts fall back to ps(1)'s process start timestamp.
  */
-export function readMcpLockProcessIdentity(pid: number): string | null {
+export function readMcpLockProcessIdentity(pid: number, fresh = false): string | null {
   const cached = processIdentityCache.get(pid);
-  const now = Date.now();
-  if (cached && now - cached.checkedAt < OWNER_IDENTITY_CACHE_MS) {
+  const now = performance.now();
+  if (
+    !fresh &&
+    cached &&
+    now >= cached.checkedAt &&
+    now - cached.checkedAt < OWNER_IDENTITY_CACHE_MS
+  ) {
     return cached.identity;
   }
 
@@ -135,6 +159,34 @@ export function readMcpLockProcessIdentity(pid: number): string | null {
   return identity;
 }
 
+/** Stable enough to distinguish independent hosts sharing a state directory. */
+export function readMcpLockHostIdentity(): string {
+  if (process.platform === "linux") {
+    for (const candidate of ["/etc/machine-id", "/var/lib/dbus/machine-id"]) {
+      try {
+        const machineId = fs.readFileSync(candidate, "utf8").trim();
+        if (machineId) return `linux:${machineId}`;
+      } catch {
+        // Fall through to the hostname identity.
+      }
+    }
+  }
+  return `${process.platform}:${os.hostname() || "unknown-host"}`;
+}
+
+/** A shared state directory does not make local PID checks safe across namespaces. */
+export function readMcpLockPidNamespaceIdentity(): string | null {
+  if (process.platform !== "linux") return null;
+  try {
+    return fs.readlinkSync("/proc/self/ns/pid");
+  } catch {
+    return null;
+  }
+}
+
+const LOCAL_HOST_IDENTITY = readMcpLockHostIdentity();
+const LOCAL_PID_NAMESPACE_IDENTITY = readMcpLockPidNamespaceIdentity();
+
 function lockFileStem(sandboxName: string): string {
   // Hashing makes the filesystem key traversal-safe even if a caller reaches
   // the lock before the command's normal sandbox-name validation.
@@ -158,6 +210,8 @@ function createLockOwner(sandboxName: string, token: string): McpLifecycleLockOw
     sandboxName,
     pid: process.pid,
     processIdentity: readMcpLockProcessIdentity(process.pid),
+    hostIdentity: LOCAL_HOST_IDENTITY,
+    pidNamespaceIdentity: LOCAL_PID_NAMESPACE_IDENTITY,
     token,
     acquiredAt: new Date().toISOString(),
   };
@@ -175,7 +229,7 @@ async function readLockObservation(lockPath: string): Promise<LockObservation | 
     try {
       const stat = await fs.promises.lstat(lockPath);
       if (!stat.isFile() || stat.isSymbolicLink()) {
-        return { owner: null, mtimeMs: stat.mtimeMs };
+        return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
       }
     } catch (statError) {
       if (isErrnoException(statError) && statError.code === "ENOENT") return null;
@@ -186,15 +240,19 @@ async function readLockObservation(lockPath: string): Promise<LockObservation | 
 
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) return { owner: null, mtimeMs: stat.mtimeMs };
+    if (!stat.isFile()) {
+      return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
+    }
     try {
       const parsed: unknown = JSON.parse(await handle.readFile("utf8"));
       return {
         owner: isLockOwner(parsed) ? parsed : null,
         mtimeMs: stat.mtimeMs,
+        dev: stat.dev,
+        ino: stat.ino,
       };
     } catch {
-      return { owner: null, mtimeMs: stat.mtimeMs };
+      return { owner: null, mtimeMs: stat.mtimeMs, dev: stat.dev, ino: stat.ino };
     }
   } finally {
     await handle.close();
@@ -214,6 +272,20 @@ export function classifyMcpLifecycleLock(
   if (!owner || owner.sandboxName !== sandboxName) {
     return nowMs - observation.mtimeMs >= corruptLockGraceMs ? "stale" : "wait";
   }
+  // The lock coordinates local CLI processes, not independent hosts or PID
+  // namespaces. Never use this process's PID table to reap a foreign owner;
+  // wait for operator/distributed-lease resolution instead of risking overlap.
+  // Legacy or incomplete records have unknown provenance. Treat them as
+  // foreign instead of using this host's PID table to reap them.
+  if (!owner.hostIdentity || owner.hostIdentity !== LOCAL_HOST_IDENTITY) return "active";
+  if (
+    (LOCAL_PID_NAMESPACE_IDENTITY !== null && !owner.pidNamespaceIdentity) ||
+    (owner.pidNamespaceIdentity !== null &&
+      owner.pidNamespaceIdentity !== undefined &&
+      owner.pidNamespaceIdentity !== LOCAL_PID_NAMESPACE_IDENTITY)
+  ) {
+    return "active";
+  }
   if (!processIsAlive(owner.pid)) return "stale";
 
   const observedIdentity = readMcpLockProcessIdentity(owner.pid);
@@ -222,7 +294,12 @@ export function classifyMcpLifecycleLock(
     observedIdentity !== null &&
     owner.processIdentity !== observedIdentity
   ) {
-    return "stale";
+    // PID identities are cached briefly. Confirm a mismatch without the cache
+    // before reaping so rapid PID reuse cannot evict a newly live owner.
+    const refreshedIdentity = readMcpLockProcessIdentity(owner.pid, true);
+    if (refreshedIdentity !== null && owner.processIdentity !== refreshedIdentity) {
+      return "stale";
+    }
   }
   // If this OS cannot recover process-start identity, a live PID is treated as
   // active. Failing closed may require waiting for that process to exit, but it
@@ -238,6 +315,38 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function resetCorruptGenerationTracker(tracker: CorruptGenerationTracker): void {
+  tracker.generation = null;
+  tracker.firstSeenAt = 0;
+}
+
+/** Age one continuously observed corrupt inode with a monotonic clock. */
+function classifyObservedMcpLifecycleLock(
+  observation: LockObservation,
+  sandboxName: string,
+  corruptLockGraceMs: number,
+  corruptTracker: CorruptGenerationTracker,
+): McpLifecycleLockDisposition {
+  if (!observation.owner || observation.owner.sandboxName !== sandboxName) {
+    const generation = `${observation.dev}:${observation.ino}:${observation.mtimeMs}`;
+    const now = performance.now();
+    if (corruptTracker.generation !== generation) {
+      corruptTracker.generation = generation;
+      corruptTracker.firstSeenAt = now;
+      return "wait";
+    }
+    return now - corruptTracker.firstSeenAt >= corruptLockGraceMs ? "stale" : "wait";
+  }
+  resetCorruptGenerationTracker(corruptTracker);
+  // The wall-clock arguments are irrelevant for a structurally valid owner.
+  return classifyMcpLifecycleLock(
+    observation,
+    sandboxName,
+    observation.mtimeMs,
+    corruptLockGraceMs,
+  );
+}
+
 async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.promises.lstat(targetPath);
@@ -250,36 +359,35 @@ async function pathExists(targetPath: string): Promise<boolean> {
 
 async function safelyReleaseLock(lockPath: string, token: string): Promise<void> {
   const observation = await readLockObservation(lockPath);
-  // This path is used only by the live owner. Stale-reaper recovery uses the
-  // quarantine-and-verify protocol below so competing reclaimers cannot unlink
-  // a replacement generation between this token read and unlink.
   if (!observation || observation.owner?.token !== token) return;
-  try {
-    await fs.promises.unlink(lockPath);
-  } catch (error) {
-    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
-  }
+  // Claim and verify the generation before deletion. A replacement appearing
+  // after the token read is restored rather than unlinked.
+  await reclaimStaleGeneration(lockPath, observation);
 }
 
-async function reclaimStaleReaper(
-  reaperPath: string,
-  expectedToken: string | null,
+async function reclaimStaleGeneration(
+  targetPath: string,
+  expected: LockObservation,
 ): Promise<boolean> {
-  const quarantinePath = `${reaperPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
+  const quarantinePath = `${targetPath}.reclaim-${process.pid}-${crypto.randomUUID()}`;
   try {
     // Rename is the atomic claim. Another waiter may have already removed the
     // stale generation and published a replacement after our earlier read, so
     // the moved file must be verified before it is ever deleted.
-    await fs.promises.rename(reaperPath, quarantinePath);
+    await fs.promises.rename(targetPath, quarantinePath);
   } catch (error) {
     if (isErrnoException(error) && error.code === "ENOENT") return false;
     throw error;
   }
 
   const claimed = await readLockObservation(quarantinePath);
+  const expectedToken = expected.owner?.token ?? null;
   const claimedExpectedGeneration =
     expectedToken === null
-      ? claimed !== null && claimed.owner === null
+      ? claimed !== null &&
+        claimed.owner === null &&
+        claimed.dev === expected.dev &&
+        claimed.ino === expected.ino
       : claimed?.owner?.token === expectedToken;
   if (claimedExpectedGeneration) {
     await fs.promises.rm(quarantinePath, { force: true, recursive: true });
@@ -292,7 +400,7 @@ async function reclaimStaleReaper(
   // path, preserve the displaced owner record for diagnosis rather than ever
   // deleting an owner we did not claim.
   try {
-    await fs.promises.link(quarantinePath, reaperPath);
+    await fs.promises.link(quarantinePath, targetPath);
     await fs.promises.rm(quarantinePath, { force: true });
   } catch (error) {
     if (!isErrnoException(error) || error.code !== "EEXIST") throw error;
@@ -304,6 +412,7 @@ async function tryReapStaleLock(
   lockPath: string,
   sandboxName: string,
   corruptLockGraceMs: number,
+  corruptTracker: CorruptGenerationTracker,
 ): Promise<boolean> {
   const reaperPath = `${lockPath}.reaper`;
   const reaperToken = crypto.randomUUID();
@@ -313,19 +422,14 @@ async function tryReapStaleLock(
   try {
     const latest = await readLockObservation(lockPath);
     if (!latest) return true;
-    if (classifyMcpLifecycleLock(latest, sandboxName, Date.now(), corruptLockGraceMs) !== "stale") {
+    if (
+      classifyObservedMcpLifecycleLock(latest, sandboxName, corruptLockGraceMs, corruptTracker) !==
+      "stale"
+    ) {
       return false;
     }
 
-    const quarantinePath = `${lockPath}.stale-${process.pid}-${crypto.randomUUID()}`;
-    try {
-      await fs.promises.rename(lockPath, quarantinePath);
-    } catch (error) {
-      if (isErrnoException(error) && error.code === "ENOENT") return true;
-      throw error;
-    }
-    await fs.promises.rm(quarantinePath, { force: true, recursive: true });
-    return true;
+    return reclaimStaleGeneration(lockPath, latest);
   } finally {
     await safelyReleaseLock(reaperPath, reaperToken);
   }
@@ -350,11 +454,25 @@ async function writeCandidateAndLink(
       await fs.promises.link(candidatePath, lockPath);
       return true;
     } catch (error) {
+      // NFS may execute LINK but lose/replay its reply. Reconcile the result
+      // from the unique candidate's link count plus our unguessable owner token
+      // before treating EEXIST (or another transport error) as a failed claim.
+      const candidateStat = await fs.promises.stat(candidatePath);
+      const published = await readLockObservation(lockPath);
+      if (candidateStat.nlink >= 2 && published?.owner?.token === owner.token) {
+        return true;
+      }
       if (isErrnoException(error) && error.code === "EEXIST") return false;
       throw error;
     }
   } finally {
-    await fs.promises.rm(candidatePath, { force: true });
+    try {
+      await fs.promises.rm(candidatePath, { force: true });
+    } catch {
+      // Publication is decided only by LINK plus owner-token reconciliation.
+      // A unique candidate cleanup failure must not strand a live canonical
+      // self-lock before the caller enters its protected operation.
+    }
   }
 }
 
@@ -374,10 +492,12 @@ async function acquireMcpLifecycleLock(
     mode: 0o700,
   });
 
-  const startedAt = Date.now();
+  const startedAt = performance.now();
+  const corruptMainTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
+  const corruptReaperTracker: CorruptGenerationTracker = { generation: null, firstSeenAt: 0 };
   let lastOwnerPid: number | null = null;
   for (;;) {
-    if (Date.now() - startedAt >= timeoutMs) {
+    if (performance.now() - startedAt >= timeoutMs) {
       const ownerSuffix = lastOwnerPid ? ` (owner pid ${lastOwnerPid})` : "";
       throw new Error(
         `Timed out waiting for MCP lifecycle lock for sandbox '${sandboxName}'${ownerSuffix}. Another add, restart, remove, rebuild, or destroy operation is still running.`,
@@ -387,22 +507,23 @@ async function acquireMcpLifecycleLock(
     const reaperPath = `${lockPath}.reaper`;
     const reaperObservation = await readLockObservation(reaperPath);
     if (reaperObservation) {
-      const reaperDisposition = classifyMcpLifecycleLock(
+      const reaperDisposition = classifyObservedMcpLifecycleLock(
         reaperObservation,
         sandboxName,
-        Date.now(),
         corruptLockGraceMs,
+        corruptReaperTracker,
       );
       if (reaperDisposition === "stale") {
         // The reaper has the same atomic, PID-identified owner format as the
         // main lock. A SIGKILL at any point in stale-lock cleanup is therefore
         // recoverable without age-expiring a legitimate long operation.
-        await reclaimStaleReaper(reaperPath, reaperObservation.owner?.token ?? null);
+        await reclaimStaleGeneration(reaperPath, reaperObservation);
         continue;
       }
       await sleep(pollIntervalMs);
       continue;
     }
+    resetCorruptGenerationTracker(corruptReaperTracker);
 
     if (!(await pathExists(reaperPath))) {
       const token = crypto.randomUUID();
@@ -420,13 +541,19 @@ async function acquireMcpLifecycleLock(
     if (observation) {
       lastOwnerPid = observation.owner?.pid ?? null;
       if (
-        classifyMcpLifecycleLock(observation, sandboxName, Date.now(), corruptLockGraceMs) ===
-        "stale"
+        classifyObservedMcpLifecycleLock(
+          observation,
+          sandboxName,
+          corruptLockGraceMs,
+          corruptMainTracker,
+        ) === "stale"
       ) {
-        if (await tryReapStaleLock(lockPath, sandboxName, corruptLockGraceMs)) {
+        if (await tryReapStaleLock(lockPath, sandboxName, corruptLockGraceMs, corruptMainTracker)) {
           continue;
         }
       }
+    } else {
+      resetCorruptGenerationTracker(corruptMainTracker);
     }
     await sleep(pollIntervalMs);
   }
@@ -437,6 +564,10 @@ async function acquireMcpLifecycleLock(
  * AsyncLocalStorage makes nested calls in the same lifecycle operation
  * reentrant (rebuild recovery -> MCP restart), while separate top-level
  * promises in one Node process still contend on the filesystem lock.
+ *
+ * The lease is host-local. If a state directory is shared across machines or
+ * PID namespaces, foreign owners fail closed and require operator/distributed
+ * lease resolution; local PID probing is never used to reap them.
  *
  * This is a CLI state lock only. It is not an MCP bridge, proxy, listener, or
  * credential process and never participates in sandbox network traffic.

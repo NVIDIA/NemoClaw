@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_GATEWAY_PORT } from "../core/ports";
 import { buildDockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
 import {
@@ -18,12 +18,96 @@ import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
   BASE_GATEWAY_STATE_DIR_NAME,
+  createDynamicGatewayRuntimeHelpers,
   resolveGatewayCompatContainerName,
   resolveGatewayName,
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
 } from "./gateway-binding";
+
+describe("dynamic gateway runtime helpers", () => {
+  it("resolves every default probe from the current process-local gateway binding", async () => {
+    let gatewayName = "nemoclaw";
+    let gatewayPort = 8080;
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const probeDockerDriverGatewayHttpReady = vi.fn(async () => true);
+    const probeGatewayTcpReady = vi.fn(async () => true);
+    const getGatewayClusterImageDrift = vi.fn(() => null);
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => gatewayName,
+      getGatewayPort: () => gatewayPort,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift,
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady,
+      waitForGatewayHttpReadyBase: vi.fn(async () => true),
+      probeGatewayTcpReady,
+    });
+
+    expect(helpers.getDockerDriverGatewayEndpoint()).toBe("http://127.0.0.1:8080");
+    await helpers.isGatewayHttpReady();
+    await helpers.isDockerDriverGatewayHttpReady();
+    await helpers.isGatewayTcpReady(250);
+    helpers.getGatewayClusterImageDrift();
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8080/",
+      undefined,
+    );
+    expect(probeDockerDriverGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8080/openshell.v1.OpenShell/Health",
+    );
+    expect(probeGatewayTcpReady).toHaveBeenLastCalledWith(8080, 250);
+    expect(getGatewayClusterImageDrift).toHaveBeenLastCalledWith({ gatewayName: "nemoclaw" });
+
+    gatewayName = "nemoclaw-8081";
+    gatewayPort = 8081;
+    expect(helpers.getDockerDriverGatewayEndpoint()).toBe("http://127.0.0.1:8081");
+    await helpers.isGatewayHttpReady();
+    helpers.getGatewayClusterImageDrift();
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:8081/",
+      undefined,
+    );
+    expect(getGatewayClusterImageDrift).toHaveBeenLastCalledWith({
+      gatewayName: "nemoclaw-8081",
+    });
+  });
+
+  it("preserves explicit probe URLs and injects the bound default wait probe", async () => {
+    const probeGatewayHttpReady = vi.fn(async () => true);
+    const waitForGatewayHttpReadyBase = vi.fn(async (options) => {
+      expect(options.probe).toBeTypeOf("function");
+      return options.probe?.();
+    });
+    const helpers = createDynamicGatewayRuntimeHelpers({
+      getGatewayName: () => "nemoclaw-9090",
+      getGatewayPort: () => 9090,
+      getDockerDriverGatewayEndpoint: (port) => `http://127.0.0.1:${port}`,
+      getGatewayClusterImageDrift: vi.fn(() => null),
+      probeGatewayHttpReady,
+      probeDockerDriverGatewayHttpReady: vi.fn(async () => true),
+      waitForGatewayHttpReadyBase,
+      probeGatewayTcpReady: vi.fn(async () => true),
+    });
+
+    await helpers.isGatewayHttpReady(25, "https://probe.example/health", "POST");
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      25,
+      "https://probe.example/health",
+      "POST",
+    );
+    await expect(helpers.waitForGatewayHttpReady()).resolves.toBe(true);
+    expect(probeGatewayHttpReady).toHaveBeenLastCalledWith(
+      undefined,
+      "http://127.0.0.1:9090/",
+      undefined,
+    );
+  });
+});
 
 describe("gateway-binding resolver (#4422)", () => {
   it("keeps the bare nemoclaw names for the default gateway port", () => {

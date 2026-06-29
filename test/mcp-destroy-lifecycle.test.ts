@@ -193,6 +193,7 @@ registry.registerSandbox({
   mcp: { bridges: { github: pending } },
 });
 registry.addCustomPolicy("alpha", ownedPolicy("github"));
+policies.getPresetContentGatewayState = () => { throw new Error("absent rebuild queried live policy"); };
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 (async () => {
   const preparation = await bridge.${method}("alpha");
@@ -219,6 +220,8 @@ registry.registerSandbox({
   gatewayName: "nemoclaw",
   mcp: { bridges: { github: bridgeEntries.github } },
 });
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+policies.getPresetContentGatewayState = () => { throw new Error("absent rebuild queried live policy"); };
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 (async () => {
   const preparation = await bridge.prepareMcpBridgesForAbsentSandboxRebuild("alpha");
@@ -248,6 +251,78 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.calls).toEqual(["provider get alpha-mcp-github"]);
     expect(payload.adapterCalls).toEqual([]);
     expect(payload.providers).toContain("alpha-mcp-github");
+  });
+
+  for (const method of ["prepareMcpBridgesForRebuild"] as const) {
+    it(`rejects policy drift before ${method} mutates adapter or provider state`, () => {
+      const result = runDestroyLifecycleScenario(`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { github: bridgeEntries.github } },
+});
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+policies.getPresetContentGatewayState = () => "drift";
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  let message = "";
+  try {
+    await bridge.${method}("alpha");
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, calls, adapterCalls }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        message: string;
+        calls: string[];
+        adapterCalls: string[];
+      };
+      expect(payload.message).toMatch(/policy.*drift/i);
+      expect(payload.calls).toEqual([]);
+      expect(payload.adapterCalls).toEqual([]);
+    });
+  }
+
+  it("rejects an unowned same-name policy record during absent-sandbox rebuild", () => {
+    const result = runDestroyLifecycleScenario(`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  gatewayName: "nemoclaw",
+  mcp: { bridges: { github: bridgeEntries.github } },
+});
+registry.addCustomPolicy("alpha", {
+  ...ownedPolicy("github"),
+  content: "operator-owned-content",
+  sourcePath: "/operator/policy.yaml",
+});
+policies.getPresetContentGatewayState = () => { throw new Error("absent rebuild queried live policy"); };
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  let message = "";
+  try {
+    await bridge.prepareMcpBridgesForAbsentSandboxRebuild("alpha");
+  } catch (error) {
+    message = error.message;
+  }
+  process.stdout.write(JSON.stringify({ message, calls, adapterCalls }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      message: string;
+      calls: string[];
+      adapterCalls: string[];
+    };
+    expect(payload.message).toMatch(/unowned same-name registry record/);
+    expect(payload.calls).toEqual([]);
+    expect(payload.adapterCalls).toEqual([]);
   });
 
   it("finalizes an externally absent sandbox without attempting sandbox adapter exec", () => {

@@ -528,6 +528,7 @@ describe("MCP add crash consistency", () => {
       expect(rejected.status, `${rejected.stdout}\n${rejected.stderr}`).toBe(2);
       expect(rejected.stderr).toContain("Failed to activate generated MCP policy");
       expect(rejected.stderr).toContain("effective state: drift");
+      expect(`${rejected.stdout}\n${rejected.stderr}`).not.toContain("host-only-secret");
       expect(fs.existsSync(path.join(home, "provider.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "attached.marker"))).toBe(false);
       expect(fs.existsSync(path.join(home, "adapter.marker"))).toBe(false);
