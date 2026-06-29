@@ -174,11 +174,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       "                 'api_key': 'sk-OPENSHELL-PROXY-REWRITE'}",
       "  Max turns:    60",
     ].join("\n");
-    const run = runWrapper(
-      ["config", "show"],
-      {},
-      { stub: { stdout: fixture, exitCode: 0 } },
-    );
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
     expect(run.realInvoked).toBe(true);
@@ -197,11 +193,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       "  nemoclaw-inference:",
       "    api_key: sk-OPENSHELL-PROXY-REWRITE",
     ].join("\n");
-    const run = runWrapper(
-      ["config", "show"],
-      {},
-      { stub: { stdout: fixture, exitCode: 0 } },
-    );
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
@@ -222,13 +214,78 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
 
   it("leaves non-`config show` output untouched even when api_key shapes appear", () => {
     const fixture = "providers:\n  nemoclaw-inference:\n    api_key: sk-OPENSHELL-PROXY-REWRITE";
-    const run = runWrapper(
-      ["config", "list"],
-      {},
-      { stub: { stdout: fixture, exitCode: 0 } },
-    );
+    const run = runWrapper(["config", "list"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
     expect(run.stdout).toContain("sk-OPENSHELL-PROXY-REWRITE");
+  });
+
+  it("masks non-sk- value shapes (nvapi-, plain) on api_key fields", () => {
+    const fixture = [
+      "{'api_key': 'nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaa'}",
+      '{"api_key": "raw-secret-no-prefix-value"}',
+      "api_key: nvapi-zzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(run.stdout).not.toContain("nvapi-zzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+    expect(run.stdout).not.toContain("raw-secret-no-prefix-value");
+    expect(run.stdout).toContain("'api_key': 'sk-****'");
+    expect(run.stdout).toContain('"api_key": "sk-****"');
+    expect(run.stdout).toContain("api_key: sk-****");
+  });
+
+  it("masks other secret-shaped fields beyond api_key (access_token, secret, password, token)", () => {
+    const fixture = [
+      "{'access_token': 'leaked-access-token-12345', 'secret_key': 'leaked-secret-key-12345'}",
+      '{"client_secret": "leaked-client-secret-12345"}',
+      "token: leaked-bearer-token-12345",
+      "password: leaked-password-12345",
+      "bearer: leaked-bearer-12345",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-access-token-12345");
+    expect(run.stdout).not.toContain("leaked-secret-key-12345");
+    expect(run.stdout).not.toContain("leaked-client-secret-12345");
+    expect(run.stdout).not.toContain("leaked-bearer-token-12345");
+    expect(run.stdout).not.toContain("leaked-password-12345");
+    expect(run.stdout).not.toContain("leaked-bearer-12345");
+    expect(run.stdout).toContain("'access_token': 'sk-****'");
+    expect(run.stdout).toContain("'secret_key': 'sk-****'");
+    expect(run.stdout).toContain('"client_secret": "sk-****"');
+    expect(run.stdout).toContain("token: sk-****");
+    expect(run.stdout).toContain("password: sk-****");
+    expect(run.stdout).toContain("bearer: sk-****");
+  });
+
+  it("leaves non-secret fields untouched even when their values look credential-shaped", () => {
+    const fixture = [
+      "{'provider': 'sk-could-be-mistaken'}",
+      '{"base_url": "https://api.example.com/sk-not-a-secret"}',
+      "default: meta/llama-3.1-8b-instruct",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("sk-could-be-mistaken");
+    expect(run.stdout).toContain("https://api.example.com/sk-not-a-secret");
+    expect(run.stdout).toContain("default: meta/llama-3.1-8b-instruct");
+  });
+
+  it("does not mask api_key mentions inside YAML comments", () => {
+    const fixture = [
+      "# example: api_key: leave-this-alone-in-comment",
+      "api_key: sk-OPENSHELL-PROXY-REWRITE",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("# example: api_key: leave-this-alone-in-comment");
+    expect(run.stdout).toContain("api_key: sk-****");
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
   });
 });

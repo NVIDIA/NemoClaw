@@ -34,32 +34,31 @@ REAL_HERMES="/usr/local/bin/hermes.real"
 GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 [ -f "$GUARD" ] || GUARD="${_self_dir}/validate-env-secret-boundary.py"
 
+_resolve_trusted_python3() {
+  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+    if [ -x "$_candidate" ]; then
+      printf '%s' "$_candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   set -o pipefail
-  "$REAL_HERMES" "$@" | sed -E "
-    s/('api_key': )'sk-[^']*'/\\1'sk-****'/g
-    s/(\"api_key\"[[:space:]]*:[[:space:]]*)\"sk-[^\"]*\"/\\1\"sk-****\"/g
-    s/(api_key[[:space:]]*[:=][[:space:]]*)sk-[A-Za-z0-9_-]+/\\1sk-****/g
-  "
+  PYTHON3="$(_resolve_trusted_python3)" || {
+    echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
+    exit 127
+  }
+  "$REAL_HERMES" "$@" | "$PYTHON3" "$GUARD" mask-config-output
   exit "${PIPESTATUS[0]}"
 fi
 
 if [ "${1:-}" = "gateway" ]; then
-  # Run the guard with python3 resolved from a fixed set of absolute paths, not
-  # via PATH: PATH is part of the untrusted environment this wrapper guards
-  # against, so a PATH-shadowed python3 could no-op the secret check. Fail
-  # closed if no trusted interpreter is found.
-  PYTHON3=""
-  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
-    if [ -x "$_candidate" ]; then
-      PYTHON3="$_candidate"
-      break
-    fi
-  done
-  if [ -z "$PYTHON3" ]; then
+  PYTHON3="$(_resolve_trusted_python3)" || {
     echo "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard" >&2
     exit 127
-  fi
+  }
   "$PYTHON3" "$GUARD" runtime-env || exit $?
 fi
 

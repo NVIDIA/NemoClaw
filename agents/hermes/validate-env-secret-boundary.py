@@ -186,6 +186,54 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     return 1
 
 
+_SECRET_FIELD_RE = re.compile(
+    r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|secret[_-]?key|"
+    r"authorization|bearer|credential|password|secret|token)\b"
+)
+_MASK_PY = "sk-****"
+# Python dict ('key': 'value'), JSON ("key": "value"), and unquoted YAML/env (key: value or key=value).
+_PY_DICT_RE = re.compile(
+    r"(?P<lead>'(?P<key>[A-Za-z_][A-Za-z0-9_]*)'[ \t]*:[ \t]*)'[^']*'"
+)
+_JSON_RE = re.compile(
+    r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_]*)\"[ \t]*:[ \t]*)\"[^\"]*\""
+)
+_UNQUOTED_RE = re.compile(
+    r"(?P<lead>(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*)"
+    r"(?P<value>\"[^\"]*\"|'[^']*'|[^ \t\r\n#][^\r\n#]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+)
+
+
+def _is_secret_field(name: str) -> bool:
+    return bool(_SECRET_FIELD_RE.search(name))
+
+
+def _mask_pyjson(match: "re.Match[str]") -> str:
+    if not _is_secret_field(match.group("key")):
+        return match.group(0)
+    quote = "'" if match.group(0).startswith("'") or "'" in match.group("lead")[-2:] else "\""
+    return f"{match.group('lead')}{quote}{_MASK_PY}{quote}"
+
+
+def _mask_unquoted(match: "re.Match[str]") -> str:
+    if not _is_secret_field(match.group("key")):
+        return match.group(0)
+    return f"{match.group('lead')}{_MASK_PY}{match.group('trail')}"
+
+
+def mask_config_output(stream_in: "object", stream_out: "object") -> int:
+    for line in stream_in:
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            stream_out.write(line)
+            continue
+        masked = _PY_DICT_RE.sub(_mask_pyjson, line)
+        masked = _JSON_RE.sub(_mask_pyjson, masked)
+        masked = _UNQUOTED_RE.sub(_mask_unquoted, masked)
+        stream_out.write(masked)
+    return 0
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="validate-env-secret-boundary")
     sub = parser.add_subparsers(dest="mode", required=True)
@@ -198,9 +246,15 @@ def main(argv: list[str]) -> int:
         "runtime-env",
         help="Validate the current process environment",
     )
+    sub.add_parser(
+        "mask-config-output",
+        help="Mask secret-shaped fields on stdin; print to stdout",
+    )
     args = parser.parse_args(argv)
     if args.mode == "env-file":
         return validate_env_file(args.path)
+    if args.mode == "mask-config-output":
+        return mask_config_output(sys.stdin, sys.stdout)
     assert args.mode == "runtime-env", f"unreachable: argparse subparsers are required ({args.mode!r})"
     return validate_runtime_env()
 
