@@ -485,6 +485,21 @@ $$nemoclaw list [--json]
 $$nemoclaw list --json
 ```
 
+### `$$nemoclaw use <name>`
+
+Promote a registered sandbox to the default.
+This is the first-class replacement for hand-editing `~/.nemoclaw/sandboxes.json`; it updates the registry through the same atomic, lock-guarded path that `$$nemoclaw onboard` uses for the initial default.
+Subsequent commands and the `NEMOCLAW_SANDBOX_NAME` resolution order then pick up the new default automatically.
+Pass `--json` to receive a machine-readable result indicating whether the registry was updated, the sandbox was already the default, or the name is unknown.
+
+`$$nemoclaw use` is a thin selector and never mutates the sandbox itself.
+It fails with a non-zero exit and a known-sandbox list when the requested name is not registered, so scripts can branch safely on the outcome.
+
+```bash
+$$nemoclaw use <name>
+$$nemoclaw use <name> --json
+```
+
 ### `$$nemoclaw deploy`
 
 <Warning>

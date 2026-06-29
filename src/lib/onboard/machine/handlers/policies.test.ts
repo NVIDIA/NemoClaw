@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session, type SessionUpdates } from "../../../state/onboard-session";
+import { mergePolicyMessagingChannels } from "../../messaging-policy-presets";
 import { handlePoliciesState, type PoliciesStateOptions } from "./policies";
 
 type Agent = { name: string } | null;
@@ -50,10 +51,7 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
     activeSandbox: vi.fn(() => ({
       messaging: { plan: makeMessagingPlan("my-assistant", ["telegram"]) },
     })),
-    mergeChannels: vi.fn(
-      (selected: string[], recorded: string[], active: string[] | null | undefined) =>
-        selected.length > 0 ? selected : (active ?? recorded),
-    ),
+    mergeChannels: vi.fn(mergePolicyMessagingChannels),
     smoke: vi.fn(),
     prepareResume: vi.fn(
       (

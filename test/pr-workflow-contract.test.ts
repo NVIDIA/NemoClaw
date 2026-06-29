@@ -135,6 +135,7 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
+  const prSelfHostedWorkflow = readYaml<CiWorkflow>(".github/workflows/pr-self-hosted.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
   const sharedActions = {
@@ -151,6 +152,9 @@ describe("pull request and main workflow contracts", () => {
       ".github/actions/ci-installer-integration/action.yaml",
     ),
   };
+  const resolveHermesBaseAction = readYaml<CompositeAction>(
+    ".github/actions/resolve-hermes-base-image/action.yaml",
+  );
 
   it("routes only code-changing PRs through the code-check path", () => {
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");
@@ -669,6 +673,27 @@ describe("pull request and main workflow contracts", () => {
       expect(mainChecksRun).toContain(`require_success "${jobName}"`);
     }
     expect(mainWorkflow.jobs["sandbox-images-and-e2e"].needs).toBe("checks");
+  });
+
+  it("runs Hermes stale OpenClaw image validation in self-hosted PR CI", () => {
+    const job = prSelfHostedWorkflow.jobs["build-hermes-stale-openclaw-image"];
+    const checkout = requiredWorkflowStep(job, "Checkout");
+    const runs = stepRuns(job).join("\n");
+
+    expect(job["runs-on"]).toBe("linux-amd64-cpu4");
+    expect(job["timeout-minutes"]).toBe(30);
+    expect(checkout.with?.["persist-credentials"]).toBe(false);
+    expect(stepUses(job)).toContain("./.github/actions/resolve-hermes-base-image");
+    expect(runs).toContain("bash scripts/verify-hermes-stale-openclaw-image.sh");
+  });
+
+  it("exports immutable GHCR digests from the Hermes base resolver", () => {
+    const runs = stepRuns(resolveHermesBaseAction).join("\n");
+
+    expect(runs).toContain("docker image inspect");
+    expect(runs).toContain("${image}@sha256:");
+    expect(runs).toContain("HERMES_BASE_IMAGE=${digest_ref}");
+    expect(runs).toContain("HERMES_BASE_IMAGE=nemoclaw-hermes-base-local");
   });
 
   it("does not run npm lifecycle scripts during CI dependency installs", () => {
