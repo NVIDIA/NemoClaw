@@ -3333,6 +3333,8 @@ jobs:
           retention-days: 14
 
   security-posture-vitest:
+    permissions:
+      contents: read
     needs: generate-matrix
     if: ${{ (inputs.jobs == '' && inputs.scenarios == '') || contains(format(',{0},', inputs.jobs), ',security-posture-vitest,') || contains(format(',{0},', inputs.scenarios), ',security-posture,') }}
     runs-on: ubuntu-latest
@@ -3356,6 +3358,9 @@ jobs:
       NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_AGENT: ${{ matrix.agent }}
+      # Legacy-parity contract: enforce a non-root host user. PID 1 must stay
+      # root long enough to step down child processes, so its uid, bounding
+      # set, and NoNewPrivs remain evidence unless an opt-in expectation is set.
       NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
       NEMOCLAW_E2E_SECURITY_POSTURE: "1"
       NEMOCLAW_NON_INTERACTIVE: "1"

@@ -24,6 +24,14 @@ export interface SecurityPostureSummary {
   startupLogClean: true;
 }
 
+export interface SecurityPostureExpectations {
+  droppedBoundingCapabilities: boolean;
+  enabled: boolean;
+  noNewPrivileges: boolean;
+  nonRootEntrypoint: boolean;
+  nonRootHost: boolean;
+}
+
 const DANGEROUS_CAPABILITIES = [
   [21, "CAP_SYS_ADMIN"],
   [19, "CAP_SYS_PTRACE"],
@@ -67,13 +75,30 @@ export function dangerousCapabilities(capabilityHex: string | null): string[] {
 }
 
 export function securityPostureEnabled(): boolean {
-  return truthy(process.env.NEMOCLAW_E2E_SECURITY_POSTURE);
+  return securityPostureExpectations().enabled;
+}
+
+export function securityPostureExpectations(
+  env: NodeJS.ProcessEnv = process.env,
+): SecurityPostureExpectations {
+  const enabled = truthy(env.NEMOCLAW_E2E_SECURITY_POSTURE);
+  return {
+    droppedBoundingCapabilities: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS),
+    enabled,
+    noNewPrivileges: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS),
+    nonRootEntrypoint: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT),
+    nonRootHost: enabled && truthy(env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST ?? "1"),
+  };
 }
 
 export function securityPostureModeEnv(): NodeJS.ProcessEnv {
-  if (!securityPostureEnabled()) return {};
+  const expectations = securityPostureExpectations();
+  if (!expectations.enabled) return {};
   return {
-    NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST ?? "1",
+    NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS: expectations.droppedBoundingCapabilities ? "1" : "0",
+    NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT: expectations.nonRootEntrypoint ? "1" : "0",
+    NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: expectations.nonRootHost ? "1" : "0",
+    NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS: expectations.noNewPrivileges ? "1" : "0",
     NEMOCLAW_E2E_SECURITY_POSTURE: "1",
   };
 }
@@ -84,6 +109,7 @@ export async function assertSecurityPosture(
   sandboxName: string,
   agent: SecurityPostureAgent,
 ): Promise<SecurityPostureSummary> {
+  const expectations = securityPostureExpectations();
   const hostUser = await host.command(
     "sh",
     ["-lc", 'uid="$(id -u)"; gid="$(id -g)"; echo "uid=$uid gid=$gid"; test "$uid" -ne 0'],
@@ -116,18 +142,15 @@ export async function assertSecurityPosture(
   if (!uid || !capBnd) throw new Error(`entrypoint status is incomplete:\n${entrypoint.stdout}`);
   const dangerousBoundingCapabilities = dangerousCapabilities(capBnd);
   const dangerousEffectiveCapabilities = dangerousCapabilities(capEff);
-  if (truthy(process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_ENTRYPOINT) && uid === "0") {
+  if (expectations.nonRootEntrypoint && uid === "0") {
     throw new Error(`entrypoint PID 1 expected a non-root uid, got ${uid}`);
   }
-  if (
-    truthy(process.env.NEMOCLAW_E2E_EXPECT_DROPPED_BOUNDS) &&
-    dangerousBoundingCapabilities.length > 0
-  ) {
+  if (expectations.droppedBoundingCapabilities && dangerousBoundingCapabilities.length > 0) {
     throw new Error(
       `entrypoint PID 1 retained bounding capabilities: ${dangerousBoundingCapabilities.join(", ")}`,
     );
   }
-  if (truthy(process.env.NEMOCLAW_E2E_EXPECT_NO_NEW_PRIVS) && noNewPrivs !== "1") {
+  if (expectations.noNewPrivileges && noNewPrivs !== "1") {
     throw new Error(`entrypoint PID 1 expected NoNewPrivs=1, got ${noNewPrivs ?? "<missing>"}`);
   }
 
@@ -159,7 +182,7 @@ exit "$bad"
 
   const functionName = agent === "hermes" ? "hermes" : "openclaw";
   const guardArg = agent === "hermes" ? "setup" : "configure";
-  const allowNonRootOwner = truthy(process.env.NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST) ? "1" : "0";
+  const allowNonRootOwner = expectations.nonRootHost ? "1" : "0";
   const proxyEnv = await sandbox.execShell(
     sandboxName,
     trustedSandboxShellScript(String.raw`

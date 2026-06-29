@@ -73,6 +73,7 @@ describe("security posture workflow boundary", () => {
     ];
     const env = job.env as Record<string, unknown>;
     delete env.NEMOCLAW_E2E_SECURITY_POSTURE;
+    job.permissions = { contents: "write" };
     env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
     const install = (job.steps as Array<Record<string, unknown>>).find(
       (step) => step.name === "Install OpenShell CLI",
@@ -81,6 +82,7 @@ describe("security posture workflow boundary", () => {
     install!.run = "bash scripts/install-openshell.sh";
     const errors = validateSecurityPostureWorkflow(workflow);
     expect(errors).toContain("security-posture-vitest must set NEMOCLAW_E2E_SECURITY_POSTURE=1");
+    expect(errors).toContain("security-posture-vitest must hold only contents: read");
     expect(errors).toContain(
       "security-posture-vitest must not expose the inference key at job scope",
     );

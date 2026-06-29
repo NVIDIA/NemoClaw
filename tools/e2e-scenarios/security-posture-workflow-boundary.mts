@@ -65,6 +65,10 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
   if (job["timeout-minutes"] !== 75) {
     errors.push(`${JOB_NAME} must retain its 75 minute two-agent budget`);
   }
+  const permissions = record(job.permissions);
+  if (permissions.contents !== "read" || Object.keys(permissions).length !== 1) {
+    errors.push(`${JOB_NAME} must hold only contents: read`);
+  }
   if (record(job.strategy)["fail-fast"] !== false) {
     errors.push(`${JOB_NAME} matrix must keep fail-fast disabled`);
   }
