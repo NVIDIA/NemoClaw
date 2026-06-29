@@ -278,8 +278,6 @@ MSTEAMS_APP_ID=<your-teams-app-id> \
 After the rebuild starts the Teams webhook forward, route your public HTTPS endpoint to `http://127.0.0.1:3978/api/messages` or the port you selected with `MSTEAMS_PORT`.
 If `channels add teams` reports that another sandbox already uses the same Teams webhook port, choose another `MSTEAMS_PORT` for one sandbox or stop and remove the conflicting sandbox.
 
-For OpenClaw sandboxes, NemoClaw renders `channels.msteams.streaming.mode: "off"` by default so Teams receives one final message instead of relying on the native Teams streaming preview/final collapse path.
-
 ### `channels add wechat`
 
 `channels add wechat` (experimental) follows the same shape as the other channels with two differences driven by the iLink QR handshake.
