@@ -68,18 +68,18 @@ describe("messaging channel config", () => {
     });
   });
 
-  it("leaves Telegram compatibility aliases to Telegram enrollment hooks", () => {
+  it("normalizes Telegram compatibility aliases to canonical channel config", () => {
     expect(
       sanitizeMessagingChannelConfig({
         TELEGRAM_AUTHORIZED_CHAT_IDS: "  123, 456  ",
       }),
-    ).toBeNull();
+    ).toEqual({ TELEGRAM_ALLOWED_IDS: "123, 456" });
 
     expect(
       readMessagingChannelConfigFromEnv({
         TELEGRAM_CHAT_ID: "8388960805",
       }),
-    ).toBeNull();
+    ).toEqual({ TELEGRAM_ALLOWED_IDS: "8388960805" });
   });
 
   it("normalizes Discord compatibility aliases to canonical channel config", () => {
@@ -104,6 +104,8 @@ describe("messaging channel config", () => {
   });
 
   it.each([
+    ["TELEGRAM_ALLOWED_IDS", "TELEGRAM_AUTHORIZED_CHAT_IDS"],
+    ["TELEGRAM_ALLOWED_IDS", "TELEGRAM_CHAT_ID"],
     ["DISCORD_SERVER_ID", "DISCORD_SERVER_IDS"],
     ["DISCORD_USER_ID", "DISCORD_ALLOWED_IDS"],
     ["MSTEAMS_APP_ID", "TEAMS_CLIENT_ID"],
@@ -180,13 +182,15 @@ describe("messaging channel config", () => {
     expect(env.DISCORD_REQUIRE_MENTION).toBeUndefined();
   });
 
-  it("does not hydrate Telegram aliases outside the enrollment hook", () => {
+  it("hydrates Telegram aliases through the shared compatibility table", () => {
     const env: NodeJS.ProcessEnv = {
       TELEGRAM_AUTHORIZED_CHAT_IDS: "alias-user",
     };
 
-    expect(hydrateMessagingChannelConfig(null, env)).toBeNull();
-    expect(env.TELEGRAM_ALLOWED_IDS).toBeUndefined();
+    expect(hydrateMessagingChannelConfig(null, env)).toEqual({
+      TELEGRAM_ALLOWED_IDS: "alias-user",
+    });
+    expect(env.TELEGRAM_ALLOWED_IDS).toBe("alias-user");
   });
 
   it("reads effective config from env", () => {

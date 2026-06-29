@@ -5,9 +5,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import { MessagingHookRegistry, runMessagingHook } from "../../../hooks";
 import type { ChannelHookSpec } from "../../../manifest";
+import { getMessagingConfigCompatEnvKeys } from "../../metadata";
 import {
   createTelegramAllowlistAliasesHook,
   mergeTelegramAllowlistAliases,
+  TELEGRAM_ALLOWED_IDS_ALIAS_ENVS,
   TELEGRAM_ALLOWLIST_ALIASES_HOOK_ID,
 } from "./allowlist-aliases";
 
@@ -24,6 +26,12 @@ const TELEGRAM_ALLOWLIST_ALIASES_HOOK = {
 } as const satisfies ChannelHookSpec;
 
 describe("Telegram allowlist aliases hook implementation", () => {
+  it("keeps hook aliases synchronized with shared compatibility metadata", () => {
+    expect(TELEGRAM_ALLOWED_IDS_ALIAS_ENVS).toEqual(
+      getMessagingConfigCompatEnvKeys().TELEGRAM_ALLOWED_IDS,
+    );
+  });
+
   it("merges compatibility aliases into canonical TELEGRAM_ALLOWED_IDS", async () => {
     const env: NodeJS.ProcessEnv = {
       TELEGRAM_ALLOWED_IDS: "111, 222",

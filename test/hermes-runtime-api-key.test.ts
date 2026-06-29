@@ -891,6 +891,19 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       ],
       error: "runtime plan credentialBindings[0] has invalid placeholder",
     },
+    {
+      name: "conflicting duplicate placeholders",
+      credentialBindings: [
+        slackBotCredentialBinding(),
+        {
+          channelId: "slack",
+          providerEnvKey: "SLACK_BOT_TOKEN",
+          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        },
+      ],
+      error:
+        "runtime plan credentialBindings[1] conflicts with an earlier placeholder for SLACK_BOT_TOKEN",
+    },
   ])("Hermes Dockerfile runtime-plan guard rejects $name", ({ credentialBindings, error }) => {
     const rejected = runHermesDockerfileRuntimePlanGuard(
       baseMessagingRuntimePlan({ credentialBindings }),

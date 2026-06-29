@@ -15,9 +15,8 @@ export interface MessagingManifestMetadataOptions {
   readonly manifests?: readonly ChannelManifest[];
 }
 
-// TODO: Remove these aliases after QA automation and public templates stop
-// exporting the legacy names for at least one full release.
 const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
+  TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
   DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
   DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
   MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
@@ -25,6 +24,13 @@ const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
   TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
   MSTEAMS_PORT: ["TEAMS_PORT"],
 };
+
+const CONFIG_COMPAT_ENV_KEY_REMOVAL_GATE = {
+  releaseWindow: "one-full-release",
+  sourceBoundaries: ["QA automation", "public templates"],
+  removalCondition:
+    "Remove after the source boundaries stop exporting these legacy names for at least one full release.",
+} as const;
 
 export interface MessagingCredentialMetadata {
   readonly channelId: string;
@@ -193,6 +199,20 @@ export function getMessagingConfigCompatEnvKeys(
   return Object.fromEntries(
     Object.entries(CONFIG_COMPAT_ENV_KEYS).filter(([canonical]) => configKeys.has(canonical)),
   );
+}
+
+export function getMessagingConfigCompatEnvKeyRemovalGate(
+  options: MessagingManifestMetadataOptions = {},
+): Readonly<{
+  releaseWindow: string;
+  sourceBoundaries: readonly string[];
+  removalCondition: string;
+  canonicalKeys: readonly string[];
+}> {
+  return {
+    ...CONFIG_COMPAT_ENV_KEY_REMOVAL_GATE,
+    canonicalKeys: Object.keys(getMessagingConfigCompatEnvKeys(options)),
+  };
 }
 
 export function listMessagingPolicyPresetMetadata(

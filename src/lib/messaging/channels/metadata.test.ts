@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
+  getMessagingConfigCompatEnvKeyRemovalGate,
   getMessagingConfigCompatEnvKeys,
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
@@ -89,12 +90,28 @@ describe("built-in messaging channel metadata", () => {
       "TEAMS_REQUIRE_MENTION",
     ]);
     expect(getMessagingConfigCompatEnvKeys()).toEqual({
+      TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
       DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
       MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
       MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
       TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
       MSTEAMS_PORT: ["TEAMS_PORT"],
+    });
+    expect(getMessagingConfigCompatEnvKeyRemovalGate()).toEqual({
+      releaseWindow: "one-full-release",
+      sourceBoundaries: ["QA automation", "public templates"],
+      removalCondition:
+        "Remove after the source boundaries stop exporting these legacy names for at least one full release.",
+      canonicalKeys: [
+        "TELEGRAM_ALLOWED_IDS",
+        "DISCORD_SERVER_ID",
+        "DISCORD_USER_ID",
+        "MSTEAMS_APP_ID",
+        "MSTEAMS_TENANT_ID",
+        "TEAMS_ALLOWED_USERS",
+        "MSTEAMS_PORT",
+      ],
     });
   });
 
