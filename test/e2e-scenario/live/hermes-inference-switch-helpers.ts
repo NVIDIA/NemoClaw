@@ -15,6 +15,11 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
+import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
+import {
+  inferenceSetAttemptCount,
+  runInferenceSetWithRetry,
+} from "../fixtures/inference-switch-retry.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -40,6 +45,24 @@ interface MockAnthropicProvider {
   close(): Promise<void>;
 }
 
+export function mockAnthropicEndpointUrl(
+  port: number,
+  runtimeEnv: NodeJS.ProcessEnv = process.env,
+): string {
+  const host = runtimeEnv.NEMOCLAW_SWITCH_MOCK_HOST ?? "host.openshell.internal";
+  return `http://${host}:${port}`;
+}
+
+export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
+  return (
+    runtimeEnv.NEMOCLAW_MODEL ?? runtimeEnv.NEMOCLAW_COMPAT_MODEL ?? DEFAULT_HOSTED_INFERENCE_MODEL
+  );
+}
+
+export function openshellGatewayName(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
+  return runtimeEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
+}
+
 export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
@@ -48,14 +71,15 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    OPENSHELL_GATEWAY: openshellGatewayName(),
   };
   apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
   USE_COMPATIBLE_HOSTED &&
     apiKey &&
     Object.assign(out, {
       COMPATIBLE_API_KEY: apiKey,
-      NEMOCLAW_COMPAT_MODEL: SWITCH_MODEL,
+      NEMOCLAW_MODEL: hostedInstallModel(),
+      NEMOCLAW_COMPAT_MODEL: hostedInstallModel(),
       NEMOCLAW_ENDPOINT_URL:
         process.env.NEMOCLAW_ENDPOINT_URL ?? "https://inference-api.nvidia.com/v1",
       NEMOCLAW_PREFERRED_API: process.env.NEMOCLAW_PREFERRED_API ?? "openai-completions",
@@ -99,12 +123,36 @@ export function chatContent(raw: string): string {
   );
 }
 
+export async function runHermesPongWithRetry(options: {
+  attempts?: number;
+  delay?: (milliseconds: number) => Promise<void>;
+  run: (attempt: number) => Promise<ShellProbeResult>;
+}): Promise<ShellProbeResult> {
+  const attempts = options.attempts ?? 3;
+  const delay =
+    options.delay ??
+    ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  let last: ShellProbeResult | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    last = await options.run(attempt);
+    let pong = false;
+    if (last.exitCode === 0) {
+      try {
+        pong = /PONG/iu.test(chatContent(last.stdout));
+      } catch {}
+    }
+    if (pong || attempt === attempts) return last;
+    await delay(5_000);
+  }
+  throw new Error("Hermes live probe retry loop completed without running an attempt.");
+}
+
 export async function cleanupHermesSwitch(
   host: HostCliClient,
   sandbox: SandboxClient,
 ): Promise<void> {
   await bestEffort(() =>
-    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes"], {
+    host.command("node", [CLI, SANDBOX_NAME, "destroy", "--yes", "--cleanup-gateway"], {
       artifactName: "cleanup-nemoclaw-destroy",
       env: env(),
       timeoutMs: 120_000,
@@ -227,7 +275,7 @@ async function startMockAnthropicProvider(): Promise<MockAnthropicProvider> {
     throw new Error("mock Anthropic provider did not expose a TCP port");
   }
   return {
-    endpointUrl: `http://host.openshell.internal:${(address as AddressInfo).port}`,
+    endpointUrl: mockAnthropicEndpointUrl((address as AddressInfo).port),
     close: () => closeServer(server),
   };
 }
@@ -279,7 +327,7 @@ export async function installHermes(
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
     install = await host.command(
       "bash",
-      ["install.sh", "--non-interactive", "--yes-i-accept-third-party-software"],
+      ["install.sh", "--non-interactive", "--fresh", "--yes-i-accept-third-party-software"],
       {
         artifactName: attempt === 1 ? "install-hermes" : `install-hermes-attempt-${attempt}`,
         cwd: REPO_ROOT,
@@ -298,6 +346,38 @@ export async function installHermes(
   }
   if (!install) throw new Error("install command did not run");
   return install;
+}
+
+export async function runHermesInferenceSetWithRetry(
+  host: HostCliClient,
+  apiKey: string,
+  compatibleMetadataArgs: string[],
+  options: { attempts?: number; delay?: (milliseconds: number) => Promise<void> } = {},
+): Promise<ShellProbeResult> {
+  const args = [
+    CLI,
+    "inference",
+    "set",
+    "--provider",
+    SWITCH_PROVIDER,
+    "--model",
+    SWITCH_MODEL,
+    ...compatibleMetadataArgs,
+  ];
+  return runInferenceSetWithRetry({
+    attempts:
+      options.attempts ?? inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS),
+    delay: options.delay,
+    run: (attempt, verify) =>
+      host.command("node", verify ? args : [...args, "--no-verify"], {
+        artifactName: verify
+          ? `hermes-inference-set-${attempt}`
+          : "hermes-inference-set-no-verify-after-transient-failures",
+        env: env(apiKey),
+        redactionValues: [apiKey],
+        timeoutMs: 180_000,
+      }),
+  });
 }
 
 export async function hermesGatewayPid(
@@ -338,6 +418,10 @@ export function expectedBaseUrl(): string {
   return SWITCH_API === "anthropic-messages"
     ? "https://inference.local"
     : "https://inference.local/v1";
+}
+
+export function inferenceLocalMaxTokens(api: string = SWITCH_API): number {
+  return api === "anthropic-messages" ? 32 : 100;
 }
 
 export function expectedApiMode(): string | undefined {
