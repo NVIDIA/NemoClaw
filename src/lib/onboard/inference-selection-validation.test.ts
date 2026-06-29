@@ -45,4 +45,45 @@ describe("inference selection validation", () => {
       exit.mockRestore();
     }
   });
+
+  it("fails reasoning-mode validation when Chat Completions fails (#3279)", async () => {
+    vi.stubEnv("NEMOCLAW_REASONING", "yes");
+    const probeOpenAiLikeEndpoint = vi.fn(() => ({
+      ok: false,
+      failures: [{ name: "Chat Completions API", httpStatus: 500 }],
+    }));
+    const promptValidationRecovery = vi.fn(async () => "selection" as const);
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const helpers = createInferenceSelectionValidationHelpers({
+      isNonInteractive: () => false,
+      agentProductName: () => "OpenClaw",
+      getCredential: () => "test-key",
+      probeOpenAiLikeEndpoint,
+      promptValidationRecovery,
+    });
+
+    try {
+      await expect(
+        helpers.validateCustomOpenAiLikeSelection(
+          "Custom endpoint",
+          "https://compatible.example/v1",
+          "reasoning-model",
+          "COMPATIBLE_API_KEY",
+        ),
+      ).resolves.toEqual({ ok: false, retry: "selection" });
+      expect(probeOpenAiLikeEndpoint).toHaveBeenCalledWith(
+        "https://compatible.example/v1",
+        "reasoning-model",
+        "test-key",
+        {
+          requireResponsesToolCalling: false,
+          skipResponsesProbe: true,
+          probeStreaming: false,
+        },
+      );
+    } finally {
+      error.mockRestore();
+      vi.unstubAllEnvs();
+    }
+  });
 });

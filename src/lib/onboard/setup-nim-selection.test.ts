@@ -71,6 +71,8 @@ describe("createRemoteModelValidator", () => {
     state.endpointUrl = "https://compatible.example/v1";
     state.model = "model-a";
     let calledEndpoint: string | null = null;
+    let configuredReasoning = false;
+    const logLines: string[] = [];
     const { validateSelectedRemoteModel } = createRemoteModelValidator({
       OPENAI_ENDPOINT_URL: "https://default-openai.example/v1",
       ANTHROPIC_ENDPOINT_URL: "https://default-anthropic.example/v1",
@@ -89,6 +91,11 @@ describe("createRemoteModelValidator", () => {
       shouldRequireResponsesToolCalling: () => false,
       shouldSkipResponsesProbe: () => false,
       getProbeAuthMode: () => undefined,
+      configureCompatibleEndpointReasoning: async () => {
+        configuredReasoning = true;
+        return "true";
+      },
+      log: (message) => logLines.push(message),
     });
 
     const result = await validateSelectedRemoteModel({
@@ -105,6 +112,11 @@ describe("createRemoteModelValidator", () => {
     assert.equal(result, "selected");
     assert.equal(calledEndpoint, "https://compatible.example/v1");
     assert.equal(state.preferredInferenceApi, "openai-completions");
+    assert.equal(state.compatibleEndpointReasoning, "true");
+    assert.equal(configuredReasoning, true);
+    assert.deepEqual(logLines, [
+      "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+    ]);
   });
 
   it("maps provider validation model retries without mutating selected model state", async () => {

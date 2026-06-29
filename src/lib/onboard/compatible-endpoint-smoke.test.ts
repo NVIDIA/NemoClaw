@@ -81,7 +81,7 @@ describe("compatible endpoint sandbox smoke helpers", () => {
     expect(script).toContain("INFERENCE_SMOKE_OK");
     expect(script).toContain("models.providers.inference");
     expect(script).toContain("https://inference.local/v1/chat/completions");
-    expect(script).toContain("INITIAL_MAX_TOKENS=256");
+    expect(script).toContain("INITIAL_MAX_TOKENS=512");
     expect(script).toContain("RETRY_MAX_TOKENS=1024");
     expect(script).toContain("SMOKE_ATTEMPTS=3");
     expect(script).toContain("SMOKE_REQUEST_TIMEOUT_SECONDS=60");
