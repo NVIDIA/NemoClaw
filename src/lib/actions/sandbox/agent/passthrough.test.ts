@@ -447,6 +447,58 @@ describe("runAgentPassthrough", () => {
     );
   });
 
+  it("emits a shields-relock warning with timeout when shields auto-relocked recently (#5922)", async () => {
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { writes, proc } = makeProcMock();
+    await runAgentPassthrough(
+      "alpha",
+      { extraArgs: ["--agent", "main", "-m", "hi"] },
+      {
+        process: proc,
+        getRecentShieldsAutoRestore: () => ({
+          timestamp: new Date().toISOString(),
+          timeoutSeconds: 20,
+        }),
+      },
+    );
+    expect(execMock).toHaveBeenCalled();
+    const all = writes.join("");
+    expect(all).toMatch(/[Ss]hields auto-relocked after 20s/);
+    expect(all).toMatch(/shields down --timeout 20s/);
+  });
+
+  it("emits a shields-relock warning with fallback timeout when timeoutSeconds is null (#5922)", async () => {
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { writes, proc } = makeProcMock();
+    await runAgentPassthrough(
+      "alpha",
+      { extraArgs: ["--agent", "main", "-m", "hi"] },
+      {
+        process: proc,
+        getRecentShieldsAutoRestore: () => ({
+          timestamp: new Date().toISOString(),
+          timeoutSeconds: null,
+        }),
+      },
+    );
+    expect(execMock).toHaveBeenCalled();
+    const all = writes.join("");
+    expect(all).toMatch(/[Ss]hields auto-relocked/);
+    expect(all).toMatch(/shields down --timeout 60s/);
+  });
+
+  it("emits no shields warning when there was no recent auto-restore (#5922)", async () => {
+    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
+    const { writes } = makeProcMock();
+    await runAgentPassthrough(
+      "alpha",
+      { extraArgs: ["--agent", "main", "-m", "hi"] },
+      { getRecentShieldsAutoRestore: () => null },
+    );
+    expect(execMock).toHaveBeenCalled();
+    expect(writes.join("")).not.toMatch(/[Ss]hields auto-relocked/);
+  });
+
   it("rejects with exit 1 + recovery hints when sandbox phase is non-Ready", async () => {
     ensureLiveMock.mockResolvedValueOnce({ output: "Phase: Error" });
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });

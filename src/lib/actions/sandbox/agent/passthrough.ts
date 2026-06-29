@@ -89,6 +89,7 @@
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
+import { type ShieldsAutoRestoreEvent, readRecentShieldsAutoRestore } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
@@ -127,6 +128,7 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
+  getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreEvent | null;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -413,6 +415,21 @@ export async function runAgentPassthrough(
   }
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
+  }
+  const checkShields =
+    deps.getRecentShieldsAutoRestore ??
+    ((name: string) => readRecentShieldsAutoRestore(name, 10 * 60 * 1000));
+  const relock = checkShields(sandboxName);
+  if (relock) {
+    const afterPart =
+      relock.timeoutSeconds !== null ? ` after ${String(relock.timeoutSeconds)}s` : "";
+    const timeoutSuggestion =
+      relock.timeoutSeconds !== null
+        ? `--timeout ${String(relock.timeoutSeconds)}s`
+        : "--timeout 60s";
+    proc.stderr.write(
+      `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${sandboxName} shields down ${timeoutSuggestion}\` to extend.\n`,
+    );
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;

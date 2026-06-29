@@ -3,6 +3,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
+import { readRecentShieldsAutoRestore } from "./audit";
 import path from "node:path";
 import os from "node:os";
 
@@ -114,5 +115,63 @@ describe("shields-audit", () => {
     expect(line).not.toContain("nvapi-");
     expect(line).not.toContain("ghp_");
     expect(line).not.toContain("sk-");
+  });
+});
+
+describe("readRecentShieldsAutoRestore", () => {
+  it("returns timestamp and timeoutSeconds when shields_down precedes shields_auto_restore (#5922)", () => {
+    const now = new Date().toISOString();
+    fs.appendFileSync(
+      auditPath,
+      JSON.stringify({
+        action: "shields_down",
+        sandbox: "alpha",
+        timestamp: new Date(Date.now() - 25 * 1000).toISOString(),
+        timeout_seconds: 20,
+      }) +
+        "\n" +
+        JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: now }) +
+        "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result?.timestamp).toBe(now);
+    expect(result?.timeoutSeconds).toBe(20);
+  });
+
+  it("returns timestamp with null timeoutSeconds when no shields_down entry exists (#5922)", () => {
+    const now = new Date().toISOString();
+    fs.appendFileSync(
+      auditPath,
+      JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: now }) + "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result?.timestamp).toBe(now);
+    expect(result?.timeoutSeconds).toBeNull();
+  });
+
+  it("returns null when the most recent shields_auto_restore entry is older than the window (#5922)", () => {
+    const old = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    fs.appendFileSync(
+      auditPath,
+      JSON.stringify({ action: "shields_auto_restore", sandbox: "alpha", timestamp: old }) + "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the recent shields_auto_restore entry is for a different sandbox (#5922)", () => {
+    const now = new Date().toISOString();
+    fs.appendFileSync(
+      auditPath,
+      JSON.stringify({ action: "shields_auto_restore", sandbox: "other-sb", timestamp: now }) +
+        "\n",
+    );
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the audit file does not exist (#5922)", () => {
+    const result = readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath);
+    expect(result).toBeNull();
   });
 });
