@@ -635,6 +635,35 @@ describe("credentials oclif commands", () => {
     expect(output.stderr).toContain("delete failed");
   });
 
+  it("credentials add rejects --config values that look secret-shaped", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              "region=tvly-secret-shaped-12345",
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("looks secret-shaped");
+      expect(output.stderr).not.toContain("tvly-secret-shaped-12345");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
   it("credentials reset cleans local state when the gateway provider is already absent", async () => {
     const forgetCalls: string[] = [];
     installRuntimeBridge({
@@ -646,7 +675,9 @@ describe("credentials oclif commands", () => {
     });
     const { CredentialsResetCommand } = loadCommands();
 
-    const output = await captureOutput(() => CredentialsResetCommand.run(["tavily-search", "--yes"]));
+    const output = await captureOutput(() =>
+      CredentialsResetCommand.run(["tavily-search", "--yes"]),
+    );
 
     expect(forgetCalls).toEqual(["tavily-search"]);
     expect(output.stdout).toContain("already absent");

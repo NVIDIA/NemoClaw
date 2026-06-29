@@ -80,7 +80,8 @@ NemoClaw intentionally does not preserve `.env` or `.mcp.json` because users may
 
 ## Optional Web Search
 
-Deep Agents Code uses Tavily web search when you provide a Tavily credential in the runtime environment.
+Deep Agents Code can reach Tavily web search once you register a Tavily credential with the OpenShell gateway on the host.
+NemoClaw never accepts the raw key inside the sandbox, in `.env`, or in Deep Agents config files; the gateway injects it at egress instead.
 NemoClaw does not enable Tavily or LangSmith by default for this harness.
 The sandbox policy denies `api.tavily.com` and `api.smith.langchain.com` until you opt in.
 

@@ -323,10 +323,13 @@ export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
+const EXTRA_PROVIDER_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9._-]{0,127}$/;
+
 function normalizeExtraProviders(input: unknown): string[] | undefined {
   if (!Array.isArray(input)) return undefined;
   const cleaned = input.filter(
-    (value): value is string => typeof value === "string" && value !== "",
+    (value): value is string =>
+      typeof value === "string" && EXTRA_PROVIDER_NAME_PATTERN.test(value),
   );
   const deduped = [...new Set(cleaned)].sort();
   return deduped.length > 0 ? deduped : undefined;
@@ -558,6 +561,7 @@ export function listExtraProviders(): string[] {
 }
 
 export function addExtraProvider(name: string): boolean {
+  if (!EXTRA_PROVIDER_NAME_PATTERN.test(name)) return false;
   return withLock(() => {
     const data = load();
     const existing = new Set(data.extraProviders ?? []);

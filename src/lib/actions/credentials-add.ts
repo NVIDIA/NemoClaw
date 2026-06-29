@@ -5,6 +5,7 @@ import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../credentials/command-support";
 import { redact } from "../security/redact";
+import { SECRET_PATTERNS } from "../security/secret-patterns";
 import { recordExtraProvider, runOpenshellProviderCommand } from "./global";
 
 export type CredentialsAddInput = {
@@ -109,6 +110,16 @@ export async function runCredentialsAddAction(
         `  --config '${key}' looks credential-shaped. Use --credential <ENV_NAME> instead so the value`,
         "  stays in the host environment and never enters argv.",
       ]);
+    }
+    const value = entry.slice(eq + 1);
+    for (const pattern of SECRET_PATTERNS) {
+      pattern.lastIndex = 0;
+      if (pattern.test(value)) {
+        return fail([
+          `  --config '${key}' value looks secret-shaped. Use --credential <ENV_NAME> for credentials,`,
+          "  not --config; non-secret config values only.",
+        ]);
+      }
     }
   }
 
