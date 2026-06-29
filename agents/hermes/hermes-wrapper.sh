@@ -51,7 +51,14 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     exit 127
   }
   "$REAL_HERMES" "$@" | "$PYTHON3" "$GUARD" mask-config-output
-  exit "${PIPESTATUS[0]}"
+  statuses=("${PIPESTATUS[@]}")
+  hermes_status="${statuses[0]}"
+  masker_status="${statuses[1]}"
+  if [ "$masker_status" -ne 0 ]; then
+    echo "[SECURITY] Refusing hermes config show: output masker failed" >&2
+    exit "$masker_status"
+  fi
+  exit "$hermes_status"
 fi
 
 if [ "${1:-}" = "gateway" ]; then

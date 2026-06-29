@@ -193,10 +193,10 @@ _SECRET_FIELD_RE = re.compile(
 _MASK_PY = "sk-****"
 # Python dict ('key': 'value'), JSON ("key": "value"), and unquoted YAML/env (key: value or key=value).
 _PY_DICT_RE = re.compile(
-    r"(?P<lead>'(?P<key>[A-Za-z_][A-Za-z0-9_]*)'[ \t]*:[ \t]*)'[^']*'"
+    r"(?P<lead>'(?P<key>[A-Za-z_][A-Za-z0-9_-]*)'[ \t]*:[ \t]*)'[^']*'"
 )
 _JSON_RE = re.compile(
-    r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_]*)\"[ \t]*:[ \t]*)\"[^\"]*\""
+    r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\"[ \t]*:[ \t]*)\"[^\"]*\""
 )
 _UNQUOTED_RE = re.compile(
     r"(?P<lead>(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*)"

@@ -56,12 +56,24 @@ type StubBehaviour = {
 function runWrapper(
   args: string[],
   env: Record<string, string>,
-  opts: { shadowPython?: boolean; stub?: StubBehaviour } = {},
+  opts: {
+    shadowPython?: boolean;
+    stub?: StubBehaviour;
+    validatorScript?: string;
+  } = {},
 ): WrapperRun {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-"));
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-    fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+    if (opts.validatorScript) {
+      fs.writeFileSync(
+        path.join(dir, "validate-env-secret-boundary.py"),
+        opts.validatorScript,
+        { mode: 0o755 },
+      );
+    } else {
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+    }
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
 
     const marker = path.join(dir, "real-invoked.txt");
@@ -274,6 +286,46 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("sk-could-be-mistaken");
     expect(run.stdout).toContain("https://api.example.com/sk-not-a-secret");
     expect(run.stdout).toContain("default: meta/llama-3.1-8b-instruct");
+  });
+
+  it("masks hyphenated quoted secret-key fields (api-key, access-token)", () => {
+    const fixture = [
+      "{'api-key': 'sk-OPENSHELL-PROXY-REWRITE'}",
+      '{"access-token": "leaked-access-token-12345"}',
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      { stub: { stdout: fixture, exitCode: 0 } },
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).not.toContain("leaked-access-token-12345");
+    expect(run.stdout).toContain("'api-key': 'sk-****'");
+    expect(run.stdout).toContain('"access-token": "sk-****"');
+  });
+
+  it("fails closed when the masker exits non-zero even though hermes succeeded", () => {
+    const failingValidator = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      'sys.stderr.write("masker boom\\n")',
+      "sys.exit(2)",
+      "",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: { stdout: "api_key: sk-OPENSHELL-PROXY-REWRITE", exitCode: 0 },
+        validatorScript: failingValidator,
+      },
+    );
+
+    expect(run.status).not.toBe(0);
+    expect(run.stderr).toContain("output masker failed");
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
   });
 
   it("does not mask api_key mentions inside YAML comments", () => {
