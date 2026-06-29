@@ -13,7 +13,7 @@ export default class SandboxMcpCommand extends NemoClawCommand {
   static usage = ["<name> <add|list|status|restart|remove> [args...]"];
   static examples = [
     "<%= config.bin %> sandbox mcp alpha list",
-    "<%= config.bin %> sandbox mcp alpha add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_TOKEN",
+    "<%= config.bin %> sandbox mcp alpha add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN",
     "<%= config.bin %> sandbox mcp alpha status github --json",
     "<%= config.bin %> sandbox mcp alpha remove github",
   ];

@@ -44,9 +44,9 @@ Use the same workflow for OpenClaw, Hermes, and LangChain Deep Agents Code sandb
 NemoClaw selects the agent-specific adapter from the sandbox registry.
 
 ```bash
-export GITHUB_TOKEN=ghp_...
-$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_TOKEN
-unset GITHUB_TOKEN
+export GITHUB_MCP_TOKEN=ghp_...
+$$nemoclaw my-sandbox mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
+unset GITHUB_MCP_TOKEN
 ```
 
 The assignment above is illustrative.
@@ -59,7 +59,7 @@ Do not reuse OpenShell's Google Cloud compatibility names as MCP bearer keys.
 NemoClaw rejects `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GCP_LOCATION`, `GCP_SERVICE_ACCOUNT_EMAIL`, `GOOSE_PROVIDER`, `ANTHROPIC_VERTEX_PROJECT_ID`, and `VERTEX_LOCATION` because OpenShell exposes those non-secret configuration names as child-process values.
 NemoClaw also rejects `GCE_METADATA_HOST`, which OpenShell rewrites for its metadata emulator.
 Choose a dedicated name such as `MY_SERVICE_MCP_TOKEN`.
-NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands.
+NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands. Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well because OpenShell attaches provider keys to fresh sandbox execs; use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
 Every endpoint must use HTTPS, including endpoints reached through an OpenShell host alias.
@@ -104,7 +104,7 @@ mcp_servers:
   github:
     url: https://api.githubcopilot.com/mcp/
     headers:
-      Authorization: Bearer openshell:resolve:env:GITHUB_TOKEN
+      Authorization: Bearer openshell:resolve:env:GITHUB_MCP_TOKEN
 ```
 
 Hermes config changes and gateway reloads stay inside the sandbox.
@@ -123,14 +123,14 @@ Deep Agents Code `0.1.12` treats the sandbox-root `.mcp.json` as project configu
       "type": "http",
       "url": "https://api.githubcopilot.com/mcp/",
       "headers": {
-        "Authorization": "Bearer openshell:resolve:env:GITHUB_TOKEN"
+        "Authorization": "Bearer openshell:resolve:env:GITHUB_MCP_TOKEN"
       }
     }
   }
 }
 ```
 
-External service keys such as `GITHUB_TOKEN` remain in OpenShell provider state, not in sandbox files or NemoClaw's sandbox registry.
+External service keys such as `GITHUB_MCP_TOKEN` remain in OpenShell provider state, not in sandbox files or NemoClaw's sandbox registry.
 
 ## Operate MCP Servers
 
@@ -152,9 +152,9 @@ The JSON value `support.mode: "bridge"` identifies the agent's config-adapter ca
 Export the replacement value under the same host environment name used by `mcp add`, then restart that managed server:
 
 ```bash
-export GITHUB_TOKEN='replacement-value'
+export GITHUB_MCP_TOKEN='replacement-value'
 $$nemoclaw my-sandbox mcp restart github
-unset GITHUB_TOKEN
+unset GITHUB_MCP_TOKEN
 ```
 
 `restart` requires a successful OpenShell provider update, waits until the sandbox has received a new opaque provider revision, reapplies the generated policy, and refreshes the agent adapter.

@@ -1020,9 +1020,9 @@ The sandbox client connects directly through OpenShell's existing egress path, a
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
 
 ```bash
-export GITHUB_TOKEN=ghp_...
-nemohermes my-assistant mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_TOKEN
-unset GITHUB_TOKEN
+export GITHUB_MCP_TOKEN=ghp_...
+nemohermes my-assistant mcp add github --url https://api.githubcopilot.com/mcp/ --env GITHUB_MCP_TOKEN
+unset GITHUB_MCP_TOKEN
 ```
 
 ### `nemohermes <name> mcp status`

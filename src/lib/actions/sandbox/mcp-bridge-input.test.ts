@@ -91,6 +91,45 @@ describe("MCP CLI parsing", () => {
     }
   });
 
+  it("rejects sandbox runtime-control names as MCP credentials", () => {
+    for (const name of [
+      "BASH_ENV",
+      "API_SERVER_KEY",
+      "NEMOCLAW_DASHBOARD_PORT",
+      "OPENCLAW_GATEWAY_URL",
+      "OPENAI_BASE_URL",
+      "HERMES_HOME",
+      "DEEPAGENTS_CONFIG_PATH",
+      "LANGCHAIN_TRACING_V2",
+      "ENV",
+      "LD_PRELOAD",
+      "DYLD_INSERT_LIBRARIES",
+      "GLIBC_TUNABLES",
+      "NODE_OPTIONS",
+      "PYTHONHOME",
+      "PYTHONPATH",
+      "RUBYOPT",
+      "PERL5OPT",
+      "JAVA_TOOL_OPTIONS",
+      "_JAVA_OPTIONS",
+      "CLASSPATH",
+      "VIRTUAL_ENV",
+      "UV_PROJECT_ENVIRONMENT",
+    ]) {
+      expect(() =>
+        parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
+      ).toThrow(/reserved for sandbox runtime control/);
+      expect(() => resolveCredentialEnv([{ name, value: "host-only-secret" }])).toThrow(
+        /could alter or prevent agent commands/,
+      );
+      expect(() =>
+        buildMcpBridgeProviderArgs("create", "provider", [{ name }], {
+          [name]: "host-only-secret",
+        }),
+      ).toThrow(/reserved for sandbox runtime control/);
+    }
+  });
+
   it("rejects host stdio commands", () => {
     expect(() =>
       parseMcpAddArgs([

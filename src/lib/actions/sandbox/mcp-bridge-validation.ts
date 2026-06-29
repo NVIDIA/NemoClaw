@@ -36,6 +36,53 @@ const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set([
   "VERTEX_LOCATION",
 ]);
 const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(["GCE_METADATA_HOST"]);
+// OpenShell attaches provider keys to every fresh sandbox exec. A placeholder
+// under one of these names can alter a loader, shell, or supported agent
+// runtime before the requested command starts (for example, PYTHONHOME makes
+// Python fail during initialization). Require operators to use a dedicated
+// service credential alias instead of a process-control name.
+const SANDBOX_RUNTIME_CONTROL_ENV_KEYS = new Set([
+  "_JAVA_OPTIONS",
+  "API_SERVER_KEY",
+  "BASH_ENV",
+  "BASHOPTS",
+  "CDPATH",
+  "CLASSPATH",
+  "CONDA_PREFIX",
+  "ENV",
+  "GCONV_PATH",
+  "GLOBIGNORE",
+  "IFS",
+  "LOCPATH",
+  "NLSPATH",
+  "PROMPT_COMMAND",
+  "PS4",
+  "SHELLOPTS",
+  "VIRTUAL_ENV",
+  "ZDOTDIR",
+]);
+const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = [
+  "DEEPAGENTS_",
+  "DYLD_",
+  "GATEWAY_",
+  "GLIBC_",
+  "HERMES_",
+  "JAVA_",
+  "JDK_",
+  "LANGCHAIN_",
+  "LANGGRAPH_",
+  "LANGSMITH_",
+  "LD_",
+  "MALLOC_",
+  "NEMOCLAW_",
+  "NODE_",
+  "OPENAI_",
+  "OPENCLAW_",
+  "PERL",
+  "PYTHON",
+  "RUBY",
+  "UV_",
+];
 const MCP_PROVIDER_HASH_BYTES = 8;
 
 export function validateSandboxName(name: string): void {
@@ -78,6 +125,15 @@ export function validateMcpCredentialEnvName(name: string): void {
   if (OPENSHELL_REWRITTEN_CHILD_ENV_KEYS.has(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is rewritten by OpenShell's Google Cloud metadata compatibility path. Use a distinct secret name so credential attachment remains deterministic.`,
+      2,
+    );
+  }
+  if (
+    SANDBOX_RUNTIME_CONTROL_ENV_KEYS.has(name) ||
+    SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))
+  ) {
+    throw new McpBridgeError(
+      `MCP credential environment name '${name}' is reserved for sandbox runtime control and could alter or prevent agent commands. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
       2,
     );
   }
