@@ -3,7 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
@@ -14,11 +14,14 @@ import {
   cleanupHermesSwitch,
   hostedInstallModel,
   installHermes,
+  openshellGatewayName,
   runHermesInferenceSetWithRetry,
   SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
 
 describe("Hermes inference switch command shape", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   function matchesApiKeyShape(line: string): boolean {
     return (
       spawnSync("grep", ["-Eq", API_KEY_SHAPE_PATTERN], {
@@ -87,6 +90,25 @@ describe("Hermes inference switch command shape", () => {
     expect(openshell.mock.calls.map(([args]) => args)).toEqual([
       ["sandbox", "delete", SANDBOX_NAME],
       ["gateway", "destroy", "-g", "nemoclaw"],
+    ]);
+  });
+
+  it("resets the configured OpenShell gateway", async () => {
+    vi.stubEnv("OPENSHELL_GATEWAY", "alternate-gateway");
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const openshell = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await cleanupHermesSwitch(
+      { command } as unknown as HostCliClient,
+      { openshell } as unknown as SandboxClient,
+    );
+
+    expect(openshellGatewayName()).toBe("alternate-gateway");
+    expect(openshell.mock.calls.at(-1)?.[0]).toEqual([
+      "gateway",
+      "destroy",
+      "-g",
+      "alternate-gateway",
     ]);
   });
 

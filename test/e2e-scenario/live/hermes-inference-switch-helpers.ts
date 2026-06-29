@@ -51,6 +51,10 @@ export function hostedInstallModel(runtimeEnv: NodeJS.ProcessEnv = process.env):
   );
 }
 
+export function openshellGatewayName(runtimeEnv: NodeJS.ProcessEnv = process.env): string {
+  return runtimeEnv.OPENSHELL_GATEWAY ?? "nemoclaw";
+}
+
 export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = {
     ...buildAvailabilityProbeEnv(),
@@ -59,7 +63,7 @@ export function env(apiKey?: string, extra: NodeJS.ProcessEnv = {}): NodeJS.Proc
     NEMOCLAW_NON_INTERACTIVE: "1",
     NEMOCLAW_RECREATE_SANDBOX: "1",
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
-    OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
+    OPENSHELL_GATEWAY: openshellGatewayName(),
   };
   apiKey && Object.assign(out, { NVIDIA_INFERENCE_API_KEY: apiKey });
   USE_COMPATIBLE_HOSTED &&
@@ -130,7 +134,7 @@ export async function cleanupHermesSwitch(
     }),
   );
   await bestEffort(() =>
-    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+    sandbox.openshell(["gateway", "destroy", "-g", openshellGatewayName()], {
       artifactName: "cleanup-openshell-gateway-destroy",
       env: env(),
       timeoutMs: 120_000,
