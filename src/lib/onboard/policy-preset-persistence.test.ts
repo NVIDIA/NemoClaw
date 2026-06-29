@@ -225,17 +225,28 @@ describe("persistFinalizedPolicyPresets (#4621)", () => {
   // the REAL built-in preset catalog proves Discord and Slack are recognized as
   // built-ins and are written back to the registry, not filtered out.
   it("persists enabled messaging channel presets (Discord, Slack) to the registry (#5967)", () => {
+    // Model the registry as observable state and read it back through the same
+    // boundary policy-list uses (registry.getSandbox().policies) rather than
+    // inspecting updateSandbox's call shape.
+    const entry = { name: "sb", policies: ["npm"] } as Partial<registry.SandboxEntry> & {
+      policies: string[];
+      policyPresetsFinalized?: boolean;
+    };
     vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
-    const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+    vi.spyOn(registry, "getSandbox").mockImplementation((name) =>
+      name === "sb" ? (entry as registry.SandboxEntry) : null,
+    );
+    vi.spyOn(registry, "updateSandbox").mockImplementation((_name, fields) => {
+      Object.assign(entry, fields);
+      return true;
+    });
 
     persistFinalizedPolicyPresets("sb", ["npm", "pypi", "discord", "slack"]);
 
-    expect(updateSandbox).toHaveBeenCalledTimes(1);
-    const [, fields] = updateSandbox.mock.calls[0] as [
-      string,
-      { policies: string[]; policyPresetsFinalized: boolean },
-    ];
-    expect(fields.policyPresetsFinalized).toBe(true);
-    expect([...fields.policies].sort()).toEqual(["discord", "npm", "pypi", "slack"]);
+    const stored = registry.getSandbox("sb");
+    expect(stored?.policyPresetsFinalized).toBe(true);
+    // Discord and Slack survive the built-in filter and are stored where
+    // policy-list reads them — the #5967 registry-persistence guarantee.
+    expect([...(stored?.policies ?? [])].sort()).toEqual(["discord", "npm", "pypi", "slack"]);
   });
 });
