@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 type Step = {
@@ -53,6 +54,16 @@ function dockerHubAuthStep(job: Job): Step | undefined {
 }
 
 describe("MCP OpenShell workflow boundary", () => {
+  it("keeps the setup docs aligned with the stable default", () => {
+    const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
+
+    expect(setupDocs).toContain("defaults to the pinned OpenShell v0.0.72 stable release");
+    expect(setupDocs).toContain(
+      "The explicit dev channel is reserved for current-main compatibility coverage.",
+    );
+    expect(setupDocs).not.toContain("requires an OpenShell build from current main");
+  });
+
   it("defaults to stable while keeping current-main dev coverage selectable", () => {
     const nightly = workflow(".github/workflows/nightly-e2e.yaml");
     const reusable = workflow(".github/workflows/e2e-script.yaml");

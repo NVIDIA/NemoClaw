@@ -21,7 +21,7 @@ The integration has three parts:
 - An agent adapter writes the MCP endpoint into OpenClaw, Hermes, or LangChain Deep Agents Code config.
 
 This integration depends on the OpenShell MCP/JSON-RPC L7 policy support from NVIDIA/OpenShell#1865.
-NemoClaw requires an OpenShell build from current main that exposes native `protocol: mcp` policy handling and provider-backed credential replacement before it enables managed MCP servers.
+NemoClaw defaults to the pinned OpenShell v0.0.72 stable release, which exposes native `protocol: mcp` policy handling and provider-backed credential replacement. The explicit dev channel is reserved for current-main compatibility coverage.
 
 NemoClaw accepts Streamable HTTP MCP endpoints only.
 NemoClaw does not launch an MCP server, stdio adapter, bridge, credential proxy, data-plane relay, or listener on the host.
@@ -82,10 +82,10 @@ For the normal MCP client path, OpenShell evaluates the effective network policy
 The generated MCP policy grants only the configured destination, path, adapter binaries, pinned addresses, and explicit MCP method profile.
 NemoClaw accepts only canonical HTTPS MCP URLs and writes the credential placeholder only into the `Authorization` header.
 
-OpenShell current main attaches static provider credentials at sandbox scope; it does not reserve a credential key exclusively for one endpoint, expose an immutable provider binding on an attachment, provide a `tls: require` policy mode, bind the HTTP `Host` header to the policy destination, or include query parameters in MCP path matching.
+OpenShell v0.0.72 and current main attach static provider credentials at sandbox scope; they do not reserve a credential key exclusively for one endpoint, expose an immutable provider binding on an attachment, provide a `tls: require` policy mode, bind the HTTP `Host` header to the policy destination, or include query parameters in MCP path matching.
 Consequently, the generated policy narrows the managed MCP client path but cannot prevent a separate broader inspected-HTTP policy in the same sandbox from resolving an attached placeholder.
 NemoClaw rejects credential-key reuse between its managed MCP servers and requires a dedicated provider for each definition, but operators must also avoid granting broader routes to the same adapter runtime.
-The generated agent configuration uses the canonical HTTPS URL, but current-main policy cannot stop malicious code running as an allowed adapter binary from deliberately changing the scheme, Host header, or query string.
+The generated agent configuration uses the canonical HTTPS URL, but the supported OpenShell policy contract cannot stop malicious code running as an allowed adapter binary from deliberately changing the scheme, Host header, or query string.
 Use a dedicated, least-privilege token and a unique environment key for every server.
 
 Use an MCP service you trust with the credential it receives.
@@ -181,7 +181,7 @@ A later `mcp restart` can retry an incomplete post-rebuild restore.
 If deletion is refused, NemoClaw restores the previous MCP state.
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
-OpenShell current main still performs update, attach, detach, and delete by mutable provider name, so those checks are not an atomic identity binding; do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
+OpenShell v0.0.72 and current main still perform update, attach, detach, and delete by mutable provider name, so those checks are not an atomic identity binding; do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
 
 `remove --force` performs best-effort cleanup only where the recorded metadata still matches at inspection time.
 It never deletes an unowned or drifted same-key live policy.

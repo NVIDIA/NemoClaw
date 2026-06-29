@@ -188,6 +188,11 @@ export function computeOpenshellInstallEnv(
   if (blueprintMin) overlay.NEMOCLAW_OPENSHELL_MIN_VERSION = blueprintMin;
   if (blueprintMax) overlay.NEMOCLAW_OPENSHELL_MAX_VERSION = blueprintMax;
   if (pin.kind === "pin") overlay.NEMOCLAW_OPENSHELL_PIN_VERSION = pin.version;
+  if (channel === "dev") {
+    const env = { ...baseEnv, ...overlay };
+    delete env.NEMOCLAW_OPENSHELL_PIN_VERSION;
+    return { env };
+  }
   return Object.keys(overlay).length === 0 ? { env: baseEnv } : { env: { ...baseEnv, ...overlay } };
 }
 

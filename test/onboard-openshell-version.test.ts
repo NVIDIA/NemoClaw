@@ -402,7 +402,10 @@ describe("computeOpenshellInstallEnv", () => {
   it("does not apply stable release discovery to the dev channel", () => {
     const channel = "dev";
     const result = pinModule.computeOpenshellInstallEnv(
-      { NEMOCLAW_OPENSHELL_CHANNEL: channel },
+      {
+        NEMOCLAW_OPENSHELL_CHANNEL: channel,
+        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71",
+      },
       {
         getBlueprintMinOpenshellVersion: () => "0.0.72",
         getBlueprintMaxOpenshellVersion: () => "0.0.72",
