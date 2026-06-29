@@ -17,6 +17,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import source directly so tests cannot pass against a stale build.
+import * as gatewayPortRelease from "./gateway-port-release";
 import { resolveDefaultSandboxName } from "./service-command";
 import {
   getServiceStatuses,
@@ -432,10 +433,17 @@ describe("stopAll", () => {
   let pidDir: string;
   let spawnSyncCalls: Array<{ command: string; args: readonly string[] }>;
   let originalSpawnSync: typeof childProcess.spawnSync;
+  let releaseGatewaySpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-test-"));
     spawnSyncCalls = [];
+    // Stub the gateway-port release so unit tests never probe/kill a real
+    // host gateway bound to port 8080. Its own behavior is covered by
+    // gateway-port-release.test.ts.
+    releaseGatewaySpy = vi
+      .spyOn(gatewayPortRelease, "releaseManagedGatewayPort")
+      .mockReturnValue({ port: 8080, released: true, stopped: [], remaining: [], scanned: false });
     originalSpawnSync = childProcess.spawnSync;
     // @ts-expect-error — partial mock signature is intentional.
     childProcess.spawnSync = (command: string, args: readonly string[]) => {
@@ -464,6 +472,7 @@ describe("stopAll", () => {
 
   afterEach(() => {
     childProcess.spawnSync = originalSpawnSync;
+    releaseGatewaySpy.mockRestore();
     delete require.cache[require.resolve(ollamaProxySourcePath)];
     rmSync(pidDir, { recursive: true, force: true });
   });
@@ -503,5 +512,23 @@ describe("stopAll", () => {
     );
     expect(psCall).toBeDefined();
     expect(psCall?.args).toContain("--max-time");
+  });
+
+  it("releases the NemoClaw-managed gateway port for the resolved sandbox (#5968)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir, sandboxName: "nemoclaw-5968" });
+    logSpy.mockRestore();
+
+    expect(releaseGatewaySpy).toHaveBeenCalledTimes(1);
+    expect(releaseGatewaySpy).toHaveBeenCalledWith({ sandboxName: "nemoclaw-5968" });
+  });
+
+  it("still releases the gateway port when no sandbox name is resolved (#5968)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    stopAll({ pidDir });
+    logSpy.mockRestore();
+
+    expect(releaseGatewaySpy).toHaveBeenCalledTimes(1);
+    expect(releaseGatewaySpy).toHaveBeenCalledWith({});
   });
 });

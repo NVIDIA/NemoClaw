@@ -22,6 +22,7 @@ import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding"
 import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
+import * as gatewayPortRelease from "./gateway-port-release";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -619,6 +620,20 @@ export function stopAll(opts: ServiceOptions = {}): void {
 
   // Stop host-side services.
   stopService(pidDir, "cloudflared");
+
+  // Release the NemoClaw-managed OpenShell gateway host port. Without this the
+  // host `openshell-gateway` process (notably on macOS) keeps port 8080 bound
+  // after `nemoclaw stop`, so a fresh onboard / port-conflict recovery cannot
+  // re-bind it (#5968). Best-effort: a stop must never fail because gateway
+  // teardown hit an edge case.
+  try {
+    gatewayPortRelease.releaseManagedGatewayPort(sandboxName ? { sandboxName } : {});
+  } catch (error) {
+    warn(
+      `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
+    );
+  }
+
   info("All services stopped.");
 }
 
