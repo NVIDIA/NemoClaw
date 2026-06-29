@@ -236,6 +236,11 @@ describe("MCP CLI parsing", () => {
     expect(() => normalizeMcpServerUrl("https://127.0.0.1:31337/mcp")).toThrow(
       /private, local, or special-use IP/,
     );
+    for (const host of ["2130706433", "0177.0.0.1", "0x7f.0.0.1", "localhost."]) {
+      expect(() => normalizeMcpServerUrl(`https://${host}:31337/mcp`)).toThrow(
+        /private, local, or special-use IP/,
+      );
+    }
     expect(() => normalizeMcpServerUrl("https://169.254.169.254/latest")).toThrow(
       /private, local, or special-use IP/,
     );
