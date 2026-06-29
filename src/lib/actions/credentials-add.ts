@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../credentials/command-support";
 import { redact } from "../security/redact";
 import { SECRET_PATTERNS } from "../security/secret-patterns";
+import { ROOT } from "../state/paths";
 import { recordExtraProvider, runOpenshellProviderCommand } from "./global";
 
 export type CredentialsAddInput = {
@@ -36,6 +40,35 @@ function ok(successLines: readonly string[]): CredentialsAddResult {
 
 function fail(failureLines: readonly string[], exitCode = 1): CredentialsAddResult {
   return { exitCode, successLines: [], failureLines };
+}
+
+function bundledProviderProfilePath(type: string): string {
+  return path.join(ROOT, "nemoclaw-blueprint", "provider-profiles", `${type.toLowerCase()}.yaml`);
+}
+
+function ensureBundledProviderProfile(type: string): CredentialsAddResult | null {
+  const profilePath = bundledProviderProfilePath(type);
+  if (!fs.existsSync(profilePath)) return null;
+
+  const result = runOpenshellProviderCommand(
+    ["provider", "profile", "import", "--file", profilePath],
+    {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    },
+  );
+  if (result.status === 0) return null;
+
+  const rawDiagnostic = `${String(result.stderr || "")} ${String(result.stdout || "")}`;
+  if (/already exists/i.test(rawDiagnostic)) return null;
+
+  const redactedDiagnostic = redact(rawDiagnostic).trim();
+  return fail([
+    `  Could not import bundled provider profile '${type}'.`,
+    "  Update OpenShell with scripts/install-openshell.sh and retry.",
+    ...(redactedDiagnostic ? [`  ${redactedDiagnostic}`] : []),
+  ]);
 }
 
 export async function runCredentialsAddAction(
@@ -130,6 +163,9 @@ export async function runCredentialsAddAction(
   if (!recovered) {
     return fail(recoveryFailureLines);
   }
+
+  const providerProfileFailure = ensureBundledProviderProfile(type);
+  if (providerProfileFailure) return providerProfileFailure;
 
   const openshellArgs: string[] = ["provider", "create", "--name", provider, "--type", type];
   if (fromExisting) {

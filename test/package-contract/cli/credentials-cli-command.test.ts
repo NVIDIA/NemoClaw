@@ -7,6 +7,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "../../..");
+const TAVILY_PROFILE_PATH = path.join(
+  REPO_ROOT,
+  "nemoclaw-blueprint",
+  "provider-profiles",
+  "tavily.yaml",
+);
 const COMMAND_PATHS = {
   common: path.join(REPO_ROOT, "dist", "lib", "credentials", "command-support.js"),
   credentials: path.join(REPO_ROOT, "dist", "commands", "credentials.js"),
@@ -324,6 +330,10 @@ describe("credentials oclif commands", () => {
 
       expect(calls).toEqual([
         {
+          args: ["provider", "profile", "import", "--file", TAVILY_PROFILE_PATH],
+          opts: { ignoreError: true, stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 },
+        },
+        {
           args: [
             "provider",
             "create",
@@ -349,7 +359,10 @@ describe("credentials oclif commands", () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
     const extraProviderCalls: string[] = [];
     installRuntimeBridge({
-      runOpenshell: () => ({ status: 1, stderr: "gateway unavailable" }),
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : { status: 1, stderr: "gateway unavailable" },
       recordExtraProvider: (name) => {
         extraProviderCalls.push(name);
         return true;
@@ -380,11 +393,15 @@ describe("credentials oclif commands", () => {
 
   it("credentials add redacts credential-shaped stderr on failure", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const leakedTavilyValue = `tvly-${"leaked-secret"}-9999`;
     installRuntimeBridge({
-      runOpenshell: () => ({
-        status: 1,
-        stderr: "auth failed: TAVILY_API_KEY=tvly-leaked-secret-9999 rejected",
-      }),
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : {
+              status: 1,
+              stderr: `auth failed: TAVILY_API_KEY=${leakedTavilyValue} rejected`,
+            },
     });
     const { CredentialsAddCommand } = loadCommands();
 
@@ -404,7 +421,7 @@ describe("credentials oclif commands", () => {
       );
 
       expect(output.stderr).toContain("Could not register provider 'tavily-search'");
-      expect(output.stderr).not.toContain("tvly-leaked-secret-9999");
+      expect(output.stderr).not.toContain(leakedTavilyValue);
     } finally {
       delete process.env.TAVILY_API_KEY;
     }
@@ -413,7 +430,10 @@ describe("credentials oclif commands", () => {
   it("credentials add reports an already-exists hint pointing at credentials reset", async () => {
     process.env.TAVILY_API_KEY = "tvly-test-12345";
     installRuntimeBridge({
-      runOpenshell: () => ({ status: 1, stderr: "provider 'tavily-search' already exists" }),
+      runOpenshell: (args) =>
+        args.includes("profile")
+          ? { status: 0, stdout: "" }
+          : { status: 1, stderr: "provider 'tavily-search' already exists" },
     });
     const { CredentialsAddCommand } = loadCommands();
 
@@ -434,6 +454,48 @@ describe("credentials oclif commands", () => {
 
       expect(output.stderr).toContain("is already registered");
       expect(output.stderr).toContain("credentials reset tavily-search --yes");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials add stops before provider create when bundled profile import fails", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    const leakedTavilyValue = `tvly-${"leaked"}-9999`;
+    const calls: OpenshellCall[] = [];
+    installRuntimeBridge({
+      runOpenshell: (args, opts) => {
+        calls.push({ args, opts });
+        return { status: 2, stderr: `schema rejected TAVILY_API_KEY=${leakedTavilyValue}` };
+      },
+    });
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "tavily-search",
+              "--type",
+              "tavily",
+              "--credential",
+              "TAVILY_API_KEY",
+            ]),
+          1,
+        ),
+      );
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.args).toEqual([
+        "provider",
+        "profile",
+        "import",
+        "--file",
+        TAVILY_PROFILE_PATH,
+      ]);
+      expect(output.stderr).toContain("Could not import bundled provider profile 'tavily'");
+      expect(output.stderr).not.toContain(leakedTavilyValue);
     } finally {
       delete process.env.TAVILY_API_KEY;
     }
