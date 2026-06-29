@@ -8,6 +8,7 @@ import YAML from "yaml";
 
 import { validateHermesDashboardWorkflowBoundary } from "./hermes-dashboard-workflow-boundary.mts";
 import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
+import { validateE2eOperationsWorkflowBoundary } from "./operations-workflow-boundary.mts";
 import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -4919,6 +4920,7 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   const errors: string[] = [];
   errors.push(...validateHermesDashboardWorkflowBoundary(workflowPath));
   errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
+  errors.push(...validateE2eOperationsWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);

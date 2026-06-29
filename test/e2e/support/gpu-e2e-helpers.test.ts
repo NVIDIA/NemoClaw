@@ -15,4 +15,10 @@ describe("GPU E2E helpers", () => {
   it("does not synthesize an Ollama model pull timeout outside workflow configuration", () => {
     expect(env({}, {}).NEMOCLAW_OLLAMA_PULL_TIMEOUT).toBeUndefined();
   });
+
+  it("forwards the workflow-owned trace directory through availability probes", () => {
+    expect(env({}, { NEMOCLAW_TRACE_DIR: "/tmp/nemoclaw-traces" }).NEMOCLAW_TRACE_DIR).toBe(
+      "/tmp/nemoclaw-traces",
+    );
+  });
 });

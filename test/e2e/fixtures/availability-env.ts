@@ -12,6 +12,7 @@ const AVAILABILITY_PROBE_EXTRA_ENV_KEYS = [
   "DOCKER_API_VERSION",
   "XDG_RUNTIME_DIR",
   "NEMOCLAW_OLLAMA_PULL_TIMEOUT",
+  "NEMOCLAW_TRACE_DIR",
 ];
 
 export function buildAvailabilityProbeEnv(

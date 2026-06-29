@@ -14,14 +14,9 @@ import {
   validateE2eWorkflowBoundary,
   validateFreeStandingWorkflowInventory,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
-
-function readWorkflow(): Record<string, unknown> {
-  return YAML.parse(
-    fs.readFileSync(path.join(process.cwd(), ".github/workflows/e2e.yaml"), "utf-8"),
-  ) as Record<string, unknown>;
-}
 
 function generateMatrixScript(): string {
   const workflow = readWorkflow();
@@ -1167,7 +1162,10 @@ jobs:
       renamedWorkflowPath,
       workflow.replace(/^  runtime-overrides:$/m, "  runtime-overrides-missing:"),
     );
-    fs.writeFileSync(missingReportNeedPath, workflow.replace("        runtime-overrides,\n", ""));
+    fs.writeFileSync(
+      missingReportNeedPath,
+      removeJobNeed(workflow, "report-to-pr", "runtime-overrides"),
+    );
 
     try {
       expect(validateE2eWorkflowBoundary(renamedWorkflowPath)).toContain(
@@ -1297,7 +1295,7 @@ jobs:
     );
     fs.writeFileSync(
       missingReportNeedPath,
-      workflow.replace("        messaging-compatible-endpoint,\n", ""),
+      removeJobNeed(workflow, "report-to-pr", "messaging-compatible-endpoint"),
     );
 
     try {
