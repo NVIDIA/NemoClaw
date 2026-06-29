@@ -19,7 +19,7 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { installMcpTestCaInSandbox } from "./mcp-bridge-sandbox.ts";
+import { installMcpTestCaInSandbox, isExpectedMcpCurlPolicyDenial } from "./mcp-bridge-sandbox.ts";
 import { startCompatibleMock, startFakeMcpHttpsServer } from "./mcp-bridge-servers.ts";
 
 const OPENCLAW_SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-mcp-bridge";
@@ -760,13 +760,15 @@ req.end(body);
       [
         "set -eu",
         `body='{"jsonrpc":"2.0","id":1,"method":"tools/list"}'`,
-        `code="$(curl -sS -o /tmp/nemoclaw-mcp-denied.out -w '%{http_code}' -X POST ${JSON.stringify(mcpUrl)} -H 'content-type: application/json' -H 'authorization: Bearer openshell:resolve:env:FAKE_MCP_SECRET' --data "$body")"`,
-        'if [ "$code" != "403" ]; then',
-        "  cat /tmp/nemoclaw-mcp-denied.out",
-        '  echo "expected OpenShell 403, got $code" >&2',
-        "  exit 1",
-        "fi",
+        "rm -f /tmp/nemoclaw-mcp-denied.out /tmp/nemoclaw-mcp-denied.err",
+        "set +e",
+        `code="$(curl -sS -o /tmp/nemoclaw-mcp-denied.out -w '%{http_code}' -X POST ${JSON.stringify(mcpUrl)} -H 'content-type: application/json' -H 'authorization: Bearer openshell:resolve:env:FAKE_MCP_SECRET' --data "$body" 2>/tmp/nemoclaw-mcp-denied.err)"`,
+        "curl_rc=$?",
+        "set -e",
         "cat /tmp/nemoclaw-mcp-denied.out 2>/dev/null || true",
+        "cat /tmp/nemoclaw-mcp-denied.err >&2",
+        'printf "NEMOCLAW_MCP_CURL_HTTP_CODE=%s\\n" "$code"',
+        'exit "$curl_rc"',
       ].join("\n"),
     ),
     {
@@ -775,7 +777,10 @@ req.end(body);
       timeoutMs: 60_000,
     },
   );
-  expectExitZero(deniedCurl, "non-allowlisted curl cannot call the MCP endpoint");
+  expect(
+    isExpectedMcpCurlPolicyDenial(deniedCurl),
+    `non-allowlisted curl must receive an OpenShell policy denial\nstdout:\n${deniedCurl.stdout}\nstderr:\n${deniedCurl.stderr}`,
+  ).toBe(true);
   expect(fakeMcp.requests.length).toBe(requestCountAfterAllowedNodeProof);
 
   const registryRaw = fs.existsSync(REGISTRY_FILE) ? fs.readFileSync(REGISTRY_FILE, "utf8") : "";

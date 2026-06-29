@@ -5,6 +5,29 @@ import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
+import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+
+const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
+
+/**
+ * Accept the two fail-closed shapes OpenShell can expose for a denied HTTPS
+ * request: an L7 HTTP 403, or curl's exit 56 for a CONNECT-level proxy 403.
+ */
+export function isExpectedMcpCurlPolicyDenial(
+  result: Pick<ShellProbeResult, "exitCode" | "stderr" | "stdout" | "timedOut">,
+): boolean {
+  if (result.timedOut) return false;
+
+  const httpCode = result.stdout.match(
+    new RegExp(`^${MCP_CURL_HTTP_CODE_MARKER}([0-9]{3})$`, "m"),
+  )?.[1];
+  if (result.exitCode === 0) return httpCode === "403";
+
+  return (
+    result.exitCode === 56 &&
+    /curl:\s*\(56\)\s*CONNECT tunnel failed,\s*response 403/i.test(result.stderr)
+  );
+}
 
 function requireMcpTestCaPath(): string {
   const caPath = process.env.NEMOCLAW_MCP_TLS_CA_CERT;
@@ -48,7 +71,7 @@ async function collectHermesRecoveryDiagnostics(
         "cat /run/nemoclaw/hermes-root-lifecycle 2>/dev/null || true",
         "echo '=== lifecycle processes ==='",
         "ps -eo user=,pid=,ppid=,stat=,args= | grep -E '[n]emoclaw-start|[h]ermes|[s]ocat' || true",
-        'for log in /tmp/nemoclaw-start.log /tmp/gateway-recovery.log /tmp/gateway.log /tmp/hermes-dashboard.log; do echo "=== ${log} ==="; if [ -f "$log" ] && [ ! -L "$log" ]; then tail -n 200 "$log"; else echo missing-or-unsafe; fi; done',
+        'for log in /tmp/nemoclaw-start.log /tmp/gateway-recovery.log /tmp/gateway.log /tmp/dashboard.log; do echo "=== ${log} ==="; if [ -f "$log" ] && [ ! -L "$log" ]; then tail -n 200 "$log"; else echo missing-or-unsafe; fi; done',
       ].join("\n"),
     ),
     {

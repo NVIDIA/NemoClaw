@@ -729,6 +729,77 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(fs.existsSync(ranMarker)).toBe(false);
   });
 
+  it("allows only exact same-name OpenShell env placeholders in runtime and dotenv inputs", () => {
+    const name = "GITHUB_MCP_TOKEN";
+    const validPlaceholders = [
+      `openshell:resolve:env:${name}`,
+      `openshell:resolve:env:v0_${name}`,
+      `openshell:resolve:env:v1442987827285932589_${name}`,
+    ];
+
+    for (const [index, placeholder] of validPlaceholders.entries()) {
+      const runtimeDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-runtime-${index}-`),
+      );
+      const runtimeFixture = makeWrapperFixture(runtimeDir);
+      const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], {
+        [name]: placeholder,
+      });
+      expect(runtimeResult.status, placeholder).toBe(0);
+      expect(runtimeResult.stdout).toContain("dcode-stub-ran");
+      expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(true);
+
+      const dotenvDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-dotenv-${index}-`),
+      );
+      const dotenvFixture = makeWrapperFixture(dotenvDir);
+      fs.writeFileSync(dotenvFixture.envFile, `${name}="${placeholder}"\n`, "utf8");
+      const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+      expect(dotenvResult.status, placeholder).toBe(0);
+      expect(dotenvResult.stdout).toContain("dcode-stub-ran");
+      expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(true);
+    }
+  });
+
+  it("rejects mismatched, malformed, wrapped, and raw credential placeholders", () => {
+    const invalidCases = [
+      { name: "MODEL_NAME", value: "openshell:resolve:env:OTHER_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12_OTHER_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v_MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12x_MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:v12__MODEL_NAME" },
+      { name: "MODEL_NAME", value: "Bearer openshell:resolve:env:MODEL_NAME" },
+      { name: "MODEL_NAME", value: "openshell:resolve:env:MODEL_NAME:suffix" },
+      { name: "MODEL-NAME", value: "openshell:resolve:env:MODEL-NAME" },
+      { name: "GITHUB_MCP_TOKEN", value: "opaqueRawCredentialValue12345" },
+    ];
+
+    for (const [index, { name, value }] of invalidCases.entries()) {
+      const runtimeDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-invalid-runtime-${index}-`),
+      );
+      const runtimeFixture = makeWrapperFixture(runtimeDir);
+      const runtimeResult = runWrapper(runtimeFixture.wrapperPath, ["-n", "hi"], {
+        [name]: value,
+      });
+      expect(runtimeResult.status, `runtime accepted ${value}`).not.toBe(0);
+      expect(runtimeResult.stderr).toContain(name);
+      expect(runtimeResult.stderr).not.toContain(value);
+      expect(fs.existsSync(runtimeFixture.ranMarker)).toBe(false);
+
+      const dotenvDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-dcode-placeholder-invalid-dotenv-${index}-`),
+      );
+      const dotenvFixture = makeWrapperFixture(dotenvDir);
+      fs.writeFileSync(dotenvFixture.envFile, `${name}=${value}\n`, "utf8");
+      const dotenvResult = runWrapper(dotenvFixture.wrapperPath, ["-n", "hi"], {});
+      expect(dotenvResult.status, `dotenv accepted ${value}`).not.toBe(0);
+      expect(dotenvResult.stderr).toContain(name);
+      expect(dotenvResult.stderr).not.toContain(value);
+      expect(fs.existsSync(dotenvFixture.ranMarker)).toBe(false);
+    }
+  });
+
   it("allows nemoclaw-managed messaging tokens whose values are intentionally credential-shaped", () => {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-wrapper-"));
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);

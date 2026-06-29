@@ -728,11 +728,13 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       stdio: "ignore",
     });
     const decoy = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
+    const helper = spawn("/bin/sleep", ["30"], { stdio: "ignore" });
 
-    const writeFakeProcess = (pid: number, argv: string[], startTime: string) => {
+    const writeFakeProcess = (pid: number, argv: string[], startTime: string, parentPid = "1") => {
       const procDir = path.join(procRoot, String(pid));
       fs.mkdirSync(procDir, { recursive: true });
       fs.writeFileSync(path.join(procDir, "cmdline"), `${argv.join("\0")}\0`);
+      fs.writeFileSync(path.join(procDir, "status"), `Name:\tbash\nPPid:\t${parentPid}\n`);
       fs.writeFileSync(
         path.join(procDir, "stat"),
         `${pid} (bash) S ${[...Array(18).fill("0"), startTime].join(" ")}\n`,
@@ -743,8 +745,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       expect(waitForPath(oldReady)).toBe(true);
       expect(oldManager.pid).toBeTypeOf("number");
       expect(decoy.pid).toBeTypeOf("number");
+      expect(helper.pid).toBeTypeOf("number");
       writeFakeProcess(oldManager.pid!, ["bash", manager], "101");
       writeFakeProcess(decoy.pid!, ["bash", manager, "true"], "202");
+      writeFakeProcess(helper.pid!, ["bash", manager], "303", String(oldManager.pid));
       const result = runRecovery({
         ...harness,
         validatorPath: path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
@@ -760,14 +764,17 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       ]);
       expect(decoy.killed).toBe(false);
       expect(decoy.exitCode).toBeNull();
+      expect(helper.killed).toBe(false);
+      expect(helper.exitCode).toBeNull();
     } finally {
       oldManager.kill("SIGKILL");
       decoy.kill("SIGKILL");
+      helper.kill("SIGKILL");
       removeTempDir(harness.tmp);
     }
   }, 20_000);
 
-  function runManagedTopologyProbe(managed: boolean) {
+  function runManagedTopologyProbe(managed: boolean, helperChildren = 0) {
     const harness = prepareRecoveryHarness(managed ? "managed-parent" : "bare-parent");
     const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");
     const proxyEnvFile = path.join(harness.tmp, "nemoclaw-proxy-env.sh");
@@ -798,6 +805,19 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       path.join(procRoot, parentPid, "cmdline"),
       managed ? `bash\0${path.join(harness.stubsDir, "nemoclaw-start")}\0` : "sleep\0infinity\0",
     );
+    fs.writeFileSync(path.join(procRoot, parentPid, "status"), "Name:\tbash\nPPid:\t1\n");
+    for (let index = 0; index < helperChildren; index += 1) {
+      const helperPid = String(333 + index);
+      fs.mkdirSync(path.join(procRoot, helperPid), { recursive: true });
+      fs.writeFileSync(
+        path.join(procRoot, helperPid, "cmdline"),
+        `bash\0${path.join(harness.stubsDir, "nemoclaw-start")}\0`,
+      );
+      fs.writeFileSync(
+        path.join(procRoot, helperPid, "status"),
+        `Name:\tbash\nPPid:\t${parentPid}\n`,
+      );
+    }
     writeStub(harness.stubsDir, "python3", `${SHARED_PYTHON_STUB_BY_MODE}\n`);
     stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
     writeStub(harness.stubsDir, "curl", 'printf "200"\nexit 0');
@@ -828,6 +848,14 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
 
   it("keeps a healthy Hermes gateway only when its service-manager parent is present", () => {
     const { result, managerLaunched } = runManagedTopologyProbe(true);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("ALREADY_RUNNING");
+    expect(result.stdout).not.toContain("SERVICE_PID=");
+    expect(managerLaunched).toBe(false);
+  });
+
+  it("ignores same-argv helper children of the managed Hermes service manager", () => {
+    const { result, managerLaunched } = runManagedTopologyProbe(true, 2);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("ALREADY_RUNNING");
     expect(result.stdout).not.toContain("SERVICE_PID=");
