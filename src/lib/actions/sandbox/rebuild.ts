@@ -1015,12 +1015,12 @@ export async function rebuildSandbox(
       backupManifest?.policyPresets ?? registryPolicyPresets,
       rebuildDisabledChannels,
     );
+    const restoredPresets: string[] = [];
+    const failedPresets: string[] = [];
     if (savedPresets.length > 0) {
       console.log("");
       console.log("  Restoring policy presets...");
       log(`Policy presets to restore: [${savedPresets.join(",")}]`);
-      const restoredPresets: string[] = [];
-      const failedPresets: string[] = [];
       for (const presetName of savedPresets) {
         try {
           log(`Applying preset: ${presetName}`);
@@ -1055,6 +1055,7 @@ export async function rebuildSandbox(
     let mutablePermsRepairUnverified = false;
     let mutableConfigHashRefreshUnverified = false;
     let messagingHostForwardUnverified = false;
+    const policyPresetRestoreIncomplete = failedPresets.length > 0;
     if (agentDef.name === "openclaw") {
       // openclaw doctor --fix validates and repairs directory structure.
       // Idempotent and safe — catches structural changes between OpenClaw versions
@@ -1141,10 +1142,34 @@ export async function rebuildSandbox(
     // on_session_start. Gateway startup is non-fatal if state.db migration fails.
 
     // Step 7: Update registry with new version
+    //
+    // Source-of-truth reconciliation for `policies`:
+    //
+    // - Invalid state: `registry.policies` retained a preset name after the
+    //   reapply loop pruned it (disabled messaging channel) or skipped it
+    //   (failed `applyPreset`), so `policy-list` showed a ● marker for a
+    //   preset whose rules were absent from the gateway.
+    // - Source boundary: `policies.applyPreset` only appends to
+    //   `registry.policies`; nothing else writes the canonical post-rebuild
+    //   set. The reapply loop above is the only place that knows which
+    //   presets were actually reapplied.
+    // - Source-fix constraint: must run after the reapply loop and use the
+    //   successfully restored subset, not `savedPresets` (which still
+    //   includes failures).
+    // - Regression test:
+    //   `src/lib/actions/sandbox/rebuild-flow.test.ts` asserts
+    //   `registry.updateSandbox` receives `policies: restoredPresets` for
+    //   both the successful-rebuild and partial-restore harnesses.
+    // - Removal condition: drop this once `applyPreset` writes the
+    //   canonical post-apply set itself (replacing its append-only
+    //   contract), making the rebuild flow's reconciliation redundant.
     registry.updateSandbox(sandboxName, {
       agentVersion: agentDef.expectedVersion || null,
+      policies: restoredPresets,
     });
-    log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
+    log(
+      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}]`,
+    );
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
     if (!ensureMessagingHostForwardAfterRebuild(sandboxName, rebuildMessagingPlan)) {
@@ -1156,7 +1181,8 @@ export async function rebuildSandbox(
       restoreSucceeded &&
       !mutablePermsRepairUnverified &&
       !mutableConfigHashRefreshUnverified &&
-      !messagingHostForwardUnverified
+      !messagingHostForwardUnverified &&
+      !policyPresetRestoreIncomplete
     ) {
       console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
       if (staleRecovery) {
@@ -1193,6 +1219,11 @@ export async function rebuildSandbox(
       if (messagingHostForwardUnverified) {
         console.log(
           `    Messaging webhook forward was not verified \u2014 run \`${CLI_NAME} ${sandboxName} connect\` after resolving the port conflict`,
+        );
+      }
+      if (policyPresetRestoreIncomplete) {
+        console.log(
+          `    Policy presets failed to reapply: ${failedPresets.join(", ")} \u2014 re-apply manually with \`${CLI_NAME} ${sandboxName} policy-add\``,
         );
       }
     }

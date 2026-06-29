@@ -8,9 +8,9 @@ import {
   filterSafeUpdates,
   MACHINE_SNAPSHOT_VERSION,
   normalizeSession,
-  sanitizeFailure,
   type Session,
   type SessionUpdates,
+  sanitizeFailure,
 } from "../../../state/onboard-session";
 import type { OnboardFlowContext } from "../flow-context";
 import { advanceTo, completeOnboardMachine } from "../result";
@@ -41,6 +41,7 @@ function context(): OnboardFlowContext<null, null, null> {
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: true,

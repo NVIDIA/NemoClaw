@@ -6,13 +6,10 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST=sha256:60333c1982ad855d55887b4488e867eb343f3930a30aa8e0268e5397fc6f2926
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@${NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST}
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:8dad3b989a9ed1e601743310b97be21be5f59f89f7913a47d04f3ec3c40b8ce6
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
-ARG BASE_IMAGE
-ARG NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST
 
 # Keep the final image contract explicit even when the published base image
 # changes independently of this Dockerfile.
@@ -253,72 +250,35 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 # hadolint ignore=DL3002
 USER root
 
-# Flatten stale published base images that still contain /sandbox/.openclaw from
-# older Hermes base layouts or the old .hermes-data symlink bridge. Dockerfile.base
-# is the source of truth for new bases; this final-image repair only removes
-# invalid state baked into already-published bases.
-# NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST is the removal trigger: update or remove
-# this cleanup when the Dockerfile's default pinned Hermes base digest advances
-# past the stale layout. Official GHCR bases must be digest-pinned while this
-# temporary repair exists; local and verifier-built bases are intentionally
-# exempt because their digest is not an upstream publication boundary. OpenShell
-# starts the sandbox as the sandbox user, so runtime migration cannot rely on
-# root privileges inside the pod. Regression coverage lives in
-# scripts/verify-hermes-stale-openclaw-image.sh.
-# REMOVAL_CHECKLIST:
-# 1. BASE_IMAGE defaults to a digest newer than NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST.
-# 2. Supported GHCR Hermes base tags resolve to post-stale-layout digests.
-# 3. Hermes stale-layout verifier coverage is kept or intentionally retired.
-# 4. Remove this ARG and cleanup block in the same PR that advances the default.
-# Refuse symlinked stale state before rm -rf so a compromised base cannot point
-# cleanup outside the Hermes sandbox root.
-# Docker image layers cannot persist bind mounts at /sandbox/.openclaw, so the
-# build-time traversal threat here is a symlinked path baked into the base layer.
+# Flatten stale published base images that still contain the old .hermes-data
+# symlink bridge. The base resolver owns published-image provenance and exports
+# immutable digests; this final-image boundary owns layout validation so local,
+# rebuilt, and caller-selected bases remain supported. Retired OpenClaw state
+# must never enter a Hermes final image. OpenShell starts the sandbox as the
+# sandbox user, so the .hermes-data migration cannot rely on root privileges
+# inside the pod.
 # hadolint ignore=DL4006
 RUN set -eu; \
-    stale_base_digest="${NEMOCLAW_STALE_OPENCLAW_BASE_DIGEST:?}"; \
-    case "${BASE_IMAGE:-}" in \
-        ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:*) \
-            if [ "${BASE_IMAGE##*@}" != "$stale_base_digest" ]; then \
-                echo "ERROR: remove stale Hermes .openclaw cleanup or update the tracked stale-base digest; BASE_IMAGE=$BASE_IMAGE tracked=$stale_base_digest" >&2; \
-                exit 1; \
-            fi; \
-            ;; \
-        ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:*) \
-            echo "ERROR: use an immutable Hermes base digest while stale .openclaw cleanup is present; BASE_IMAGE=$BASE_IMAGE" >&2; \
-            exit 1; \
-            ;; \
-        nemoclaw-hermes-base-local | nemoclaw-hermes-stale-openclaw-dir-base:* | nemoclaw-hermes-stale-openclaw-link-base:*) \
-            ;; \
-        *) \
-            echo "ERROR: unsupported Hermes BASE_IMAGE while stale .openclaw cleanup is present; BASE_IMAGE=${BASE_IMAGE:-unset}" >&2; \
-            exit 1; \
-            ;; \
-    esac; \
     config_dir=/sandbox/.hermes; \
     data_dir=/sandbox/.hermes-data; \
     openclaw_dir=/sandbox/.openclaw; \
-    mkdir -p "$config_dir"; \
-    if [ -L "$openclaw_dir" ]; then \
-        echo "ERROR: refusing Hermes layout cleanup because $openclaw_dir is a symlink" >&2; \
-        exit 1; \
-    fi; \
-    rm -rf "$openclaw_dir"; \
     if [ -e "$openclaw_dir" ] || [ -L "$openclaw_dir" ]; then \
-        echo "ERROR: stale OpenClaw state dir still exists after Hermes cleanup: $openclaw_dir" >&2; \
+        echo "ERROR: Hermes base image contains retired OpenClaw state: $openclaw_dir" >&2; \
         exit 1; \
     fi; \
+    mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_link="$(find "$data_dir" -type l -print -quit)"; \
+        if [ -n "$legacy_link" ]; then \
+            echo "ERROR: refusing legacy layout cleanup because $legacy_link is a symlink" >&2; \
+            exit 1; \
+        fi; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
-            if [ -L "$entry" ]; then \
-                echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
-                exit 1; \
-            fi; \
             name="$(basename "$entry")"; \
             target="$config_dir/$name"; \
             if [ -L "$target" ]; then \
