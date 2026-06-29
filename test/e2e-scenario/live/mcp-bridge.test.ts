@@ -21,6 +21,7 @@ import type { CleanupRegistry } from "../fixtures/cleanup.ts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
   installMcpTestCaInSandbox,
@@ -40,10 +41,10 @@ const REBIND_SERVER_NAME = "rebind";
 const REBIND_HOSTNAME = "mcp-rebind.example.test";
 const REBIND_PUBLIC_IP = "1.1.1.1";
 const REBIND_CREDENTIAL_KEY = "REBIND_MCP_SECRET";
-const HOST_SECRET = "fake-host-mcp-secret-value";
-const ROTATED_HOST_SECRET = "fake-rotated-mcp-secret-value";
-const REBIND_HOST_SECRET = "fake-rebind-mcp-secret-value";
-const COMPATIBLE_KEY = "fake-compatible-mcp-bridge-key";
+const HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.host;
+const ROTATED_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rotatedHost;
+const REBIND_HOST_SECRET = MCP_BRIDGE_TEST_CREDENTIALS.rebindHost;
+const COMPATIBLE_KEY = MCP_BRIDGE_TEST_CREDENTIALS.compatibleEndpoint;
 const COMPATIBLE_MODEL = "mock/mcp-bridge";
 const TOOL_CHALLENGE = "nemoclaw-authenticated-mcp-proof";
 const REGISTRY_FILE = path.join(process.env.HOME ?? os.homedir(), ".nemoclaw", "sandboxes.json");

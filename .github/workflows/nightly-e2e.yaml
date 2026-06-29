@@ -1738,8 +1738,15 @@ jobs:
             test/e2e-scenario/live/mcp-bridge.test.ts \
             --silent=false --reporter=default
 
-      - name: Upload MCP server artifacts
+      - id: mcp_artifact_secret_scan
+        name: Scan MCP artifacts for fixture credentials
         if: always()
+        run: >-
+          npx tsx tools/e2e-scenarios/assert-mcp-artifact-secrets-absent.mts
+          e2e-artifacts/vitest/mcp-bridge
+
+      - name: Upload MCP server artifacts
+        if: ${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mcp-bridge-artifacts

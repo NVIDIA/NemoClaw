@@ -6,6 +6,7 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 
 type Step = {
+  id?: string;
   if?: string;
   name?: string;
   env?: Record<string, string>;
@@ -152,6 +153,28 @@ describe("MCP OpenShell workflow boundary", () => {
       const installIndex = job.steps?.findIndex((step) => step.name === "Install OpenShell CLI");
       expect(tlsIndex).toBeGreaterThanOrEqual(0);
       expect(installIndex).toBeGreaterThan(tlsIndex ?? -1);
+    }
+  });
+
+  it("fails closed on raw or base64 fixture credentials before artifact upload", () => {
+    const nightly = workflow(".github/workflows/nightly-e2e.yaml");
+    const vitest = workflow(".github/workflows/e2e-vitest-scenarios.yaml");
+
+    for (const job of [nightly.jobs["mcp-bridge-e2e"], vitest.jobs["mcp-bridge-vitest"]]) {
+      const scan = job.steps?.find(
+        (step) => step.name === "Scan MCP artifacts for fixture credentials",
+      );
+      const upload = job.steps?.find((step) => step.name === "Upload MCP server artifacts");
+      expect(scan?.id).toBe("mcp_artifact_secret_scan");
+      expect(scan?.if).toBe("always()");
+      expect(scan?.run).toContain("tools/e2e-scenarios/assert-mcp-artifact-secrets-absent.mts");
+      expect(scan?.run).toContain("e2e-artifacts/vitest/mcp-bridge");
+      expect(upload?.if).toBe(
+        "${{ always() && steps.mcp_artifact_secret_scan.outcome == 'success' }}",
+      );
+      expect(job.steps?.indexOf(scan as Step)).toBeLessThan(
+        job.steps?.indexOf(upload as Step) ?? -1,
+      );
     }
   });
 
