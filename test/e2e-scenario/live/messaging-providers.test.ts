@@ -78,20 +78,16 @@ interface TelegramDoctorReport {
 }
 
 function parseTelegramVisibilityJson(text: string): TelegramVisibleStatusReport | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
   try {
-    return JSON.parse(trimmed) as TelegramVisibleStatusReport;
+    return JSON.parse(text.trim()) as TelegramVisibleStatusReport;
   } catch {
     return null;
   }
 }
 
 function parseTelegramDoctorJson(text: string): TelegramDoctorReport | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
   try {
-    return JSON.parse(trimmed) as TelegramDoctorReport;
+    return JSON.parse(text.trim()) as TelegramDoctorReport;
   } catch {
     return null;
   }
