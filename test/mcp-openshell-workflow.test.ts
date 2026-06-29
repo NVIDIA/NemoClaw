@@ -87,8 +87,9 @@ describe("MCP OpenShell workflow boundary", () => {
   it("keeps reusable lane configuration from overriding the selected channel", () => {
     const nightly = workflow(".github/workflows/nightly-e2e.yaml");
 
-    for (const [name, job] of Object.entries(nightly.jobs)) {
-      if (job.uses !== "./.github/workflows/e2e-script.yaml") continue;
+    for (const [name, job] of Object.entries(nightly.jobs).filter(
+      ([, candidate]) => candidate.uses === "./.github/workflows/e2e-script.yaml",
+    )) {
       const laneEnv = JSON.parse(String(job.with?.env_json ?? "{}")) as Record<string, unknown>;
       expect(laneEnv.NEMOCLAW_OPENSHELL_CHANNEL, name).toBeUndefined();
     }

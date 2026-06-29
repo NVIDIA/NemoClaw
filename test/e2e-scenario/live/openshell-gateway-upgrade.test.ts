@@ -22,16 +22,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { type ArtifactSink } from "../fixtures/artifacts.ts";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
+import type { HostCliClient } from "../fixtures/clients/host.ts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { validateSandboxName } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
-import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { shellQuote } from "../../../src/lib/core/shell-quote";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_OPENSHELL = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
@@ -120,10 +120,9 @@ function escapeRegExpLiteral(value: string): string {
 }
 
 function expectedCurrentOpenShellVersionPattern(): RegExp {
-  if (!CURRENT_OPENSHELL_VERSION_OVERRIDE && OPENSHELL_CHANNEL === "dev") {
-    return /^\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*$/i;
-  }
-  return new RegExp(`^${escapeRegExpLiteral(CURRENT_OPENSHELL_VERSION)}$`, "i");
+  return !CURRENT_OPENSHELL_VERSION_OVERRIDE && OPENSHELL_CHANNEL === "dev"
+    ? /^\d+\.\d+\.\d+[.-]dev\d*(?:[.+-][0-9A-Za-z]+)*$/i
+    : new RegExp(`^${escapeRegExpLiteral(CURRENT_OPENSHELL_VERSION)}$`, "i");
 }
 
 function expectedCurrentOpenShellVersionLabel(): string {

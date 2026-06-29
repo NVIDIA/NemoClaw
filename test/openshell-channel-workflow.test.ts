@@ -36,8 +36,7 @@ function readWorkflow(relativePath: string): Workflow {
 function namedStep(workflow: Workflow, job: string, name: string): WorkflowStep {
   const step = workflow.jobs[job]?.steps?.find((candidate) => candidate.name === name);
   expect(step, `${job} must include step '${name}'`).toBeDefined();
-  if (!step) throw new Error(`${job} must include step '${name}'`);
-  return step;
+  return step as WorkflowStep;
 }
 
 function runCommand(script: string, env: Record<string, string>) {
