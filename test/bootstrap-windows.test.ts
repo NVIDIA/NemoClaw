@@ -587,6 +587,7 @@ Process ID: 1234
 PSVersion: 5.1.28000.1830
 **********************
 '@
+  $log += [Environment]::NewLine
   $log += ('Transcript started, output file is {0}{1}' -f $script:logPath, [Environment]::NewLine)
   $log += ('Status file is {0}{1}' -f $script:statusPath, [Environment]::NewLine)
   $log += @'
@@ -644,7 +645,9 @@ try {
     expect(result.stdout).not.toContain("$transcriptStarted = $false");
     expect(result.stdout).not.toContain("Start-Transcript");
     expect(result.stdout).not.toContain("WriteAllText");
-    expect(result.stdout).not.toContain("& 'C:\\\\WINDOWS\\\\System32\\\\wsl.exe' --install -d 'Ubuntu-24.04'");
+    expect(result.stdout).not.toContain(
+      "& 'C:\\\\WINDOWS\\\\System32\\\\wsl.exe' --install -d 'Ubuntu-24.04'",
+    );
     expect(result.stdout).not.toContain("Transcript started, output file is");
     expect(result.stdout).not.toContain("Status file is");
     expect(result.stdout).not.toContain("End time:");
@@ -680,8 +683,10 @@ Convert-WslInstallLogForDisplay -Log $log
     expect(result.stdout).not.toContain("TEST-HOST");
   });
 
-  itPowerShell("does not request reboot when Ubuntu install exits without registering the distro", () => {
-    const result = runPowerShellHarness(`
+  itPowerShell(
+    "does not request reboot when Ubuntu install exits without registering the distro",
+    () => {
+      const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
@@ -723,26 +728,29 @@ try {
 } | ConvertTo-Json -Compress
 `);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("WSL install output:");
-    expect(result.stdout).toContain("The operation completed successfully.");
-    expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
-    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
-    expect(parsed.statusMessages).toContain(
-      "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
-    );
-    expect(parsed.statusMessages).toContain(
-      "WARN:The install output did not report that a reboot is required.",
-    );
-    expect(parsed.statusMessages).not.toContain(
-      "WARN:A reboot is required before WSL can finish registering the distro.",
-    );
-    expect(parsed.requestReboot).toBe(false);
-    expect(parsed.outcome).toContain("WSL distro 'Ubuntu-24.04' is still not registered after install.");
-    expect(parsed.statusPathExists).toBe(false);
-    expect(parsed.logPathExists).toBe(false);
-  });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("WSL install output:");
+      expect(result.stdout).toContain("The operation completed successfully.");
+      expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.statusMessages).toContain(
+        "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
+      );
+      expect(parsed.statusMessages).toContain(
+        "WARN:The install output did not report that a reboot is required.",
+      );
+      expect(parsed.statusMessages).not.toContain(
+        "WARN:A reboot is required before WSL can finish registering the distro.",
+      );
+      expect(parsed.requestReboot).toBe(false);
+      expect(parsed.outcome).toContain(
+        "WSL distro 'Ubuntu-24.04' is still not registered after install.",
+      );
+      expect(parsed.statusPathExists).toBe(false);
+      expect(parsed.logPathExists).toBe(false);
+    },
+  );
 
   itPowerShell("reports failed Ubuntu install output in the main window", () => {
     const result = runPowerShellHarness(`
