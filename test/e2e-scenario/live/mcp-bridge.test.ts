@@ -802,7 +802,9 @@ const req = https.request({
 });
 req.on("error", (error) => {
   console.error(error.message);
-  process.exit(expectation === "deny" ? 0 : 1);
+  const strictDenied = expectation === "deny-strict" && /HTTP\\/1\\.[01] 403 Forbidden/.test(error.message);
+  strictDenied && console.log(JSON.stringify({ status: 403, error: error.message }));
+  process.exit(expectation === "deny" || strictDenied ? 0 : 1);
 });
 req.end(body);
 `;
