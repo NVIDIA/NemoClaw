@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { hashCredential } from "../../../security/credential-hash";
 import type {
   ChannelManifest,
   SandboxMessagingCredentialBindingPlan,
   SandboxMessagingInputReference,
 } from "../../manifest";
 import type { ManifestCompilerContext } from "../types";
-import { hashCredential } from "../../../security/credential-hash";
 import { resolveSandboxNameTemplate } from "./template";
 
 export function planCredentialBindings(

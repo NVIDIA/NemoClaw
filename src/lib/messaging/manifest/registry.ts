@@ -74,9 +74,21 @@ function assertDiagnosticContractValid(manifest: ChannelManifest): void {
       assertSafeToPrintOnlyOnConfig(manifest.id, input);
       continue;
     }
+    assertSafeToPrintRequiresValidValues(manifest.id, input);
     assertValueDisplayKeysAllowed(manifest.id, input);
     assertAgentApplicabilitySupported(manifest.id, input, supportedAgents);
   }
+}
+
+function assertSafeToPrintRequiresValidValues(
+  channelId: MessagingChannelId,
+  input: ChannelConfigInputSpec,
+): void {
+  if (input.safeToPrintInDiagnostics !== true) return;
+  if (input.validValues && input.validValues.length > 0) return;
+  throw new Error(
+    `Channel manifest '${channelId}' input '${input.id}' has safeToPrintInDiagnostics=true but no validValues allowlist; the diagnostic boundary cannot bound an open-ended value`,
+  );
 }
 
 function assertSafeToPrintOnlyOnConfig(

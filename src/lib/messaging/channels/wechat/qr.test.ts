@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   encodeIlinkClientVersion,
+  type FetchLike,
   fetchWechatQrSession,
   pollWechatQrStatus,
-  WechatQrError,
   WECHAT_ILINK_BOOTSTRAP_BASE_URL,
   WECHAT_ILINK_DEFAULT_BOT_TYPE,
-  type FetchLike,
+  WechatQrError,
 } from "./qr";
 
 type Capture = { url: string; init?: { method?: string; headers?: Record<string, string> } };

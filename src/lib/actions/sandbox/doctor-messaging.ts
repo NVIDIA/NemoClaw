@@ -10,12 +10,16 @@ import {
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
 import { asMessagingAgent } from "../../messaging/manifest";
+import {
+  visibleConfigDoctorHint,
+  visibleConfigDoctorStatus,
+} from "../../messaging/visible-config-output";
 import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { ROOT } from "../../runner";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { buildStatusCommandDeps } from "../../status-command-deps";
-import type { DoctorCheck, DoctorStatus } from "./doctor-report";
+import type { DoctorCheck } from "./doctor-report";
 
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
 
@@ -269,30 +273,21 @@ function activeChannelsFromEntry(sb: SandboxEntry): string[] {
   return registered.filter((channel: string) => !disabled.has(channel));
 }
 
-function visibleConfigDoctorHint(
-  sandboxName: string,
-  channelName: string,
-  source: "persisted" | "default" | "invalid",
-): string | undefined {
-  if (source === "default") {
-    return `run \`${CLI_NAME} ${sandboxName} channels status --channel ${channelName}\` to confirm the resolved value`;
-  }
-  if (source === "invalid") {
-    return `run \`${CLI_NAME} ${sandboxName} channels add ${channelName}\` to re-enter a valid value`;
-  }
-  return undefined;
-}
-
 function buildVisibleConfigDoctorCheck(
   sandboxName: string,
   channelName: string,
   record: ReturnType<typeof collectVisibleConfigRecords>[number],
 ): DoctorCheck {
-  const hint = visibleConfigDoctorHint(sandboxName, channelName, record.display.source);
+  const hint = visibleConfigDoctorHint({
+    cli: CLI_NAME,
+    sandboxName,
+    channelName,
+    source: record.display.source,
+  });
   return {
     group: "Messaging",
     label: record.input.label,
-    status: doctorStatusForDisplay(record.display.source),
+    status: visibleConfigDoctorStatus(record.display.source),
     detail: record.display.detail,
     ...(hint === undefined ? {} : { hint }),
   };
@@ -302,13 +297,7 @@ function messagingChannelConfigDoctorChecks(sandboxName: string, sb: SandboxEntr
   const activeChannels = activeChannelsFromEntry(sb);
   if (activeChannels.length === 0) return [];
   const plan = registry.getMessagingPlanFromEntry(sb);
-  // Legacy sandbox entries from before the agent field was mandatory may
-  // still hydrate with `sb.agent === undefined`; default to "openclaw" so
-  // agent-applicability filtering matches the historical behaviour. Existing
-  // regression: doctor-flow.test.ts asserts the OpenClaw visible-config path
-  // when a legacy entry omits the field. Remove the fallback once every
-  // managed sandbox has been migrated by an explicit registry upgrade.
-  const agent = asMessagingAgent(sb.agent ?? "openclaw");
+  const agent = asMessagingAgent(sb.agent);
   const checks: DoctorCheck[] = [];
   for (const channelName of activeChannels) {
     const diagnostic = getChannelStatusDiagnostic(channelName);
@@ -319,17 +308,6 @@ function messagingChannelConfigDoctorChecks(sandboxName: string, sb: SandboxEntr
     }
   }
   return checks;
-}
-
-function doctorStatusForDisplay(source: "persisted" | "default" | "invalid"): DoctorStatus {
-  switch (source) {
-    case "persisted":
-      return "ok";
-    case "default":
-      return "info";
-    case "invalid":
-      return "warn";
-  }
 }
 
 export function collectMessagingDoctorChecks(

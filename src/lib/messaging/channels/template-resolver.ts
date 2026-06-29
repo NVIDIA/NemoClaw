@@ -3,8 +3,8 @@
 
 import { resolveDiscordTemplateReference } from "./discord/template-resolver";
 import { resolveSlackTemplateReference } from "./slack/template-resolver";
-import { resolveTelegramTemplateReference } from "./telegram/template-resolver";
 import { resolveTeamsTemplateReference } from "./teams/template-resolver";
+import { resolveTelegramTemplateReference } from "./telegram/template-resolver";
 import type { BuiltInRenderTemplateResolver } from "./template-resolver-utils";
 import { resolveWechatTemplateReference } from "./wechat/template-resolver";
 import { resolveWhatsappTemplateReference } from "./whatsapp/template-resolver";

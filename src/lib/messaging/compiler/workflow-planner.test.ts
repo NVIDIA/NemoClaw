@@ -826,29 +826,6 @@ describe("MessagingWorkflowPlanner", () => {
     });
   });
 
-  it("does not persist an empty TELEGRAM_REQUIRE_MENTION env var into the plan at the planner source boundary", async () => {
-    const plan = await withEnv(
-      {
-        TELEGRAM_REQUIRE_MENTION: "",
-      },
-      () =>
-        planner().buildPlan({
-          sandboxName: "demo",
-          agent: "openclaw",
-          workflow: "onboard",
-          isInteractive: false,
-          configuredChannels: ["telegram"],
-          credentialAvailability: { TELEGRAM_BOT_TOKEN: true },
-        }),
-    );
-
-    const requireMention = plan.channels
-      .find((channel) => channel.channelId === "telegram")
-      ?.inputs.find((input) => input.inputId === "requireMention");
-    expect(requireMention).toBeDefined();
-    expect(requireMention?.value).not.toBe("");
-  });
-
   it("rebuilds from stored plan input values when config env is unavailable", async () => {
     const existingPlan = await withEnv(
       {

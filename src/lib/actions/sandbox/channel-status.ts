@@ -15,16 +15,17 @@ import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 import {
+  createBuiltInChannelManifestRegistry,
+  getMessagingManifestAvailabilityContext,
+} from "../../messaging";
+import {
   collectBuiltInMessagingChannelDiagnostics,
   collectVisibleConfigRecords,
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
-import {
-  createBuiltInChannelManifestRegistry,
-  getMessagingManifestAvailabilityContext,
-} from "../../messaging";
-import { asMessagingAgent } from "../../messaging/manifest";
 import type { SandboxMessagingPlan } from "../../messaging/manifest";
+import { asMessagingAgent } from "../../messaging/manifest";
+import { visibleConfigSeverity } from "../../messaging/visible-config-output";
 import * as policies from "../../policy";
 import {
   type DiagnosticSeverity,
@@ -551,28 +552,13 @@ function buildConfigVisibilitySignals(
 ): DiagnosticSignal[] {
   if (diagnostic.visibleConfigInputs.length === 0) return [];
   const plan = deps.getMessagingPlan(entry);
-  const records = collectVisibleConfigRecords(
-    diagnostic,
-    plan,
-    channelName,
-    asMessagingAgent(agent.name),
-  );
+  const messagingAgent = entry?.agent ? asMessagingAgent(agent.name) : null;
+  const records = collectVisibleConfigRecords(diagnostic, plan, channelName, messagingAgent);
   return records.map(({ input, display }) => ({
     label: input.label,
-    severity: severityForDisplay(display.source),
+    severity: visibleConfigSeverity(display.source),
     detail: display.detail,
   }));
-}
-
-function severityForDisplay(source: "persisted" | "default" | "invalid") {
-  switch (source) {
-    case "persisted":
-      return "ok" as const;
-    case "default":
-      return "info" as const;
-    case "invalid":
-      return "warn" as const;
-  }
 }
 
 function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {

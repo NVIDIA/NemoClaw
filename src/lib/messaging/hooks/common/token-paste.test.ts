@@ -9,9 +9,9 @@ import { runMessagingHook } from "../hook-runner";
 import { MessagingHookRegistry } from "../registry";
 import {
   COMMON_CONFIG_PROMPT_HOOK_HANDLER_ID,
+  COMMON_HOOK_REGISTRATIONS,
   COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID,
   COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
-  COMMON_HOOK_REGISTRATIONS,
   createTokenPasteHook,
 } from "./index";
 

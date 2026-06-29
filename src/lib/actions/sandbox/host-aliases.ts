@@ -4,9 +4,9 @@
 import { isIP } from "node:net";
 
 import {
+  type DockerSpawnSyncResult,
   dockerExecFileSync,
   dockerSpawnSync,
-  type DockerSpawnSyncResult,
 } from "../../adapters/docker/exec";
 import { CLI_NAME } from "../../cli/branding";
 import type { SandboxEntry } from "../../state/registry";

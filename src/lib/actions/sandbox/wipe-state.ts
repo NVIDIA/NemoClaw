@@ -3,7 +3,7 @@
 
 import path from "node:path";
 
-import { YW, R } from "../../cli/terminal-style";
+import { R, YW } from "../../cli/terminal-style";
 import { shellQuote } from "../../core/shell-quote";
 import * as registry from "../../state/registry";
 

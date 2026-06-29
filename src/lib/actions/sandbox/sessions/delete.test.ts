@@ -12,8 +12,8 @@ vi.mock("./gateway-rpc", () => ({
 }));
 
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { callOpenclawGateway } from "./gateway-rpc";
 import { deleteSandboxSession } from "./delete";
+import { callOpenclawGateway } from "./gateway-rpc";
 
 const ensureMock = ensureLiveSandboxOrExit as unknown as ReturnType<typeof vi.fn>;
 const gatewayMock = callOpenclawGateway as unknown as ReturnType<typeof vi.fn>;

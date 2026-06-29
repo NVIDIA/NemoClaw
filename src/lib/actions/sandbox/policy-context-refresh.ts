@@ -3,8 +3,8 @@
 
 import {
   POLICY_CONTEXT_SANDBOX_PATH,
-  writePolicyContextToSandbox,
   type WritePolicyContextResult,
+  writePolicyContextToSandbox,
 } from "./policy-explain";
 
 /**

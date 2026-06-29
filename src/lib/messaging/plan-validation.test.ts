@@ -531,4 +531,62 @@ describe("plan channel derivation", () => {
       DISCORD_USER_ID: "user-1",
     });
   });
+
+  it("drops persisted Telegram config values that violate the manifest validValues allowlist", () => {
+    const plan = makePlan({
+      channels: [
+        {
+          ...makePlan().channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "requireMention",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+              statePath: "telegramConfig.requireMention",
+              value: "definitely-not-a-mention-mode",
+            },
+            {
+              channelId: "telegram",
+              inputId: "groupPolicy",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_GROUP_POLICY",
+              statePath: "telegramConfig.groupPolicy",
+              value: "definitely-not-a-policy",
+            },
+          ],
+        },
+      ],
+    });
+
+    const config = getMessagingChannelConfigFromPlan(plan) ?? {};
+    expect(config).not.toHaveProperty("TELEGRAM_REQUIRE_MENTION");
+    expect(config).not.toHaveProperty("TELEGRAM_GROUP_POLICY");
+  });
+
+  it("drops persisted Telegram config values whose type is unsupported by the manifest", () => {
+    const plan = makePlan({
+      channels: [
+        {
+          ...makePlan().channels[0],
+          inputs: [
+            {
+              channelId: "telegram",
+              inputId: "groupPolicy",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_GROUP_POLICY",
+              statePath: "telegramConfig.groupPolicy",
+              value: ["open"] as unknown as string,
+            },
+          ],
+        },
+      ],
+    });
+
+    const config = getMessagingChannelConfigFromPlan(plan) ?? {};
+    expect(config).not.toHaveProperty("TELEGRAM_GROUP_POLICY");
+  });
 });

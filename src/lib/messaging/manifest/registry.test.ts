@@ -144,4 +144,23 @@ describe("ChannelManifestRegistry", () => {
       "is not kind 'config' yet declares safeToPrintInDiagnostics=true",
     );
   });
+
+  it("rejects registration when a config input declares safeToPrintInDiagnostics without a validValues allowlist", () => {
+    const malformed = {
+      ...TELEGRAM_MANIFEST,
+      id: "malformed-open-ended",
+      inputs: [
+        {
+          id: "openEnded",
+          kind: "config",
+          required: false,
+          safeToPrintInDiagnostics: true,
+        },
+      ],
+    } as unknown as ChannelManifest;
+
+    expect(() => createChannelManifestRegistry([malformed])).toThrow(
+      "has safeToPrintInDiagnostics=true but no validValues allowlist",
+    );
+  });
 });

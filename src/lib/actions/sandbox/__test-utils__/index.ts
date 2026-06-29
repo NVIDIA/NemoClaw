@@ -3,16 +3,17 @@
 
 import { vi } from "vitest";
 
+import type { AgentDefinition } from "../../../agent/defs";
 import {
   type CompileTelegramPlanOptions,
   compileTelegramPlanForTests,
-} from "../../messaging/__test-utils__/telegram-plan";
-import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../messaging/manifest";
-import type { SandboxEntry } from "../../state/registry";
+} from "../../../messaging/__test-utils__/telegram-plan";
+import type { MessagingSerializableValue, SandboxMessagingPlan } from "../../../messaging/manifest";
+import type { SandboxEntry } from "../../../state/registry";
 import {
   getMessagingPlanFromEntry,
   serializeSandboxMessagingStateForDisk,
-} from "../../state/registry-messaging";
+} from "../../../state/registry-messaging";
 
 export type ChannelInputOverride = {
   inputId: string;
@@ -181,4 +182,154 @@ export function useRealMessagingPlanReader<
 >(deps: T): T {
   deps.getMessagingPlan = (entry) => getMessagingPlanFromEntry(entry);
   return deps;
+}
+
+export function fakeChannelStatusAgent(name: "openclaw" | "hermes" = "openclaw"): AgentDefinition {
+  const configDir = name === "openclaw" ? "/sandbox/.openclaw" : "/sandbox/.hermes";
+  const stateDirs = name === "openclaw" ? ["whatsapp"] : ["platforms"];
+  return {
+    name,
+    agentDir: `/fake/${name}`,
+    manifestPath: `/fake/${name}/manifest.yaml`,
+    get displayName() {
+      return name;
+    },
+    get healthProbe() {
+      return { url: "http://localhost:0/", port: 0, timeout_seconds: 5 };
+    },
+    get forwardPort() {
+      return 0;
+    },
+    get dashboard() {
+      return { kind: "ui" as const, label: "UI", path: "/" };
+    },
+    get configPaths() {
+      return { dir: configDir, configFile: "config.json", envFile: null, format: "json" };
+    },
+    get inferenceProviderOptions() {
+      return [];
+    },
+    get stateDirs() {
+      return stateDirs;
+    },
+    get stateFiles() {
+      return [];
+    },
+    get versionCommand() {
+      return `${name} --version`;
+    },
+    get expectedVersion() {
+      return null;
+    },
+    get hasDevicePairing() {
+      return false;
+    },
+    get phoneHomeHosts() {
+      return [];
+    },
+    get dockerfileBasePath() {
+      return null;
+    },
+    get dockerfilePath() {
+      return null;
+    },
+    get startScriptPath() {
+      return null;
+    },
+    get policyAdditionsPath() {
+      return null;
+    },
+    get policyPermissivePath() {
+      return null;
+    },
+    get pluginDir() {
+      return null;
+    },
+    get legacyPaths() {
+      return null;
+    },
+  } as unknown as AgentDefinition;
+}
+
+export function channelStatusEntry(
+  messagingChannels: string[] = ["whatsapp"],
+  disabledChannels: string[] = [],
+): SandboxEntry {
+  const disabled = new Set(disabledChannels);
+  return {
+    name: "alpha",
+    agent: "openclaw",
+    messaging: {
+      schemaVersion: 1,
+      plan: {
+        schemaVersion: 1,
+        sandboxName: "alpha",
+        agent: "openclaw",
+        workflow: "onboard",
+        channels: messagingChannels.map((channelId) => ({
+          channelId,
+          displayName: channelId,
+          authMode: channelId === "whatsapp" ? "in-sandbox-qr" : "token-paste",
+          active: !disabled.has(channelId),
+          selected: true,
+          configured: true,
+          disabled: disabled.has(channelId),
+          inputs: [],
+          hooks: [],
+        })),
+        disabledChannels,
+        credentialBindings: [],
+        networkPolicy: { presets: [], entries: [] },
+        agentRender: [],
+        buildSteps: [],
+        stateUpdates: [],
+        healthChecks: [],
+      },
+    },
+  } as SandboxEntry;
+}
+
+export interface ChannelStatusExecResult {
+  status: number;
+  stdout: string;
+  stderr: string;
+}
+
+export interface ChannelStatusMakeDepsOptions {
+  exec: (
+    sandboxName: string,
+    command: string,
+    timeoutMs?: number,
+  ) => ChannelStatusExecResult | null;
+  appliedPresets?: string[];
+  gatewayPresets?: string[] | null;
+  agentName?: "openclaw" | "hermes";
+  sandbox?: SandboxEntry | undefined;
+  channelInputs?: ChannelInputOverridesByChannel;
+  messagingPlan?: SandboxMessagingPlan | null;
+  out?: (line: string) => void;
+}
+
+export function makeChannelStatusDeps(opts: ChannelStatusMakeDepsOptions, probedAt: Date) {
+  const calls: string[] = [];
+  const out = opts.out ?? ((line: string) => calls.push(line));
+  const sandbox = opts.sandbox ?? channelStatusEntry();
+  return {
+    out,
+    deps: {
+      loadAgent: () => fakeChannelStatusAgent(opts.agentName),
+      getSandbox: () => sandbox,
+      getAppliedPresets: () => opts.appliedPresets ?? ["whatsapp"],
+      getGatewayPresets: () =>
+        opts.gatewayPresets === undefined ? ["whatsapp"] : opts.gatewayPresets,
+      getMessagingPlan: () =>
+        opts.messagingPlan !== undefined
+          ? opts.messagingPlan
+          : fakePlanFromInputs(sandbox, opts.channelInputs),
+      execSandbox: vi.fn(opts.exec),
+      now: () => probedAt,
+      out,
+    },
+    out_lines: calls,
+  };
 }

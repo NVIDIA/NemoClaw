@@ -13,7 +13,7 @@ import {
   ChannelManifestRegistry,
   type SandboxMessagingPlan,
 } from "../manifest";
-import { ManifestCompiler } from "./manifest-compiler";
+import { ManifestCompiler, normalizeInputValue } from "./manifest-compiler";
 
 const ALL_CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "teams"] as const;
 const TEST_CREDENTIALS: Readonly<Record<string, string>> = {
@@ -1420,5 +1420,49 @@ describe("ManifestCompiler", () => {
         supportedChannelIds: [],
       }),
     ).rejects.toThrow("Missing messaging channel manifest(s): telegram");
+  });
+});
+
+describe("normalizeInputValue", () => {
+  const allowlistInput = {
+    id: "requireMention",
+    kind: "config" as const,
+    required: false,
+    validValues: ["0", "1"],
+  };
+  const formatInput = {
+    id: "userId",
+    kind: "config" as const,
+    required: false,
+    formatPattern: "^\\d+$",
+  };
+
+  it("returns undefined for empty, whitespace-only, null, and undefined raw values", () => {
+    expect(normalizeInputValue(allowlistInput, "")).toBeUndefined();
+    expect(normalizeInputValue(allowlistInput, "   ")).toBeUndefined();
+    expect(normalizeInputValue(allowlistInput, null)).toBeUndefined();
+    expect(normalizeInputValue(allowlistInput, undefined)).toBeUndefined();
+  });
+
+  it("returns undefined when the trimmed value is not in the manifest validValues allowlist", () => {
+    expect(normalizeInputValue(allowlistInput, "definitely-not-a-policy")).toBeUndefined();
+    expect(normalizeInputValue(allowlistInput, "2")).toBeUndefined();
+  });
+
+  it("returns undefined when the trimmed value fails the manifest formatPattern", () => {
+    expect(normalizeInputValue(formatInput, "abc")).toBeUndefined();
+    expect(normalizeInputValue(formatInput, "123abc")).toBeUndefined();
+  });
+
+  it("returns the trimmed value when it satisfies the manifest contract", () => {
+    expect(normalizeInputValue(allowlistInput, "1")).toBe("1");
+    expect(normalizeInputValue(allowlistInput, "  0  ")).toBe("0");
+    expect(normalizeInputValue(formatInput, " 123 ")).toBe("123");
+  });
+
+  it("throws when the raw value contains line breaks rather than silently smuggling them through", () => {
+    expect(() => normalizeInputValue(allowlistInput, "1\n2")).toThrow(
+      "Messaging input values must not contain line breaks.",
+    );
   });
 });

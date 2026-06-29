@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { getActiveMessagingHostForward } from "../../../host-forward";
 import { MessagingHookConflictError } from "../../../hooks/errors";
 import type {
   MessagingHookContext,
   MessagingHookHandler,
   MessagingHookRegistration,
 } from "../../../hooks/types";
+import { getActiveMessagingHostForward } from "../../../host-forward";
 import type { MessagingSerializableValue } from "../../../manifest";
 import { parseSandboxMessagingPlan } from "../../../plan-validation";
 

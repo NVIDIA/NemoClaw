@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { RenderTemplateContext } from "../../compiler/engines/template";
-import { normalizeWechatIlinkBaseUrl } from "./ilink-base-url";
 import {
   allowedIds,
   type BuiltInRenderTemplateResolver,
@@ -12,6 +11,7 @@ import {
   resolvedRenderTemplateReference,
   stateValue,
 } from "../template-resolver-utils";
+import { normalizeWechatIlinkBaseUrl } from "./ilink-base-url";
 
 export const resolveWechatTemplateReference: BuiltInRenderTemplateResolver = (
   reference,

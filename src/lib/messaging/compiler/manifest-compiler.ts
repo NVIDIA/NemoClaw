@@ -379,7 +379,7 @@ function readInputDefaultValue(
   return normalizeInputValue(input, input.defaultValue);
 }
 
-function normalizeInputValue(
+export function normalizeInputValue(
   input: ChannelInputSpec,
   raw: string | null | undefined,
 ): string | undefined {

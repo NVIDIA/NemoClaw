@@ -47,13 +47,13 @@ import * as registry from "../../../state/registry";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { resolveHostPathFromCwd } from "../host-path";
 import { isWarmupSessionId } from "../warmup-session";
-import { type SessionIndexEntry, parseSessionIndex } from "./session-index";
 import {
   DEFAULT_AGENT_ID,
   parseAgentIdFromSessionKey,
   validateAgentId,
   validateSessionKey,
 } from "./paths";
+import { parseSessionIndex, type SessionIndexEntry } from "./session-index";
 
 export type SessionsExportFormat = "dir" | "tar" | "jsonl";
 

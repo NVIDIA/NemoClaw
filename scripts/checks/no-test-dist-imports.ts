@@ -163,6 +163,12 @@ function findPathConstructionViolations(absolutePath: string): Violation[] {
   return findViolations(absolutePath).filter(isPathConstructionViolation);
 }
 
+function findBareImportViolations(absolutePath: string): Violation[] {
+  return findViolations(absolutePath).filter(
+    (violation) => !isPathConstructionViolation(violation),
+  );
+}
+
 function main(): void {
   const staleFixtureExclusions = [...FIXTURE_EXCLUSIONS].filter((relativePath) => {
     const absolutePath = path.join(REPO_ROOT, relativePath);
@@ -174,6 +180,21 @@ function main(): void {
       "Fixture exclusions must exist and still construct a compiled-internal path through path.join/require/template, not via a bare import specifier:",
     );
     for (const relativePath of staleFixtureExclusions) console.error(`  ${relativePath}`);
+    process.exit(1);
+  }
+
+  const fixturesWithBareImports = [...FIXTURE_EXCLUSIONS].flatMap((relativePath) => {
+    const absolutePath = path.join(REPO_ROOT, relativePath);
+    return existsSync(absolutePath) ? findBareImportViolations(absolutePath) : [];
+  });
+
+  if (fixturesWithBareImports.length > 0) {
+    console.error(
+      "Fixture exclusions are limited to path-construction/dynamic-require violations; the following excluded fixtures contain bare import specifiers and must be rewritten or moved:",
+    );
+    for (const violation of fixturesWithBareImports) {
+      console.error(`  ${violation.file}:${violation.line} ${violation.detail}`);
+    }
     process.exit(1);
   }
 

@@ -10,8 +10,8 @@ vi.mock("../../policy/context", () => ({
 
 import type { PolicyContext } from "../../policy/context";
 import {
-  POLICY_CONTEXT_SANDBOX_PATH,
   explainSandboxPolicy,
+  POLICY_CONTEXT_SANDBOX_PATH,
   writePolicyContextToSandbox,
 } from "./policy-explain";
 

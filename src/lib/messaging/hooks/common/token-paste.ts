@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type {
-  MessagingHookHandler,
-  MessagingHookOutputMap,
-  MessagingHookRegistration,
-} from "../types";
 import { createBuiltInChannelManifestRegistry } from "../../channels";
 import type {
   ChannelHookOutputSpec,
   ChannelManifest,
   ChannelSecretInputSpec,
 } from "../../manifest";
+import type {
+  MessagingHookHandler,
+  MessagingHookOutputMap,
+  MessagingHookRegistration,
+} from "../types";
 
 export const COMMON_TOKEN_PASTE_HOOK_HANDLER_ID = "common.tokenPaste";
 

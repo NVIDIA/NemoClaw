@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { createBuiltInChannelManifestRegistry } from "./channels";
 import type {
+  ChannelInputSpec,
+  ChannelManifest,
   MessagingAgentId,
   MessagingChannelId,
   MessagingSerializableValue,
@@ -12,6 +15,62 @@ import {
   type MaybeCompactMessagingPlan,
   normalizePersistedSandboxMessagingPlanShape,
 } from "./persistence";
+
+let cachedBuiltInManifestsById: Map<string, ChannelManifest> | null = null;
+
+function builtInManifestsById(): Map<string, ChannelManifest> {
+  if (!cachedBuiltInManifestsById) {
+    cachedBuiltInManifestsById = new Map(
+      createBuiltInChannelManifestRegistry()
+        .list()
+        .map((manifest) => [manifest.id, manifest]),
+    );
+  }
+  return cachedBuiltInManifestsById;
+}
+
+function manifestInputById(
+  manifest: ChannelManifest,
+  inputId: string,
+): ChannelInputSpec | undefined {
+  return manifest.inputs.find((input) => input.id === inputId);
+}
+
+function persistedValueAllowedByManifest(
+  input: ChannelInputSpec,
+  value: MessagingSerializableValue,
+): boolean {
+  if (input.kind !== "config") return true;
+  if (!input.validValues || input.validValues.length === 0) return true;
+  if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+    return false;
+  }
+  const text = typeof value === "string" ? value : String(value);
+  return input.validValues.includes(text);
+}
+
+export function sanitizePersistedManifestValues(plan: SandboxMessagingPlan): SandboxMessagingPlan {
+  const manifests = builtInManifestsById();
+  let mutated = false;
+  const channels = plan.channels.map((channel) => {
+    const manifest = manifests.get(channel.channelId);
+    if (!manifest) return channel;
+    let channelMutated = false;
+    const inputs = channel.inputs.map((entry) => {
+      if (entry.kind !== "config" || entry.value === undefined || entry.value === null) {
+        return entry;
+      }
+      const spec = manifestInputById(manifest, entry.inputId);
+      if (!spec || persistedValueAllowedByManifest(spec, entry.value)) return entry;
+      channelMutated = true;
+      mutated = true;
+      const { value: _dropped, ...rest } = entry;
+      return rest;
+    });
+    return channelMutated ? { ...channel, inputs } : channel;
+  });
+  return mutated ? { ...plan, channels } : plan;
+}
 
 export interface SandboxMessagingPlanParseOptions {
   sandboxName?: string | null;
@@ -114,16 +173,17 @@ export function getMessagingChannelConfigFromPlan(
   plan: SandboxMessagingPlan | null | undefined,
 ): MessagingChannelConfig | null {
   if (!plan) return null;
+  const sanitized = sanitizePersistedManifestValues(plan);
   const config: MessagingChannelConfig = {};
-  const stateValues = getMessagingPlanStateValues(plan);
+  const stateValues = getMessagingPlanStateValues(sanitized);
 
-  for (const update of plan.stateUpdates) {
+  for (const update of sanitized.stateUpdates) {
     if (update.kind !== "rebuild-hydration") continue;
     const value = stringifyPlanStateValue(stateValues[update.statePath]);
     if (value) config[update.env] = value;
   }
 
-  for (const channel of plan.channels) {
+  for (const channel of sanitized.channels) {
     for (const input of channel.inputs) {
       if (input.kind !== "config" || !input.sourceEnv || input.value == null) continue;
       if (config[input.sourceEnv]) continue;

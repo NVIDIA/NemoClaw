@@ -9,7 +9,7 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
-import type { SandboxGpuProofResult, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,

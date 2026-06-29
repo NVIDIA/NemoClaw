@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
+import * as registry from "../../state/registry";
 import type { SandboxMessagingPlan } from "../manifest";
 import { compactSandboxMessagingPlanForPersistence } from "../persistence";
 import { MessagingHostStateApplier } from "./host-state-applier";
 import { MessagingSetupApplier } from "./setup-applier";
-import * as registry from "../../state/registry";
 
 vi.mock("../../state/registry", () => {
   const sandboxes = new Map<string, Record<string, unknown>>();

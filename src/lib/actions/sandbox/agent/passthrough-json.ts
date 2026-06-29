@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncOptions, type SpawnSyncReturns, spawnSync } from "node:child_process";
 
 import { openClawAgentJsonProvenanceLines } from "../../../openclaw/agent-json-provenance";
 import { buildOpenshellExecArgs, computeExitCode } from "../exec";

@@ -4,7 +4,7 @@
 import { GATEWAY_PORT } from "../../core/ports";
 import { HOST_GATEWAY_PGREP_PATTERN } from "../../onboard/host-gateway-process";
 import type { DoctorCheck } from "./doctor";
-import { captureHostCommand, type CommandCapture } from "./doctor-host-command";
+import { type CommandCapture, captureHostCommand } from "./doctor-host-command";
 
 export type GatewayInspectOptions = {
   namedGatewayConnected?: boolean;

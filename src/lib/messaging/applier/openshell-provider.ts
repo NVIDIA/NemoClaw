@@ -3,12 +3,12 @@
 
 import { redact } from "../../security/redact";
 import type { SandboxMessagingCredentialBindingPlan, SandboxMessagingPlan } from "../manifest";
+import { filterEnabledPlanEntries } from "./plan-filter";
 import type {
   MessagingCredentialApplyOptions,
   MessagingCredentialApplyResult,
   MessagingOpenShellRunner,
 } from "./types";
-import { filterEnabledPlanEntries } from "./plan-filter";
 
 type MessagingCredentialApplyEntry = MessagingCredentialApplyResult["upserted"][number];
 type MessagingCredentialReuseEntry = MessagingCredentialApplyResult["reused"][number];

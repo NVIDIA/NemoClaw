@@ -639,7 +639,7 @@ The rebuild reuses the existing sandbox name and persisted credentials, so messa
 Run a focused health check for one sandbox and the host services it depends on.
 The command checks the local CLI build, Docker daemon, OpenShell CLI, NemoClaw gateway container, gateway port mapping, live sandbox state, inference route, provider reachability, messaging channel conflicts, Ollama reachability, and the cloudflared tunnel state.
 
-For channels with manifest-declared visible config inputs (e.g. Telegram group mention mode and OpenClaw-only group policy), the Messaging section also surfaces one check per opted-in input so operators can confirm the active policy without inspecting logs. Secrets and inputs that do not opt in via `safeToPrintInDiagnostics` remain excluded, agent-scoped inputs are hidden when the sandbox runs a different agent, and persisted values are validated against the manifest allowlist before display.
+The Messaging section also surfaces one check per opted-in visible config input so operators can confirm the active policy without inspecting logs. The rendering rules (manifest opt-in via `safeToPrintInDiagnostics`, agent-scoped hiding, manifest allowlist validation) are shared with `channels status` and documented under [channels status](#channels-status).
 
 Warnings do not make the command fail.
 Failed checks exit non-zero so scripts can use `doctor` as a readiness gate.

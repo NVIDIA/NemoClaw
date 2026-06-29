@@ -2,20 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  MessagingHookInputMap,
+  MessagingHookOutputMap,
+  MessagingHookRunResult,
+} from "../hooks";
+import type {
   ChannelHookFailureMode,
   ChannelHookOutputSpec,
   ChannelHookPhase,
   MessagingAgentId,
   MessagingChannelId,
-  SandboxMessagingNetworkPolicyEntryPlan,
   SandboxMessagingHookReferencePlan,
+  SandboxMessagingNetworkPolicyEntryPlan,
   SandboxMessagingPlan,
 } from "../manifest";
-import type {
-  MessagingHookInputMap,
-  MessagingHookOutputMap,
-  MessagingHookRunResult,
-} from "../hooks";
 
 export const MESSAGING_SETUP_APPLIER_ENV_KEY = "NEMOCLAW_MESSAGING_PLAN_B64";
 

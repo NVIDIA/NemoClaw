@@ -40,7 +40,7 @@ import {
   selectGatewayForSandboxDestroy,
 } from "./destroy-gateway";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
+import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -292,10 +292,10 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
+export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
 export { wipeSandboxState };
-export type { WipeSandboxStateDeps };
 
 export async function destroySandbox(
   sandboxName: string,

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { G, R, RD as _RD, YW } from "../../cli/terminal-style";
+import { RD as _RD, G, R, YW } from "../../cli/terminal-style";
 import * as shields from "../../shields";
 
 export interface RebuildShieldsWindow {

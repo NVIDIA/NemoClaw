@@ -10,13 +10,13 @@
 // tests can stay offline.
 
 import {
+  type FetchLike,
   fetchWechatQrSession,
   pollWechatQrStatus,
-  type FetchLike,
+  WECHAT_ILINK_BOOTSTRAP_BASE_URL,
+  WechatQrError,
   type WechatQrSession,
   type WechatQrStatusResponse,
-  WechatQrError,
-  WECHAT_ILINK_BOOTSTRAP_BASE_URL,
 } from "./qr";
 
 /** Total deadline for a single login attempt. 8 minutes is long enough to

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { runCurlProbe, type CurlProbeResult } from "../../../../adapters/http/probe";
+import { type CurlProbeResult, runCurlProbe } from "../../../../adapters/http/probe";
 
 export type SlackTokenKind = "bot" | "app";
 export type SlackValidationFailureKind = "rejected" | "indeterminate";
