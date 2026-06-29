@@ -276,14 +276,6 @@ describe("ManifestCompiler", () => {
         outputId: "openclawPluginPackage",
         required: true,
       },
-      {
-        channelId: "teams",
-        kind: "build-file",
-        hookId: "teams-install-openclaw-skill",
-        handler: "common.staticOutputs",
-        outputId: "msteamsSkill",
-        required: true,
-      },
     ]);
     expect(plan.buildSteps).toEqual(
       expect.arrayContaining([
@@ -313,13 +305,17 @@ describe("ManifestCompiler", () => {
             pin: true,
           },
         }),
+      ]),
+    );
+    expect(plan.runtimeSetup?.nodePreloads).toEqual(
+      expect.arrayContaining([
         expect.objectContaining({
           channelId: "teams",
-          kind: "build-file",
-          value: expect.objectContaining({
-            path: "skills/msteams/SKILL.md",
-            content: expect.stringContaining("@[Display Name](AAD_OBJECT_ID)"),
-          }),
+          module: "msteams-message-hints",
+          source: "/usr/local/lib/nemoclaw/preloads/msteams-message-hints.js",
+          target: "/tmp/nemoclaw-msteams-message-hints.js",
+          injectInto: ["boot", "connect"],
+          optional: false,
         }),
       ]),
     );
