@@ -538,4 +538,98 @@ describe("credentials oclif commands", () => {
       delete process.env.TAVILY_API_KEY;
     }
   });
+
+  it("credentials add rejects provider names outside the OpenShell grammar", async () => {
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(
+        () =>
+          CredentialsAddCommand.run([
+            "bad name/with*chars",
+            "--type",
+            "tavily",
+            "--credential",
+            "TAVILY_API_KEY",
+          ]),
+        1,
+      ),
+    );
+
+    expect(output.stderr).toContain("Provider name must be");
+  });
+
+  it("credentials add rejects --credential env names longer than 256 chars", async () => {
+    const longName = `A${"X".repeat(260)}`;
+    process.env[longName] = "v";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              longName,
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--credential must be a valid env variable name");
+    } finally {
+      delete process.env[longName];
+    }
+  });
+
+  it("credentials add rejects --config entries longer than the per-entry limit", async () => {
+    process.env.TAVILY_API_KEY = "tvly-test-12345";
+    installRuntimeBridge();
+    const { CredentialsAddCommand } = loadCommands();
+
+    try {
+      const longEntry = `region=${"x".repeat(5000)}`;
+      const output = await captureOutput(() =>
+        expectExitCode(
+          () =>
+            CredentialsAddCommand.run([
+              "demo-provider",
+              "--type",
+              "generic",
+              "--credential",
+              "TAVILY_API_KEY",
+              "--config",
+              longEntry,
+            ]),
+          1,
+        ),
+      );
+
+      expect(output.stderr).toContain("--config entry exceeds");
+    } finally {
+      delete process.env.TAVILY_API_KEY;
+    }
+  });
+
+  it("credentials reset redacts credential-shaped stderr from OpenShell failures", async () => {
+    installRuntimeBridge({
+      runOpenshell: () => ({
+        status: 1,
+        stderr: "delete failed: leaked nvapi-abcdefghijklmnopqrstuv from gateway",
+      }),
+    });
+    const { CredentialsResetCommand } = loadCommands();
+
+    const output = await captureOutput(() =>
+      expectExitCode(() => CredentialsResetCommand.run(["tavily-search", "--yes"]), 1),
+    );
+
+    expect(output.stderr).not.toContain("nvapi-abcdefghijklmnopqrstuv");
+    expect(output.stderr).toContain("delete failed");
+  });
 });

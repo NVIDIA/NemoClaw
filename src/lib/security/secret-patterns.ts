@@ -59,4 +59,4 @@ export const SECRET_PATTERNS: RegExp[] = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_P
  * The primary path delegates to node; this fallback only runs when
  * node or dist/ is unavailable. Consistency test verifies these appear.
  */
-export const EXPECTED_SHELL_PREFIXES = ["nvapi-", "nvcf-", "ghp_", "sk-"];
+export const EXPECTED_SHELL_PREFIXES = ["nvapi-", "nvcf-", "ghp_", "sk-", "tvly-"];

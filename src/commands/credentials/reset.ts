@@ -9,6 +9,7 @@ import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
 import { prompt as askPrompt } from "../../lib/credentials/store";
+import { redact } from "../../lib/security/redact";
 
 export default class CredentialsResetCommand extends NemoClawCommand {
   static id = "credentials:reset";
@@ -82,7 +83,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
         "  registered providers, then retry with one of those names.",
       );
     }
-    const stderr = String(result.stderr || "").trim();
+    const stderr = redact(String(result.stderr || "").trim());
     if (stderr) lines.push(`  ${stderr}`);
     this.failWithLines(lines);
   }

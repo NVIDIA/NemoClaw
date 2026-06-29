@@ -25,6 +25,9 @@ const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,255}$/;
 const CONFIG_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,127}$/;
 const CONFIG_KEY_DENYLIST =
   /(?:^|_)(?:key|token|secret|password|credential|authorization|bearer|api[_-]?key)(?:_|$)/i;
+const PROVIDER_NAME_PATTERN = /^[a-z][a-z0-9._-]{0,127}$/i;
+const PROVIDER_TYPE_PATTERN = /^[a-z][a-z0-9._-]{0,63}$/i;
+const MAX_CONFIG_ENTRY_LENGTH = 4096;
 
 function ok(successLines: readonly string[]): CredentialsAddResult {
   return { exitCode: 0, successLines, failureLines: [] };
@@ -38,6 +41,17 @@ export async function runCredentialsAddAction(
   input: CredentialsAddInput,
 ): Promise<CredentialsAddResult> {
   const { provider, type, credentials, configPairs, fromExisting } = input;
+
+  if (!PROVIDER_NAME_PATTERN.test(provider)) {
+    return fail([
+      "  Provider name must be 1-128 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
+    ]);
+  }
+  if (!PROVIDER_TYPE_PATTERN.test(type)) {
+    return fail([
+      "  --type must be 1-64 chars, start with a letter, and use only letters, digits, '.', '_', or '-'.",
+    ]);
+  }
 
   if (isBridgeProviderName(provider)) {
     return fail([
@@ -77,6 +91,9 @@ export async function runCredentialsAddAction(
   }
 
   for (const entry of configPairs) {
+    if (entry.length > MAX_CONFIG_ENTRY_LENGTH) {
+      return fail([`  --config entry exceeds ${MAX_CONFIG_ENTRY_LENGTH} characters.`]);
+    }
     const eq = entry.indexOf("=");
     if (eq <= 0) {
       return fail(["  --config must be in KEY=VALUE form."]);
