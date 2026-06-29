@@ -1097,8 +1097,15 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
   });
 
   it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
-    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
-    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    const current = makeTeamsEntry("alpha", { disabled: true });
+    arrangeRegistry({ current });
+    getDisabledChannelsMock.mockImplementation(
+      () => current.messaging?.plan.disabledChannels ?? [],
+    );
+    updateSandboxMock.mockImplementation((_name: string, updates: Partial<SandboxEntry>) => {
+      Object.assign(current, updates);
+      return true;
+    });
     applyPresetMock.mockReturnValue(false);
 
     await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
@@ -1106,15 +1113,24 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
     );
 
     expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
-    expect(updateSandboxMock).toHaveBeenCalledTimes(2);
-    expect(updateSandboxMock.mock.calls[0]?.[1]).toMatchObject({
-      messaging: { plan: { disabledChannels: [] } },
-    });
-    expect(updateSandboxMock.mock.calls[1]?.[1]).toMatchObject({
-      messaging: { plan: { disabledChannels: ["teams"] } },
-    });
+    expect(registry.getDisabledChannels("alpha")).toContain("teams");
     expect(rebuildSandboxMock).not.toHaveBeenCalled();
     expect(loggedText()).toContain("channels start teams");
+  });
+
+  it("channels start prints recovery guidance when policy and disabled-plan rollback both fail", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    applyPresetMock.mockReturnValue(false);
+    updateSandboxMock.mockReturnValueOnce(true).mockReturnValueOnce(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Could not restore 'teams' to disabled state");
+    expect(loggedText()).toContain("nemoclaw alpha channels stop teams");
   });
 });
 
