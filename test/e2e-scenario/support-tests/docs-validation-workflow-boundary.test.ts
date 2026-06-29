@@ -4,8 +4,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import YAML from "yaml";
 import { describe, expect, it } from "vitest";
+import YAML from "yaml";
 import {
   readDocsValidationWorkflow,
   validateDocsValidationWorkflow,
@@ -33,7 +33,7 @@ describe("docs validation workflow boundary", () => {
     );
   });
 
-  it("makes execution, determinism, and aggregation part of the central ratchet", () => {
+  it("makes execution, determinism, and aggregation part of the focused ratchet", () => {
     const workflow = readDocsValidationWorkflow();
     const job = workflow.jobs["docs-validation-vitest"];
     job.env!.CHECK_DOC_LINKS_REMOTE = "1";
@@ -55,7 +55,7 @@ describe("docs validation workflow boundary", () => {
     const workflowPath = join(directory, "workflow.yaml");
     try {
       writeFileSync(workflowPath, YAML.stringify(workflow));
-      expect(validateE2eVitestScenariosWorkflowBoundary(workflowPath)).toContain(
+      expect(validateDocsValidationWorkflowBoundary(workflowPath)).toContain(
         "report-to-pr must wait for docs-validation-vitest",
       );
     } finally {

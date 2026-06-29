@@ -6,7 +6,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
-import { validateDocsValidationWorkflowBoundary } from "./docs-validation-workflow-boundary.mts";
+import { validateInferenceSwitchWorkflowBoundary } from "./inference-switch-workflow-boundary.mts";
+import { validateSandboxOperationsWorkflow } from "./sandbox-operations-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_VITEST_WORKFLOW_PATH = join(
@@ -7470,7 +7471,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
 ): string[] {
   const workflow = readWorkflowRecord(workflowPath);
   const errors: string[] = [];
-  errors.push(...validateDocsValidationWorkflowBoundary(workflowPath));
+  errors.push(...validateInferenceSwitchWorkflowBoundary(workflowPath));
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
 
   const workflowDispatch = requireWorkflowDispatch(errors, triggers);
@@ -7862,6 +7863,7 @@ export function validateE2eVitestScenariosWorkflowBoundary(
   validateDiagnosticsVitestJob(errors, jobs);
   validateModelRouterProviderRoutedInferenceVitestJob(errors, jobs);
   validateSnapshotCommandsVitestJob(errors, jobs);
+  errors.push(...validateSandboxOperationsWorkflow({ jobs }));
   validateSparkInstallVitestJob(errors, jobs);
   validateGatewayDriftPreflightVitestJob(errors, jobs);
 
