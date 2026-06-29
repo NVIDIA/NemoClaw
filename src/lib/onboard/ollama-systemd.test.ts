@@ -1,11 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { OLLAMA_PORT } from "../core/ports";
-import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
-import { mergeOllamaLoopbackSystemdOverride } from "./ollama-systemd";
+import { OLLAMA_PORT } from "../../../dist/lib/core/ports";
+import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../../dist/lib/inference/ollama-runtime-context";
+import {
+  ensureOllamaLoopbackSystemdOverride,
+  mergeOllamaLoopbackSystemdOverride,
+} from "../../../dist/lib/onboard/ollama-systemd";
 
 describe("mergeOllamaLoopbackSystemdOverride", () => {
   it("writes the OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH lines under [Service] when no drop-in exists", () => {
@@ -85,4 +88,44 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
       `Environment="OLLAMA_CONTEXT_LENGTH=${MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW}"`,
     );
   });
+});
+
+// #5716: on a Linux aarch64 host running `nemoclaw onboard --non-interactive
+// --yes` without passwordless sudo, the wizard previously aborted with
+// "Refusing to continue with a potentially non-loopback Ollama bind" mid-flow.
+// The new behaviour detects the missing `sudo -n` upfront and skips the
+// loopback override with an actionable warning so the headless install can
+// continue against Ollama's existing bind.
+describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () => {
+  it("skips the override with a warning when sudo -n is unavailable in non-interactive mode", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = ensureOllamaLoopbackSystemdOverride({
+        platformImpl: () => "linux",
+        hasOllamaSystemdUnitImpl: () => true,
+        isNonInteractive: () => true,
+        hasPasswordlessSudoImpl: () => false,
+      });
+      expect(result).toBe("not-applicable");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("passwordless sudo is not available"),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt"),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("does not skip the override when not on Linux (the override is platform-gated)", () => {
+    const result = ensureOllamaLoopbackSystemdOverride({
+      platformImpl: () => "darwin",
+      hasOllamaSystemdUnitImpl: () => true,
+      isNonInteractive: () => true,
+      hasPasswordlessSudoImpl: () => false,
+    });
+    expect(result).toBe("not-applicable");
+  });
+
 });

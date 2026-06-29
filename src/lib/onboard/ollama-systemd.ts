@@ -26,6 +26,24 @@ type OllamaLoopbackSystemdOverrideOptions = {
   enableService?: boolean;
   detectNvidiaPlatformImpl?: () => string;
   hasOllamaCudaV13LibraryImpl?: () => boolean;
+  /**
+   * Platform override (test seam). Defaults to `process.platform`. Lets unit
+   * tests exercise the Linux-only branches from non-Linux dev hosts.
+   */
+  platformImpl?: () => NodeJS.Platform;
+  /**
+   * Override the systemd-ollama-unit detection. Defaults to a `systemctl
+   * list-unit-files` probe. Lets unit tests skip the host check so the new
+   * #5716 sudo fall-through can be reached deterministically.
+   */
+  hasOllamaSystemdUnitImpl?: () => boolean;
+  /**
+   * Optional probe for passwordless sudo. Returns true when `sudo -n true`
+   * succeeds. Defaults to running it via `runShell`. Exposed so tests can
+   * exercise the #5716 "no passwordless sudo" fall-through deterministically
+   * without needing a real sudoers config.
+   */
+  hasPasswordlessSudoImpl?: () => boolean;
 };
 
 function isEnvNonInteractive(): boolean {
@@ -91,17 +109,50 @@ export function ensureOllamaLoopbackSystemdOverride(
   // now handles bridge-network reachability for both native-Docker-in-WSL and
   // non-WSL Linux, so loopback binding is the right policy everywhere. See
   // issues #3342 (re-onboard repair) and #3695 (WSL native Docker).
-  if (process.platform !== "linux") return "not-applicable";
+  const platform = (options.platformImpl ?? (() => process.platform))();
+  if (platform !== "linux") return "not-applicable";
 
-  const hasOllamaSystemdUnit = !!runCapture(
-    [
-      "sh",
-      "-c",
-      "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
-    ],
-    { ignoreError: true },
-  ).trim();
+  const hasOllamaSystemdUnit =
+    options.hasOllamaSystemdUnitImpl?.() ??
+    !!runCapture(
+      [
+        "sh",
+        "-c",
+        "command -v systemctl >/dev/null && [ -d /run/systemd/system ] && systemctl list-unit-files ollama.service --no-legend 2>/dev/null | head -n1",
+      ],
+      { ignoreError: true },
+    ).trim();
   if (!hasOllamaSystemdUnit) return "not-applicable";
+
+  // #5716: a non-interactive run on a host without passwordless sudo cannot
+  // apply the loopback override (every `sudo -n ...` below would error). The
+  // installer used to march into the override and abort mid-flight with
+  // "Refusing to continue with a potentially non-loopback Ollama bind",
+  // breaking the headless install contract. Detect the unavailable sudo
+  // upfront, log the actionable reason, and skip the override instead of
+  // exiting. Ollama keeps running on its existing bind; the host operator
+  // can re-run with NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt or grant
+  // passwordless sudo to restore the loopback hardening.
+  const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
+  const hasPasswordlessSudo =
+    options.hasPasswordlessSudoImpl ??
+    (() => {
+      const probe = runShell("sudo -n true", {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 5_000,
+      });
+      return !probe.error && probe.status === 0;
+    });
+  if (sudoPrefix === "sudo -n" && !hasPasswordlessSudo()) {
+    console.warn(
+      "  Skipping Ollama systemd loopback override: passwordless sudo is not available " +
+        "on this host. Ollama will keep its current bind; set " +
+        `${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt to allow a password prompt, ` +
+        "or configure passwordless sudo to restore loopback hardening.",
+    );
+    return "not-applicable";
+  }
 
   console.log("  Configuring Ollama systemd loopback override...");
   console.log(
@@ -109,7 +160,6 @@ export function ensureOllamaLoopbackSystemdOverride(
       "The next steps use sudo to write the drop-in, reload systemd, and restart the service; " +
       "you may be prompted for your password.",
   );
-  const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const existingDropInResult = runShell(
     [
       `if [ -r ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then`,
