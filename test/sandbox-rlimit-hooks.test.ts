@@ -405,6 +405,9 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const dashboardSeeder = path.join(localLib, "seed-hermes-dashboard-config.py");
     const runtimeGuard = path.join(localLib, "hermes-runtime-config-guard.py");
     const mcpTransaction = path.join(localLib, "hermes-mcp-config-transaction.py");
+    const preloadDir = path.join(localLib, "preloads");
+    const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
+    const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
     const startBin = path.join(tmp, "nemoclaw-start");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
@@ -418,8 +421,15 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.writeFileSync(dashboardSeeder, "# dashboard seeder fixture\n");
       fs.writeFileSync(runtimeGuard, "# runtime guard fixture\n");
       fs.writeFileSync(mcpTransaction, "# MCP transaction fixture\n");
+      fs.mkdirSync(preloadDir, { mode: 0o777 });
+      fs.writeFileSync(safetyNet, "module.exports = 'safety net fixture';\n", { mode: 0o666 });
+      fs.writeFileSync(ciaoGuard, "module.exports = 'ciao guard fixture';\n", { mode: 0o666 });
+      fs.chmodSync(preloadDir, 0o777);
+      fs.chmodSync(safetyNet, 0o666);
+      fs.chmodSync(ciaoGuard, 0o666);
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
+      const fixtureOwner = fs.statSync(startBin);
       const command = dockerRunCommandBetween(
         dockerfile,
         "# Copy startup script and the secret-boundary validator.",
@@ -431,6 +441,10 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py", mcpTransaction)
+        .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
+        .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
+        .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
+        .replaceAll("chown root:root", `chown ${fixtureOwner.uid}:${fixtureOwner.gid}`)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", profileHook)
         .replaceAll("/etc/profile.d", path.dirname(profileHook))
@@ -443,6 +457,18 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       expectSystemRlimitHookEnforcesLimits(profileHook);
       expectSystemRlimitHookEnforcesLimits(bashrc);
       expectSystemRlimitHookIsSilentWhenVerificationFails(bashrc, rlimitLib);
+      const hardenedDir = fs.statSync(preloadDir);
+      const hardenedSafetyNet = fs.statSync(safetyNet);
+      const hardenedCiaoGuard = fs.statSync(ciaoGuard);
+      expect(hardenedDir.mode & 0o777).toBe(0o755);
+      expect(hardenedSafetyNet.mode & 0o777).toBe(0o444);
+      expect(hardenedCiaoGuard.mode & 0o777).toBe(0o444);
+      expect(hardenedDir.uid).toBe(fixtureOwner.uid);
+      expect(hardenedDir.gid).toBe(fixtureOwner.gid);
+      expect(hardenedSafetyNet.uid).toBe(fixtureOwner.uid);
+      expect(hardenedSafetyNet.gid).toBe(fixtureOwner.gid);
+      expect(hardenedCiaoGuard.uid).toBe(fixtureOwner.uid);
+      expect(hardenedCiaoGuard.gid).toBe(fixtureOwner.gid);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
