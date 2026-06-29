@@ -1065,7 +1065,11 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
 
     await startSandboxChannel("alpha", { channel: "teams" });
 
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
     expect(rebuildSandboxMock).toHaveBeenCalledWith("alpha", ["--yes"]);
+    expect(applyPresetMock.mock.invocationCallOrder[0]).toBeLessThan(
+      rebuildSandboxMock.mock.invocationCallOrder[0],
+    );
     expect(ensureMessagingHostForwardAfterRebuildMock).toHaveBeenCalledWith(
       "alpha",
       expect.any(Object),
@@ -1078,6 +1082,39 @@ describe("Teams host-forward lifecycle (PRA-2)", () => {
       port: 3978,
       label: "Microsoft Teams webhook",
     });
+  });
+
+  it("channels start reapplies its policy before a non-interactive rebuild is queued", async () => {
+    process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+
+    await startSandboxChannel("alpha", { channel: "teams" });
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("Change queued");
+  });
+
+  it("channels start restores the disabled plan and skips rebuild when its policy preset fails", async () => {
+    arrangeRegistry({ current: makeTeamsEntry("alpha", { disabled: true }) });
+    getDisabledChannelsMock.mockReturnValue(["teams"]);
+    applyPresetMock.mockReturnValue(false);
+
+    await expect(startSandboxChannel("alpha", { channel: "teams" })).rejects.toThrow(
+      "process.exit(1)",
+    );
+
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "teams");
+    expect(updateSandboxMock).toHaveBeenCalledTimes(2);
+    expect(updateSandboxMock.mock.calls[0]?.[1]).toMatchObject({
+      messaging: { plan: { disabledChannels: [] } },
+    });
+    expect(updateSandboxMock.mock.calls[1]?.[1]).toMatchObject({
+      messaging: { plan: { disabledChannels: ["teams"] } },
+    });
+    expect(rebuildSandboxMock).not.toHaveBeenCalled();
+    expect(loggedText()).toContain("channels start teams");
   });
 });
 
