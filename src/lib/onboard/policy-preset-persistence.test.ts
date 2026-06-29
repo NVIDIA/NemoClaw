@@ -218,4 +218,24 @@ describe("persistFinalizedPolicyPresets (#4621)", () => {
       policyPresetsFinalized: true,
     });
   });
+
+  // #5967 was a registry-persistence regression: an enabled messaging channel's
+  // preset reached the live gateway but was dropped from the registry `policies`
+  // write, so `policy-list` (which reads registry.policies) rendered `○`. Using
+  // the REAL built-in preset catalog proves Discord and Slack are recognized as
+  // built-ins and are written back to the registry, not filtered out.
+  it("persists enabled messaging channel presets (Discord, Slack) to the registry (#5967)", () => {
+    vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+    const updateSandbox = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
+
+    persistFinalizedPolicyPresets("sb", ["npm", "pypi", "discord", "slack"]);
+
+    expect(updateSandbox).toHaveBeenCalledTimes(1);
+    const [, fields] = updateSandbox.mock.calls[0] as [
+      string,
+      { policies: string[]; policyPresetsFinalized: boolean },
+    ];
+    expect(fields.policyPresetsFinalized).toBe(true);
+    expect([...fields.policies].sort()).toEqual(["discord", "npm", "pypi", "slack"]);
+  });
 });
