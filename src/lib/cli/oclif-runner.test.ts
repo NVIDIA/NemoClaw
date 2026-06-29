@@ -159,13 +159,17 @@ describe("runOclifArgv", () => {
     class ExitError extends Error {
       oclif = { exit: 0 };
     }
-    runMock.mockRejectedValue(new ExitError("EEXIT: 0"));
+    const exitError = new ExitError("EEXIT: 0");
+    runMock.mockRejectedValue(exitError);
     const errorLine = vi.fn();
 
     await runOclifArgv(["sandbox", "list"], { rootDir: "/repo", error: errorLine });
 
     expect(errorLine).not.toHaveBeenCalled();
-    expect(handleMock).toHaveBeenCalled();
+    // The runner must NOT force a failure code here — handle() owns the
+    // graceful exit 0 for a genuine ExitError(0).
+    expect(process.exitCode).toBeUndefined();
+    expect(handleMock).toHaveBeenCalledWith(exitError);
   });
 });
 
