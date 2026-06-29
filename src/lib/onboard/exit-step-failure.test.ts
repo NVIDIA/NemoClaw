@@ -12,6 +12,7 @@ import {
   markLastStartedStepFailed,
   registerIncompleteOnboardExitFailureHandler,
 } from "./exit-step-failure";
+import { noteOnboardResumeHintShown, resetOnboardResumeHintForTests } from "./resume-hint";
 
 const originalHome = process.env.HOME;
 const restoreOriginalHome =
@@ -31,6 +32,7 @@ beforeEach(async () => {
   vi.resetModules();
   session = await import("../state/onboard-session");
   session.clearSession();
+  resetOnboardResumeHintForTests();
 });
 
 afterEach(() => {
@@ -73,6 +75,8 @@ describe("terminal step failure helper", () => {
       },
     };
     session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    // The incomplete exit also prints the #6003 resume hint; capture it.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     registerIncompleteOnboardExitFailureHandler(
       session,
@@ -89,6 +93,7 @@ describe("terminal step failure helper", () => {
 
     complete = false;
     listeners[0](1);
+    errorSpy.mockRestore();
 
     const loaded = requireLoadedSession();
     expect(loaded.steps.inference.status).toBe("failed");
@@ -121,5 +126,50 @@ describe("terminal step failure helper", () => {
       ),
     ).toBeNull();
     expect(markStepFailed).not.toHaveBeenCalled();
+  });
+});
+
+describe("incomplete-onboard --resume backstop (#6003)", () => {
+  function runExitHandler(code: number, { complete = false } = {}): string {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((message?: unknown) => {
+      lines.push(String(message ?? ""));
+    });
+    const listeners: Array<(code: number) => void> = [];
+    const processLike = {
+      once: (_event: "exit", listener: (code: number) => void) => {
+        listeners.push(listener);
+      },
+    };
+    registerIncompleteOnboardExitFailureHandler(
+      session,
+      () => complete,
+      "Onboarding exited before the step completed.",
+      processLike,
+    );
+    listeners[0](code);
+    spy.mockRestore();
+    return lines.join("\n");
+  }
+
+  it("prints the resume hint when a step was in progress at exit", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    expect(runExitHandler(1)).toContain("onboard --resume");
+  });
+
+  it("stays silent when no step had started", () => {
+    session.saveSession(session.createSession());
+    expect(runExitHandler(1)).not.toContain("--resume");
+  });
+
+  it("stays silent on a successful exit", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "inference" }));
+    expect(runExitHandler(0)).not.toContain("--resume");
+  });
+
+  it("does not duplicate a tailored hint that already printed", () => {
+    session.saveSession(session.createSession({ lastStepStarted: "sandbox" }));
+    noteOnboardResumeHintShown();
+    expect(runExitHandler(1)).not.toContain("--resume");
   });
 });

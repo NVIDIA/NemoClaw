@@ -6,6 +6,7 @@ import {
   LEGACY_MACHINE_STEP_MUTATION_OPTIONS,
   type StepMutationOptions,
 } from "../state/onboard-step-mutation";
+import { printOnboardResumeHint } from "./resume-hint";
 
 export interface ExitStepFailureSessionDeps {
   loadSession(): Pick<Session, "lastStepStarted"> | null;
@@ -38,6 +39,11 @@ export function registerIncompleteOnboardExitFailureHandler(
 ): void {
   processLike.once("exit", (code) => {
     if (isComplete() || code === 0) return;
-    markLastStartedStepFailed(deps, message);
+    // A non-null return means a step was in progress, so the session records a
+    // resumable point — surface `--resume` for the many exit paths that don't
+    // print their own recovery guidance (#6003). When an explicit cancel has
+    // already cleared the session (or no step started), this is null and stays
+    // silent; printOnboardResumeHint also self-dedupes against tailored hints.
+    if (markLastStartedStepFailed(deps, message)) printOnboardResumeHint();
   });
 }
