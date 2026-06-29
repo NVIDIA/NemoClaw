@@ -676,6 +676,10 @@ describe("E2E reusable workflow contract", () => {
     expect(scorecardStep?.with?.script).toContain("traceTiming.buildTraceTimingResult");
     expect(scorecardStep?.with?.script).toContain("budgetExceeded");
     expect(scorecardStep?.with?.script).toContain("budgetWarningMessage");
+    expect(scorecardStep?.with?.script).toContain("budgetStatus");
+    expect(scorecardStep?.with?.script).toContain(
+      "buildTraceTimingResult({ github, context, core })",
+    );
     expect(scorecardStep?.with?.script).toContain("core.warning");
     expect(scorecardStep?.with?.script).toContain("lines.push(...traceSummaryLines)");
     expect(scorecardStep?.with?.script).not.toContain(

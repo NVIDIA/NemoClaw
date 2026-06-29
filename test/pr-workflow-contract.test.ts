@@ -396,6 +396,7 @@ describe("pull request and main workflow contracts", () => {
 
     expect(staticRuns).toContain("npm install --ignore-scripts");
     expect(staticRuns).toContain("npm run validate:configs");
+    expect(staticRuns).toContain("npm run typecheck:scorecard");
     expect(staticPrekRun).toContain("npx prek run --all-files --stage pre-commit");
     for (const skippedHook of [
       "test-cli",

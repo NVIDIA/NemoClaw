@@ -3018,9 +3018,9 @@ jobs:
                   .map(([name]) => ({ name, url: null }))
                   .sort((a, b) => a.name.localeCompare(b.name));
 
-            const { traceTimingLine, traceSummaryLines, budgetExceeded, budgetWarningMessage } =
-              await traceTiming.buildTraceTimingResult({ github, context });
-            if (budgetExceeded) {
+            const { traceTimingLine, traceSummaryLines, budgetExceeded, budgetWarningMessage, budgetStatus } =
+              await traceTiming.buildTraceTimingResult({ github, context, core });
+            if (budgetExceeded || budgetStatus === 'config_unavailable') {
               core.warning(budgetWarningMessage || 'Cloud onboard advisory performance budget warning; see scorecard summary for timing details.');
             }
 

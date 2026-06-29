@@ -22,6 +22,7 @@ type TraceTimingAnalyzer = {
   buildTraceTimingResult: (...args: any[]) => Promise<any>;
   buildTraceSummaryLines: (...args: any[]) => string[];
   evaluateOnboardPerformanceBudget: (...args: any[]) => any;
+  exceedsThreshold: (...args: any[]) => boolean;
   formatTopPhaseChanges: (...args: any[]) => string;
   readOnboardPerformanceBudget: (rootDir?: string) => unknown;
   selectOnboardTrace: (
@@ -290,7 +291,7 @@ describe("cloud onboard scorecard trace timing", () => {
   });
 
   it("scorecard warns budget config unavailable without saying performance budget exceeded", async () => {
-    const tempRoot = mkdtempSync(path.join(tmpdir(), "nemoclaw-budget-config-"));
+    const tempRoot = mkdtempSync(path.join(process.cwd(), ".tmp-nemoclaw-budget-config-"));
     const previousWorkspace = process.env.GITHUB_WORKSPACE;
     const restoreWorkspace =
       previousWorkspace === undefined
@@ -314,11 +315,12 @@ describe("cloud onboard scorecard trace timing", () => {
         github: traceGithubFixture({ summariesByRunId: { 1: timingSummary() } }),
       });
 
-      expect(result.budgetExceeded).toBe(true);
-      expect(result.budgetWarningMessage).toContain("performance budget unavailable");
+      expect(result.budgetExceeded).toBe(false);
+      expect(result.budgetStatus).toBe("config_unavailable");
+      expect(result.budgetWarningMessage).toContain("budget config unavailable");
       expect(result.budgetWarningMessage).not.toContain("performance budget exceeded");
       expect(result.traceTimingLine).toContain("Trace: cloud-onboard total 1.0s");
-      expect(result.traceTimingLine).toContain("Budget: advisory warning");
+      expect(result.traceTimingLine).toContain("Budget: config unavailable");
       expect(result.traceSummaryLines.join("\n")).toContain(
         "the budget config is invalid or unreadable",
       );
@@ -326,6 +328,27 @@ describe("cloud onboard scorecard trace timing", () => {
       restoreWorkspace();
       rmSync(tempRoot, { recursive: true, force: true });
     }
+  });
+
+  it("rejects budget roots outside the repository", () => {
+    const outsideRepo = mkdtempSync(path.join(tmpdir(), "nemoclaw-budget-outside-"));
+    try {
+      expect(traceTiming.readOnboardPerformanceBudget(outsideRepo)).toMatchObject({
+        status: "unavailable",
+        reason: "path_traversal",
+      });
+    } finally {
+      rmSync(outsideRepo, { recursive: true, force: true });
+    }
+  });
+
+  it("requires both absolute and percentage thresholds for advisory regressions", () => {
+    const threshold = { minDeltaMs: 100, minPercent: 30 };
+
+    expect(traceTiming.exceedsThreshold(250, 100, threshold)).toBe(true);
+    expect(traceTiming.exceedsThreshold(150, 100, threshold)).toBe(false);
+    expect(traceTiming.exceedsThreshold(1120, 1000, threshold)).toBe(false);
+    expect(traceTiming.exceedsThreshold(1050, 1000, threshold)).toBe(false);
   });
 
   it("keeps trace timing analysis limited to the trusted summary schema", () => {
@@ -368,10 +391,14 @@ describe("cloud onboard scorecard trace timing", () => {
     expect(traceTiming.selectOnboardTrace([negativeDurationSummary])).toBeNull();
   });
 
-  it("does not expose raw comparison errors in trace timing output", async () => {
+  it("logs sanitized comparison errors without exposing secrets", async () => {
+    const warnings: string[] = [];
+    const listWorkflowRunArtifacts = Symbol("listWorkflowRunArtifacts");
     const result = await traceTiming.buildTraceTimingResult({
       context: { repo: { owner: "NVIDIA", repo: "NemoClaw" }, runId: 1 },
+      core: { warning: (message: string) => warnings.push(message) },
       github: {
+        rest: { actions: { listWorkflowRunArtifacts } },
         paginate: async () => {
           throw new Error("download failed with token=secret");
         },
@@ -380,6 +407,7 @@ describe("cloud onboard scorecard trace timing", () => {
 
     expect(result.traceTimingLine).toBe("Trace: ⊘ comparison unavailable");
     expect(result.traceTimingLine).not.toContain("secret");
+    expect(warnings).toEqual(["Trace timing failed: Error: download failed with token=[redacted]"]);
   });
 
   it("covers trace timing fallback branches with mocked GitHub data", async () => {

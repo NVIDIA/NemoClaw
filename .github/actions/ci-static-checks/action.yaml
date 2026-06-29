@@ -33,7 +33,11 @@ runs:
       shell: bash
       run: npm run validate:configs
 
-    # TypeScript checks and version sync run in the build-typecheck job.
+    - name: Typecheck scorecard analyzer
+      shell: bash
+      run: npm run typecheck:scorecard
+
+    # General TypeScript checks and version sync run in the build-typecheck job.
     - name: Run static hook checks
       shell: bash
       run: |

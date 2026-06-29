@@ -346,10 +346,20 @@ describe("E2E advisor auto-dispatch planning", () => {
 });
 
 describe("E2E advisor deterministic recommendations", () => {
-  it("requires cloud onboard E2E for onboard performance budget changes", () => {
-    expect(requiresCloudOnboardE2e(["ci/onboard-performance-budget.json"])).toBe(true);
-    expect(requiresCloudOnboardE2e(["scripts/scorecard/analyze-trace-timing.ts"])).toBe(true);
-    expect(requiresCloudOnboardE2e(["src/lib/onboard/tracing.ts"])).toBe(true);
+  it.each([
+    "src/lib/onboard/tracing.ts",
+    "src/lib/trace.ts",
+    "scripts/scorecard/analyze-trace-timing.ts",
+    "ci/onboard-performance-budget.json",
+    ".github/actions/run-e2e-script/action.yaml",
+    ".github/workflows/nightly-e2e.yaml",
+    "test/e2e/test-cloud-onboard-e2e.sh",
+    "test/e2e-scenario/live/cloud-onboard.test.ts",
+  ])("requires cloud onboard E2E for timing-sensitive path %s", (changedFile) => {
+    expect(requiresCloudOnboardE2e([changedFile])).toBe(true);
+  });
+
+  it("does not require cloud onboard E2E for unrelated docs", () => {
     expect(requiresCloudOnboardE2e(["docs/reference/commands.mdx"])).toBe(false);
   });
 

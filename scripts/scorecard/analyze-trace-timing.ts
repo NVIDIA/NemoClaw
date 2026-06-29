@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -11,6 +10,7 @@ const WORKFLOW_FILE = "nightly-e2e.yaml";
 const TRACE_ARTIFACT_NAME = "cloud-onboard-traces";
 const TRACE_SUMMARY_FILE = "cloud-onboard-trace-timing-summary.json";
 const ONBOARD_PERFORMANCE_BUDGET_FILE = "ci/onboard-performance-budget.json";
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const ONBOARD_PHASE_PREFIX = "nemoclaw.onboard.phase.";
 // Keep this ordered list aligned with the trace span names emitted by
 // src/lib/onboard/tracing.ts.
@@ -90,8 +90,9 @@ function traceTimingResult(
   traceSummaryLines = [],
   budgetExceeded = false,
   budgetWarningMessage = null,
+  budgetStatus = "not_evaluated",
 ) {
-  return { traceTimingLine, traceSummaryLines, budgetExceeded, budgetWarningMessage };
+  return { traceTimingLine, traceSummaryLines, budgetExceeded, budgetWarningMessage, budgetStatus };
 }
 
 function isFiniteNonNegativeNumber(value) {
@@ -139,8 +140,26 @@ function normalizeOnboardPerformanceBudget(value) {
   };
 }
 
-function readOnboardPerformanceBudget(rootDir = process.env.GITHUB_WORKSPACE || process.cwd()) {
-  const filePath = path.join(rootDir, ONBOARD_PERFORMANCE_BUDGET_FILE);
+function repoRelativePath(baseDir, targetPath) {
+  return path.relative(path.resolve(baseDir), path.resolve(targetPath));
+}
+
+function isPathInside(baseDir, targetPath) {
+  const relativePath = repoRelativePath(baseDir, targetPath);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+function readOnboardPerformanceBudget(rootDir = process.env.GITHUB_WORKSPACE || REPO_ROOT) {
+  const repoRoot = path.resolve(REPO_ROOT);
+  const budgetRoot = path.resolve(rootDir);
+  if (!isPathInside(repoRoot, budgetRoot)) {
+    return { status: "unavailable", reason: "path_traversal" };
+  }
+
+  const filePath = path.resolve(budgetRoot, ONBOARD_PERFORMANCE_BUDGET_FILE);
+  if (!isPathInside(budgetRoot, filePath)) {
+    return { status: "unavailable", reason: "path_traversal" };
+  }
   if (!fs.existsSync(filePath)) {
     return { status: "unavailable", reason: "missing" };
   }
@@ -229,6 +248,7 @@ function percentDelta(currentMs, priorMs) {
   return priorMs > 0 ? ((currentMs - priorMs) / priorMs) * 100 : 0;
 }
 
+// Require both an absolute and percentage delta so tiny fast-phase noise does not page maintainers.
 function exceedsThreshold(currentMs, priorMs, threshold) {
   const deltaMs = currentMs - priorMs;
   return (
@@ -236,26 +256,44 @@ function exceedsThreshold(currentMs, priorMs, threshold) {
   );
 }
 
-function evaluateOnboardPerformanceBudget({ budget, currentTrace, priorTrace, phaseRows }) {
+function sanitizeTraceTimingError(error) {
+  const errorName = error?.constructor?.name || "Error";
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage
+    .replace(/(token|key|secret|password)=\S+/gi, "$1=[redacted]")
+    .replace(/(token|key|secret|password):\S+/gi, "$1:[redacted]")
+    .slice(0, 200);
+  return `${errorName}: ${message}`;
+}
+
+function evaluateOnboardPerformanceBudget({
+  budget,
+  currentTrace,
+  priorTrace = null,
+  phaseRows = [],
+}) {
   if (budget === null) return null;
   if ("status" in budget) {
     if (budget.status === "unavailable") {
       const reason =
         budget.reason === "missing"
           ? "the budget config was not found"
-          : "the budget config is invalid or unreadable";
+          : budget.reason === "path_traversal"
+            ? "the budget config path resolved outside the repository"
+            : "the budget config is invalid or unreadable";
       return {
-        exceeded: true,
+        exceeded: false,
+        status: "config_unavailable",
         mode: "advisory",
         scope: "cloud-onboard-e2e warm-system",
-        statusLabel: "warning",
-        summary: `Budget: advisory warning - ${ONBOARD_PERFORMANCE_BUDGET_FILE} unavailable; ${reason}.`,
-        warningMessage: `Cloud onboard advisory performance budget unavailable; check ${ONBOARD_PERFORMANCE_BUDGET_FILE} and the scorecard summary for details.`,
+        statusLabel: "config_unavailable",
+        summary: `Budget: config unavailable - ${reason}.`,
+        warningMessage: `Cloud onboard advisory performance budget config unavailable; check ${ONBOARD_PERFORMANCE_BUDGET_FILE} and the scorecard summary for details.`,
         summaryLines: [
           "",
           "### Onboard Performance Budget",
           "",
-          "Status: **Advisory warning**",
+          "Status: **Config unavailable**",
           `Config: \`${ONBOARD_PERFORMANCE_BUDGET_FILE}\``,
           `Finding: ${reason}.`,
           "",
@@ -348,6 +386,7 @@ function evaluateOnboardPerformanceBudget({ budget, currentTrace, priorTrace, ph
 
   return {
     exceeded,
+    status: exceeded ? "exceeded" : "ok",
     mode: budget.mode,
     scope: budget.scope,
     statusLabel: exceeded ? "warning" : "ok",
@@ -493,6 +532,7 @@ async function buildTraceTimingResult(deps) {
         budgetEvaluation?.summaryLines ?? [],
         budgetEvaluation?.exceeded ?? false,
         budgetEvaluation?.warningMessage ?? null,
+        budgetEvaluation?.status ?? "not_evaluated",
       );
     }
 
@@ -511,6 +551,7 @@ async function buildTraceTimingResult(deps) {
         budgetEvaluation?.summaryLines ?? [],
         budgetEvaluation?.exceeded ?? false,
         budgetEvaluation?.warningMessage ?? null,
+        budgetEvaluation?.status ?? "not_evaluated",
       );
     }
 
@@ -529,6 +570,7 @@ async function buildTraceTimingResult(deps) {
         budgetEvaluation?.summaryLines ?? [],
         budgetEvaluation?.exceeded ?? false,
         budgetEvaluation?.warningMessage ?? null,
+        budgetEvaluation?.status ?? "not_evaluated",
       );
     }
 
@@ -547,6 +589,7 @@ async function buildTraceTimingResult(deps) {
         budgetEvaluation?.summaryLines ?? [],
         budgetEvaluation?.exceeded ?? false,
         budgetEvaluation?.warningMessage ?? null,
+        budgetEvaluation?.status ?? "not_evaluated",
       );
     }
 
@@ -562,8 +605,10 @@ async function buildTraceTimingResult(deps) {
       buildTraceSummaryLines(currentTrace, priorTrace, priorTag, phaseRows, budgetEvaluation),
       budgetEvaluation?.exceeded ?? false,
       budgetEvaluation?.warningMessage ?? null,
+      budgetEvaluation?.status ?? "not_evaluated",
     );
   } catch (error) {
+    deps.core?.warning?.(`Trace timing failed: ${sanitizeTraceTimingError(error)}`);
     return traceTimingResult("Trace: ⊘ comparison unavailable");
   }
 }
@@ -576,11 +621,13 @@ module.exports = {
   buildTraceTimingResult,
   buildTraceSummaryLines,
   evaluateOnboardPerformanceBudget,
+  exceedsThreshold,
   extractPhaseDurations,
   formatTraceDelta,
   formatTopPhaseChanges,
   readOnboardPerformanceBudget,
   readTraceSummaryFromRun,
   resolvePriorReleaseTag,
+  sanitizeTraceTimingError,
   selectOnboardTrace,
 };

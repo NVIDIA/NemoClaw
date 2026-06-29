@@ -9,11 +9,11 @@
  * Vitest project.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
+import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { discoverTargets } from "../scripts/validate-configs";
@@ -115,6 +115,31 @@ describe("config validation target discovery", () => {
         "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
       ]),
     );
+  });
+
+  it("includes the onboard performance budget config", () => {
+    expect(filesBySchema.get("schemas/onboard-config.schema.json") ?? []).toEqual([
+      "ci/onboard-performance-budget.json",
+    ]);
+  });
+});
+
+// ── Onboard performance budget ──────────────────────────────────────────────
+
+describe("onboard-config.schema.json", () => {
+  const validate = compileSchema("schemas/onboard-config.schema.json");
+  const data = loadJSON(repoPath("ci/onboard-performance-budget.json"));
+
+  it("onboard-performance-budget.json passes schema validation", () => {
+    expectValid(validate, data, "onboard-performance-budget.json");
+  });
+
+  it("rejects invalid threshold shapes", () => {
+    const bad = {
+      ...cloneObject(data),
+      regressionWarning: { minDeltaMs: -1, minPercent: 20 },
+    };
+    expect(validate(bad)).toBe(false);
   });
 });
 
