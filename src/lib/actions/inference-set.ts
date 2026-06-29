@@ -72,7 +72,7 @@ export interface InferenceSetDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  runOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => OpenshellRunResult;
+  runOpenshell: (args: string[], opts?: { ignoreError?: boolean; stdio?: import("node:child_process").StdioOptions }) => OpenshellRunResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
@@ -609,9 +609,37 @@ export async function runInferenceSet(
     openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
     {
       ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
     },
   );
   if (setResult.status !== 0) {
+    const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
+    const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
+    const combined = `${stderr}\n${stdout}`;
+    if (/provider.*not found/i.test(combined) || /not found.*provider/i.test(combined)) {
+      let providerList = "No providers registered";
+      try {
+        const registeredProviders = [
+          ...new Set(
+            deps
+              .listSandboxes()
+              .sandboxes.map((s) => s.provider)
+              .filter((p): p is string => typeof p === "string" && p.length > 0),
+          ),
+        ];
+        if (registeredProviders.length > 0) {
+          providerList = `Registered providers: ${registeredProviders.join(", ")}`;
+        }
+      } catch {
+        // Registry unavailable — still show the onboard tip without provider details.
+      }
+      throw new InferenceSetError(
+        `OpenShell inference route update failed with exit ${setResult.status ?? 1}.\n` +
+          `${providerList}\n` +
+          `Tip: register a new provider with \`${CLI_NAME} onboard\`.`,
+        setResult.status ?? 1,
+      );
+    }
     throw new InferenceSetError(
       `OpenShell inference route update failed with exit ${setResult.status ?? 1}.`,
       setResult.status ?? 1,

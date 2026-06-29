@@ -448,7 +448,7 @@ describe("runInferenceSet", () => {
         "nvidia/nemotron-3-super-120b-a12b",
         "--no-verify",
       ],
-      { ignoreError: true },
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     expect(config.agents).toEqual({
       defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
@@ -540,7 +540,7 @@ describe("runInferenceSet", () => {
         "openai/gpt-5.4-mini",
         "--no-verify",
       ],
-      { ignoreError: true },
+      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
     );
     expect(config).toEqual({
       _nemoclaw_upstream: {
@@ -1108,6 +1108,74 @@ describe("runInferenceSet", () => {
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("includes registered providers and onboard tip when openshell reports provider not found (#5924)", async () => {
+    const deps = createDeps({
+      config: {},
+      entries: [
+        { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+        { name: "beta", agent: "openclaw", provider: "anthropic-prod", model: "claude-sonnet-4-6" },
+      ],
+      openshellStatus: 1,
+    });
+    deps.calls.runOpenshell.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "error: provider 'bad-provider' not found in gateway",
+    });
+
+    const err = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      deps,
+    ).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/Registered providers: nvidia-prod, anthropic-prod/);
+    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("throws the generic error when openshell fails without a provider-not-found pattern (#5924)", async () => {
+    const deps = createDeps({ config: {}, openshellStatus: 42 });
+    deps.calls.runOpenshell.mockReturnValue({
+      status: 42,
+      stdout: "",
+      stderr: "error: network timeout connecting to gateway",
+    });
+
+    const err = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      deps,
+    ).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/OpenShell inference route update failed with exit 42/);
+    expect(err.message).not.toMatch(/Registered providers/);
+    expect(err.message).not.toMatch(/onboard/);
+  });
+
+  it("shows 'No providers registered' when no sandbox has a provider on provider-not-found (#5924)", async () => {
+    const deps = createDeps({
+      config: {},
+      entries: [{ name: "alpha", agent: "openclaw", provider: null, model: null }],
+      openshellStatus: 1,
+    });
+    deps.calls.runOpenshell.mockReturnValue({
+      status: 1,
+      stdout: "",
+      stderr: "error: provider 'openai-api' not found in gateway",
+    });
+
+    const err = await runInferenceSet(
+      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      deps,
+    ).catch((e: Error) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/No providers registered/);
+    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
 
   it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
