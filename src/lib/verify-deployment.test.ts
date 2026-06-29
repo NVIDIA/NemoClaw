@@ -1,12 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import {
-  verifyDeployment,
-  formatVerificationDiagnostics,
-} from "../../dist/lib/verify-deployment.js";
-import { buildChain } from "../../dist/lib/dashboard/contract.js";
+import { describe, expect, it } from "vitest";
+import { buildChain } from "./dashboard/contract.js";
+import { formatVerificationDiagnostics, verifyDeployment } from "./verify-deployment.js";
 
 const chain = buildChain();
 
@@ -37,7 +34,7 @@ describe("verifyDeployment", () => {
     expect(result.verification.dashboardReachable).toBe(true);
   });
 
-  it("treats HTTP 401 as gateway alive (device auth enabled — fixes #2342)", async () => {
+  it("treats HTTP 401 as a live gateway with device auth enabled (#2342)", async () => {
     const deps = makeDeps({
       executeSandboxCommand: () => ({ status: 0, stdout: "401", stderr: "" }),
       probeHostPort: () => 401,
@@ -264,7 +261,7 @@ describe("verifyDeployment", () => {
     expect(msgDiag?.hint).toContain("rebuild");
   });
 
-  it("surfaces an inconclusive runtime probe as a messaging warn (catches malformed openclaw.json #4156)", async () => {
+  it("surfaces an inconclusive runtime probe as a messaging warning for malformed openclaw.json (#4156)", async () => {
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,

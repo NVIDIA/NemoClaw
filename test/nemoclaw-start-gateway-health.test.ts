@@ -358,7 +358,7 @@ describe("gateway serving watchdog (#4710)", () => {
 });
 
 describe("record_gateway_pid", () => {
-  it("replaces a planted symlink without writing through it (#4710 pidfile race)", () => {
+  it("replaces a planted symlink without writing through it during the pidfile race (#4710)", () => {
     // In root mode the pidfile lives in sticky /tmp; a sandbox process can
     // plant a symlink at that path between respawns. The update must replace
     // the symlink as a directory entry (atomic rename), never open it.

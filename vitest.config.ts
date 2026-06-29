@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import path from "node:path";
+
 import { defineConfig } from "vitest/config";
 
 import {
   shouldRunBranchValidationE2E,
-  shouldRunInstallerIntegration,
   shouldRunLiveE2EScenarios,
 } from "./test/e2e-scenario/fixtures/live-project-gate.ts";
 import { resolveE2ERetryCount } from "./test/helpers/e2e-retries";
@@ -14,10 +15,13 @@ import { testTimeout } from "./test/helpers/timeouts";
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
-const runInstallerIntegration = shouldRunInstallerIntegration();
 const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
+const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
+const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+  .filter(Boolean)
+  .join(" ");
 
 export default defineConfig({
   test: {
@@ -34,15 +38,29 @@ export default defineConfig({
         test: {
           name: "cli",
           testTimeout: testTimeout(),
-          include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          include: ["src/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/.claude/**"],
+        },
+      },
+      {
+        test: {
+          name: "integration",
+          // Source-backed process fixtures can exceed the unit-test budget
+          // when several coverage shards transpile and spawn them concurrently.
+          testTimeout: testTimeout(15_000),
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
+          // Integration fixtures often spawn short Node programs. Keep those
+          // programs on the same source graph as their parent test process.
+          env: { NODE_OPTIONS: sourceNodeOptions },
+          include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",
             "**/.claude/**",
             "test/e2e/**",
-            // Live scenario tests own their own gated project (e2e-scenarios-live)
-            // and require Docker + a real onboard to pass. Excluding here keeps
-            // the cli project (and pre-commit `Test (cli)`) green locally.
             "test/e2e-scenario/live/**",
+            "test/e2e-scenario/support-tests/**",
+            "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-preflight.test.ts",
             "test/install-preflight-docker-bootstrap.test.ts",
@@ -53,18 +71,20 @@ export default defineConfig({
       {
         test: {
           name: "installer-integration",
-          include: runInstallerIntegration
-            ? [
-                "test/install-express-prompt.test.ts",
-                "test/install-preflight.test.ts",
-                "test/install-preflight-docker-bootstrap.test.ts",
-                "test/install-openshell-version-check.test.ts",
-              ]
-            : [],
-          // Slow tests that spawn real bash install.sh processes.
-          // Run in CI or explicitly with:
-          //   NEMOCLAW_RUN_INSTALLER_TESTS=1 npx vitest run --project installer-integration
-          // Excluded from pre-commit/pre-push to avoid flaky timeouts.
+          include: [
+            "test/install-express-prompt.test.ts",
+            "test/install-preflight.test.ts",
+            "test/install-preflight-docker-bootstrap.test.ts",
+            "test/install-openshell-version-check.test.ts",
+          ],
+          // Slow tests that spawn real bash install.sh processes. Explicit
+          // project selection keeps them out of the fast source-test command.
+        },
+      },
+      {
+        test: {
+          name: "package-contract",
+          include: ["test/package-contract/**/*.test.ts"],
         },
       },
       {

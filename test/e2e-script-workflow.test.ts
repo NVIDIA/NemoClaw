@@ -449,7 +449,7 @@ describe("E2E reusable workflow contract", () => {
         "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
         "npm run build:cli",
         "npx tsx scripts/check-dist-sourcemaps.ts dist",
-        "npx vitest run --project cli \\",
+        "npx vitest run --project cli --project integration \\",
       ]),
     );
   });
@@ -1052,6 +1052,14 @@ describe("E2E reusable workflow contract", () => {
       (step) => step.name === "Install issue #4434 host dependencies",
     );
     const issue4434VitestInstallRun = issue4434VitestInstallStep?.run ?? "";
+    const networkPolicyVitestSteps =
+      vitestScenarioWorkflow.jobs["network-policy-vitest"].steps ?? [];
+    const networkPolicyVitestStepIndex = (name: string) =>
+      networkPolicyVitestSteps.findIndex((step) => step.name === name);
+    const networkPolicyVitestInstallStep = networkPolicyVitestSteps.find(
+      (step) => step.name === "Install network-policy host dependencies",
+    );
+    const networkPolicyVitestInstallRun = networkPolicyVitestInstallStep?.run ?? "";
     const installActionRun = installActionStep?.run ?? "";
 
     expect(issue4434VitestInstallStep?.uses).toBeUndefined();
@@ -1060,6 +1068,13 @@ describe("E2E reusable workflow contract", () => {
     );
     expect(issue4434VitestStepIndex("Install issue #4434 host dependencies")).toBeLessThan(
       issue4434VitestStepIndex("Authenticate to Docker Hub"),
+    );
+    expect(networkPolicyVitestInstallStep?.uses).toBeUndefined();
+    expect(networkPolicyVitestInstallRun).toContain(
+      "sudo apt-get install -y --no-install-recommends expect",
+    );
+    expect(networkPolicyVitestStepIndex("Install network-policy host dependencies")).toBeLessThan(
+      networkPolicyVitestStepIndex("Run network-policy live test"),
     );
 
     expect(installActionStep?.env?.APT_PACKAGES).toBe("${{ inputs.packages }}");
@@ -1082,6 +1097,7 @@ describe("E2E reusable workflow contract", () => {
       "sudo apt-get install -y --no-install-recommends",
     ]) {
       expect(issue4434VitestInstallRun, fragment).toContain(fragment);
+      expect(networkPolicyVitestInstallRun, fragment).toContain(fragment);
       expect(installActionRun, fragment).toContain(fragment);
     }
   });
@@ -1285,6 +1301,18 @@ describe("E2E reusable workflow contract", () => {
     }
 
     expect(nightlyWorkflow.jobs["common-egress-agent-e2e"].with?.inference_route).toBeUndefined();
+  });
+
+  it("uses the target custom endpoint for double-onboard stale rebuild recovery", () => {
+    const liveTest = readFileSync("test/e2e-scenario/live/double-onboard.test.ts", "utf8");
+
+    expect(liveTest).toContain(
+      "function staleRebuildEnv(sandboxName: string, fakeBaseUrl: string)",
+    );
+    expect(liveTest).toContain("return onboardEnv(sandboxName, fakeBaseUrl);");
+    expect(liveTest).toContain("env: staleRebuildEnv(SANDBOX_A, fake.baseUrl)");
+    expect(liveTest).not.toContain("ambient-wrong-model");
+    expect(liveTest).not.toContain('onboardEnv(sandboxName, "http://127.0.0.1:9/v1")');
   });
 
   it("keeps rebuild fixture registry inference aligned with hosted custom inference", () => {

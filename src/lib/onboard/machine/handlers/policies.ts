@@ -137,7 +137,7 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedPolicyPresets = Array.isArray(latestSession?.policyPresets)
     ? latestSession.policyPresets
     : null;
-  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan) ?? [];
+  const recordedMessagingChannels = getActiveChannelsFromPlan(latestSession?.messagingPlan);
   const activeSandbox = deps.getActiveSandbox(sandboxName);
   const activePlan = activeSandbox?.messaging?.plan;
   const activeMessagingChannels = getActiveChannelsFromPlan(activePlan);

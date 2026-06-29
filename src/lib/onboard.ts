@@ -1058,14 +1058,11 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
   buildContext;
 // classifySandboxCreateFailure — see validation import above
 
-// ---------------------------------------------------------------------------
-// Ollama model prompt/pull/prepare functions — from inference/ollama/proxy.ts
-// (proxy lifecycle functions already imported at the top of this file)
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
   prepareOllamaModel,
-} = require("./inference/ollama/proxy");
+}: typeof import("./inference/ollama/proxy") = require("./inference/ollama/proxy");
 
 const {
   handleWindowsHostOllamaSelection,
@@ -3281,6 +3278,9 @@ async function selectAndValidateOllamaModel(
 ): Promise<OllamaModelSelectionOutcome> {
   const { requestedModel, recoveredModel } = defaults;
   const probeFailures = new OllamaProbeFailureTracker();
+  const confirm = (question: string, defaultIsYes: boolean) =>
+    promptYesNoOrDefault(question, null, defaultIsYes);
+  const interaction = { isNonInteractive, isAutoYes, confirm };
   while (true) {
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
@@ -3323,7 +3323,7 @@ async function selectAndValidateOllamaModel(
         }
       }
     }
-    const probe = await prepareOllamaModel(selectedModel, installedModels);
+    const probe = await prepareOllamaModel(selectedModel, installedModels, interaction);
     if (!probe.ok) {
       const probeFailureLimitReached = probeFailures.recordFailure(selectedModel);
       const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);

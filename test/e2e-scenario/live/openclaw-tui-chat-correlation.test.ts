@@ -488,7 +488,7 @@ async function runLiveIssue2603ReproWithEventCaptureRetry(
 // ─── The live regression guard ─────────────────────────────────────
 
 test(
-  "openclaw-tui-chat-correlation: rapid TUI/webchat sends stay correlated on a real OpenClaw sandbox (#2603 + #3145)",
+  "openclaw-tui-chat-correlation keeps rapid TUI and webchat sends correlated on a real OpenClaw sandbox (#2603, #3145)",
   async ({ artifacts, environment, onboard, sandbox, secrets }) => {
     secrets.required("NVIDIA_INFERENCE_API_KEY");
 

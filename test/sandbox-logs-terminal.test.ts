@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 
 import { describe, expect, it } from "vitest";
 
-import { showSandboxLogsWithDeps } from "../dist/lib/actions/sandbox/logs.js";
+import { showSandboxLogsWithDeps } from "../src/lib/actions/sandbox/logs.js";
 
 function makeSpawnChild(): EventEmitter & {
   exitCode: number | null;

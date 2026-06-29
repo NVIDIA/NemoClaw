@@ -12,7 +12,7 @@ import {
   loadAgent,
   resolveAgentName,
   resolveAgentNameAlias,
-} from "../../../dist/lib/agent/defs";
+} from "./defs";
 
 const tempAgentDirs: string[] = [];
 

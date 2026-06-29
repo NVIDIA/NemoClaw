@@ -8,7 +8,7 @@ import {
   computePatchedTag,
   ensurePatchedClusterImage,
   extractUpstreamVersion,
-} from "../../dist/lib/cluster-image-patch";
+} from "./cluster-image-patch";
 
 const UPSTREAM = "ghcr.io/nvidia/openshell/cluster:0.0.36";
 

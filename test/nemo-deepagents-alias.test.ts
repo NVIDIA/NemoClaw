@@ -75,6 +75,25 @@ function runNemoClaw(
   }
 }
 
+function createDeepAgentsRegistry(): { home: string; registryPath: string } {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemo-deepagents-use-"));
+  const registryDir = path.join(home, ".nemoclaw");
+  const registryPath = path.join(registryDir, "sandboxes.json");
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    registryPath,
+    JSON.stringify({
+      sandboxes: {
+        "dcode-alpha": { name: "dcode-alpha", agent: "langchain-deepagents-code" },
+        "dcode-beta": { name: "dcode-beta", agent: "langchain-deepagents-code" },
+      },
+      defaultSandbox: "dcode-alpha",
+    }),
+    { mode: 0o600 },
+  );
+  return { home, registryPath };
+}
+
 describe("nemo-deepagents alias", () => {
   it("package-style nemo-deepagents symlink exists and is executable", () => {
     expect(fs.existsSync(DEEPAGENTS_CLI)).toBe(true);
@@ -83,7 +102,7 @@ describe("nemo-deepagents alias", () => {
     expect(stat.mode & 0o100).not.toBe(0);
   });
 
-  it("--version outputs nemo-deepagents branding", () => {
+  it("outputs nemo-deepagents branding for --version", () => {
     const { code, out } = runDeepAgents("--version");
     expect(code).toBe(0);
     expect(out).toMatch(/^nemo-deepagents v[\d.]+/);
@@ -101,7 +120,57 @@ describe("nemo-deepagents alias", () => {
     expect(code).toBe(0);
     expect(out).toContain("NemoDeepAgents");
     expect(out).toContain("nemo-deepagents onboard");
+    expect(out).toContain("nemo-deepagents use <name>");
     expect(out).not.toContain("nemoclaw onboard");
+  });
+
+  it("promotes a registered Deep Agents sandbox through the alias command", () => {
+    const { home, registryPath } = createDeepAgentsRegistry();
+
+    try {
+      const { code, out } = runDeepAgents("use dcode-beta", { HOME: home });
+
+      expect(code).toBe(0);
+      expect(out).toContain("Default sandbox set to 'dcode-beta' (was 'dcode-alpha').");
+      expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual(
+        expect.objectContaining({ defaultSandbox: "dcode-beta" }),
+      );
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  it("reports an already-default Deep Agents sandbox through the alias command", () => {
+    const { home } = createDeepAgentsRegistry();
+
+    try {
+      const { code, out } = runDeepAgents("use dcode-alpha", { HOME: home });
+
+      expect(code).toBe(0);
+      expect(out).toContain("Sandbox 'dcode-alpha' is already the default.");
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  it("returns structured not-found output through the alias command", () => {
+    const { home, registryPath } = createDeepAgentsRegistry();
+
+    try {
+      const { code, out } = runDeepAgents("use dcode-missing --json", { HOME: home });
+
+      expect(code).toBe(1);
+      expect(JSON.parse(out)).toEqual({
+        outcome: "not-found",
+        sandboxName: "dcode-missing",
+        knownSandboxes: ["dcode-alpha", "dcode-beta"],
+      });
+      expect(JSON.parse(fs.readFileSync(registryPath, "utf8"))).toEqual(
+        expect.objectContaining({ defaultSandbox: "dcode-alpha" }),
+      );
+    } finally {
+      fs.rmSync(home, { force: true, recursive: true });
+    }
   });
 
   it("routes nemo-deepagents uninstall as a global command, not a sandbox connect command", () => {

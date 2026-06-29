@@ -15,7 +15,7 @@ import {
   OVERRIDE_ENV_VAR,
   pickHostPython,
   prepareModelRouterVenv,
-} from "../../../dist/lib/onboard/model-router-python";
+} from "./model-router-python";
 
 function probeOk(version: readonly [number, number, number]) {
   return {
@@ -85,7 +85,7 @@ describe("pickHostPython", () => {
     assert.equal(result.overrideRequested, false);
   });
 
-  it("returns every healthy candidate in priority order so the caller can fall back on venv failure (#3786 Codex P2)", () => {
+  it("returns every healthy candidate in priority order so the caller can fall back on venv failure per Codex P2 review (#3786)", () => {
     const which = (cmd: string) =>
       ({
         "python3.13": "/usr/bin/python3.13",
@@ -176,7 +176,7 @@ describe("pickHostPython", () => {
     assert.equal(probeCount, 1);
   });
 
-  it("treats NEMOCLAW_MODEL_ROUTER_PYTHON as a strict pin and does not fall back to PATH (#3786 Codex P3)", () => {
+  it("treats NEMOCLAW_MODEL_ROUTER_PYTHON as a strict pin without falling back to PATH per Codex P3 review (#3786)", () => {
     const which = (cmd: string) => (cmd === "python3.12" ? "/usr/bin/python3.12" : null);
     const probe = (executable: string) => {
       if (executable === "/opt/custom/python3.10") {
@@ -299,7 +299,7 @@ describe("supported version window", () => {
     assert.deepEqual([...MIN_PYTHON_VERSION], [3, 10]);
   });
 
-  it("excludes 3.14 to dodge the macOS Homebrew pyexpat regression in #3781", () => {
+  it("excludes 3.14 to avoid the macOS Homebrew pyexpat regression (#3781)", () => {
     assert.deepEqual([...MAX_PYTHON_EXCLUSIVE], [3, 14]);
   });
 });

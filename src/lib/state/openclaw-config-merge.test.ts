@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { mergeOpenClawRestoredConfig } from "../../../dist/lib/state/openclaw-config-merge";
+import { mergeOpenClawRestoredConfig } from "./openclaw-config-merge";
 
 describe("mergeOpenClawRestoredConfig", () => {
   it("keeps rebuilt runtime-owned config while restoring durable backup-only settings", () => {

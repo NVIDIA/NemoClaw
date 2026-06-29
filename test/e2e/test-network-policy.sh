@@ -467,7 +467,9 @@ bash /tmp/nemoclaw-brew-e2e.sh" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1)
 test_net_03_live_policy_add() {
   log "=== TC-NET-03: Live Policy-Add Without Restart ==="
 
-  local target_url="https://slack.com/"
+  # Probe Slack's non-redirecting API path. The marketing root can redirect
+  # outside the slack.com allowlist and does not isolate preset behavior.
+  local target_url="https://slack.com/api/api.test"
 
   log "  Step 1: Verify slack.com is blocked before policy-add..."
   local before

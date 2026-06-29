@@ -381,7 +381,7 @@ describe("shields timer authorization", () => {
   // (This narrows the revert window; it does not close the TOCTOU.)
   // -------------------------------------------------------------------------
 
-  it("#4663 re-verifies the auto-restore lock after settle so a reconciler reverting .config-hash perms is caught", async () => {
+  it("re-verifies the auto-restore lock after settle so a reconciler reverting .config-hash perms is caught (#4663)", async () => {
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
 
@@ -443,7 +443,7 @@ describe("shields timer authorization", () => {
     expect(JSON.parse(fs.readFileSync(stateFile, "utf-8")).shieldsDown).toBe(false);
   });
 
-  it("#4663 leaves shields DOWN and audits when the post-settle re-lock cannot hold .config-hash perms", async () => {
+  it("leaves shields DOWN and audits when the post-settle re-lock cannot hold .config-hash perms (#4663)", async () => {
     const stateDir = path.join(tmpHome, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
 

@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-
-import { validateSkillName } from "../../dist/lib/skill-name";
-import { checkExisting, removeSkill, verifyRemove } from "../../dist/lib/skill-remote";
-import { resolveSkillPaths } from "../../dist/lib/skill-install";
+import { resolveSkillPaths } from "./skill-install";
+import { validateSkillName } from "./skill-name";
+import { checkExisting, removeSkill, verifyRemove } from "./skill-remote";
 
 describe("validateSkillName", () => {
   it("accepts valid skill names", () => {

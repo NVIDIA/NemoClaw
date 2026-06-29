@@ -6,13 +6,13 @@ import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
+const onboardSession = requireDist("../../state/onboard-session.js");
 const {
   isLocalInferenceProvider,
   getRebuildCredentialEnvFromRegistry,
   getRebuildEndpointFromRegistry,
   prepareRebuildResumeConfig,
-} = requireDist("../../../../dist/lib/actions/sandbox/rebuild-resume-config.js");
+} = requireDist("./rebuild-resume-config.js");
 
 const noopLog = () => undefined;
 const throwingBail = (msg: string): never => {

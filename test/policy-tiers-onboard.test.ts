@@ -5,7 +5,7 @@
 // Verifies that selectPolicyTier and setupPoliciesWithSelection wire correctly.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -57,12 +57,12 @@ function buildPreamble({
   stubOpenshellBin = false,
   runCaptureReturn = "",
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "src", "lib", "credentials", "store.ts"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "resolve.ts"),
   );
 
   // Both stubs must run before onboard.js is required — onboard destructures
@@ -151,7 +151,7 @@ console.log = () => {};
   });
 
   it("rejects unknown NEMOCLAW_POLICY_TIER before usage notice or preflight (#3741)", () => {
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const script = String.raw`
 const fs = require("node:fs");
 const path = require("node:path");
@@ -207,7 +207,7 @@ process.exit = (code = 0) => {
   });
 
   it("ignores invalid NEMOCLAW_POLICY_TIER during interactive onboarding", () => {
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     const script = String.raw`
 process.env.NEMOCLAW_POLICY_TIER = "invalid_tier";
 delete process.env.NEMOCLAW_NON_INTERACTIVE;
@@ -261,7 +261,7 @@ console.log = () => {};
   });
 
   it("restricted tier produces an empty preset list", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
     const script =
       buildPreamble({ tierEnv: "restricted" }) +
       String.raw`
@@ -281,7 +281,7 @@ console.log = () => {};
   });
 
   it("balanced tier resolves dev presets read-write and weather read-only", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -308,7 +308,7 @@ console.log = () => {};
   });
 
   it("open tier resolves presets including at least one social/messaging preset", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
     const script =
       buildPreamble({ tierEnv: "open" }) +
       String.raw`
@@ -334,7 +334,7 @@ console.log = () => {};
   });
 
   it("a preset can be deselected via selected option in resolveTierPresets", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -357,7 +357,7 @@ console.log = () => {};
   });
 
   it("access level can be restricted from read-write to read via override", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -408,7 +408,7 @@ console.log = (...args) => lines.push(args.join(" "));
   });
 
   it("selected tier is persisted to the registry via updateSandbox({ policyTier })", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({ tierEnv: "open", policyMode: "skip" }) +
       String.raw`
@@ -450,7 +450,7 @@ console.log = (...args) => lines.push(args.join(" "));
   });
 
   it("omits Brave from policy preset selection when web search is unsupported", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -492,7 +492,7 @@ console.log = () => {};
   });
 
   it("removes a previously-applied Brave preset when web search is unsupported", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -539,7 +539,7 @@ console.log = () => {};
   });
 
   it("removes a previously-applied built-in Brave preset when Brave search is declined", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -589,7 +589,7 @@ console.log = () => {};
   });
 
   it("keeps explicitly requested built-in Brave when web search is supported", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -628,7 +628,7 @@ console.log = () => {};
   });
 
   it("clamps resumed policy presets to web-search-supported presets", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -669,7 +669,7 @@ console.log = () => {};
   });
 
   it("clamps an unsupported-only resumed policy preset list to empty", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -710,7 +710,7 @@ console.log = () => {};
   });
 
   it("removes OpenClaw-only policy presets when resuming Hermes policy selection", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -751,7 +751,7 @@ console.log = () => {};
   });
 
   it("removes Hermes Nous policy presets when resuming OpenClaw policy selection", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -792,7 +792,7 @@ console.log = () => {};
   });
 
   it("preserves a resumed custom preset whose name matches an unsupported built-in", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -834,7 +834,7 @@ console.log = () => {};
   });
 
   it("preserves a non-interactive custom preset whose name matches an unsupported built-in", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -881,7 +881,7 @@ console.log = () => {};
   // that the user may have meant NEMOCLAW_POLICY_TIER when the value looks like
   // a tier name.
   it("falls back to tier suggestions when NEMOCLAW_POLICY_MODE is unknown (#2429)", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -925,7 +925,7 @@ console.log = () => {};
   });
 
   it("omits the tier-name hint for a non-tier invalid value (#2429)", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
     const script =
       buildPreamble({
         tierEnv: "balanced",
@@ -963,14 +963,14 @@ console.log = () => {};
 });
 
 describe("selectTierPresetsAndAccess", () => {
-  const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+  const tiersPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "tiers.ts"));
+  const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
 
   function buildPresetsScript(body: string): string {
-    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credPath = JSON.stringify(path.join(repoRoot, "src", "lib", "credentials", "store.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
     return String.raw`
 const credentials = require(${credPath});
 const runner = require(${runnerPath});
