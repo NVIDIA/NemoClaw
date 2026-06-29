@@ -469,6 +469,8 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
 The exit code is the remote command's exit code.
 
+The OpenShell exec endpoint rejects any argument that contains a newline or carriage return, so multi-line commands (for example a `bash` heredoc) cannot be passed through `exec`. NemoClaw detects this before dispatch, names the offending argument position, and exits with status `2` rather than surfacing the lower-level OpenShell `InvalidArgument` error. Join the statements with semicolons (`exec -- bash -lc "cmd1; cmd2"`) or run a script file inside the sandbox (`exec -- bash <script-path>`) instead.
+
 | Flag | Description |
 |------|-------------|
 | `--workdir <dir>` | Working directory inside the sandbox. The directory is checked before the command runs; if it does not exist, NemoClaw reports `error: --workdir: <dir> does not exist inside the sandbox` and exits with status `1` without invoking the inner command. |
