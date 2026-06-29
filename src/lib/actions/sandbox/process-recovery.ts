@@ -639,21 +639,18 @@ export function waitForRecoveredSandboxGateway(
     console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
   }
   sleep(settleSeconds);
-  // Keep an explicit stopped result distinct from an inconclusive transport
-  // result. Two stopped probes prove the persistent #4710 wedge quickly. A
-  // healthy gateway can, however, outlive several transient sandbox-exec
-  // misses, so null gets the same bounded wait budget as initial recovery.
-  let stoppedProbes = 0;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const result = probe(sandboxName);
-    if (result === true) return true;
-    if (result === false) {
-      stoppedProbes += 1;
-      if (stoppedProbes >= 2) return false;
-    }
-    if (attempt + 1 < attempts) sleep(intervalSeconds);
-  }
-  return false;
+  // A stopped HTTP probe is still only a point-in-time observation. PID 1 can
+  // have respawned the gateway while OpenClaw is still finishing its startup
+  // transition, so multiple stopped results may precede a healthy listener.
+  // Give stopped and inconclusive probes the same bounded recovery window.
+  // A persistent #4710 wedge still fails closed when that window expires.
+  return waitUntil(() => probe(sandboxName) === true, {
+    initialIntervalMs: intervalSeconds * 1000,
+    maxIntervalMs: intervalSeconds * 1000,
+    backoffFactor: 1,
+    maxAttempts: attempts,
+    sleep: (ms) => sleep(ms / 1000),
+  });
 }
 
 function isHermesAgent(

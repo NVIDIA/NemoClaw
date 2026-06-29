@@ -91,14 +91,16 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25]);
   });
 
-  it("tolerates one transient post-settle transport miss when the gateway still serves", () => {
+  it("uses the bounded recovery window for transient stopped probes", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([true, false, true]),
+      probeImpl: makeProbe([true, false, false, true]),
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(true);
-    expect(sleeps).toEqual([25, 3]);
+    expect(sleeps).toEqual([25, 3, 3]);
   });
 
   it("uses the bounded recovery window for inconclusive post-settle transport", () => {
@@ -126,13 +128,15 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
   });
 
   it("fails recovery when the gateway serves once and then drops its listener (wedge)", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
     const sleeps: number[] = [];
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
       probeImpl: makeProbe([true, false, false]),
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(false);
-    expect(sleeps).toEqual([25, 3]);
+    expect(sleeps).toEqual([25, 3, 3]);
   });
 
   it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", () => {

@@ -54,8 +54,8 @@ describe("CLI dispatch", () => {
         "      echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '      if [ "$(cat "$state_file")" != recovered ]; then echo STOPPED; exit 0; fi',
         // The wedge shape: the relaunched gateway answers the first
-        // post-recovery probe, then drops its listener — both bounded
-        // post-settle confirmations refuse.
+        // post-recovery probe, then drops its listener for the full bounded
+        // post-settle confirmation window.
         '      count=$(cat "$ready_count_file" 2>/dev/null || echo 0)',
         "      count=$((count + 1))",
         '      echo "$count" > "$ready_count_file"',
@@ -123,8 +123,8 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("--env PYTHONUSERBASE=");
     expect(calls).toContain("--env PYTHONNOUSERSITE=1");
     expect(calls).not.toContain("OPENCLAW=");
-    // First probe succeeded; both post-settle confirms observed the dropped
-    // listener, proving a persistent wedge rather than a transient miss.
-    expect(fs.readFileSync(readyCountFile, "utf8").trim()).toBe("3");
+    // First probe succeeded; every bounded post-settle confirm observed the
+    // dropped listener, proving a persistent wedge rather than a transient.
+    expect(fs.readFileSync(readyCountFile, "utf8").trim()).toBe("5");
   });
 });
