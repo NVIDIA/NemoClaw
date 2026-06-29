@@ -714,7 +714,7 @@ exit 0
         tar() {
           local dest="\${!#}"
           for name in openshell openshell-gateway openshell-sandbox; do
-            printf '#!/usr/bin/env bash\nexit 0\n' > "$dest/$name"
+            printf '#!/usr/bin/env bash\necho "%s 0.0.72"\nexit 0\n' "$name" > "$dest/$name"
             chmod 755 "$dest/$name"
           done
         }
@@ -781,7 +781,7 @@ exit 0
         tar() {
           local dest="\${!#}"
           for name in openshell openshell-gateway openshell-sandbox; do
-            printf '#!/usr/bin/env bash\nexit 0\n' > "$dest/$name"
+            printf '#!/usr/bin/env bash\necho "%s 0.0.72"\nexit 0\n' "$name" > "$dest/$name"
             chmod 755 "$dest/$name"
           done
         }

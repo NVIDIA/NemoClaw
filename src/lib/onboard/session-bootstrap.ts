@@ -11,6 +11,7 @@ export interface OnboardSessionBootstrapInput {
   requestedSandboxName: string | null;
   cannotPrompt: boolean;
   nonInteractive: boolean;
+  authoritativeResumeConfig?: boolean;
   agentFlag?: string | null;
   envAgent?: string | null;
 }
@@ -30,6 +31,7 @@ export interface OnboardSessionBootstrapDeps {
       fromDockerfile?: string | null;
       sandboxName?: string | null;
       agent?: string | null;
+      authoritativeResumeConfig?: boolean;
     },
   ): ResumeConfigConflict[];
   recordResumeConflict(conflict: ResumeConfigConflict): Promise<unknown>;
@@ -152,6 +154,7 @@ async function prepareResumeSession(
     fromDockerfile: input.requestedFromDockerfile,
     sandboxName: input.requestedSandboxName,
     agent: input.agentFlag || null,
+    authoritativeResumeConfig: input.authoritativeResumeConfig,
   });
   if (resumeConflicts.length > 0) {
     await exitForResumeConflicts(resumeConflicts, deps);

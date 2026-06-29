@@ -53,6 +53,8 @@ describe("rebuild gateway drift preflight", () => {
     const onboardSession = requireDist("../../state/onboard-session.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const agentRuntime = requireDist("../../agent/runtime.js");
+    const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
+    const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 
     printIssueSpy = vi
       .spyOn(gatewayDrift, "printOpenShellStateRpcIssue")
@@ -71,7 +73,11 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-      .mockResolvedValue({ recovered: true });
+      .mockResolvedValue({
+        recovered: true,
+        before: { state: "healthy_named" },
+        after: { state: "healthy_named" },
+      });
 
     spies.push(
       detectPreflightIssueSpy,
@@ -87,15 +93,29 @@ describe("rebuild gateway drift preflight", () => {
         policies: [],
         nimContainer: null,
         agent: null,
+        nemoclawVersion: "0.1.0",
+        dashboardPort: 18789,
+        gatewayName: "nemoclaw",
+        gatewayPort: 8080,
       } as never),
+      vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
         sessions: [],
       }),
       vi.spyOn(onboardSession, "loadSession").mockReturnValue(null),
+      vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true }),
+      vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
+      vi
+        .spyOn(requireDist("../../onboard.js"), "preflightAuthoritativeRebuildTarget")
+        .mockResolvedValue(undefined),
+      vi
+        .spyOn(rebuildImagePreflight, "preflightRebuildImage")
+        .mockResolvedValue({ ok: true, imageTag: null }),
+      vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
       checkAgentVersionSpy,
     );
 
@@ -197,6 +217,8 @@ describe("rebuild gateway drift preflight", () => {
     const onboardSession = requireDist("../../state/onboard-session.js");
     const sandboxVersion = requireDist("../../sandbox/version.js");
     const agentRuntime = requireDist("../../agent/runtime.js");
+    const rebuildUsageNotice = requireDist("./rebuild-usage-notice.js");
+    const rebuildImagePreflight = requireDist("./rebuild-custom-image-preflight.js");
 
     let listCalls = 0;
     detectPreflightIssueSpy = vi
@@ -230,7 +252,11 @@ describe("rebuild gateway drift preflight", () => {
       .mockReturnValue({ status: 0, output: "" } as never);
     recoverNamedGatewayRuntimeSpy = vi
       .spyOn(gatewayRuntime, "recoverNamedGatewayRuntime")
-      .mockResolvedValue({ recovered: true });
+      .mockResolvedValue({
+        recovered: true,
+        before: { state: "healthy_named" },
+        after: { state: "healthy_named" },
+      });
     checkAgentVersionSpy = vi
       .spyOn(sandboxVersion, "checkAgentVersion")
       .mockReturnValue({ expectedVersion: "0.1.0", sandboxVersion: "0.0.1" } as never);
@@ -256,15 +282,25 @@ describe("rebuild gateway drift preflight", () => {
         agent: null,
         gatewayName: "nemoclaw-12345",
         gatewayPort: 12345,
+        nemoclawVersion: "0.1.0",
+        dashboardPort: 18789,
       } as never),
+      vi.spyOn(registry, "updateSandbox").mockReturnValue(true),
       vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null),
       vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
         detected: false,
         sessions: [],
       }),
       vi.spyOn(onboardSession, "loadSession").mockReturnValue(null),
+      vi.spyOn(onboardSession, "acquireOnboardLock").mockReturnValue({ acquired: true }),
+      vi.spyOn(onboardSession, "releaseOnboardLock").mockImplementation(() => undefined),
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null),
       vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw"),
+      vi.spyOn(onboardMod, "preflightAuthoritativeRebuildTarget").mockResolvedValue(undefined),
+      vi
+        .spyOn(rebuildImagePreflight, "preflightRebuildImage")
+        .mockResolvedValue({ ok: true, imageTag: null }),
+      vi.spyOn(rebuildUsageNotice, "ensureRebuildUsageNoticeAccepted").mockResolvedValue(true),
       checkAgentVersionSpy,
       vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined),
       vi.spyOn(onboardMod, "onboard").mockRejectedValue(new Error("recreate-stub")),
@@ -288,7 +324,7 @@ describe("rebuild gateway drift preflight", () => {
     expect(listCalls).toBe(2);
   });
 
-  it("does not recover generic sandbox list failures", async () => {
+  it("does not retry gateway recovery for generic sandbox list failures", async () => {
     detectPreflightIssueSpy.mockReturnValue(null);
     captureOpenshellSpy.mockReturnValue({ status: 1, output: "unknown option: sandbox list" });
 
@@ -296,7 +332,8 @@ describe("rebuild gateway drift preflight", () => {
       "Failed to query running sandboxes from OpenShell.",
     );
 
-    expect(recoverNamedGatewayRuntimeSpy).not.toHaveBeenCalled();
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledTimes(2);
+    expect(recoverNamedGatewayRuntimeSpy).toHaveBeenCalledWith({ gatewayName: "nemoclaw" });
     expect(captureOpenshellSpy).toHaveBeenCalledTimes(1);
   });
 });

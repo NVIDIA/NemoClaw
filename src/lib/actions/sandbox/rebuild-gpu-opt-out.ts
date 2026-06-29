@@ -2,11 +2,21 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import {
+  resolveGatewayPortFromName,
+  resolveSandboxGatewayName,
+} from "../../onboard/gateway-binding";
+import { loadAgent } from "../../agent/defs";
+import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 
 export type RebuildGpuOptOutEntry = {
   sandboxGpuMode?: string | null;
   sandboxGpuEnabled?: boolean;
+  sandboxGpuDevice?: string | null;
   gpuEnabled?: boolean;
+  dashboardPort?: number | null;
+  gatewayName?: string | null;
+  gatewayPort?: number | null;
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
@@ -28,12 +38,51 @@ export function rebuildShouldOptOutGpu(sb: RebuildGpuOptOutEntry | null | undefi
   return sb.gpuEnabled === false;
 }
 
+export function getRebuildSandboxGpuOverrides(sb: RebuildGpuOptOutEntry | null | undefined): {
+  sandboxGpu: "enable" | "disable" | null;
+  sandboxGpuDevice: string | null;
+  sessionGpuPassthrough: boolean;
+} {
+  const mode = normalizeSandboxGpuMode(sb?.sandboxGpuMode);
+  if (mode === "1") {
+    return {
+      sandboxGpu: "enable",
+      sandboxGpuDevice: sb?.sandboxGpuDevice?.trim() || null,
+      sessionGpuPassthrough: true,
+    };
+  }
+  if (mode === "0") {
+    return { sandboxGpu: "disable", sandboxGpuDevice: null, sessionGpuPassthrough: false };
+  }
+  if (hasRecordedGpuMode(sb?.sandboxGpuMode) && mode === null) {
+    throw new Error(`Invalid recorded sandbox GPU mode '${String(sb?.sandboxGpuMode)}'.`);
+  }
+  if (mode === "auto") {
+    // A false cached value keeps resume's legacy fallback from converting
+    // recorded auto mode into forced enable after the old registry row is
+    // temporarily removed. Fresh preflight recomputes actual auto detection.
+    return { sandboxGpu: null, sandboxGpuDevice: null, sessionGpuPassthrough: false };
+  }
+  if (sb?.gpuEnabled === false) {
+    return { sandboxGpu: "disable", sandboxGpuDevice: null, sessionGpuPassthrough: false };
+  }
+  return { sandboxGpu: null, sandboxGpuDevice: null, sessionGpuPassthrough: false };
+}
+
 export type RebuildRecreateOnboardOpts = {
   resume: true;
   nonInteractive: true;
   recreateSandbox: true;
+  authoritativeResumeConfig: true;
+  acceptThirdPartySoftware: true;
   agent: string | null | undefined;
   fromDockerfile: string | null;
+  sandboxGpu: "enable" | "disable" | null;
+  sandboxGpuDevice: string | null;
+  controlUiPort: number | null;
+  targetGatewayName: string;
+  targetGatewayPort: number;
+  onboardLockAlreadyHeld: true;
   autoYes: boolean;
   noGpu?: true;
 };
@@ -43,13 +92,44 @@ export function buildRebuildRecreateOnboardOpts(args: {
   rebuildAgent: string | null | undefined;
   storedFromDockerfile: string | null;
   autoYes: boolean;
+  usageNoticeAccepted: true;
 }): RebuildRecreateOnboardOpts {
+  const gpuOverrides = getRebuildSandboxGpuOverrides(args.sb);
+  const targetGatewayName = resolveSandboxGatewayName(args.sb);
+  const targetGatewayPort = resolveGatewayPortFromName(targetGatewayName);
+  if (targetGatewayPort === null) {
+    throw new Error(`Cannot resolve persisted gateway port for '${targetGatewayName}'.`);
+  }
+  const dashboardPort = args.sb?.dashboardPort;
+  if (
+    dashboardPort !== undefined &&
+    dashboardPort !== null &&
+    (!Number.isInteger(dashboardPort) || dashboardPort < 0 || dashboardPort > 65535)
+  ) {
+    throw new Error(`Invalid persisted dashboard port '${String(dashboardPort)}'.`);
+  }
+  const managesDashboard = shouldManageDashboardForAgent(
+    loadAgent(args.rebuildAgent || "openclaw"),
+  );
+  if (managesDashboard && (!dashboardPort || dashboardPort < 1)) {
+    throw new Error(
+      "Cannot recreate a dashboard-managed sandbox without its persisted dashboard port.",
+    );
+  }
   return {
     resume: true,
     nonInteractive: true,
     recreateSandbox: true,
+    authoritativeResumeConfig: true,
+    acceptThirdPartySoftware: args.usageNoticeAccepted,
     agent: args.rebuildAgent,
     fromDockerfile: args.storedFromDockerfile,
+    sandboxGpu: gpuOverrides.sandboxGpu,
+    sandboxGpuDevice: gpuOverrides.sandboxGpuDevice,
+    controlUiPort: managesDashboard ? (dashboardPort ?? null) : null,
+    targetGatewayName,
+    targetGatewayPort,
+    onboardLockAlreadyHeld: true,
     autoYes: args.autoYes,
     ...(rebuildShouldOptOutGpu(args.sb) ? { noGpu: true as const } : {}),
   };

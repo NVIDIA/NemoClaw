@@ -105,6 +105,7 @@ policies.applyPresetContent = () => {
   return true;
 };
 policies.getPresetContentGatewayState = () => "match";
+policies.removePreset = () => true;
 processRecovery.executeSandboxCommand = (_sandbox, command) => {
   adapterCalls.push(command);
   if (command.includes("'config' 'add'")) {
@@ -176,6 +177,39 @@ ${body}
 }
 
 describe("authenticated MCP sandbox destroy lifecycle", () => {
+  for (const method of [
+    "prepareMcpBridgesForAbsentSandboxDestroy",
+    "prepareMcpBridgesForAbsentSandboxRebuild",
+  ] as const) {
+    it(`clears a providerless preflighted add during ${method}`, () => {
+      const result = runDestroyLifecycleScenario(`
+providers.delete("alpha-mcp-github");
+attachedProviders.delete("alpha-mcp-github");
+const pending = { ...bridgeEntries.github, addState: "preflighted" };
+delete pending.providerId;
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  mcp: { bridges: { github: pending } },
+});
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  const preparation = await bridge.${method}("alpha");
+  process.stdout.write(JSON.stringify({ preparation, sandbox: registry.getSandbox("alpha") }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const payload = JSON.parse(result.stdout) as {
+        preparation: { entries: unknown[] };
+        sandbox: { mcp?: unknown; customPolicies?: unknown };
+      };
+      expect(payload.preparation.entries).toEqual([]);
+      expect(payload.sandbox.mcp).toBeUndefined();
+      expect(payload.sandbox.customPolicies).toBeUndefined();
+    });
+  }
+
   it("prepares an absent-sandbox rebuild without adapter exec or provider detach", () => {
     const result = runDestroyLifecycleScenario(`
 delete process.env.GITHUB_TOKEN;
@@ -254,9 +288,9 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.sandbox.customPolicies).toBeUndefined();
   });
 
-  it("restores policy, attachment, and adapter without the host secret env", () => {
+  it("restores policy, attachment, and adapter without rotating an exported host secret", () => {
     const result = runDestroyLifecycleScenario(`
-delete process.env.GITHUB_TOKEN;
+process.env.GITHUB_TOKEN = "ambient-value-that-must-not-rotate";
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
@@ -293,7 +327,7 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
       policyApplyCalls: number;
       secretPresent: boolean;
     };
-    expect(payload.secretPresent).toBe(false);
+    expect(payload.secretPresent).toBe(true);
     expect(payload.providers).toContain("alpha-mcp-github");
     expect(
       payload.calls.some((call) => call === "sandbox provider attach alpha alpha-mcp-github"),
@@ -367,6 +401,42 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(
       payload.adapterCalls.some((call) => call.includes("config") && call.includes("remove")),
     ).toBe(true);
+  });
+
+  it("restores a rebuilt sandbox without rotating an exported MCP credential", () => {
+    const result = runDestroyLifecycleScenario(`
+process.env.GITHUB_TOKEN = "ambient-value-that-must-not-rotate";
+attachedProviders.delete("alpha-mcp-github");
+adapterRegistered = false;
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  mcp: { bridges: { github: bridgeEntries.github } },
+});
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  await bridge.restoreMcpBridgesAfterRebuild("alpha", [bridgeEntries.github]);
+  process.stdout.write(JSON.stringify({
+    calls,
+    attached: [...attachedProviders],
+    adapterRegistered,
+    policyApplyCalls,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
+      calls: string[];
+      attached: string[];
+      adapterRegistered: boolean;
+      policyApplyCalls: number;
+    };
+    expect(payload.calls.some((call) => /^provider (create|update) /.test(call))).toBe(false);
+    expect(payload.attached).toContain("alpha-mcp-github");
+    expect(payload.adapterRegistered).toBe(true);
+    expect(payload.policyApplyCalls).toBe(1);
   });
 
   for (const [label, prepareFunction] of [

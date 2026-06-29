@@ -8,12 +8,31 @@ import {
   type RebuildSandboxOptions,
 } from "../../domain/lifecycle/options";
 
-const { hydrateCredentialEnv } = require("../../onboard") as {
+const onboardModule = require("../../onboard") as {
+  ensureValidatedBraveSearchCredential: (nonInteractive?: boolean) => Promise<unknown>;
   hydrateCredentialEnv: (name: string) => string | null;
+  preflightAuthoritativeRebuildTarget: (options: {
+    authoritativeResumeConfig: true;
+    model: string;
+    provider: string;
+    sandboxName: string;
+    targetGatewayName: string;
+    targetGatewayPort: number;
+    controlUiPort: number | null;
+    sandboxGpu: "enable" | "disable" | null;
+    sandboxGpuDevice: string | null;
+    noGpu?: true;
+  }) => Promise<void>;
 };
+const { ensureValidatedBraveSearchCredential, hydrateCredentialEnv } = onboardModule;
 const hermesProviderAuth = require("../../hermes-provider-auth") as {
   HERMES_PROVIDER_NAME: string;
+  HERMES_INFERENCE_CREDENTIAL_ENV: string;
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV: string;
+  inspectHermesProviderBinding: (runOpenshellFn: typeof runOpenshell) => {
+    exists: boolean;
+    credentialKeys: string[] | null;
+  };
   isHermesProviderRegistered: (runOpenshellFn: typeof runOpenshell) => boolean;
   registerHermesInferenceProvider: (
     apiKey: string,
@@ -34,6 +53,7 @@ import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { BRAVE_API_KEY_ENV } from "../../inference/web-search";
 import type {
   MessagingHookApplyRequest,
   MessagingHookOutputMap,
@@ -49,10 +69,22 @@ import {
   MessagingWorkflowPlanner,
   tryGetMessagingAgentId,
 } from "../../messaging";
-import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
+import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
+import {
+  hydrateMessagingChannelConfig,
+  MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
+} from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
 import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
+import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
+import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
+import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
+import { agentSupportsWebSearch } from "../../onboard/web-search-support";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -77,25 +109,45 @@ import {
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
+import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
+import {
+  REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+  type RebuildDurableConfig,
+  resolveRebuildDockerfile,
+  resolveRebuildDurableConfig,
+  resolveRebuildHermesDashboardEnv,
+  validatedRebuildRegistryUpdate,
+} from "./rebuild-durable-config";
 import {
   backupSandboxStateForRebuild,
+  ensureRebuildTargetGatewaySelected,
   ensureRebuildAgentBaseImage,
   openRebuildShieldsWindowForState,
   pinRebuildAgentBaseImageForRecreate,
   type RebuildSandboxEntry,
   resolveRebuildLiveState,
+  warnUnpreservedUserManagedFiles,
 } from "./rebuild-flow-helpers";
-import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import {
+  buildRebuildRecreateOnboardOpts,
+  getRebuildSandboxGpuOverrides,
+  type RebuildRecreateOnboardOpts,
+} from "./rebuild-gpu-opt-out";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
 import {
   getRebuildCredentialEnvFromRegistry,
-  isLocalInferenceProvider,
   prepareRebuildResumeConfig,
+  type RebuildResumeConfig,
 } from "./rebuild-resume-config";
-import { printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
+import {
+  printRebuildShieldsRecovery,
+  type RebuildShieldsWindow,
+  relockRebuildShieldsWindow,
+} from "./rebuild-shields";
+import { ensureRebuildUsageNoticeAccepted } from "./rebuild-usage-notice";
 
 export function buildRefreshMutableOpenClawConfigHashCommand(
   configDir = "/sandbox/.openclaw",
@@ -168,23 +220,41 @@ function nonEmptyString(value: unknown): string | null {
 }
 
 function preflightHermesProviderCredentials(
-  session: Session | null,
+  persistedAuthMethod: unknown,
   credentialEnv: string | null,
   log: (msg: string) => void,
 ): boolean {
   const authMethod =
-    normalizeHermesRebuildAuthMethod(session?.hermesAuthMethod) ||
+    normalizeHermesRebuildAuthMethod(persistedAuthMethod) ||
     (credentialEnv === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV ? "api_key" : null);
+  const expectedCredentialEnv =
+    authMethod === "api_key"
+      ? hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
+      : hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV;
+  const binding = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
 
-  if (hermesProviderAuth.isHermesProviderRegistered(runOpenshell)) {
-    log("Hermes Provider rebuild preflight: provider is registered in OpenShell");
-    return true;
+  if (binding.exists) {
+    const matches =
+      binding.credentialKeys?.length === 1 && binding.credentialKeys[0] === expectedCredentialEnv;
+    log(
+      `Hermes Provider rebuild preflight: expected ${expectedCredentialEnv}; observed ${binding.credentialKeys?.join(",") || "unavailable"}`,
+    );
+    if (matches) return true;
+    console.error("");
+    console.error(
+      `  ${_RD}Rebuild preflight failed:${R} the shared Hermes Provider credential binding has changed.`,
+    );
+    console.error(
+      `  Expected exactly ${expectedCredentialEnv}; re-run Hermes onboarding to reconcile it.`,
+    );
+    console.error("  Sandbox is untouched — no data was lost.");
+    return false;
   }
 
   if (authMethod === "api_key") {
-    const envKey =
-      nonEmptyString(process.env[hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV]) ||
-      nonEmptyString(process.env.NEMOCLAW_PROVIDER_KEY);
+    const envKey = nonEmptyString(
+      process.env[hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV],
+    );
     log(
       `Hermes Provider rebuild preflight: OpenShell provider missing; API key env=${envKey ? "present" : "missing"}`,
     );
@@ -195,7 +265,11 @@ function preflightHermesProviderCredentials(
           runOpenshell,
           hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
         );
-        return true;
+        const registered = hermesProviderAuth.inspectHermesProviderBinding(runOpenshell);
+        return (
+          registered.credentialKeys?.length === 1 &&
+          registered.credentialKeys[0] === hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
+        );
       } catch (err) {
         log(
           `Hermes Provider rebuild preflight: failed to register OpenShell provider: ${err instanceof Error ? err.message : String(err)}`,
@@ -355,9 +429,12 @@ async function confirmSandboxRebuildIfNeeded(
 
 function checkRebuildGatewaySchemaPreflight(
   sandboxName: string,
+  sb: RebuildSandboxEntry,
   bail: (msg: string, code?: number) => never,
 ): boolean {
-  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue();
+  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue({
+    gatewayName: resolveSandboxGatewayName(sb),
+  });
   if (gatewayPreflightIssue) {
     printOpenShellStateRpcIssue(gatewayPreflightIssue, {
       action: `rebuilding sandbox '${sandboxName}'`,
@@ -423,65 +500,19 @@ async function stageRebuildMessagingPlanOrBail(
 }
 
 function preflightRebuildCredentials(
-  sandboxName: string,
   sb: RebuildSandboxEntry,
   log: (msg: string) => void,
   bail: (msg: string, code?: number) => never,
 ): boolean {
-  const session = onboardSession.loadSession();
-  const sessionMatchesTarget = session?.sandboxName === sandboxName;
-  // The target registry entry is authoritative when a matching legacy session
-  // omitted credentialEnv; rebuild rewrites provider/model from this entry later,
-  // so remote registry providers must still fail closed before backup/delete.
-  const registryCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
-  let rebuildCredentialEnv = registryCredentialEnv;
-  if (sessionMatchesTarget && registryCredentialEnv === null) {
-    rebuildCredentialEnv = session?.credentialEnv || null;
-  }
-  if (!sessionMatchesTarget && session?.sandboxName) {
-    log(
-      `Preflight warning: session belongs to '${session.sandboxName}', not '${sandboxName}' — using registry credential env ${rebuildCredentialEnv || "(none)"}`,
-    );
-    console.log(
-      `  ${D}Note: onboard session belongs to '${session.sandboxName}', not '${sandboxName}'. ` +
-        `Using the '${sandboxName}' registry entry for credential preflight.${R}`,
-    );
-  }
-
+  const rebuildCredentialEnv = getRebuildCredentialEnvFromRegistry(sb.provider, sb.credentialEnv);
   const rebuildProvider = sb.provider;
 
-  // Compatibility boundary for GH #2519: pre-fix local-provider sessions could
-  // persist credentialEnv="OPENAI_API_KEY" even though current local-provider
-  // write paths persist null. Only a session for this sandbox plus a local
-  // target registry provider may bypass the key; keep until legacy sessions are
-  // no longer supported by rebuild migration tests.
-  if (
-    sessionMatchesTarget &&
-    isLocalInferenceProvider(sb.provider) &&
-    rebuildCredentialEnv === "OPENAI_API_KEY"
-  ) {
-    console.log(
-      `  ${D}Note: migrating ${sb.provider} sandbox off OPENAI_API_KEY (GH #2519). ` +
-        `Local inference does not require a host API key.${R}`,
-    );
-    log(
-      `Preflight: legacy ${sb.provider} sandbox detected (credentialEnv=OPENAI_API_KEY) — clearing for rebuild`,
-    );
-    rebuildCredentialEnv = null;
-  }
-
   if (rebuildProvider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
-    if (
-      !preflightHermesProviderCredentials(
-        sessionMatchesTarget ? session : null,
-        rebuildCredentialEnv,
-        log,
-      )
-    ) {
+    if (!preflightHermesProviderCredentials(sb.hermesAuthMethod, rebuildCredentialEnv, log)) {
       bail("Missing Hermes Provider credentials");
       return false;
     }
-    rebuildCredentialEnv = null;
+    return true;
   }
 
   if (!rebuildCredentialEnv) {
@@ -521,6 +552,340 @@ function preflightRebuildCredentials(
   console.error("  Sandbox is untouched — no data was lost.");
   bail(`Missing credential: ${rebuildCredentialEnv}`);
   return false;
+}
+
+type RebuildBail = (message: string, code?: number) => never;
+
+type RebuildTargetConfig = {
+  resumeConfig: RebuildResumeConfig;
+  sessionSnapshot: Session | null;
+  sessionMatchesSandbox: boolean;
+  durableConfig: RebuildDurableConfig;
+  hermesToolGateways: string[];
+  hasHermesToolGateways: boolean;
+  credentialEnv: string | null;
+  fromDockerfile: string | null;
+  agentDefinition: ReturnType<typeof loadAgent> | null;
+};
+
+function printRebuildPreflightFailure(
+  summary: string,
+  detail: string,
+  bailMessage: string,
+  bail: RebuildBail,
+): void {
+  console.error("");
+  console.error(`  ${_RD}Rebuild preflight failed:${R} ${summary}`);
+  console.error(`  ${detail}`);
+  console.error("  Sandbox is untouched — no data was lost.");
+  bail(bailMessage);
+}
+
+function stringListOrNull(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.filter((item: unknown): item is string => typeof item === "string");
+}
+
+function resolveRebuildHermesToolGateways(
+  rebuildAgent: string | null,
+  sb: RebuildSandboxEntry,
+  session: Session | null,
+  sessionMatchesSandbox: boolean,
+): { gateways: string[]; recorded: boolean } {
+  if (rebuildAgent !== "hermes") return { gateways: [], recorded: false };
+  const registryGateways = stringListOrNull(sb.hermesToolGateways);
+  const sessionGateways = sessionMatchesSandbox
+    ? stringListOrNull(session?.hermesToolGateways)
+    : null;
+  return {
+    gateways: registryGateways ?? sessionGateways ?? [],
+    recorded: registryGateways !== null || sessionGateways !== null,
+  };
+}
+
+function validateRebuildDurableConfig(
+  durableConfig: RebuildDurableConfig,
+  resumeConfig: RebuildResumeConfig,
+  bail: RebuildBail,
+): boolean {
+  if (durableConfig.webSearchError) {
+    printRebuildPreflightFailure(
+      "recorded web-search state is invalid.",
+      durableConfig.webSearchError,
+      "Recorded web-search state is invalid",
+      bail,
+    );
+    return false;
+  }
+  if (durableConfig.fromDockerfileError) {
+    printRebuildPreflightFailure(
+      "recorded custom Dockerfile is invalid.",
+      durableConfig.fromDockerfileError,
+      "Recorded custom Dockerfile is invalid",
+      bail,
+    );
+    return false;
+  }
+  if (
+    durableConfig.hermesAuthMethodError ||
+    (resumeConfig.provider === hermesProviderAuth.HERMES_PROVIDER_NAME &&
+      durableConfig.hermesAuthMethod === null)
+  ) {
+    printRebuildPreflightFailure(
+      "Hermes auth state is incomplete.",
+      durableConfig.hermesAuthMethodError ??
+        "cannot determine the recorded Hermes Provider authentication method",
+      "Cannot determine recorded Hermes Provider authentication method",
+      bail,
+    );
+    return false;
+  }
+  return true;
+}
+
+function prepareRebuildTargetConfig(
+  sandboxName: string,
+  sb: RebuildSandboxEntry,
+  rebuildAgent: string | null,
+  log: (message: string) => void,
+  bail: RebuildBail,
+): RebuildTargetConfig | null {
+  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
+  if (!resumeConfig) return null;
+  const sessionSnapshot = onboardSession.loadSession();
+  const sessionMatchesSandbox = sessionSnapshot?.sandboxName === sandboxName;
+  const durableConfig = resolveRebuildDurableConfig(sandboxName, sb, sessionSnapshot, {
+    provider: resumeConfig.provider,
+    model: resumeConfig.model,
+  });
+  if (!validateRebuildDurableConfig(durableConfig, resumeConfig, bail)) return null;
+
+  const dockerfile = resolveRebuildDockerfile(durableConfig.fromDockerfile);
+  if (!dockerfile.ok) {
+    printRebuildPreflightFailure(
+      "recorded custom Dockerfile is unavailable.",
+      `${dockerfile.path}: ${dockerfile.reason}`,
+      "Recorded custom Dockerfile is unavailable",
+      bail,
+    );
+    return null;
+  }
+
+  const hermesGateways = resolveRebuildHermesToolGateways(
+    rebuildAgent,
+    sb,
+    sessionSnapshot,
+    sessionMatchesSandbox,
+  );
+  const credentialEnv =
+    resumeConfig.provider === hermesProviderAuth.HERMES_PROVIDER_NAME
+      ? durableConfig.hermesAuthMethod === "api_key"
+        ? hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV
+        : hermesProviderAuth.HERMES_INFERENCE_CREDENTIAL_ENV
+      : resumeConfig.credentialEnv;
+
+  return {
+    resumeConfig,
+    sessionSnapshot,
+    sessionMatchesSandbox,
+    durableConfig,
+    hermesToolGateways: hermesGateways.gateways,
+    hasHermesToolGateways: hermesGateways.recorded,
+    credentialEnv,
+    fromDockerfile: dockerfile.path,
+    agentDefinition: rebuildAgent && rebuildAgent !== "openclaw" ? loadAgent(rebuildAgent) : null,
+  };
+}
+
+async function preflightRebuildBraveSearchCredential(
+  durableConfig: RebuildDurableConfig,
+  bail: RebuildBail,
+): Promise<boolean> {
+  if (!durableConfig.webSearchConfig) return true;
+  try {
+    const credential = await ensureValidatedBraveSearchCredential(true);
+    if (typeof credential !== "string" || !credential.trim()) {
+      throw new Error("Brave Search credential validation did not return a usable key.");
+    }
+    return true;
+  } catch (err) {
+    printRebuildPreflightFailure(
+      "Brave Web Search credential is invalid.",
+      err instanceof Error ? err.message : String(err),
+      "Brave Web Search credential preflight failed",
+      bail,
+    );
+    return false;
+  }
+}
+
+async function preflightRebuildTargetRuntime(
+  target: RebuildTargetConfig,
+  sb: RebuildSandboxEntry,
+  recreateOptions: RebuildRecreateOnboardOpts,
+  log: (message: string) => void,
+  bail: RebuildBail,
+): Promise<boolean> {
+  if (
+    target.durableConfig.webSearchConfig &&
+    !agentSupportsWebSearch(target.agentDefinition, target.fromDockerfile)
+  ) {
+    printRebuildPreflightFailure(
+      "the recorded agent/image does not support Brave Web Search.",
+      "Recreate with a supported image before enabling recorded web-search state.",
+      "Recorded Brave Web Search is unsupported by the rebuild image",
+      bail,
+    );
+    return false;
+  }
+
+  const managesDashboard = shouldManageDashboardForAgent(target.agentDefinition);
+  const gpuEnv = { ...process.env };
+  delete gpuEnv.NEMOCLAW_SANDBOX_GPU;
+  delete gpuEnv.NEMOCLAW_SANDBOX_GPU_DEVICE;
+  const sandboxGpuConfig = resolveSandboxGpuConfig(nim.detectGpu(), {
+    flag: recreateOptions.sandboxGpu,
+    device: recreateOptions.sandboxGpuDevice,
+    env: gpuEnv,
+  });
+  if (sandboxGpuConfig.errors.length > 0) {
+    printRebuildPreflightFailure(
+      "the recorded sandbox GPU state cannot be recreated.",
+      sandboxGpuConfig.errors.join(" "),
+      "Recorded sandbox GPU state is invalid",
+      bail,
+    );
+    return false;
+  }
+  try {
+    await enforceDockerGpuPatchPreserveNetwork(target.resumeConfig.provider, sandboxGpuConfig, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      gatewayPort: recreateOptions.targetGatewayPort,
+      log,
+    });
+  } catch (err) {
+    printRebuildPreflightFailure(
+      "the recorded GPU network path is not reachable.",
+      err instanceof Error ? err.message : String(err),
+      "Sandbox GPU network preflight failed",
+      bail,
+    );
+    return false;
+  }
+
+  const customImage = await rebuildImagePreflight.preflightRebuildImage({
+    agent: target.agentDefinition,
+    fromDockerfile: target.fromDockerfile,
+    model: target.resumeConfig.model,
+    provider: target.resumeConfig.provider,
+    preferredInferenceApi: target.resumeConfig.preferredInferenceApi,
+    compatibleEndpointReasoning: target.resumeConfig.compatibleEndpointReasoning,
+    webSearchConfig: target.durableConfig.webSearchConfig,
+    hermesToolGateways: target.hermesToolGateways,
+    sandboxGpuConfig,
+    gatewayPort: recreateOptions.targetGatewayPort,
+    chatUiUrl: managesDashboard ? `http://127.0.0.1:${String(recreateOptions.controlUiPort)}` : "",
+  });
+  if (!customImage.ok) {
+    printRebuildPreflightFailure(
+      "the replacement sandbox image did not build.",
+      redact(customImage.detail),
+      "Replacement sandbox image preflight failed",
+      bail,
+    );
+    return false;
+  }
+  if (!(await preflightRebuildBraveSearchCredential(target.durableConfig, bail))) return false;
+
+  // Credential preflight must use the same trusted selection. Legacy registry
+  // rows may recover provider/model from their own matching onboard session;
+  // checking the raw row first would miss that remote credential requirement.
+  return preflightRebuildCredentials(
+    {
+      ...sb,
+      provider: target.resumeConfig.provider,
+      model: target.resumeConfig.model,
+      credentialEnv: target.credentialEnv,
+      hermesAuthMethod: target.durableConfig.hermesAuthMethod,
+    },
+    log,
+    bail,
+  );
+}
+
+async function preflightAuthoritativeOnboardRuntime(
+  sandboxName: string,
+  resumeConfig: RebuildResumeConfig,
+  recreateOptions: RebuildRecreateOnboardOpts,
+  bail: RebuildBail,
+): Promise<boolean> {
+  try {
+    await onboardModule.preflightAuthoritativeRebuildTarget({
+      ...recreateOptions,
+      model: resumeConfig.model,
+      provider: resumeConfig.provider,
+      sandboxName,
+    });
+    return true;
+  } catch (err) {
+    printRebuildPreflightFailure(
+      "the replacement onboarding host/runtime checks did not pass.",
+      err instanceof Error ? err.message : String(err),
+      "Replacement onboarding preflight failed",
+      bail,
+    );
+    return false;
+  }
+}
+
+function prepareRebuildRecreateOptions(
+  sb: RebuildSandboxEntry,
+  rebuildAgent: string | null,
+  storedFromDockerfile: string | null,
+  autoYes: boolean,
+  bail: RebuildBail,
+): RebuildRecreateOnboardOpts | null {
+  try {
+    return buildRebuildRecreateOnboardOpts({
+      sb,
+      rebuildAgent,
+      storedFromDockerfile,
+      autoYes,
+      usageNoticeAccepted: true,
+    });
+  } catch (err) {
+    printRebuildPreflightFailure(
+      "the recorded recreate target is invalid.",
+      err instanceof Error ? err.message : String(err),
+      "Recorded recreate target is invalid",
+      bail,
+    );
+    return null;
+  }
+}
+
+function stageRebuildHermesDashboardConfig(
+  rebuildAgent: string | null,
+  sb: RebuildSandboxEntry,
+  controlUiPort: number | null,
+  bail: RebuildBail,
+): boolean {
+  const resolved = resolveRebuildHermesDashboardEnv(rebuildAgent, sb, controlUiPort);
+  if (!resolved.ok) {
+    printRebuildPreflightFailure(
+      "the recorded Hermes dashboard state is invalid.",
+      resolved.reason,
+      "Recorded Hermes dashboard state is invalid",
+      bail,
+    );
+    return false;
+  }
+  for (const key of REBUILD_HERMES_DASHBOARD_ENV_KEYS) {
+    const value = resolved.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  return true;
 }
 
 function hydrateMessagingConfigForRebuild(sandboxName: string, log: (msg: string) => void): void {
@@ -701,8 +1066,85 @@ export async function rebuildSandbox(
   options: string[] | RebuildSandboxOptions = {},
   opts: { throwOnError?: boolean } = {},
 ): Promise<void> {
-  return withMcpLifecycleLock(sandboxName, () =>
-    rebuildSandboxUnlocked(sandboxName, options, opts),
+  return withMcpLifecycleLock(sandboxName, async () => {
+    const scopedEnvKeys = [
+      BRAVE_API_KEY_ENV,
+      MESSAGING_SETUP_APPLIER_ENV_KEY,
+      "OPENSHELL_GATEWAY",
+      DOCKER_GPU_PATCH_NETWORK_ENV,
+      ...REBUILD_HERMES_DASHBOARD_ENV_KEYS,
+      ...MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
+    ];
+    const savedEnv = scopedEnvKeys.map((key) => [key, process.env[key]] as const);
+    try {
+      await rebuildSandboxUnlocked(sandboxName, options, opts);
+    } finally {
+      for (const key of scopedEnvKeys) delete process.env[key];
+      Object.assign(
+        process.env,
+        Object.fromEntries(
+          savedEnv.filter((entry): entry is [string, string] => entry[1] !== undefined),
+        ),
+      );
+    }
+  });
+}
+
+async function ensureRebuildUsageNoticeOrBail(bail: RebuildBail): Promise<void> {
+  let accepted = false;
+  try {
+    accepted = await ensureRebuildUsageNoticeAccepted({
+      stdinIsTty: process.stdin?.isTTY === true,
+    });
+  } catch (err) {
+    printRebuildPreflightFailure(
+      "the current third-party software notice could not be recorded.",
+      err instanceof Error ? err.message : String(err),
+      "Third-party software notice preflight failed",
+      bail,
+    );
+  }
+  if (accepted) return;
+  printRebuildPreflightFailure(
+    "the current third-party software notice was not accepted.",
+    "Accept the current notice before rebuilding.",
+    "Third-party software notice was not accepted",
+    bail,
+  );
+}
+
+function acquireRebuildOnboardLock(sandboxName: string, bail: RebuildBail): () => void {
+  const lock = onboardSession.acquireOnboardLock(
+    `${CLI_NAME} ${sandboxName} rebuild --authoritative-resume`,
+  );
+  if (!lock.acquired) {
+    console.error(`  Another ${CLI_NAME} onboarding run is already in progress.`);
+    if (lock.holderPid) console.error(`  Lock holder PID: ${lock.holderPid}`);
+    console.error("  Sandbox is untouched — no data was lost.");
+    bail("Could not acquire onboard lock before rebuild");
+  }
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    onboardSession.releaseOnboardLock();
+  };
+  process.once("exit", release);
+  return release;
+}
+
+function assertRebuildEntryUnchanged(
+  sandboxName: string,
+  confirmedEntrySnapshot: string,
+  bail: RebuildBail,
+): void {
+  const lockedEntry = registry.getSandbox(sandboxName);
+  if (lockedEntry && JSON.stringify(lockedEntry) === confirmedEntrySnapshot) return;
+  printRebuildPreflightFailure(
+    "the sandbox configuration changed while rebuild confirmation was pending.",
+    "Review the current sandbox state and rerun rebuild.",
+    "Sandbox configuration changed before rebuild lock acquisition",
+    bail,
   );
 }
 
@@ -728,6 +1170,7 @@ async function rebuildSandboxUnlocked(
 
   const sb = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sb) return;
+  const confirmedEntrySnapshot = JSON.stringify(sb);
 
   // Multi-agent guard (temporary — until swarm lands)
   if (!isSingleAgentRebuildSupported(sb, bail)) return;
@@ -736,13 +1179,7 @@ async function rebuildSandboxUnlocked(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
-  if (!checkRebuildGatewaySchemaPreflight(sandboxName, bail)) return;
-
-  // Hydrate non-secret messaging config before the rebuild touches anything
-  // destructive. The manifest plan in registry is the durable source; legacy
-  // session channel fields are read only as compatibility fallback by
-  // getStoredMessagingChannelConfig().
-  hydrateMessagingConfigForRebuild(sandboxName, log);
+  if (!checkRebuildGatewaySchemaPreflight(sandboxName, sb, bail)) return;
 
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
@@ -754,46 +1191,171 @@ async function rebuildSandboxUnlocked(
   );
   if (!rebuildConfirmed) return;
 
-  // Step 0: Preflight — verify recreate preconditions BEFORE destroying
-  // anything. The most common rebuild failure is a missing provider credential
-  // when onboard runs in non-interactive mode. Checking now lets us abort with
-  // the sandbox still intact. See #2273.
-  if (!preflightRebuildCredentials(sandboxName, sb, log, bail)) return;
+  await ensureRebuildUsageNoticeOrBail(bail);
 
-  // #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
-  // provider, model, credential, endpoint — from the registry/session BEFORE any
-  // destructive backup/delete, and surface/neutralize ambient onboard-selection
-  // env that would otherwise steer the resume away from the recorded sandbox.
-  // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
-  const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
-  if (!resumeConfig) return;
+  // Serialize every gateway/provider/image proof with onboarding, not only
+  // deletion. Otherwise another run can invalidate a long preflight before
+  // this rebuild opens its destructive window.
+  const releaseRebuildOnboardLock = acquireRebuildOnboardLock(sandboxName, bail);
+  let keepLockForRecreate = false;
+  let lockedPreparation: {
+    targetConfig: RebuildTargetConfig;
+    recreateOptions: RebuildRecreateOnboardOpts;
+    rebuildMessagingPlan: Awaited<ReturnType<typeof stageRebuildMessagingPlanOrBail>>;
+    rebuildBaseImagePreflight: ReturnType<typeof ensureRebuildAgentBaseImage>;
+    liveState: NonNullable<Awaited<ReturnType<typeof resolveRebuildLiveState>>>;
+  } | null = null;
 
-  const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
-    sandboxName,
-    sb,
-    rebuildAgent,
-    log,
-    bail,
-  );
+  try {
+    assertRebuildEntryUnchanged(sandboxName, confirmedEntrySnapshot, bail);
+    // Hydrate non-secret messaging config only after serialization. The
+    // registry manifest is durable; legacy session fields are compatibility
+    // fallback and must come from the same locked target snapshot.
+    hydrateMessagingConfigForRebuild(sandboxName, log);
 
-  // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
-  const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
-  if (!liveState) return;
+    // Provider inspection and credential replacement are gateway-scoped. Bind
+    // the whole preflight to this sandbox's persisted gateway before either can
+    // observe or mutate shared OpenShell provider state.
+    if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sb, log, bail))) return;
+
+    // Step 0 / #5735 (PRA-6/PRA-9): resolve and validate the entire recreate config — agent,
+    // provider, model, credential, endpoint — from the registry/session BEFORE any
+    // destructive backup/delete, and surface/neutralize ambient onboard-selection
+    // env that would otherwise steer the resume away from the recorded sandbox.
+    // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
+    const targetConfig = prepareRebuildTargetConfig(sandboxName, sb, rebuildAgent, log, bail);
+    if (!targetConfig) return;
+    const {
+      resumeConfig,
+      sessionSnapshot: rebuildSessionSnapshot,
+      sessionMatchesSandbox: rebuildSessionMatchesSandbox,
+      durableConfig: rebuildDurableConfig,
+      hermesToolGateways: rebuildHermesToolGateways,
+      hasHermesToolGateways: hasRebuildHermesToolGateways,
+      credentialEnv: rebuildCredentialEnv,
+      fromDockerfile: storedFromDockerfile,
+    } = targetConfig;
+    const rebuildsHermesSandbox = rebuildAgent === "hermes";
+    const recreateOptions = prepareRebuildRecreateOptions(
+      sb,
+      rebuildAgent,
+      storedFromDockerfile,
+      skipConfirm || rebuildConfirmed,
+      bail,
+    );
+    if (!recreateOptions) return;
+    if (!stageRebuildHermesDashboardConfig(rebuildAgent, sb, recreateOptions.controlUiPort, bail)) {
+      return;
+    }
+    const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
+      sandboxName,
+      sb,
+      rebuildAgent,
+      log,
+      bail,
+    );
+    if (
+      !(await preflightAuthoritativeOnboardRuntime(
+        sandboxName,
+        resumeConfig,
+        recreateOptions,
+        bail,
+      ))
+    )
+      return;
+    // Component installation can replace the CLI/gateway binaries. Reconfirm
+    // the exact named gateway before any provider inspection or deletion.
+    if (!(await ensureRebuildTargetGatewaySelected(sandboxName, sb, log, bail))) return;
+    if (!checkRebuildGatewaySchemaPreflight(sandboxName, sb, bail)) return;
+    // Build and pin agent base layers before validating the exact final image.
+    // The same immutable ref is scoped into both the dry build and recreate.
+    const rebuildBaseImagePreflight = ensureRebuildAgentBaseImage(rebuildAgent, bail);
+    if (!rebuildBaseImagePreflight.ok) return;
+    const restorePreflightBaseImageOverride =
+      pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
+    let targetRuntimeReady = false;
+    try {
+      targetRuntimeReady = await preflightRebuildTargetRuntime(
+        targetConfig,
+        sb,
+        recreateOptions,
+        log,
+        bail,
+      );
+    } finally {
+      restorePreflightBaseImageOverride();
+    }
+    if (!targetRuntimeReady) return;
+    const validatedRegistryUpdate = validatedRebuildRegistryUpdate(
+      resumeConfig,
+      rebuildDurableConfig,
+      storedFromDockerfile,
+      rebuildCredentialEnv,
+    );
+    if (!registry.updateSandbox(sandboxName, validatedRegistryUpdate)) {
+      bail("Sandbox registry entry disappeared during rebuild preflight");
+      return;
+    }
+    Object.assign(sb, validatedRegistryUpdate);
+
+    // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
+    const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
+    if (!liveState) return;
+    lockedPreparation = {
+      targetConfig,
+      recreateOptions,
+      rebuildMessagingPlan,
+      rebuildBaseImagePreflight,
+      liveState,
+    };
+    keepLockForRecreate = true;
+  } finally {
+    if (!keepLockForRecreate) {
+      process.removeListener("exit", releaseRebuildOnboardLock);
+      releaseRebuildOnboardLock();
+    }
+  }
+  if (!lockedPreparation) return;
+  const {
+    targetConfig,
+    recreateOptions,
+    rebuildMessagingPlan,
+    rebuildBaseImagePreflight,
+    liveState,
+  } = lockedPreparation;
+  const {
+    resumeConfig,
+    sessionSnapshot: rebuildSessionSnapshot,
+    sessionMatchesSandbox: rebuildSessionMatchesSandbox,
+    durableConfig: rebuildDurableConfig,
+    hermesToolGateways: rebuildHermesToolGateways,
+    hasHermesToolGateways: hasRebuildHermesToolGateways,
+    credentialEnv: rebuildCredentialEnv,
+    fromDockerfile: storedFromDockerfile,
+  } = targetConfig;
+  const rebuildsHermesSandbox = rebuildAgent === "hermes";
   const { staleRecovery, staleRegistrySnapshot } = liveState;
-
-  // Build agent base layers before backup/delete so Dockerfile.base errors leave
-  // the existing sandbox intact. This is what applies local Hermes version edits.
-  const rebuildBaseImagePreflight = ensureRebuildAgentBaseImage(rebuildAgent, bail);
-  if (!rebuildBaseImagePreflight.ok) return;
 
   // On stale-sandbox recovery the live sandbox is gone, so the normal
   // unlock→recreate→relock cycle cannot run. Track stale lock state and defer
   // clearing old shields state until recreate succeeds (#4497).
-  const { rebuildShieldsWindow, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
-    sandboxName,
-    staleRecovery,
-  );
-  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+  let rebuildShieldsWindow: RebuildShieldsWindow | null;
+  let staleSandboxWasLocked: boolean;
+  try {
+    ({ rebuildShieldsWindow, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
+      sandboxName,
+      staleRecovery,
+    ));
+  } catch (err) {
+    process.removeListener("exit", releaseRebuildOnboardLock);
+    releaseRebuildOnboardLock();
+    throw err;
+  }
+  if (!rebuildShieldsWindow) {
+    process.removeListener("exit", releaseRebuildOnboardLock);
+    releaseRebuildOnboardLock();
+    return bail("Failed to auto-unlock shields.");
+  }
 
   const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
     relockRebuildShieldsWindow(sandboxName, rebuildShieldsWindow, sandboxStillExists, CLI_NAME);
@@ -811,6 +1373,21 @@ async function rebuildSandboxUnlocked(
       bail,
     );
     if (backupManifest === undefined) return;
+    const registryPolicyPresets = Array.isArray(sb.policies)
+      ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
+      : [];
+    const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
+    const rebuildPolicyPresets = pruneDisabledMessagingPolicyPresets(
+      backupManifest?.policyPresets ?? registryPolicyPresets,
+      rebuildDisabledChannels,
+    );
+    const rebuildSessionPolicyPresets = resolveRecreatePolicyPresets(
+      rebuildPolicyPresets,
+      sb.policyPresetsFinalized === true,
+      (sb.customPolicies?.length ?? 0) > 0,
+      {},
+      true,
+    ).policyPresets;
 
     // Step 3: Delete sandbox without tearing down gateway or session.
     // sandboxDestroy() cleans up the gateway when it's the last sandbox and
@@ -835,6 +1412,11 @@ async function rebuildSandboxUnlocked(
       bail,
     );
     if (!mcpPreparation) return;
+    // MCP preparation removes only adapter entries whose exact ownership
+    // fingerprints match the registry. Probe afterward so a Deep Agents
+    // `.mcp.json` containing only NemoClaw-managed entries is not mislabeled as
+    // unpreserved user state; any file that remains still needs the warning.
+    if (!staleRecovery) warnUnpreservedUserManagedFiles(sandboxName, log);
     const rebuildMcpEntries = mcpPreparation.entries;
     const rebuildDetachedMcpProviderEntries = mcpPreparation.detachedProviderEntries;
     const rebuildScrubbedMcpAdapterEntries = mcpPreparation.scrubbedAdapterEntries;
@@ -892,29 +1474,9 @@ async function rebuildSandboxUnlocked(
 
     // Force the sandbox name so onboard recreates with the same name.
     // Mark session resumable and point at this sandbox; set env var as fallback.
-    const sessionBefore = onboardSession.loadSession();
-    const sessionMatchesSandbox = sessionBefore?.sandboxName === sandboxName;
-    const rebuildsHermesSandbox = rebuildAgent === "hermes";
-    let registryHermesToolGateways: string[] | null = null;
-    if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
-      registryHermesToolGateways = sb.hermesToolGateways.filter(
-        (value: unknown): value is string => typeof value === "string",
-      );
-    }
-    const sessionHermesToolGateways =
-      rebuildsHermesSandbox &&
-      sessionMatchesSandbox &&
-      Array.isArray(sessionBefore?.hermesToolGateways)
-        ? sessionBefore.hermesToolGateways.filter(
-            (value: unknown): value is string => typeof value === "string",
-          )
-        : null;
-    const rebuildHermesToolGateways = rebuildsHermesSandbox
-      ? (registryHermesToolGateways ?? sessionHermesToolGateways ?? [])
-      : [];
-    const hasRebuildHermesToolGateways =
-      rebuildsHermesSandbox &&
-      (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
+    const sessionBefore = rebuildSessionSnapshot;
+    const sessionMatchesSandbox = rebuildSessionMatchesSandbox;
+    const rebuildGpuOverrides = getRebuildSandboxGpuOverrides(sb);
     log(
       `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
     );
@@ -924,12 +1486,56 @@ async function rebuildSandboxUnlocked(
     // from a previous onboard of a *different* agent type would be picked up
     // by resolveAgentName() and the wrong Dockerfile would be used.  (#2201)
     onboardSession.updateSession((s: Session) => {
+      // This is a new target-scoped flow even when the previous session belongs
+      // to the target: the old sandbox is gone, so cached sandbox/agent/policy
+      // completion markers must not skip replacement creation or tear down the
+      // crash-safe MCP registry transaction. Preserve only target-owned config
+      // that has no durable registry source.
+      Object.assign(
+        s,
+        onboardSession.createSession({
+          mode: "non-interactive",
+          hermesAuthMethod: rebuildDurableConfig.hermesAuthMethod,
+          webSearchConfig: rebuildDurableConfig.webSearchConfig,
+          telegramConfig: sessionMatchesSandbox ? sessionBefore?.telegramConfig : null,
+          wechatConfig: sessionMatchesSandbox ? sessionBefore?.wechatConfig : null,
+          migratedLegacyValueHashes: sessionMatchesSandbox
+            ? sessionBefore?.migratedLegacyValueHashes
+            : null,
+          routerPid:
+            resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerPid : undefined,
+          routerCredentialHash:
+            resumeConfig.provider === "nvidia-router" ? sessionBefore?.routerCredentialHash : null,
+          metadata: {
+            gatewayName: recreateOptions.targetGatewayName,
+            fromDockerfile: storedFromDockerfile,
+          },
+        }),
+      );
+      // The outer gate completed the non-mutating runtime/component/port
+      // checks while the old sandbox was intact. Cache preflight so inner
+      // resume runs only its live GPU/CDI/DNS backstops and cannot enter the
+      // full gateway reconciliation/cleanup path after delete.
+      s.steps.preflight.status = "complete";
+      s.steps.preflight.startedAt = null;
+      s.steps.preflight.completedAt = s.updatedAt;
+      s.steps.preflight.error = null;
+      s.steps.gateway.status = "complete";
+      s.steps.gateway.startedAt = null;
+      s.steps.gateway.completedAt = s.updatedAt;
+      s.steps.gateway.error = null;
       s.sandboxName = sandboxName;
       s.resumable = true;
       s.status = "in_progress";
       s.agent = rebuildAgent;
       s.messagingPlan = rebuildMessagingPlan;
       s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
+      // The loaded session may belong to a different sandbox. Seed the exact
+      // target set captured before delete so the inner policy phase reconciles
+      // that set instead of unrelated session presets or ambient policy env.
+      s.policyPresets = rebuildSessionPolicyPresets;
+      s.gpuPassthrough = rebuildGpuOverrides.sessionGpuPassthrough;
+      s.metadata.fromDockerfile = storedFromDockerfile;
       // Persist inference selection from the about-to-be-removed registry entry
       // so onboard --resume can recreate with the same provider/model in
       // non-interactive mode. Without this the registry is gone by the time
@@ -945,7 +1551,7 @@ async function rebuildSandboxUnlocked(
       s.provider = resumeConfig.provider;
       s.model = resumeConfig.model;
       s.nimContainer = resumeConfig.nimContainer;
-      s.credentialEnv = resumeConfig.credentialEnv;
+      s.credentialEnv = rebuildCredentialEnv;
       s.preferredInferenceApi = resumeConfig.preferredInferenceApi;
       s.compatibleEndpointReasoning = resumeConfig.compatibleEndpointReasoning;
       // `onboard --resume` uses the session as the recreate contract. Always
@@ -959,24 +1565,16 @@ async function rebuildSandboxUnlocked(
       s.endpointUrl = resumeConfig.endpointUrl;
       return s;
     });
-    process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
-
     const sessionAfter = onboardSession.loadSession();
     log(
       `Session after update: sandboxName=${sessionAfter?.sandboxName}, status=${sessionAfter?.status}, resumable=${sessionAfter?.resumable}, provider=${sessionAfter?.provider}, model=${sessionAfter?.model}`,
     );
     log(
-      `Env: NEMOCLAW_SANDBOX_NAME=${process.env.NEMOCLAW_SANDBOX_NAME}, NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
+      `Recreate env will target NEMOCLAW_SANDBOX_NAME=${sandboxName}; NEMOCLAW_RECREATE_SANDBOX=${process.env.NEMOCLAW_RECREATE_SANDBOX}`,
     );
 
-    // Forward the stored --from Dockerfile path so onboard --resume uses the
-    // same custom image.  Without this, the conflict check rejects the resume
-    // because requestedFrom (null) !== recordedFrom (the stored path).  (#2301)
-    // Only read from the session when it belongs to this sandbox to avoid
-    // using config from a different sandbox's onboard run.
-    const storedFromDockerfile = sessionMatchesSandbox
-      ? sessionAfter?.metadata?.fromDockerfile || null
-      : null;
+    // Forward the target session's stored --from Dockerfile path. Unrelated
+    // session metadata was cleared in the target-scoped rewrite above.
     log(
       `Calling onboard({ resume: true, nonInteractive: true, recreateSandbox: true, fromDockerfile: ${storedFromDockerfile} })`,
     );
@@ -1012,24 +1610,20 @@ async function rebuildSandboxUnlocked(
     // been deleted. The recreate path also inherits the original sandbox's
     // no-GPU intent so the inner `onboard --resume` does not enforce the
     // Docker CDI GPU preflight on hosts without an NVIDIA GPU.
-    const recreateOpts = buildRebuildRecreateOnboardOpts({
-      sb,
-      rebuildAgent,
-      storedFromDockerfile,
-      autoYes: skipConfirm || rebuildConfirmed,
-    });
-    // #5735: isolate ambient onboard-selection env only for the duration of the
+    // #5735: isolate ambient onboard-selection/config env only for the duration of the
     // recreate. The session was just pinned to the registry agent/provider/
     // model/credential/reasoning above, so removing NEMOCLAW_AGENT/PROVIDER/
-    // PROVIDER_KEY/ENDPOINT_URL/MODEL/REASONING forces onboard --resume to
-    // recreate from that pinned config (and the already-registered gateway
-    // provider) instead of an unrelated onboard's values. Restored in finally
+    // provider, model, image, policy, VLLM, and GPU overrides forces onboard
+    // --resume to recreate from that pinned config (and the already-registered
+    // gateway provider) instead of unrelated ambient values. Restored in finally
     // so a bulk rebuild loop and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
+    const previousSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
+    process.env.NEMOCLAW_SANDBOX_NAME = sandboxName;
     const restoreRebuildBaseImageOverride =
       pinRebuildAgentBaseImageForRecreate(rebuildBaseImagePreflight);
     try {
-      await onboard(recreateOpts);
+      await onboard(recreateOptions);
       log("onboard() returned successfully");
     } catch (err) {
       onboardFailed = true;
@@ -1042,6 +1636,8 @@ async function rebuildSandboxUnlocked(
       process.exit = _savedExit;
       restoreRebuildBaseImageOverride();
       restoreAmbientRecreateEnv();
+      if (previousSandboxName === undefined) delete process.env.NEMOCLAW_SANDBOX_NAME;
+      else process.env.NEMOCLAW_SANDBOX_NAME = previousSandboxName;
     }
 
     if (!onboardFailed) {
@@ -1049,16 +1645,9 @@ async function rebuildSandboxUnlocked(
     }
 
     if (onboardFailed) {
-      // Clean up onboard's internal state that normally runs in
-      // process.once("exit") listeners — those never fire because we
-      // threw from the overridden process.exit instead of actually
-      // exiting.  Without this the onboard lock file stays on disk and
-      // blocks the next onboard/rebuild invocation.
-      try {
-        onboardSession.releaseOnboardLock();
-      } catch {
-        /* best effort */
-      }
+      // The outer rebuild owns the onboard lock across the entire destructive
+      // window and releases it in the enclosing finally. Only mark the inner
+      // state failure here; releasing early would reopen the post-delete race.
       try {
         markLastStartedStepFailed(onboardSession, "Rebuild recreate failed");
       } catch {
@@ -1176,14 +1765,7 @@ async function rebuildSandboxUnlocked(
     // presets (#4497). Custom `policy-add --from-file/--from-dir` rules
     // (`sb.customPolicies`) are not re-applied here; like a normal rebuild, they
     // follow the recreate/onboard path and must be re-added if they were in use.
-    const registryPolicyPresets = Array.isArray(sb.policies)
-      ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
-      : [];
-    const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
-    const savedPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest?.policyPresets ?? registryPolicyPresets,
-      rebuildDisabledChannels,
-    );
+    const savedPresets = rebuildPolicyPresets;
     const restoredPresets: string[] = [];
     const failedPresets: string[] = [];
     if (savedPresets.length > 0) {
@@ -1335,12 +1917,20 @@ async function rebuildSandboxUnlocked(
     // - Removal condition: drop this once `applyPreset` writes the
     //   canonical post-apply set itself (replacing its append-only
     //   contract), making the rebuild flow's reconciliation redundant.
+    const policyPresetsFinalized =
+      sb.policyPresetsFinalized === true &&
+      failedPresets.length === 0 &&
+      (sb.customPolicies?.length ?? 0) === 0
+        ? true
+        : undefined;
     registry.updateSandbox(sandboxName, {
       agentVersion: agentDef.expectedVersion || null,
       policies: restoredPresets,
+      policyTier: sb.policyTier ?? null,
+      policyPresetsFinalized,
     });
     log(
-      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}]`,
+      `Registry updated: agentVersion=${agentDef.expectedVersion}, policies=[${restoredPresets.join(",")}], policyPresetsFinalized=${String(policyPresetsFinalized === true)}`,
     );
 
     if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
@@ -1415,5 +2005,7 @@ async function rebuildSandboxUnlocked(
     if (!rebuildShieldsWindow.relocked) {
       relockShieldsIfNeeded(sandboxStillExists);
     }
+    process.removeListener("exit", releaseRebuildOnboardLock);
+    releaseRebuildOnboardLock();
   }
 }

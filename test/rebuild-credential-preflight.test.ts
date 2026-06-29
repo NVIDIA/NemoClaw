@@ -119,6 +119,11 @@ function createFixture(opts: {
           model: "meta/llama-3.3-70b-instruct",
           provider,
           gpuEnabled: false,
+          sandboxGpuMode: "0",
+          gatewayName: "nemoclaw",
+          gatewayPort: 8080,
+          dashboardPort: 18789,
+          fromDockerfile: null,
           policies: [],
           agent,
           ...(agents ? { agents } : {}),
@@ -236,29 +241,68 @@ function createFixture(opts: {
   ].join("\\n");
 
   const registeredProvidersLiteral = JSON.stringify(registeredProviders ?? null);
+  const hermesProviderStatePath = path.join(tmpDir, "hermes-provider-credential-key");
+  const initialHermesCredentialKey =
+    hermesAuthMethod === "api_key" ? "NOUS_API_KEY" : "OPENAI_API_KEY";
   fs.writeFileSync(
     path.join(tmpDir, "openshell"),
     `#!/usr/bin/env node
+const fs = require("fs");
 const a = process.argv.slice(2);
 const registeredProviders = ${registeredProvidersLiteral};
+const hermesProviderStatePath = ${JSON.stringify(hermesProviderStatePath)};
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (a[0]==="-V" || a[0]==="--version")         { process.stdout.write("openshell 0.0.72\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="list")       { process.stdout.write("${sandboxName}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="ssh-config") { process.stdout.write("${sshConfig}\\n"); process.exit(0); }
 if (a[0]==="sandbox" && a[1]==="delete")     { process.exit(0); }
-if (a[0]==="status")                         { process.stdout.write("running\\n"); process.exit(0); }
-if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n"); process.exit(0); }
+if (a[0]==="status")                         { process.stdout.write("Server Status\\n  Gateway: nemoclaw\\n  Status: Connected\\n"); process.exit(0); }
+if (a[0]==="gateway" && a[1]==="info")       { const i=a.indexOf("-g"); const name=i>=0?a[i+1]:"nemoclaw"; process.stdout.write("Gateway Info\\n\\nGateway: " + name + "\\n"); process.exit(0); }
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
-if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
+if (a[0]==="inference" && a[1]==="get")      { process.stdout.write("Gateway inference:\\n  Provider: ${provider}\\n  Model: meta/llama-3.3-70b-instruct\\n"); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
 if (a[0]==="provider" && a[1]==="get")       {
-  if (Array.isArray(registeredProviders)) process.exit(registeredProviders.includes(a[2]) ? 0 : 1);
-  process.exit(${providerRegistered ? 0 : 1});
+  const providerName = a[2];
+  const persistedHermes = providerName === "hermes-provider" && fs.existsSync(hermesProviderStatePath);
+  const exists = persistedHermes || (Array.isArray(registeredProviders)
+    ? registeredProviders.includes(providerName)
+    : ${providerRegistered ? "true" : "false"});
+  if (!exists) process.exit(1);
+  if (providerName === "hermes-provider") {
+    const credentialKey = persistedHermes
+      ? fs.readFileSync(hermesProviderStatePath, "utf8").trim()
+      : ${JSON.stringify(initialHermesCredentialKey)};
+    process.stdout.write("Provider:\\n  Name: hermes-provider\\n  Credential keys: " + credentialKey + "\\n");
+  }
+  process.exit(0);
+}
+if (a[0]==="provider" && (a[1]==="create" || a[1]==="update")) {
+  const nameIndex = a.indexOf("--name");
+  const providerName = a[1] === "create" ? a[nameIndex + 1] : a[2];
+  const credentialIndex = a.indexOf("--credential");
+  if (providerName === "hermes-provider" && credentialIndex >= 0) {
+    fs.writeFileSync(hermesProviderStatePath, a[credentialIndex + 1]);
+  }
+  process.exit(0);
 }
 if (a[0]==="provider")                       { process.exit(0); }
+if (a[0]==="forward" && a[1]==="list")      { process.stdout.write("SANDBOX BIND PORT PID STATUS\\n${sandboxName} 127.0.0.1 18789 4242 running\\n"); process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
 `,
     { mode: 0o755 },
   );
+  for (const component of ["openshell-gateway", "openshell-sandbox"]) {
+    fs.writeFileSync(
+      path.join(tmpDir, component),
+      `#!/usr/bin/env node
+const requiredFeatures = "request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods";
+if (process.argv[2] === "-V" || process.argv[2] === "--version") process.stdout.write("${component} 0.0.72\\n");
+process.exit(0);
+`,
+      { mode: 0o755 },
+    );
+  }
 
   // ── Fake ps for active SSH session detection ──────────────────
   const activeSessionLines = Array.from(
@@ -282,6 +326,10 @@ process.exit(0);
     path.join(tmpDir, "docker"),
     `#!/usr/bin/env node
 const a = process.argv.slice(2);
+if (a[0]==="info") {
+  process.stdout.write(JSON.stringify({ServerVersion:"27.0.0", OperatingSystem:"Docker Engine", NCPU:8, MemTotal:17179869184}) + "\\n");
+  process.exit(0);
+}
 if (a[0]==="build") { process.exit(${dockerBuildExitCode}); }
 if (a[0]==="image" && a[1]==="inspect") {
   const formatIndex = a.indexOf("--format");
@@ -292,7 +340,8 @@ if (a[0]==="image" && a[1]==="inspect") {
 }
 if (a[0]==="tag" || a[0]==="rmi") { process.exit(0); }
 if (a[0]==="run") {
-  if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
+  if (a.includes("nslookup")) process.stdout.write("Server: 127.0.0.11\\n** server can't find nemoclaw.invalid: NXDOMAIN\\n");
+  else if (a.includes("/usr/bin/ldd")) process.stdout.write("ldd (GNU libc) 2.41\\n");
   else process.stdout.write("nemoclaw-hermes-mcp-runtime-ok\\n");
   process.exit(0);
 }
@@ -351,6 +400,8 @@ function runRebuild(
     env: {
       HOME: fixture.tmpDir,
       PATH: fixture.tmpDir + ":" + NODE_BIN + ":/usr/bin:/bin",
+      NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+      NEMOCLAW_SKIP_HOST_DNS_PREFLIGHT: "1",
       NEMOCLAW_NON_INTERACTIVE: "1",
       NEMOCLAW_NO_CONNECT_HINT: "1",
       NO_COLOR: "1",

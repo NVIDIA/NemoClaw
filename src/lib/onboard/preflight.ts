@@ -664,6 +664,7 @@ export function assertCdiNvidiaGpuSpecPresent(
   host: HostAssessment,
   explicitlyOptedOutGpuPassthrough: boolean,
   hostGpuPlatform: string | null | undefined = null,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
 ): void {
   if (hostGpuPlatform === "jetson" || isWslDockerDesktopRuntime(host)) return;
   if (
@@ -678,7 +679,7 @@ export function assertCdiNvidiaGpuSpecPresent(
     "  Docker is configured for CDI device injection (CDISpecDirs is set), but the NVIDIA GPU CDI spec is missing or stale. OpenShell GPU startup can fail until the CDI spec is refreshed.",
   );
   printRemediationActions(planHostRemediation(host));
-  process.exit(1);
+  exitProcess(1);
 }
 
 export function planHostRemediation(assessment: HostAssessment): RemediationAction[] {

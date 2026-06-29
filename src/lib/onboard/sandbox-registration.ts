@@ -33,6 +33,9 @@ export interface CreatedSandboxRegistryEntryInput {
   agentVersionKnown: boolean;
   imageTag: string | null;
   appliedPolicies: string[];
+  webSearchEnabled?: boolean;
+  fromDockerfile?: string | null;
+  hermesAuthMethod?: "oauth" | "api_key" | null;
   plannedMessagingState: SandboxMessagingState | undefined;
   /**
    * Durable MCP rebuild manifest carried across an already-absent sandbox.
@@ -48,6 +51,14 @@ export interface CreatedSandboxRegistryEntryInput {
 
 export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryEntryInput {
   registerSandbox?(entry: SandboxEntry): void;
+}
+
+export function creationFidelity(
+  webSearchEnabled: boolean,
+  fromDockerfile: string | null,
+  hermesAuthMethod: "oauth" | "api_key" | null,
+): Pick<SandboxEntry, "webSearchEnabled" | "fromDockerfile" | "hermesAuthMethod"> {
+  return { webSearchEnabled, fromDockerfile, hermesAuthMethod };
 }
 
 export function selection(
@@ -89,6 +100,9 @@ export function buildCreatedSandboxRegistryEntry(
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,
     policies: input.appliedPolicies,
+    webSearchEnabled: input.webSearchEnabled === true,
+    fromDockerfile: input.fromDockerfile ?? null,
+    hermesAuthMethod: input.hermesAuthMethod ?? null,
     messaging: messagingState,
     mcp: input.preservedMcpState,
     hermesToolGateways:

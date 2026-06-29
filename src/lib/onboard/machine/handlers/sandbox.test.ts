@@ -149,6 +149,12 @@ function createDeps(
       getSandboxReuseState: () => "missing",
       hasSandboxGpuDrift: () => false,
       getSandboxHermesToolGateways: () => [],
+      getSandboxRegistryEntry: (name: string) => ({
+        name,
+        webSearchEnabled: false,
+        fromDockerfile: null,
+        hermesAuthMethod: null,
+      }),
       normalizeHermesToolGatewaySelections: (value: unknown) =>
         Array.isArray(value) ? (value as string[]) : [],
       stringSetsEqual: (left: string[], right: string[]) =>
@@ -220,6 +226,7 @@ function baseOptions(
     preferredInferenceApi: "openai-completions",
     sandboxGpuConfig: { sandboxGpuEnabled: false, mode: "0" },
     hermesToolGateways: [],
+    hermesAuthMethod: null,
     controlUiPort: null,
     rootDir: "/repo",
     deps,
@@ -259,6 +266,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith(
       "my-assistant",
@@ -282,6 +290,20 @@ describe("handleSandboxState", () => {
       updates: undefined,
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
+  });
+
+  it("does not auto-enable web search from ambient credentials during authoritative rebuild", async () => {
+    const configureWebSearch = vi.fn(async () => ({ fetchEnabled: true as const }));
+    const { deps, calls } = createDeps({ configureWebSearch });
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps),
+      authoritativeResumeConfig: true,
+    });
+
+    expect(configureWebSearch).not.toHaveBeenCalled();
+    expect((calls.createSandbox.mock.calls[0] as unknown[] | undefined)?.[5]).toBeNull();
+    expect(result.webSearchConfig).toBeNull();
   });
 
   it("reuses a completed ready sandbox on resume", async () => {
@@ -311,6 +333,33 @@ describe("handleSandboxState", () => {
     });
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
     expect(result.session).toBe(skippedSession);
+  });
+
+  it("backfills absent rebuild fidelity after validated sandbox reuse", async () => {
+    const session = createSession({
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+      hermesAuthMethod: "api_key",
+    });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "ready",
+      getSandboxRegistryEntry: (name) => ({ name, nemoclawVersion: "0.1.0" }),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+      hermesAuthMethod: "api_key",
+    });
+
+    expect(calls.updateSandbox).toHaveBeenCalledWith("saved", {
+      webSearchEnabled: true,
+      fromDockerfile: null,
+      hermesAuthMethod: "api_key",
+    });
   });
 
   it("removes registry state when messaging config drift forces sandbox recreation", async () => {
@@ -448,6 +497,7 @@ describe("handleSandboxState", () => {
       { sandboxGpuEnabled: false, mode: "0" },
       null,
       [],
+      null,
     );
     expect(result.webSearchConfig).toBeNull();
   });

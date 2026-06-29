@@ -572,6 +572,36 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   }
 }
 
+async function restoreExistingMcpBridgeRuntime(
+  sandboxName: string,
+  entries: readonly McpBridgeEntry[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
+  const resolvedByServer = await preflightMcpEntryTargets(entries);
+  await ensureSandboxGatewaySelected(sandboxName);
+  const sandbox = getSandboxOrThrow(sandboxName);
+  assertMcpDestroyNotPending(sandbox);
+  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+  for (const entry of entries) {
+    assertGeneratedPolicyMutationSafe(sandboxName, entry);
+    const provider = assertMcpProviderRecoverable(entry);
+    if (provider.exists !== true) {
+      throw new McpBridgeError(
+        `OpenShell provider '${entry.providerName}' is missing. Runtime restoration refuses to create or rotate credentials; run explicit MCP restart after exporting '${entry.env[0]}'.`,
+      );
+    }
+    assertNoAttachedProviderCredentialCollision(sandboxName, entry);
+    applyGeneratedPolicy(sandboxName, entry, resolvedByServer.get(entry.server));
+    attachProvider(sandboxName, entry);
+    waitForAttachedMcpCredential(sandboxName, entry);
+    const adapter =
+      (entry.adapter as AgentMcpAdapter | undefined) ?? getBridgeAdapter(getSandboxAgent(sandbox));
+    registerAgentAdapter(sandboxName, adapter, entry, {}, { replaceExisting: true });
+    writeBridgeEntry(sandboxName, { ...entry, adapter, updatedAt: nowIso() });
+  }
+}
+
 export interface McpDestroyPreparation {
   entries: McpBridgeEntry[];
   detachedProviderEntries: McpBridgeEntry[];
@@ -603,17 +633,34 @@ function mcpBridgeEntriesEqual(left: McpBridgeEntry, right: McpBridgeEntry): boo
   );
 }
 
-function discardPreparedMcpAddsBeforeDestroy(
+async function discardSafeIncompleteMcpAdds(
   sandboxName: string,
   sandbox: SandboxEntry,
-): SandboxEntry {
+): Promise<SandboxEntry> {
   const bridges = bridgeState(sandbox);
-  const remaining = Object.fromEntries(
-    Object.entries(bridges).filter(([, entry]) => entry.addState !== "prepared"),
+  const providerlessCandidates = Object.values(bridges).filter(
+    (entry) => entry.addState === "preflighted" && !entry.providerId,
   );
+  if (providerlessCandidates.length > 0) await ensureSandboxGatewaySelected(sandboxName);
+  const remainingEntries: Array<[string, McpBridgeEntry]> = [];
+  const providerlessPreflighted: McpBridgeEntry[] = [];
+  for (const [server, entry] of Object.entries(bridges)) {
+    if (entry.addState === "prepared") continue;
+    if (entry.addState === "preflighted" && !entry.providerId) {
+      assertAuthenticatedBridgeEntry(entry);
+      const inspection = inspectMcpProvider(entry.providerName);
+      if (inspection.exists === false) {
+        providerlessPreflighted.push(entry);
+        continue;
+      }
+    }
+    remainingEntries.push([server, entry]);
+  }
+  const remaining = Object.fromEntries(remainingEntries);
   if (Object.keys(remaining).length === Object.keys(bridges).length) {
     return sandbox;
   }
+  for (const entry of providerlessPreflighted) removeGeneratedPolicy(sandboxName, entry);
   // A prepared add precedes all external side effects, so destroy must drop
   // only its local manifest and must not inspect/delete same-name global state.
   setBridgeState(sandboxName, remaining);
@@ -684,7 +731,7 @@ export async function prepareMcpBridgesForAbsentSandboxDestroy(
   options: { force?: boolean } = {},
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = discardPreparedMcpAddsBeforeDestroy(sandboxName, getSandboxOrThrow(sandboxName));
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
@@ -717,7 +764,7 @@ export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = discardPreparedMcpAddsBeforeDestroy(sandboxName, getSandboxOrThrow(sandboxName));
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
@@ -897,13 +944,11 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       `Could not clear prepared MCP destroy state for sandbox '${sandboxName}' before runtime restoration.`,
     );
   }
-  // Exact providers were required before phase one. Reusing them does not
-  // require the host secret environment variable: OpenShell retains the
-  // credential and restart writes only the placeholder into agent config.
-  for (const entry of preparation.entries) {
+  // Reattach only the exact existing providers. This restoration path never
+  // reads host secret values and therefore cannot rotate preserved credentials.
+  for (const entry of preparation.entries)
     inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-  }
-  await restartMcpBridge(sandboxName);
+  await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries);
 }
 
 /**
@@ -988,9 +1033,9 @@ export interface McpRebuildPreparation {
   scrubbedAdapterEntries: McpBridgeEntry[];
 }
 
-function getCompleteMcpRebuildEntries(sandboxName: string): McpBridgeEntry[] {
+async function getCompleteMcpRebuildEntries(sandboxName: string): Promise<McpBridgeEntry[]> {
   validateSandboxName(sandboxName);
-  const sandbox = getSandboxOrThrow(sandboxName);
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const incompleteAdd = entries.find((entry) => entry.addState);
   if (incompleteAdd) {
@@ -1010,7 +1055,7 @@ function getCompleteMcpRebuildEntries(sandboxName: string): McpBridgeEntry[] {
 export async function prepareMcpBridgesForAbsentSandboxRebuild(
   sandboxName: string,
 ): Promise<McpRebuildPreparation> {
-  const entries = getCompleteMcpRebuildEntries(sandboxName);
+  const entries = await getCompleteMcpRebuildEntries(sandboxName);
   if (entries.length === 0) {
     return {
       entries: [],
@@ -1032,7 +1077,7 @@ export async function prepareMcpBridgesForRebuild(
   sandboxName: string,
 ): Promise<McpRebuildPreparation> {
   const sandbox = getSandboxOrThrow(sandboxName);
-  const entries = getCompleteMcpRebuildEntries(sandboxName);
+  const entries = await getCompleteMcpRebuildEntries(sandboxName);
   if (entries.length === 0) {
     return {
       entries: [],
@@ -1183,7 +1228,7 @@ export async function restoreMcpBridgesAfterRebuild(
   // Persist the recovery contract before touching the gateway. If refresh
   // fails, `mcp restart` remains retryable after the operator fixes the cause.
   setBridgeState(sandboxName, bridges);
-  await restartMcpBridge(sandboxName);
+  await restoreExistingMcpBridgeRuntime(sandboxName, entries);
 }
 
 export async function removeMcpBridge(

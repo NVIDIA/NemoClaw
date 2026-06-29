@@ -89,6 +89,20 @@ describe("registry", () => {
     expect(data.sandboxes.alpha.nimContainer).toBeNull();
   });
 
+  it("stores rebuild fidelity metadata at registration time", () => {
+    registry.registerSandbox({
+      name: "alpha",
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+    expect(registry.getSandbox("alpha")).toMatchObject({
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "oauth",
+    });
+  });
+
   it("stores normalized compatible-endpoint reasoning state", () => {
     registry.registerSandbox({
       name: "alpha",

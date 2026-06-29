@@ -72,7 +72,8 @@ function createDeps(
   return {
     calls,
     deps: {
-      normalizeHermesAuthMethod: (value: string | null | undefined) => value ?? null,
+      normalizeHermesAuthMethod: (value: string | null | undefined) =>
+        value === "oauth" || value === "api_key" ? value : null,
       setupNim: calls.setupNim,
       setupInference: calls.setupInference,
       startRecordedStep: calls.startStep,
@@ -294,6 +295,41 @@ describe("handleProviderInferenceState", () => {
     expect(calls.skipped).not.toHaveBeenCalledWith("provider_selection", expect.anything());
     expect(calls.setupNim).toHaveBeenCalledWith({ type: "nvidia" }, "dcode-station", null, false);
     expect(calls.setupInference).toHaveBeenCalled();
+  });
+
+  it("uses a preflighted authoritative rebuild selection despite an incomplete old step marker", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "mock/mcp-bridge",
+      endpointUrl: "https://compatible.example.test/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-completions",
+    });
+    const { deps, calls } = createDeps({ isInferenceRouteReady: vi.fn(() => true) });
+
+    const result = await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      authoritativeResumeConfig: true,
+      sandboxName: "mcp-rebuild",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.recoverProvider).toHaveBeenCalledWith("compatible-endpoint", "COMPATIBLE_API_KEY");
+    expect(calls.complete).toHaveBeenCalledWith(
+      "provider_selection",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "mock/mcp-bridge",
+        endpointUrl: "https://compatible.example.test/v1",
+      }),
+    );
+    expect(result).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "mock/mcp-bridge",
+      endpointUrl: "https://compatible.example.test/v1",
+      preferredInferenceApi: "openai-completions",
+    });
   });
 
   it("clears non-NVIDIA provider credentials when inference setup fails", async () => {

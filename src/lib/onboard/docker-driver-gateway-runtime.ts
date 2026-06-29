@@ -31,7 +31,7 @@ type DockerDriverGatewayEnvModule = typeof import("./docker-driver-gateway-env")
 // attached to a Docker-driver gateway. These heuristics can be retired when
 // OpenShell owns and reports the same runtime identity fields directly.
 export interface DockerDriverGatewayRuntimeDeps {
-  gatewayPort: number;
+  gatewayPort: number | (() => number);
   getCachedOpenshellBinary(): string | null;
   getBlueprintMaxOpenshellVersion(): string | null;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
@@ -96,10 +96,13 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   const dockerDriverGatewayEnv: DockerDriverGatewayEnvModule =
     deps.loadDockerDriverGatewayEnv?.() ?? require("./docker-driver-gateway-env");
 
+  const currentGatewayPort = () =>
+    typeof deps.gatewayPort === "function" ? deps.gatewayPort() : deps.gatewayPort;
+
   function getDockerDriverGatewayStateDir(): string {
     const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
     if (configured && configured.trim()) return path.resolve(configured.trim());
-    const dir = gatewayBinding.resolveGatewayStateDirName(deps.gatewayPort);
+    const dir = gatewayBinding.resolveGatewayStateDirName(currentGatewayPort());
     return path.join(os.homedir(), ".local", "state", "nemoclaw", dir);
   }
 
@@ -172,6 +175,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
   ): Record<string, string> {
     return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
+      gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
       dockerNetworkName: process.env.OPENSHELL_DOCKER_NETWORK_NAME || "openshell-docker",
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
@@ -222,7 +226,8 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     return (
       env.OPENSHELL_DRIVERS === "docker" ||
       Boolean(env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE) ||
-      env.OPENSHELL_GRPC_ENDPOINT === dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint()
+      env.OPENSHELL_GRPC_ENDPOINT ===
+        dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort())
     );
   }
 
@@ -310,7 +315,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
           {
             pid,
             desiredEnv,
-            endpoint: dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(),
+            endpoint: dockerDriverGatewayEnv.getDockerDriverGatewayEndpoint(currentGatewayPort()),
             gatewayBin,
             dockerHost: process.env.DOCKER_HOST || null,
             platform,

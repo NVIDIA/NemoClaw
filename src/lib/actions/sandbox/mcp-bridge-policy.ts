@@ -77,7 +77,14 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
         { path: "/usr/bin/node" },
       ];
     case "hermes-config":
-      return [{ path: "/usr/local/bin/hermes" }, { path: "/opt/hermes/.venv/bin/python*" }];
+      return [
+        { path: "/usr/local/bin/hermes" },
+        // The Hermes entrypoint is a Python console script. OpenShell binds
+        // policy to /proc/<pid>/exe, which resolves the venv interpreter to
+        // the system Python binary after the wrapper execs Hermes.
+        { path: "/usr/bin/python3*" },
+        { path: "/opt/hermes/.venv/bin/python*" },
+      ];
     case "deepagents-config":
       return [{ path: "/usr/local/bin/dcode" }, { path: "/opt/venv/bin/python3*" }];
   }

@@ -146,6 +146,7 @@ describe("MCP OpenShell policy", () => {
 
     expect(hermes.network_policies.mcp_bridge_srv.binaries.map((b) => b.path)).toEqual([
       "/usr/local/bin/hermes",
+      "/usr/bin/python3*",
       "/opt/hermes/.venv/bin/python*",
     ]);
     expect(deepAgents.network_policies.mcp_bridge_srv.binaries.map((b) => b.path)).toEqual([

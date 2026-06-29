@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { SandboxMessagingPlan } from "../../../messaging/manifest";
-import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import type { HermesAuthMethod, Session, SessionUpdates } from "../../../state/onboard-session";
+import type { SandboxEntry } from "../../../state/registry";
 import { withSandboxPhaseTrace } from "../../tracing";
 import { branchTo, type OnboardStateTransitionResult } from "../result";
 import { reconcileReusedSandboxMessaging, reconcileSandboxMessaging } from "./sandbox-messaging";
@@ -22,6 +23,8 @@ export interface SandboxStateOptions<
 > {
   resume: boolean;
   fresh: boolean;
+  /** Internal rebuild mode: null web-search state is an authoritative disable, not a prompt. */
+  authoritativeResumeConfig?: boolean;
   resumeAgentChanged: boolean;
   session: Session | null;
   sandboxName: string | null;
@@ -36,6 +39,7 @@ export interface SandboxStateOptions<
   preferredInferenceApi: string | null;
   sandboxGpuConfig: SandboxGpuConfig;
   hermesToolGateways: string[];
+  hermesAuthMethod: HermesAuthMethod | null;
   controlUiPort: number | null;
   rootDir: string;
   deps: {
@@ -61,6 +65,7 @@ export interface SandboxStateOptions<
     getSandboxReuseState(sandboxName: string | null): string;
     hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
     getSandboxHermesToolGateways(sandboxName: string): unknown;
+    getSandboxRegistryEntry(sandboxName: string): SandboxEntry | null;
     normalizeHermesToolGatewaySelections(value: unknown): string[];
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): void;
@@ -108,6 +113,7 @@ export interface SandboxStateOptions<
       sandboxGpuConfig: SandboxGpuConfig,
       resourceProfile: ResourceProfile | null,
       hermesToolGateways: string[],
+      hermesAuthMethod: HermesAuthMethod | null,
     ): Promise<string>;
     updateSandboxRegistry(sandboxName: string, updates: Record<string, unknown>): void;
     getSandboxAgentRegistryFields(
@@ -278,6 +284,7 @@ class SandboxStateFlow<
         return current;
       });
     }
+    this.backfillReusedSandboxFidelity(state);
     this.deps.skippedStepMessage("sandbox", state.sandboxName);
     const skippedSession = await this.deps.recordStateSkipped("sandbox", {
       reason: "resume",
@@ -290,10 +297,32 @@ class SandboxStateFlow<
     };
   }
 
+  private backfillReusedSandboxFidelity(state: SandboxStepState<WebSearchConfig>): void {
+    if (!state.sandboxName) return;
+    const existing = this.deps.getSandboxRegistryEntry(state.sandboxName);
+    const fidelity: Partial<SandboxEntry> = {};
+    if (existing?.webSearchEnabled === undefined) {
+      fidelity.webSearchEnabled = Boolean(state.webSearchConfig);
+    }
+    if (
+      existing?.fromDockerfile === undefined &&
+      (this.options.fromDockerfile || existing?.nemoclawVersion)
+    ) {
+      fidelity.fromDockerfile = this.options.fromDockerfile;
+    }
+    if (existing?.hermesAuthMethod === undefined && this.options.hermesAuthMethod) {
+      fidelity.hermesAuthMethod = this.options.hermesAuthMethod;
+    }
+    if (Object.keys(fidelity).length > 0) {
+      this.deps.updateSandboxRegistry(state.sandboxName, fidelity);
+    }
+  }
+
   private async resolveWebSearchForCreation(
     state: SandboxStepState<WebSearchConfig>,
   ): Promise<WebSearchConfig | null> {
     if (!state.webSearchConfig) {
+      if (this.options.authoritativeResumeConfig) return null;
       return this.deps.configureWebSearch(
         null,
         this.options.agent,
@@ -339,6 +368,7 @@ class SandboxStateFlow<
           this.options.sandboxGpuConfig,
           resourceProfile,
           this.options.hermesToolGateways,
+          this.options.hermesAuthMethod,
         ),
     );
     // createSandbox() owns the build fingerprint. In particular, reusing an

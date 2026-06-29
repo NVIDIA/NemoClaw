@@ -208,6 +208,12 @@ export type RunOpenshellInstallDeps = OpenshellInstallPinDeps & {
 export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellInstallResult {
   const { env } = computeOpenshellInstallEnv(process.env, deps);
   if (env === null) return { installed: false, localBin: null, futureShellPathHint: null };
+  const installEnv = { ...env };
+  for (const key of ["NEMOCLAW_OPENSHELL_GATEWAY_BIN", "NEMOCLAW_OPENSHELL_SANDBOX_BIN"] as const) {
+    const configured = installEnv[key]?.trim();
+    if (configured) installEnv[key] = path.resolve(configured);
+    else delete installEnv[key];
+  }
   // Stream install-openshell.sh output live (info() progress + curl progress bar)
   // so the in-onboard OpenShell upgrade shows progress instead of sitting silent
   // for the whole download/verify (#4431). `inherit` keeps this call synchronous
@@ -215,7 +221,7 @@ export function runOpenshellInstall(deps: RunOpenshellInstallDeps): OpenShellIns
   // to the terminal in real time.
   const result = spawnSync("bash", [path.join(deps.scriptsDir, "install-openshell.sh")], {
     cwd: deps.cwd,
-    env,
+    env: installEnv,
     stdio: ["ignore", "inherit", "inherit"],
     timeout: 300_000,
   });

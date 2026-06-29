@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -14,6 +15,47 @@ export const REQUIRED_OPENSHELL_MCP_FEATURES = [
 
 export const REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE = OPENSHELL_MCP_POLICY_CAPABILITY_MARKER;
 
+function canonicalExecutableFile(candidate: string): string | null {
+  try {
+    const canonical = fs.realpathSync(candidate);
+    if (!fs.statSync(canonical).isFile()) return null;
+    fs.accessSync(canonical, fs.constants.R_OK | fs.constants.X_OK);
+    return canonical;
+  } catch {
+    return null;
+  }
+}
+
+function pathEntryExists(candidate: string): boolean {
+  try {
+    fs.lstatSync(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function componentBuildVersion(candidate: string): string | null {
+  const result = spawnSync(candidate, ["--version"], {
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  if (result.status !== 0 || result.error) return null;
+  return `${result.stdout}${result.stderr}`.match(/\d+\.\d+\.\d+\S*/)?.[0] ?? null;
+}
+
+function componentBuildVersionsMatch(left: string, right: string): boolean {
+  if (left === right) return true;
+  const leftGit = left.match(/^(.*\+g)([0-9a-f]{7,})$/i);
+  const rightGit = right.match(/^(.*\+g)([0-9a-f]{7,})$/i);
+  return Boolean(
+    leftGit &&
+      rightGit &&
+      leftGit[1] === rightGit[1] &&
+      (leftGit[2].startsWith(rightGit[2]) || rightGit[2].startsWith(leftGit[2])),
+  );
+}
+
 // OpenShell current main has no structured installed-feature response. Scan the
 // installed artifacts before onboarding; the running supervisor is validated
 // later by applying the actual generated MCP policy with `policy set --wait`.
@@ -23,17 +65,54 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   openshellBin: string | null;
   gatewayBin: string | null;
   sandboxBin: string | null;
+  allowExternalGatewayBin?: boolean;
+  allowExternalSandboxBin?: boolean;
+  requireSandboxBin?: boolean;
 }): boolean {
   if (!options.openshellBin) return false;
-  const candidates = [
-    options.openshellBin,
-    path.join(path.dirname(options.openshellBin), "openshell-gateway"),
-    path.join(path.dirname(options.openshellBin), "openshell-sandbox"),
-    path.join(path.dirname(options.openshellBin), "openshell-driver-vm"),
-    options.gatewayBin,
-    options.sandboxBin,
-  ].filter(
-    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
+  const selectedOpenshellBin = path.resolve(options.openshellBin);
+  const openshellBin = canonicalExecutableFile(selectedOpenshellBin);
+  if (!openshellBin) return false;
+  const openshellDir = path.dirname(openshellBin);
+  const selectedGatewayBin = options.gatewayBin
+    ? path.resolve(options.gatewayBin)
+    : path.join(path.dirname(selectedOpenshellBin), "openshell-gateway");
+  const requireSandboxBin = options.requireSandboxBin ?? true;
+  const selectedSandboxBin = requireSandboxBin
+    ? options.sandboxBin
+      ? path.resolve(options.sandboxBin)
+      : path.join(path.dirname(selectedOpenshellBin), "openshell-sandbox")
+    : null;
+  const gatewayBin = canonicalExecutableFile(selectedGatewayBin);
+  const sandboxBin = selectedSandboxBin ? canonicalExecutableFile(selectedSandboxBin) : null;
+  if ((options.gatewayBin || pathEntryExists(selectedGatewayBin)) && !gatewayBin) return false;
+  if (
+    selectedSandboxBin &&
+    (options.sandboxBin || pathEntryExists(selectedSandboxBin)) &&
+    !sandboxBin
+  ) {
+    return false;
+  }
+  if (gatewayBin && path.dirname(gatewayBin) !== openshellDir && !options.allowExternalGatewayBin) {
+    return false;
+  }
+  if (sandboxBin && path.dirname(sandboxBin) !== openshellDir && !options.allowExternalSandboxBin) {
+    return false;
+  }
+  const openshellVersion = componentBuildVersion(openshellBin);
+  if (!openshellVersion) return false;
+  for (const componentBin of [gatewayBin, sandboxBin]) {
+    if (!componentBin) continue;
+    const componentVersion = componentBuildVersion(componentBin);
+    if (!componentVersion || !componentBuildVersionsMatch(openshellVersion, componentVersion)) {
+      return false;
+    }
+  }
+
+  // Scan one selected component set. Do not union arbitrary PATH fallbacks or
+  // let an explicit external component be rescued by a different sibling.
+  const candidates = [openshellBin, gatewayBin, sandboxBin].filter(
+    (candidate): candidate is string => candidate !== null,
   );
 
   const requiredMarkers = REQUIRED_OPENSHELL_MCP_FEATURES.map((marker) => Buffer.from(marker));
@@ -49,7 +128,7 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
       if (!fs.fstatSync(fd).isFile()) continue;
       content = fs.readFileSync(fd);
     } catch {
-      continue;
+      return false;
     } finally {
       if (fd !== null) fs.closeSync(fd);
     }
@@ -65,26 +144,12 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   // MCP policy enforcement and credential replacement execute in the sandbox
   // supervisor. When that exact host artifact is available, require its native
   // MCP marker rather than accepting a union of unrelated binaries.
-  const sandboxCandidates = [
-    options.sandboxBin,
-    path.join(path.dirname(options.openshellBin), "openshell-sandbox"),
-  ].filter(
-    (candidate): candidate is string => typeof candidate === "string" && candidate.length > 0,
-  );
   const sandboxMarker = Buffer.from(REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE);
-  let foundRuntimeArtifact = false;
-  for (const candidate of new Set(sandboxCandidates)) {
-    let fd: number | null = null;
+  if (sandboxBin) {
     try {
-      fd = fs.openSync(candidate, "r");
-      if (!fs.fstatSync(fd).isFile()) continue;
-      foundRuntimeArtifact = true;
-      const content = fs.readFileSync(fd);
-      if (content.includes(sandboxMarker)) return true;
+      return fs.readFileSync(sandboxBin).includes(sandboxMarker);
     } catch {
-      // Try the next exact sandbox-runtime candidate.
-    } finally {
-      if (fd !== null) fs.closeSync(fd);
+      return false;
     }
   }
   // VM drivers embed a compressed supervisor, so scanning their host binary is
@@ -93,5 +158,5 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   // The MCP command's authoritative runtime check loads the exact generated
   // protocol:mcp policy with --wait and exact-matches the effective state
   // before any credential or provider side effect.
-  return !foundRuntimeArtifact;
+  return true;
 }

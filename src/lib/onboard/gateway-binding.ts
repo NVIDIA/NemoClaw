@@ -189,14 +189,28 @@ export interface GatewayNameBoundClassifiers {
  */
 export function createGatewayNameBoundClassifiers(
   state: typeof import("../state/gateway"),
-  gatewayName: string,
+  gatewayName: string | (() => string),
 ): GatewayNameBoundClassifiers {
+  const currentGatewayName = () =>
+    typeof gatewayName === "function" ? gatewayName() : gatewayName;
   return {
-    hasStaleGateway: (gwInfoOutput = "") => state.hasStaleGateway(gwInfoOutput, gatewayName),
-    isSelectedGateway: (statusOutput = "") => state.isSelectedGateway(statusOutput, gatewayName),
+    hasStaleGateway: (gwInfoOutput = "") =>
+      state.hasStaleGateway(gwInfoOutput, currentGatewayName()),
+    isSelectedGateway: (statusOutput = "") =>
+      state.isSelectedGateway(statusOutput, currentGatewayName()),
     isGatewayHealthy: (statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") =>
-      state.isGatewayHealthy(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName),
+      state.isGatewayHealthy(
+        statusOutput,
+        gwInfoOutput,
+        activeGatewayInfoOutput,
+        currentGatewayName(),
+      ),
     getGatewayReuseState: (statusOutput = "", gwInfoOutput = "", activeGatewayInfoOutput = "") =>
-      state.getGatewayReuseState(statusOutput, gwInfoOutput, activeGatewayInfoOutput, gatewayName),
+      state.getGatewayReuseState(
+        statusOutput,
+        gwInfoOutput,
+        activeGatewayInfoOutput,
+        currentGatewayName(),
+      ),
   };
 }

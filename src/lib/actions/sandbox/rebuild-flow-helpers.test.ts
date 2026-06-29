@@ -78,6 +78,59 @@ function makeBail(): (msg: string, code?: number) => never {
   };
 }
 
+describe("rebuild target gateway preflight", () => {
+  const priorGateway = process.env.OPENSHELL_GATEWAY;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (priorGateway === undefined) delete process.env.OPENSHELL_GATEWAY;
+    else process.env.OPENSHELL_GATEWAY = priorGateway;
+  });
+
+  it("health-checks and pins the sandbox's persisted gateway", async () => {
+    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+    const recover = vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: true,
+      before: { state: "connected_other" },
+      after: { state: "healthy_named" },
+      attempted: true,
+    });
+    const { ensureRebuildTargetGatewaySelected } = loadRebuildFlowHelpers();
+
+    await expect(
+      ensureRebuildTargetGatewaySelected(
+        "alpha",
+        { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
+        () => undefined,
+        makeBail(),
+      ),
+    ).resolves.toBe(true);
+
+    expect(recover).toHaveBeenCalledWith({ gatewayName: "nemoclaw-19080" });
+    expect(process.env.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+  });
+
+  it("fails closed when the target gateway cannot become healthy", async () => {
+    const gatewayRuntime = requireDist("../../gateway-runtime-action.js");
+    vi.spyOn(gatewayRuntime, "recoverNamedGatewayRuntime").mockResolvedValue({
+      recovered: false,
+      before: { state: "connected_other" },
+      after: { state: "missing_named" },
+      attempted: true,
+    });
+    const { ensureRebuildTargetGatewaySelected } = loadRebuildFlowHelpers();
+
+    await expect(
+      ensureRebuildTargetGatewaySelected(
+        "alpha",
+        { name: "alpha", gatewayName: "nemoclaw-19080", gatewayPort: 19080 },
+        () => undefined,
+        makeBail(),
+      ),
+    ).rejects.toThrow("Could not select healthy gateway 'nemoclaw-19080'");
+  });
+});
+
 describe("rebuild agent base image preflight", () => {
   const overrideEnvVar = "NEMOCLAW_HERMES_SANDBOX_BASE_IMAGE_REF";
   let priorOverride: string | undefined;
@@ -180,7 +233,7 @@ describe("rebuild agent base image preflight", () => {
   });
 });
 
-describe("backupSandboxStateForRebuild — user-managed file warning", () => {
+describe("warnUnpreservedUserManagedFiles", () => {
   let warnSpy: MockInstance;
   let logSpy: MockInstance;
   let errorSpy: MockInstance;
@@ -211,25 +264,20 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
       existing: [".env", ".mcp.json"],
     });
 
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-    );
+    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
+    warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
-    expect(result).toBeTruthy();
-    expect(backupSpy).toHaveBeenCalledOnce();
     expect(probeSpy).toHaveBeenCalledOnce();
     expect(probeSpy).toHaveBeenCalledWith("alpha");
 
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(true);
+    expect(
+      warnLines.some((line: string) => line.includes("will not be preserved if rebuild replaces")),
+    ).toBe(true);
     expect(warnLines.some((line: string) => line.includes(".env, .mcp.json"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("Re-add them after rebuild"))).toBe(true);
+    expect(warnLines.some((line: string) => line.includes("After a successful rebuild"))).toBe(
+      true,
+    );
   });
 
   it("emits no warning when probe returns no existing user-managed files", () => {
@@ -238,39 +286,23 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
       existing: [],
     });
 
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-    );
+    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
+    warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
-    expect(result).toBeTruthy();
     expect(probeSpy).toHaveBeenCalledOnce();
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(false);
+    expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
   });
 
   it("emits no warning when agent declares no user-managed files", () => {
     probeSpy.mockReturnValue({ declared: [], existing: [] });
 
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-    );
+    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
+    warnUnpreservedUserManagedFiles("alpha", () => undefined);
 
-    expect(result).toBeTruthy();
     expect(probeSpy).toHaveBeenCalledOnce();
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(false);
+    expect(warnLines.some((line: string) => line.includes("will not be preserved"))).toBe(false);
   });
 
   it("skips probe when staleRecovery short-circuits the backup", () => {
@@ -289,11 +321,7 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
     expect(probeSpy).not.toHaveBeenCalled();
   });
 
-  it("surfaces a user-visible warning when the probe errors but does not fail the backup", () => {
-    probeSpy.mockImplementation(() => {
-      throw new Error("ssh boom");
-    });
-
+  it("does not probe during backup before managed MCP adapter entries are scrubbed", () => {
     const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
     const result = backupSandboxStateForRebuild(
       "alpha",
@@ -305,6 +333,18 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
     );
 
     expect(result).toBeTruthy();
+    expect(backupSpy).toHaveBeenCalledOnce();
+    expect(probeSpy).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a user-visible warning when the post-scrub probe errors", () => {
+    probeSpy.mockImplementation(() => {
+      throw new Error("ssh boom");
+    });
+
+    const { warnUnpreservedUserManagedFiles } = loadRebuildFlowHelpers();
+    expect(() => warnUnpreservedUserManagedFiles("alpha", () => undefined)).not.toThrow();
+
     const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
     expect(
       warnLines.some((line: string) =>

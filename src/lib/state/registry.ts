@@ -122,6 +122,7 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // policy step never finished — so re-onboard knows whether `policies`
   // represents a final selection it can carry forward. See #4621.
   policyPresetsFinalized?: boolean;
+  webSearchEnabled?: boolean;
   agent?: string | null;
   agentVersion?: string | null;
   // NemoClaw build fingerprint (the NemoClaw CLI/build version) stamped only on
@@ -131,6 +132,8 @@ export interface SandboxEntry extends Partial<InferenceSelection> {
   // (`--from`) sandboxes are intentionally left without a fingerprint so they
   // are never auto-rebuilt onto the default image (#5026).
   nemoclawVersion?: string | null;
+  fromDockerfile?: string | null;
+  hermesAuthMethod?: "oauth" | "api_key" | null;
   imageTag?: string | null;
   messaging?: SandboxMessagingState;
   mcp?: SandboxMcpState;
@@ -575,6 +578,8 @@ export function registerSandbox(entry: SandboxEntry): void {
       openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
+      webSearchEnabled:
+        typeof entry.webSearchEnabled === "boolean" ? entry.webSearchEnabled : undefined,
       // policyPresetsFinalized is intentionally not set here: registration means
       // the policy step has not completed for this entry. It is stamped only by
       // the post-policy registry write (see policy-preset-persistence), so a
@@ -583,6 +588,11 @@ export function registerSandbox(entry: SandboxEntry): void {
       agent: entry.agent || null,
       agentVersion: entry.agentVersion || null,
       nemoclawVersion: entry.nemoclawVersion || null,
+      fromDockerfile: entry.fromDockerfile || null,
+      hermesAuthMethod:
+        entry.hermesAuthMethod === "oauth" || entry.hermesAuthMethod === "api_key"
+          ? entry.hermesAuthMethod
+          : null,
       imageTag: entry.imageTag || null,
       messaging: cloneSandboxMessagingState(entry.messaging),
       mcp: normalizeSandboxMcpState(entry.mcp),

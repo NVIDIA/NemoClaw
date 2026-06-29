@@ -43,6 +43,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       agentVersionKnown: true,
       imageTag: "nemoclaw-demo:123",
       appliedPolicies: ["discord", "slack"],
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "api_key",
       plannedMessagingState: plannedMessagingState as any,
       hermesToolGateways: ["filesystem"],
       hermesDashboardState: {
@@ -63,6 +66,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
       preferredInferenceApi: "openai-completions",
       imageTag: "nemoclaw-demo:123",
       policies: ["discord", "slack"],
+      webSearchEnabled: true,
+      fromDockerfile: "/tmp/Dockerfile.custom",
+      hermesAuthMethod: "api_key",
       hermesToolGateways: ["filesystem"],
       hermesDashboardEnabled: true,
       hermesDashboardPort: 18790,
@@ -127,6 +133,9 @@ describe("buildCreatedSandboxRegistryEntry", () => {
     expect(entry.hermesDashboardPort).toBeUndefined();
     expect(entry.hermesDashboardInternalPort).toBeUndefined();
     expect(entry.hermesDashboardTui).toBeUndefined();
+    expect(entry.webSearchEnabled).toBe(false);
+    expect(entry.fromDockerfile).toBeNull();
+    expect(entry.hermesAuthMethod).toBeNull();
   });
 
   it("carries a durable MCP rebuild manifest into the replacement registry entry", () => {
