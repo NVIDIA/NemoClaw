@@ -702,6 +702,31 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
         ).toBe(true);
       }
 
+      // Regression precondition for #5253: Hermes deliberately uses a Python
+      // gateway, so its proxy-env and gateway process do not carry OpenClaw's
+      // Node safety-net/ciao preloads. The old generic recovery path treated
+      // this valid state as unsafe and refused to relaunch Hermes.
+      const issue5253Precondition = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(
+          [
+            "set -eu",
+            `pid=${shellQuote(afterGateway.pid)}`,
+            "test -f /tmp/nemoclaw-proxy-env.sh",
+            "! grep -Eq 'NODE_OPTIONS|nemoclaw-sandbox-safety-net|nemoclaw-ciao-network-guard' /tmp/nemoclaw-proxy-env.sh",
+            `python3 -c 'from pathlib import Path; import sys; env=Path("/proc/" + sys.argv[1] + "/environ").read_bytes(); sys.exit(1 if b"nemoclaw-sandbox-safety-net" in env or b"nemoclaw-ciao-network-guard" in env else 0)' "$pid"`,
+            "echo ISSUE_5253_PRECONDITION_OK",
+          ].join("; "),
+        ),
+        {
+          artifactName: "phase-5-issue-5253-missing-node-guards-precondition",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(issue5253Precondition.exitCode, resultText(issue5253Precondition)).toBe(0);
+      expect(issue5253Precondition.stdout).toContain("ISSUE_5253_PRECONDITION_OK");
+
       // Deliberately terminate the exact tracked PID instead of invoking
       // `hermes gateway stop`: upstream's graceful command writes a planned-stop
       // marker and can return while a split-UID gateway is still alive. This
@@ -769,6 +794,25 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
       recoveredGateway = parseGatewayProcess(afterRecoverProcess.stdout);
       expect(recoveredGateway.owner).toBe("gateway");
       expect(recoveredGateway.pid).not.toBe(afterGateway.pid);
+
+      const recoveredIssue5253Env = await sandbox.execShell(
+        SANDBOX_NAME,
+        trustedSandboxShellScript(
+          [
+            "set -eu",
+            `pid=${shellQuote(recoveredGateway.pid)}`,
+            `python3 -c 'from pathlib import Path; import sys; entries=Path("/proc/" + sys.argv[1] + "/environ").read_bytes().split(b"\\0"); env=dict(item.split(b"=", 1) for item in entries if b"=" in item); node_options=env.get(b"NODE_OPTIONS", b""); ok=env.get(b"HERMES_HOME") == b"/sandbox/.hermes" and env.get(b"HTTP_PROXY", b"").startswith(b"http://") and b"nemoclaw-sandbox-safety-net" not in node_options and b"nemoclaw-ciao-network-guard" not in node_options; sys.exit(0 if ok else 1)' "$pid"`,
+            "echo ISSUE_5253_RECOVERED_ENV_OK",
+          ].join("; "),
+        ),
+        {
+          artifactName: "phase-5-issue-5253-recovered-gateway-environment",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(recoveredIssue5253Env.exitCode, resultText(recoveredIssue5253Env)).toBe(0);
+      expect(recoveredIssue5253Env.stdout).toContain("ISSUE_5253_RECOVERED_ENV_OK");
 
       const afterRecoverPid1 = await sandbox.execShell(SANDBOX_NAME, pid1IdentityScript, {
         artifactName: "phase-5-pid1-after-both-down-recover",
