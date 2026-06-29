@@ -760,12 +760,6 @@ function Test-WslOutputRequiresReboot {
     return $Output -match 'Changes will not be effective until the system is rebooted'
 }
 
-function Test-WslRepairOutputRequiresReboot {
-    param([AllowNull()] [string]$Output)
-
-    return Test-WslOutputRequiresReboot -Output $Output
-}
-
 function Write-WslRepairInstructions {
     param(
         [Parameter(Mandatory)] [int]$ExitCode,
@@ -826,7 +820,7 @@ function Invoke-WslNoDistributionInstallRepair {
 
     if ($repairResult.ExitCode -eq 0) {
         Write-Status 'WSL repair command completed successfully.'
-        if (Test-WslRepairOutputRequiresReboot -Output $repairResult.Output) {
+        if (Test-WslOutputRequiresReboot -Output $repairResult.Output) {
             Request-Reboot
             return
         }
