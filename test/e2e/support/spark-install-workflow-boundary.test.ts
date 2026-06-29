@@ -12,6 +12,7 @@ import {
   evaluateE2eWorkflowDispatchSelectors,
   validateE2eWorkflowBoundary,
 } from "../../../tools/e2e/workflow-boundary.mts";
+import { assertSparkInstallSandboxName } from "../live/spark-install-helpers.ts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -20,6 +21,16 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("spark install workflow boundary", () => {
+  it("uses a test-owned sandbox name accepted by the live cleanup guard", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { env?: Record<string, unknown> }>;
+    };
+    const sandboxName = workflow.jobs["spark-install"]?.env?.NEMOCLAW_SANDBOX_NAME;
+
+    expect(sandboxName).toBe("e2e-spark-install-ci");
+    expect(assertSparkInstallSandboxName(String(sandboxName))).toBe(sandboxName);
+  });
+
   it("maps the Spark install selector to its free-standing E2E job", () => {
     expect(
       evaluateE2eWorkflowDispatchSelectors({
@@ -117,7 +128,7 @@ describe("spark install workflow boundary", () => {
           "spark-install job must set NEMOCLAW_NON_INTERACTIVE=1",
           "spark-install job must accept third-party software non-interactively",
           "spark-install job must set NEMOCLAW_FRESH=1",
-          "spark-install job must use the stable e2e-spark-install sandbox name",
+          "spark-install job must use the stable e2e-spark-install-ci sandbox name",
           "spark-install job must use the cloud provider",
           "spark-install job must force OPENSHELL_GATEWAY=nemoclaw",
           "spark-install job env must not include NVIDIA_INFERENCE_API_KEY",

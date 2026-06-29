@@ -3154,8 +3154,8 @@ function validateSparkInstallJob(errors: string[], jobs: WorkflowRecord): void {
   if (jobEnv.NEMOCLAW_FRESH !== "1") {
     errors.push("spark-install job must set NEMOCLAW_FRESH=1");
   }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install") {
-    errors.push("spark-install job must use the stable e2e-spark-install sandbox name");
+  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-spark-install-ci") {
+    errors.push("spark-install job must use the stable e2e-spark-install-ci sandbox name");
   }
   if (jobEnv.NEMOCLAW_PROVIDER !== "cloud") {
     errors.push("spark-install job must use the cloud provider");

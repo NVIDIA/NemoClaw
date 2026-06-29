@@ -6003,7 +6003,7 @@ jobs:
       NEMOCLAW_NON_INTERACTIVE: "1"
       NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
       NEMOCLAW_FRESH: "1"
-      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install"
+      NEMOCLAW_SANDBOX_NAME: "e2e-spark-install-ci"
       NEMOCLAW_PROVIDER: "cloud"
       OPENSHELL_GATEWAY: "nemoclaw"
     steps:
