@@ -21,9 +21,7 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log(
     "    list                            List provider credentials registered with the OpenShell gateway",
   );
-  log(
-    "    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)",
-  );
+  log("    add <PROVIDER> --type <TYPE>    Register a provider credential (reads value from env)");
   log("    reset <PROVIDER> [--yes]        Remove a provider credential so onboard re-prompts");
   log("");
   log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
