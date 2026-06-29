@@ -125,14 +125,25 @@ export async function restoreDnsRebindingHostsFixture(
     [
       "-lc",
       [
-        "set -euo pipefail",
+        // Cleanup must report the exact failed operation. An implicit `errexit`
+        // here can turn a transient file/container race into an unexplained
+        // exit 1 with empty stdout/stderr, which defeats the cleanup artifact.
+        "set -uo pipefail",
         `sandbox_name=${shellQuote(sandboxName)}`,
         `host_backup=${shellQuote(fixture.hostBackupPath)}`,
         `sandbox_backup=${shellQuote(fixture.sandboxBackupPath)}`,
-        'if [ ! -f "$host_backup" ] && [ ! -f "$sandbox_backup" ]; then exit 0; fi',
+        'if [ ! -f "$host_backup" ] && [ ! -f "$sandbox_backup" ]; then echo "DNS rebinding hosts backups already absent"; exit 0; fi',
+        "host_restore_failed=0",
         'if [ -f "$host_backup" ]; then',
-        '  if ! sudo -n tee /etc/hosts < "$host_backup" >/dev/null; then echo "failed to restore host /etc/hosts" >&2; exit 1; fi',
-        '  if ! cmp -s "$host_backup" /etc/hosts; then echo "host /etc/hosts differs after restoration" >&2; exit 1; fi',
+        '  if ! sudo -n tee /etc/hosts < "$host_backup" >/dev/null; then',
+        '    echo "failed to restore host /etc/hosts" >&2; host_restore_failed=1',
+        '  elif ! cmp -s "$host_backup" /etc/hosts; then',
+        '    echo "host /etc/hosts differs after restoration" >&2; host_restore_failed=1',
+        "  else",
+        '    echo "restored host /etc/hosts"',
+        "  fi",
+        "else",
+        '  echo "host /etc/hosts backup is missing while sandbox backup remains" >&2; host_restore_failed=1',
         "fi",
         'if [ -f "$sandbox_backup" ]; then',
         "  sandbox_restored=0",
@@ -141,9 +152,12 @@ export async function restoreDnsRebindingHostsFixture(
         '    if [ -n "$container_id" ] && docker exec --user 0 -i "$container_id" sh -c \'cat > /etc/hosts\' < "$sandbox_backup"; then sandbox_restored=1; break; fi',
         '    [ "$attempt" -eq 3 ] || sleep 1',
         "  done",
-        '  if [ "$sandbox_restored" -ne 1 ]; then echo "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox" >&2; fi',
+        '  if [ "$sandbox_restored" -eq 1 ]; then echo "restored sandbox /etc/hosts"; else echo "::warning::could not restore ephemeral sandbox /etc/hosts; cleanup will destroy the sandbox" >&2; fi',
         "fi",
+        'if [ "$host_restore_failed" -ne 0 ]; then exit 1; fi',
         'if ! rm -f "$host_backup" "$sandbox_backup"; then echo "failed to remove DNS rebinding hosts backups" >&2; exit 1; fi',
+        'echo "removed DNS rebinding hosts backups"',
+        "exit 0",
       ].join("\n"),
     ],
     {
