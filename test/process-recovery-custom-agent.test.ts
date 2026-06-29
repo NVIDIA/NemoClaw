@@ -182,12 +182,10 @@ custom-box  127.0.0.1  19000  12345  running`;
       } as never);
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
         (command: unknown, rawArgs: unknown) => {
-          if (
+          healthProbeCalls += Number(
             String(command).endsWith("openshell") &&
-            getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl")
-          ) {
-            healthProbeCalls += 1;
-          }
+              getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl"),
+          );
           const setRecovered = (value: boolean): void => {
             recovered = value;
           };

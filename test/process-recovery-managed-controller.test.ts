@@ -174,9 +174,11 @@ beta  127.0.0.1  18789  12345  running`;
     let recoveryActionCalls = 0;
     const requestGatewaySupervisorAction = vi.fn(
       (_sandboxName: string, action: "restart" | "recover" | "probe") => {
-        if (action === "probe") return managedProbeResult ?? successfulProbe;
-        const result = recoverResults[Math.min(recoveryActionCalls, recoverResults.length - 1)];
-        recoveryActionCalls += 1;
+        const isProbe = action === "probe";
+        const result = isProbe
+          ? (managedProbeResult ?? successfulProbe)
+          : recoverResults[Math.min(recoveryActionCalls, recoverResults.length - 1)];
+        recoveryActionCalls += Number(!isProbe);
         return result;
       },
     );
@@ -189,15 +191,17 @@ beta  127.0.0.1  18789  12345  running`;
     try {
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
         (_command: unknown, rawArgs: unknown) => {
-          if (getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl")) {
-            healthProbeCalls += 1;
-            return {
-              status: 0,
-              stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
-              stderr: "",
-            } as never;
-          }
-          return { status: 0, stdout: "", stderr: "" } as never;
+          const isHealthProbe = getSandboxExecShellCommand(rawArgs).includes("HTTP_CODE=$(curl");
+          healthProbeCalls += Number(isHealthProbe);
+          return (
+            isHealthProbe
+              ? {
+                  status: 0,
+                  stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSTOPPED\n",
+                  stderr: "",
+                }
+              : { status: 0, stdout: "", stderr: "" }
+          ) as never;
         },
       );
       vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
