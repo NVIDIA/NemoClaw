@@ -133,6 +133,21 @@ export function ensureOllamaLoopbackSystemdOverride(
   // exiting. Ollama keeps running on its existing bind; the host operator
   // can re-run with NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt or grant
   // passwordless sudo to restore the loopback hardening.
+  //
+  // Trade-off (advisor PRA-2): this fall-through accepts a weaker security
+  // posture (Ollama may continue on a non-loopback bind) in exchange for
+  // not breaking the documented headless install contract. The escape
+  // hatches are deliberate and discoverable:
+  //   - NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt opts back into a real
+  //     sudo prompt when a TTY is attached, restoring the loopback override
+  //     end-to-end.
+  //   - The warning surfaces the exact override knob in stderr so an
+  //     operator scanning logs (or a CI run capturing them) sees how to
+  //     re-tighten without grepping the source.
+  // Aborting destroy-style with process.exit(1) here is rejected because
+  // headless pipelines have no recourse: they cannot answer a password
+  // prompt and the only signal they get is exit 1 with no actionable next
+  // step (#5716 reproduction).
   const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const hasPasswordlessSudo =
     options.hasPasswordlessSudoImpl ??

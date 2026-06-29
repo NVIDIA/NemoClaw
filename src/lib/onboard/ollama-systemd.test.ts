@@ -3,12 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { OLLAMA_PORT } from "../../../dist/lib/core/ports";
-import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../../dist/lib/inference/ollama-runtime-context";
+import { OLLAMA_PORT } from "../core/ports";
+import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
 import {
   ensureOllamaLoopbackSystemdOverride,
   mergeOllamaLoopbackSystemdOverride,
-} from "../../../dist/lib/onboard/ollama-systemd";
+} from "./ollama-systemd";
 
 describe("mergeOllamaLoopbackSystemdOverride", () => {
   it("writes the OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH lines under [Service] when no drop-in exists", () => {
@@ -98,6 +98,12 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
 // continue against Ollama's existing bind.
 describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () => {
   it("skips the override with a warning when sudo -n is unavailable in non-interactive mode", () => {
+    // CR thread: isolate NEMOCLAW_NON_INTERACTIVE_SUDO_MODE so an outer
+    // shell that has set it to `prompt` cannot change which branch of
+    // getSudoPrefix this test exercises. We are specifically testing the
+    // `sudo -n` branch, so force the env to its default for this test.
+    const previousSudoMode = process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
+    delete process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const result = ensureOllamaLoopbackSystemdOverride({
@@ -115,17 +121,29 @@ describe("ensureOllamaLoopbackSystemdOverride (#5716 non-interactive sudo)", () 
       );
     } finally {
       warn.mockRestore();
+      if (previousSudoMode === undefined) {
+        delete process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE;
+      } else {
+        process.env.NEMOCLAW_NON_INTERACTIVE_SUDO_MODE = previousSudoMode;
+      }
     }
   });
 
-  it("does not skip the override when not on Linux (the override is platform-gated)", () => {
+  it("returns before Linux-only probes when not on Linux", () => {
+    // CR thread: prove the platform gate by making the Linux-only probes
+    // throw if reached. The platformImpl returns "darwin", so the function
+    // should return "not-applicable" before touching any of the Linux
+    // probes below.
     const result = ensureOllamaLoopbackSystemdOverride({
       platformImpl: () => "darwin",
-      hasOllamaSystemdUnitImpl: () => true,
+      hasOllamaSystemdUnitImpl: () => {
+        throw new Error("systemd probe should not run on non-Linux");
+      },
+      hasPasswordlessSudoImpl: () => {
+        throw new Error("sudo probe should not run on non-Linux");
+      },
       isNonInteractive: () => true,
-      hasPasswordlessSudoImpl: () => false,
     });
     expect(result).toBe("not-applicable");
   });
-
 });
