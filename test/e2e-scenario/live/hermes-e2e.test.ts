@@ -532,10 +532,10 @@ test.skipIf(!shouldRunLiveE2EScenarios())(
     // and dashboard process recover together, and both PID 1 and the startup
     // supervisor remain stable throughout.
     const gatewayProcessScript = trustedSandboxShellScript(
-      String.raw`
-        ps -eo user=,pid=,ppid=,args= |
-        awk '($4 ~ /(^|\/)(hermes|hermes[.]real|python|python3)$/) && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'
-      `.trim(),
+      [
+        "ps -eo user=,pid=,ppid=,args= |",
+        String.raw`awk '($4 ~ /(^|\/)(hermes|hermes[.]real|python|python3)$/) && (index($0, "hermes gateway run") || index($0, "hermes.real gateway run")) { print $1 " " $2 " " $3; found = 1; exit } END { exit found ? 0 : 1 }'`,
+      ].join(" "),
     );
     const beforeRestartProcess = await sandbox.execShell(SANDBOX_NAME, gatewayProcessScript, {
       artifactName: "phase-5-hermes-gateway-process-before-restart",
