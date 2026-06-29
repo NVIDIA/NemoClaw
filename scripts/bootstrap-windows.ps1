@@ -1152,8 +1152,9 @@ function Convert-WslInstallLogForDisplay {
         return $Log
     }
 
+    $redactedMarker = '[PowerShell transcript metadata redacted.]'
     $lines = (($Log -replace "`r`n", "`n") -replace "`r", "`n") -split "`n"
-    $separatorPattern = '^\*{6,}\s*$'
+    $separatorPattern = '^[\s\uFEFF]*\*{6,}\s*$'
     $firstSeparator = -1
 
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -1164,6 +1165,24 @@ function Convert-WslInstallLogForDisplay {
     }
 
     if ($firstSeparator -lt 0) {
+        $transcriptEvidencePatterns = @(
+            '(?im)^\s*(?:Windows\s+)?PowerShell transcript (?:start|end)\s*$',
+            '(?i)\b(?:Start|Stop)-Transcript\b',
+            '(?i)\$transcriptStarted\b'
+        )
+        foreach ($pattern in $transcriptEvidencePatterns) {
+            if ($Log -match $pattern) {
+                return $redactedMarker
+            }
+        }
+        foreach ($path in $SensitivePaths) {
+            if (
+                -not [string]::IsNullOrWhiteSpace($path) -and
+                $Log.IndexOf($path, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+            ) {
+                return $redactedMarker
+            }
+        }
         return $Log
     }
 
@@ -1176,7 +1195,7 @@ function Convert-WslInstallLogForDisplay {
     }
 
     if ($headerEnd -lt 0) {
-        return '[PowerShell transcript metadata redacted.]'
+        return $redactedMarker
     }
 
     if (($headerEnd + 1) -lt $lines.Count) {
@@ -1239,7 +1258,7 @@ function Convert-WslInstallLogForDisplay {
         $bodyLines = @()
     }
 
-    return (@('[PowerShell transcript metadata redacted.]') + $bodyLines) -join "`n"
+    return (@($redactedMarker) + $bodyLines) -join "`n"
 }
 
 function Write-WslInstallLog {

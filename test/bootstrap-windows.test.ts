@@ -678,9 +678,76 @@ Convert-WslInstallLogForDisplay -Log $log
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
-    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
     expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
     expect(result.stdout).not.toContain("TEST-HOST");
+  });
+
+  itPowerShell("redacts transcript markers when separators are missing", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$log = @'
+Windows PowerShell transcript start
+Username: EXAMPLE\\bootstrap-user
+Machine: TEST-HOST
+Host Application: powershell.exe -Command Get-Date
+Log file: C:\\Users\\example\\install.log
+'@
+
+Convert-WslInstallLogForDisplay -Log $log
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+    expect(result.stdout).not.toContain("C:\\Users\\example\\install.log");
+  });
+
+  itPowerShell("recognizes transcript separators with a BOM and indentation", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$separator = ([char]0xFEFF) + '  **********************'
+$log = @(
+  $separator,
+  'Windows PowerShell transcript start',
+  'Username: EXAMPLE\\bootstrap-user',
+  'Machine: TEST-HOST',
+  '  **********************',
+  'Useful WSL output',
+  '  **********************',
+  'Windows PowerShell transcript end',
+  '  **********************'
+) -join [Environment]::NewLine
+
+Convert-WslInstallLogForDisplay -Log $log
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).toContain("Useful WSL output");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+    expect(result.stdout).not.toContain("Windows PowerShell transcript");
+  });
+
+  itPowerShell("preserves plain WSL output without transcript evidence", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+Convert-WslInstallLogForDisplay -Log 'Invalid distribution name: NotARealDistro'
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("Invalid distribution name: NotARealDistro");
   });
 
   itPowerShell(
