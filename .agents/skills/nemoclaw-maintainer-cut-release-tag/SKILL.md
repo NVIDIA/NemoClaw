@@ -123,7 +123,6 @@ Remove the released-version label only when the maintainer decides an item is de
 
 Summarize:
 
-- shipped/closed items that remain associated with `<released-version>`;
 - open issues/PRs retained as carry-forward work;
 - any items that need manual maintainer attention.
 

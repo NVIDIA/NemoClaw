@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Tier 3 — Ranking and Degraded Mode
 
 Final decision logic. Two paths: happy mode when at least one PR passes all Tier 0 gates, degraded mode when none do.
@@ -35,7 +38,8 @@ Don't give up — pick the closest-to-ready and recommend salvage steps.
    - **Ineligible**: missing PR-body DCO declaration or any commit that is not GitHub Verified. Reject rather than salvage; the contributor must provide a clean compliant history.
    - **Substantive** (real work): CI red, mergeability conflicts, missing CODEOWNERS approvals, unresolved CodeRabbit threads
 2. Distance-to-ready ranking:
-   - Fewer substantive failures wins
+   - Any PR with an **Ineligible** failure ranks below every eligible PR; if all candidates are ineligible, return a rejection-only verdict
+   - Among eligible PRs, fewer substantive failures wins
    - Tie → fewer trivial failures wins
    - Tie → higher Tier 1-2 weighted score wins (correctness beneath the broken plumbing)
 3. Output:

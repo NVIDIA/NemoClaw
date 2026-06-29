@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Repo Policy
 
 Configurable defaults that adapt the skill to a specific repository. Edit this file when adopting the skill in a new repo. The skill reads these values to know what to gate on.

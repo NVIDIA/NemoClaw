@@ -220,7 +220,20 @@ describe("maintainer PR comparator contributor compliance", () => {
     const output = JSON.parse(result.stdout);
     expect(output.gates.contributor_compliance).toBe(false);
     expect(output.details.unverified_commits).toEqual([{ sha: "abc123", reason: "unsigned" }]);
-    expect(output.failures).toContain("substantive:contributor_compliance");
+    expect(output.failures).toContain("ineligible:contributor_compliance");
+  });
+
+  it("fails when the PR body lacks the DCO declaration", () => {
+    const result = runComparatorGate({
+      body: "## Summary\n\nNo declaration.",
+      verified: true,
+    });
+
+    expect(result.status).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(output.gates.contributor_compliance).toBe(false);
+    expect(output.details.dco_declaration_present).toBe(false);
+    expect(output.failures).toContain("ineligible:contributor_compliance");
   });
 
   it("fails closed when the status check rollup is empty", () => {
@@ -241,6 +254,22 @@ describe("maintainer PR comparator contributor compliance", () => {
     expect(output.failures).toContain(
       "substantive:ci_failures=0,pending=0,missing=checks,commit-lint,dco-check",
     );
+  });
+
+  describe("contributor-compliance DCO parity", () => {
+    it("requires the canonical Signed-off-by trailer casing in both gates", () => {
+      const fixture = {
+        body: "signed-off-by: Example User <user@example.com>",
+        verified: true,
+      };
+      const mergeGate = runGate(fixture);
+      const comparator = runComparatorGate(fixture);
+
+      expect(mergeGate.status).toBe(0);
+      expect(comparator.status).toBe(0);
+      expect(JSON.parse(mergeGate.stdout).gates.contributorCompliance.pass).toBe(false);
+      expect(JSON.parse(comparator.stdout).gates.contributor_compliance).toBe(false);
+    });
   });
 
   it("names a missing required check and fails the CI gate", () => {

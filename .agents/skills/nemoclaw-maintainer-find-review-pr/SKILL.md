@@ -105,8 +105,8 @@ Present non-duplicate PRs in a table:
 
 End with a one-line recommendation of which PR to review first, preferring:
 
-1. Older PRs (waiting longest)
-2. Project Priority (`Urgent` before `High`)
+1. Project Priority (`Urgent` before `High`)
+2. Older PRs (waiting longest)
 3. PRs with passing checks
 4. PRs with smaller diff size (easier to review)
 

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Tier 0 — Plumbing Gates
 
 Mandatory prerequisites. Any gate failure means the PR cannot be merged in its current state. Six gates total. Run `scripts/collect-gates.sh <pr>` to evaluate gates 1-5 mechanically; run `scripts/check-coderabbit-threads.sh <pr>` for gate 6.
@@ -63,6 +66,6 @@ For each gate, the skill records:
 
 - Pass/fail
 - Evidence (head SHA, check names, mergeable state, thread IDs)
-- Whether the failure is **trivial** (for example, a missing issue link) or **substantive** (CI red, conflicts, missing approvals, or contributor-compliance failure)
+- Whether the failure is **ineligible** (missing PR-body DCO or any unverified commit), **trivial** (for example, a missing issue link), or **substantive** (CI red, conflicts, or missing approvals)
 
-The trivial/substantive split feeds degraded mode (see `tiebreakers.md`).
+The ineligible/trivial/substantive classification feeds degraded mode (see `tiebreakers.md`). Ineligible PRs are rejected rather than ranked for salvage.

@@ -90,7 +90,7 @@ Verdict names are comment and log vocabulary, not GitHub labels. Prepare the exa
 
 This is not a flake — the skill positively confirmed the bug is still live. Don't apply the +50 weight (the bug isn't fixed) and skip the score table entirely.
 
-- Post a "still reproduces on latest" comment with both transcripts.
+- Post a 30–80 word "still reproduces on latest" comment without transcripts. Keep the redacted baseline/latest transcripts in the local activity log as evidence.
 - Make no Project field or label change.
 - Include the marker `<!-- nemoclaw-verify-stale v1 verdict=still-reproduces YYYY-MM-DD -->` with today's date so the candidate filter applies the 7-day TTL (Step 3 idempotency).
 - Next weekly run picks the issue back up after the TTL — if the bug gets fixed in the meantime, that run catches it.
@@ -314,9 +314,9 @@ if [ "$STATE" != "OPEN" ]; then
 fi
 ```
 
-**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the exact accepted comment last.
+**Apply the accepted write set in canonical order.** Resolve Project 199, Status-field, option, and item IDs from live GitHub data immediately before writing; do not use hardcoded IDs. For an accepted `fixed-on-latest` plan, set Project Status `Needs Review`, then self-assign only if that assignment was accepted. Treat the Project update and accepted assignment as one fail-fast write set: if either write fails, stop before posting the comment. For inconclusive and still-reproduces verdicts, do not change Project fields or assignment. Post the exact accepted comment last.
 
-If Project resolution or update fails, stop without posting the comment so the accepted write set is not partially represented. Record the Project update, assignment, and comment outcome in the activity log.
+If Project resolution, update, or accepted assignment fails, stop without posting the comment so the accepted write set is not partially represented. Record the Project update, assignment, and comment outcome in the activity log.
 
 ---
 

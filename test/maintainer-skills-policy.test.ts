@@ -48,19 +48,29 @@ describe("maintainer skills follow canonical workflow policy", () => {
     expect(finder).toContain("gh project item-list 199");
     expect(finder).toContain('select(.priority == "Urgent" or .priority == "High")');
     expect(finder).not.toContain("priority: high");
+    expect(triage).toContain('select(.field.name == "Priority")');
     expect(triage).toContain('item.projectPriority === "Urgent"');
     expect(triage).toContain('item.projectPriority === "High"');
+    expect(triage.indexOf("const projectPriorities")).toBeLessThan(
+      triage.indexOf("const candidates"),
+    );
     expect(triage).not.toContain("priority: high");
   });
 
   it("preserves open release labels as carry-forward work", () => {
     const evening = read(".agents/skills/nemoclaw-maintainer-evening/SKILL.md");
     const release = read(".agents/skills/nemoclaw-maintainer-cut-release-tag/SKILL.md");
+    const morning = read(".agents/skills/nemoclaw-maintainer-morning/SKILL.md");
+    const priorities = read(".agents/skills/nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md");
 
     expect(evening).toContain("Keep their existing version label by default");
     expect(release).toContain("do not bulk-swap labels");
+    expect(morning).toContain("Keep open PR labels by default");
+    expect(priorities).toContain("keep their existing label as carry-forward work");
     expect(evening).not.toContain("bump-stragglers");
     expect(release).not.toContain("bump-stragglers");
+    expect(morning).not.toContain("bump-stragglers");
+    expect(priorities).not.toContain("bump-stragglers");
     expect(
       fs.existsSync(
         path.join(root, ".agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts"),

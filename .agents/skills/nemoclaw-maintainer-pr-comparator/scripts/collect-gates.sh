@@ -124,7 +124,7 @@ classify_failures=()
 [ "$gate_state_open" = "false" ] && classify_failures+=("substantive:not_open")
 [ "$gate_ci_green" = "false" ] && classify_failures+=("substantive:ci_failures=$ci_failure_count,pending=$ci_pending_count,missing=$(printf '%s' "$missing_checks" | jq -r 'join(",")')")
 [ "$gate_mergeable" = "false" ] && classify_failures+=("substantive:mergeable=$mergeable,state=$merge_state")
-[ "$gate_contributor_compliance" = "false" ] && classify_failures+=("substantive:contributor_compliance")
+[ "$gate_contributor_compliance" = "false" ] && classify_failures+=("ineligible:contributor_compliance")
 [ "$gate_branch_protection" = "false" ] && classify_failures+=("substantive:review=$review_decision")
 
 failures_json=$(printf '%s\n' "${classify_failures[@]:-}" | jq -Rs 'split("\n") | map(select(length > 0))')

@@ -20,10 +20,35 @@ Use after loading `SKILL.md` to choose an issue and establish its reported NemoC
 
 ```bash
 gh issue view <number> --repo NVIDIA/NemoClaw \
-  --json number,title,body,labels,url,author,createdAt,comments
+  --json number,title,body,labels,url,author,createdAt
 ```
 
-Also fetch the native Issue Type and current Project 199 fields. A candidate must have native Issue Type `Bug`; labels never substitute for this check.
+Also fetch the native Issue Type and current Project 199 fields with GraphQL. Resolve fields by their live names rather than hardcoding mutable IDs:
+
+```bash
+gh api graphql -F number=<number> -f query='query($number: Int!) {
+  repository(owner: "NVIDIA", name: "NemoClaw") {
+    issue(number: $number) {
+      issueType { name }
+      projectItems(first: 20) {
+        nodes {
+          project { number }
+          fieldValues(first: 50) {
+            nodes {
+              ... on ProjectV2ItemFieldSingleSelectValue {
+                name
+                field { ... on ProjectV2SingleSelectField { name } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}'
+```
+
+A candidate must have native Issue Type `Bug`; labels never substitute for this check. From the Project 199 item, read the `Priority` and `Status` single-select values.
 
 **Batch mode** — user says "batch", "weekly", or provides no number. Cap at **15 issues** for *processing* per run, enforced as a slice after Step 3/4 filters narrow the pool. The cap exists because batch is sequential (Step 7 reuse-or-provision keeps it on 1–2 Brev boxes total) and the wallclock budget is ~2–3 hours per 15-issue run; running larger forces the maintainer to either drop the per-plan approval gate or spread the batch across multiple sessions.
 
@@ -38,7 +63,6 @@ gh api graphql --paginate -f query='query($endCursor: String) {
         author { login }
         issueType { name }
         labels(first: 100) { nodes { name } }
-        comments(first: 100) { nodes { body createdAt url author { login } authorAssociation } }
       }
       pageInfo { hasNextPage endCursor }
     }
@@ -47,6 +71,13 @@ gh api graphql --paginate -f query='query($endCursor: String) {
 ```
 
 Read Project Priority and Status from live Project 199 data. Do not infer either field from labels.
+
+Before applying the idempotency or active-discussion filters to each candidate, fetch its complete comment history through the paginated REST endpoint. Nested GraphQL comment connections are not paginated by the outer issue query and can silently truncate old markers:
+
+```bash
+COMMENTS=$(gh api "repos/NVIDIA/NemoClaw/issues/$ISSUE_NUMBER/comments?per_page=100" \
+  --paginate --jq '.[]' | jq -s '.')
+```
 
 In batch mode, work through items one at a time. Present each verification plan and wait for approval before any Brev provisioning.
 
@@ -112,20 +143,20 @@ SEVEN_DAYS_AGO=$(date -u -v-7d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
   || date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%SZ)
 
 # Final markers do not expire.
-FINAL_MARKER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq '
-    .comments[]
+FINAL_MARKER=$(printf '%s' "$COMMENTS" \
+  | jq -r '
+    .[]
     | select(.body | test("<!-- nemoclaw-verify-stale v\\d+ verdict=(fixed-on-latest|verify-inconclusive|by-design) \\d{4}-\\d{2}-\\d{2} -->"))
-    | .createdAt' \
+    | .created_at' \
   | head -1)
 
 # still-reproduces markers expire after seven days.
-RECENT_STILL_REPRODUCES=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq --arg cutoff "$SEVEN_DAYS_AGO" '
-    .comments[]
+RECENT_STILL_REPRODUCES=$(printf '%s' "$COMMENTS" \
+  | jq -r --arg cutoff "$SEVEN_DAYS_AGO" '
+    .[]
     | select(.body | test("<!-- nemoclaw-verify-stale v\\d+ verdict=still-reproduces \\d{4}-\\d{2}-\\d{2} -->"))
-    | select(.createdAt > $cutoff)
-    | .createdAt' \
+    | select(.created_at > $cutoff)
+    | .created_at' \
   | head -1)
 
 if [ -n "$FINAL_MARKER" ] || [ -n "$RECENT_STILL_REPRODUCES" ]; then
@@ -149,26 +180,26 @@ REPORTER=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json author --
 # Question-detection patterns are chained as separate test() calls so each
 # heuristic is independently readable and a future addition (e.g. "what about",
 # "why does") is a one-line append rather than a regex-alternation patch.
-UNANSWERED_MAINT=$(gh issue view "$ISSUE_NUMBER" --repo NVIDIA/NemoClaw --json comments \
-  --jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
-    (.comments
-     | map(select((.authorAssociation == "MEMBER" or .authorAssociation == "OWNER" or .authorAssociation == "COLLABORATOR")
+UNANSWERED_MAINT=$(printf '%s' "$COMMENTS" \
+  | jq --arg reporter "$REPORTER" --arg cutoff "$SEVEN_DAYS_AGO" '
+    (.
+     | map(select((.author_association == "MEMBER" or .author_association == "OWNER" or .author_association == "COLLABORATOR")
          and (.body | test("\\?")                                                                       # literal "?"
                    or test("(?i)\\bplease (confirm|share|provide|clarify|tell|verify|check|let me know|let us know)")  # polite imperative
                    or test("(?i)\\b(could|can|would) you\\b")                                            # modal interrogative
                    or test("(?i)\\bdo you (have|know|see|use)\\b"))))                                    # "do you ..."
-     | sort_by(.createdAt) | last) as $maint
+     | sort_by(.created_at) | last) as $maint
     | if $maint == null then null
       else
-        ((.comments
-          | map(select(.author.login == $reporter and .createdAt > $maint.createdAt))
+        ((.
+          | map(select(.user.login == $reporter and .created_at > $maint.created_at))
           | length) as $replies
          | if $replies > 0 then null
            else {
-             createdAt: $maint.createdAt,
-             url: $maint.url,
-             login: $maint.author.login,
-             recent: ($maint.createdAt > $cutoff)
+             createdAt: $maint.created_at,
+             url: $maint.html_url,
+             login: $maint.user.login,
+             recent: ($maint.created_at > $cutoff)
            }
            end)
       end')

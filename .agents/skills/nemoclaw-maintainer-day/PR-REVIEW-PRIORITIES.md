@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # PR Review Priorities
 
 Ordered list of what NemoClaw maintainers look for in a pull request. Higher items block approval; lower items inform queue ranking.

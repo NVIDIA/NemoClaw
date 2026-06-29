@@ -318,34 +318,52 @@ function fetchProjectPriorities(repo: string): Map<number, string> {
   if (repo !== "NVIDIA/NemoClaw") return new Map();
 
   const out = run("gh", [
-    "project",
-    "item-list",
-    "199",
-    "--owner",
-    "NVIDIA",
-    "--limit",
-    "1000",
-    "--format",
-    "json",
+    "api",
+    "graphql",
+    "--paginate",
+    "-f",
+    `query=query($endCursor: String) {
+      organization(login: "NVIDIA") {
+        projectV2(number: 199) {
+          items(first: 100, after: $endCursor) {
+            nodes {
+              content {
+                ... on PullRequest { number repository { nameWithOwner } }
+              }
+              fieldValues(first: 100) {
+                nodes {
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    name
+                    field { ... on ProjectV2SingleSelectField { name } }
+                  }
+                }
+              }
+            }
+            pageInfo { hasNextPage endCursor }
+          }
+        }
+      }
+    }`,
+    "--jq",
+    '.data.organization.projectV2.items.nodes[] | {number: .content.number, repository: .content.repository.nameWithOwner, priority: ([.fieldValues.nodes[] | select(.field.name == "Priority") | .name][0] // null)}',
   ]);
   if (!out) return new Map();
 
   try {
-    const data = JSON.parse(out) as {
-      items?: Array<{
-        content?: { number?: number; repository?: string; type?: string };
-        priority?: string;
-      }>;
-    };
     const priorities = new Map<number, string>();
-    for (const item of data.items ?? []) {
+    for (const line of out.split("\n")) {
+      if (!line.trim()) continue;
+      const item = JSON.parse(line) as {
+        number?: number;
+        repository?: string;
+        priority?: string | null;
+      };
       if (
-        item.content?.repository === repo &&
-        item.content.type === "PullRequest" &&
-        typeof item.content.number === "number" &&
+        item.repository === repo &&
+        typeof item.number === "number" &&
         typeof item.priority === "string"
       ) {
-        priorities.set(item.content.number, item.priority);
+        priorities.set(item.number, item.priority);
       }
     }
     return priorities;
@@ -476,21 +494,35 @@ function main(): void {
   }
   process.stderr.write(`Found ${prs.length} open PRs. Filtering non-draft candidates...\n`);
 
-  // 2. Filter to non-draft, then enrich top candidates with CI + review data.
+  // 2. Fetch Project Priority before choosing the capped enrichment set so an
+  // Urgent or High PR cannot be hidden outside the REST list's initial order.
+  const projectPriorities = fetchProjectPriorities(repo);
+  const priorityRank = new Map([
+    ["Urgent", 2],
+    ["High", 1],
+  ]);
+
+  // 3. Filter to non-draft, prioritize Urgent/High, then enrich top candidates
+  // with CI + review data.
   // NOTE: Enrichment is capped at limit*3 by design — each enrichPr() call is
   // a separate GitHub API request, so we intentionally limit the blast radius.
   // Un-enriched PRs will classify as "blocked" (empty checks), which is the
   // safe default. This is NOT a bug.
-  const candidates = prs.filter((pr) => !pr.isDraft);
+  const candidates = prs
+    .filter((pr) => !pr.isDraft)
+    .sort(
+      (a, b) =>
+        (priorityRank.get(projectPriorities.get(b.number) ?? "") ?? 0) -
+        (priorityRank.get(projectPriorities.get(a.number) ?? "") ?? 0),
+    );
   const enrichCount = Math.min(candidates.length, limit * 3);
   process.stderr.write(`Enriching ${enrichCount} of ${candidates.length} candidates...\n`);
   for (let i = 0; i < enrichCount; i++) {
     enrichPr(repo, candidates[i]);
   }
 
-  // 3. Classify all PRs (un-enriched ones will be blocked due to empty checks)
+  // 4. Classify all PRs (un-enriched ones will be blocked due to empty checks)
   const classified = prs.map(classifyPr);
-  const projectPriorities = fetchProjectPriorities(repo);
   for (const item of classified) {
     item.projectPriority = projectPriorities.get(item.number) ?? null;
   }

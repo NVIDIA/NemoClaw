@@ -359,7 +359,7 @@ function checkRiskyCodeTested(
 // Gate 6: Contributor compliance
 // ---------------------------------------------------------------------------
 
-const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/imu;
+const DCO_DECLARATION = /^Signed-off-by:\s+.+\s+<[^<>\s]+@[^<>\s]+>\s*$/mu;
 
 function checkContributorCompliance(
   repo: string,
