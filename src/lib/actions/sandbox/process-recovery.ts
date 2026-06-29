@@ -623,7 +623,18 @@ export function waitForRecoveredSandboxGateway(
     console.log(`  Confirming the gateway stays responsive (~${settleSeconds}s)...`);
   }
   sleep(settleSeconds);
-  return probe(sandboxName) === true;
+  // A healthy gateway can outlive a single transient sandbox-exec or HTTP
+  // transport miss. Do not turn that one miss into a false recovery failure;
+  // require the post-settle failure to persist across one bounded re-probe.
+  // The #4710 wedge remains continuously unhealthy, so both confirmations
+  // fail while a serving gateway gets one poll interval to prove liveness.
+  return waitUntil(() => probe(sandboxName) === true, {
+    initialIntervalMs: intervalSeconds * 1000,
+    maxIntervalMs: intervalSeconds * 1000,
+    backoffFactor: 1,
+    maxAttempts: 2,
+    sleep: (ms) => sleep(ms / 1000),
+  });
 }
 
 function isHermesAgent(

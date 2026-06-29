@@ -91,14 +91,24 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25]);
   });
 
+  it("tolerates one transient post-settle transport miss when the gateway still serves", () => {
+    const sleeps: number[] = [];
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      probeImpl: makeProbe([true, false, true]),
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(true);
+    expect(sleeps).toEqual([25, 3]);
+  });
+
   it("fails recovery when the gateway serves once and then drops its listener (wedge)", () => {
     const sleeps: number[] = [];
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
-      probeImpl: makeProbe([true, false]),
+      probeImpl: makeProbe([true, false, false]),
       sleepImpl: (seconds: number) => sleeps.push(seconds),
     });
     expect(ok).toBe(false);
-    expect(sleeps).toEqual([25]);
+    expect(sleeps).toEqual([25, 3]);
   });
 
   it("skips the settle confirm when NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS=0", () => {

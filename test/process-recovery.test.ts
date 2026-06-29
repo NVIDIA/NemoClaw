@@ -321,8 +321,16 @@ beta  127.0.0.1  18789  12345  running`;
       label: "OpenShell managed controller wedge",
       supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
       expectedResult: unrecoveredGateway,
-      expectedHealthProbeCalls: 4,
-      probeStatuses: ["STOPPED", "STOPPED", "RUNNING", "STOPPED"],
+      expectedHealthProbeCalls: 5,
+      probeStatuses: ["STOPPED", "STOPPED", "RUNNING", "STOPPED", "STOPPED"],
+      settleSeconds: "1",
+    },
+    {
+      label: "OpenShell managed controller transient settle miss",
+      supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
+      expectedResult: recoveredGateway,
+      expectedHealthProbeCalls: 5,
+      probeStatuses: ["STOPPED", "STOPPED", "RUNNING", "STOPPED", "RUNNING"],
       settleSeconds: "1",
     },
     {
