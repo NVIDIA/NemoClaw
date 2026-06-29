@@ -402,8 +402,23 @@ describe("E2E fixture clients", () => {
     });
   });
 
+  it("encodes multiline shell scripts into an OpenShell-safe single argument", async () => {
+    const runner = new FakeRunner();
+    const sandbox = new SandboxClient(runner, { openshellPath: "openshell" });
+    const source = "set -e\nprintf 'ready\\n'\n";
+
+    await sandbox.execShell("assistant", trustedSandboxShellScript(source));
+
+    const argument = runner.calls[0]?.args.at(-1) ?? "";
+    expect(argument).not.toMatch(/[\r\n]/u);
+    const encoded = argument.match(/'([A-Za-z0-9+/=]+)' \| base64 -d/u)?.[1];
+    expect(encoded).toBeTruthy();
+    expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toBe(source);
+  });
+
   it("sandbox client requires trusted non-empty shell scripts", () => {
-    expect(() => trustedSandboxShellScript("")).toThrow(/must not be empty/);
+    expect(() => trustedSandboxShellScript("")).toThrow(/must be non-empty/);
+    expect(() => trustedSandboxShellScript("echo ready\0ignored")).toThrow(/no NUL bytes/);
     expectTypeOf<Parameters<SandboxClient["execShell"]>[1]>().not.toEqualTypeOf<string>();
   });
 
