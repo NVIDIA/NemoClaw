@@ -27,6 +27,10 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
+import {
+  inferenceSetAttemptCount,
+  runInferenceSetWithRetry,
+} from "../fixtures/inference-switch-retry.ts";
 import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
@@ -143,16 +147,6 @@ function parsePortEnv(name: string, fallback: number): number {
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 0 || parsed > 65_535) {
     throw new Error(`${name} must be an integer between 0 and 65535; got ${raw}`);
-  }
-  return parsed;
-}
-
-function parsePositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${name} must be a positive integer; got ${raw}`);
   }
   return parsed;
 }
@@ -815,12 +809,6 @@ test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", ()
   expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
 });
 
-function isTransientInferenceSetFailure(text: string): boolean {
-  return /timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|failed to connect|error sending request|failed to verify inference endpoint|502|503|504|temporar/i.test(
-    text,
-  );
-}
-
 function isExternalProviderValidationFailure(text: string): boolean {
   return (
     /NVIDIA Endpoints endpoint validation failed/i.test(text) &&
@@ -828,13 +816,13 @@ function isExternalProviderValidationFailure(text: string): boolean {
   );
 }
 
-async function runInferenceSetWithRetry(
+async function runOpenClawInferenceSetWithRetry(
   host: HostCliClient,
   home: string,
   redactionValues: string[],
   switchEndpointUrl: string | null,
 ): Promise<ShellProbeResult> {
-  const attempts = parsePositiveIntEnv("NEMOCLAW_SWITCH_SET_ATTEMPTS", 3);
+  const attempts = inferenceSetAttemptCount(process.env.NEMOCLAW_SWITCH_SET_ATTEMPTS);
   const compatibleCredentialEnv = (() => {
     switch (SWITCH_PROVIDER) {
       case "compatible-endpoint":
@@ -867,29 +855,17 @@ async function runInferenceSetWithRetry(
     ...compatibleMetadataArgs,
   ];
 
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = await runNemoclaw(host, home, args, {
-      artifactName: `nemoclaw-inference-set-${attempt}`,
-      redactionValues,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-    });
-    if (result.exitCode === 0) return result;
-
-    const output = resultText(result);
-    const transient = isTransientInferenceSetFailure(output);
-    if (!transient) return result;
-    if (attempt < attempts) {
-      await sleep(attempt * 5_000);
-      continue;
-    }
-
-    return runNemoclaw(host, home, [...args, "--no-verify"], {
-      artifactName: "nemoclaw-inference-set-no-verify-after-transient-failures",
-      redactionValues,
-      timeoutMs: COMMAND_TIMEOUT_MS,
-    });
-  }
-  throw new Error("Inference switch retry loop completed without running an attempt.");
+  return runInferenceSetWithRetry({
+    attempts,
+    run: (attempt, verify) =>
+      runNemoclaw(host, home, verify ? args : [...args, "--no-verify"], {
+        artifactName: verify
+          ? `nemoclaw-inference-set-${attempt}`
+          : "nemoclaw-inference-set-no-verify-after-transient-failures",
+        redactionValues,
+        timeoutMs: COMMAND_TIMEOUT_MS,
+      }),
+  });
 }
 
 RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
@@ -988,7 +964,12 @@ RUN_OPENCLAW_INFERENCE_SWITCH_TEST(
         : await ensureCompatibleAnthropicSwitchProvider(host, home, mockProvider);
 
     const pidBefore = await openclawGatewayPid(sandbox, home);
-    const switchResult = await runInferenceSetWithRetry(host, home, [apiKey], switchEndpointUrl);
+    const switchResult = await runOpenClawInferenceSetWithRetry(
+      host,
+      home,
+      [apiKey],
+      switchEndpointUrl,
+    );
     expect(switchResult.exitCode, resultText(switchResult)).toBe(0);
 
     const pidAfter = await openclawGatewayPid(sandbox, home);
