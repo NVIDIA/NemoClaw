@@ -6,12 +6,15 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 
 import type { HostCliClient } from "../fixtures/clients/host.ts";
+import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { DEFAULT_HOSTED_INFERENCE_MODEL } from "../fixtures/hosted-inference.ts";
 import {
   API_KEY_SHAPE_PATTERN,
   apiKeyShapeCommand,
+  cleanupHermesSwitch,
   hostedInstallModel,
   installHermes,
+  SANDBOX_NAME,
 } from "../live/hermes-inference-switch-helpers.ts";
 
 describe("Hermes inference switch command shape", () => {
@@ -68,6 +71,21 @@ describe("Hermes inference switch command shape", () => {
       "--non-interactive",
       "--fresh",
       "--yes-i-accept-third-party-software",
+    ]);
+  });
+
+  it("resets the sandbox and gateway before each isolated attempt", async () => {
+    const command = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+    const openshell = vi.fn().mockResolvedValue({ exitCode: 0, stderr: "", stdout: "" });
+
+    await cleanupHermesSwitch(
+      { command } as unknown as HostCliClient,
+      { openshell } as unknown as SandboxClient,
+    );
+
+    expect(openshell.mock.calls.map(([args]) => args)).toEqual([
+      ["sandbox", "delete", SANDBOX_NAME],
+      ["gateway", "destroy", "-g", "nemoclaw"],
     ]);
   });
 });

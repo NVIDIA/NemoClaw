@@ -125,6 +125,13 @@ export async function cleanupHermesSwitch(
       timeoutMs: 60_000,
     }),
   );
+  await bestEffort(() =>
+    sandbox.openshell(["gateway", "destroy", "-g", "nemoclaw"], {
+      artifactName: "cleanup-openshell-gateway-destroy",
+      env: env(),
+      timeoutMs: 120_000,
+    }),
+  );
 }
 
 function jsonResponse(res: http.ServerResponse, status: number, payload: unknown): void {
