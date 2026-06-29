@@ -32,15 +32,20 @@ function findApprovalExec(sandboxExecCalls: string[][]): string[] | undefined {
 }
 
 function findGatewayControlExec(dockerCalls: string[][]): string[] | undefined {
-  return dockerCalls.find(
-    (call) =>
-      call.length === 7 &&
+  return dockerCalls.find((call) => {
+    const userIndex = call.indexOf("--user");
+    return (
       call[0] === "exec" &&
-      call[1] === "--user" &&
-      call[2] === "root" &&
-      call[4] === "/usr/local/bin/nemoclaw-gateway-control" &&
-      call[5] === "recover",
-  );
+      userIndex > 1 &&
+      call.includes("LD_PRELOAD=") &&
+      call.includes("PYTHONUSERBASE=") &&
+      call.includes("PYTHONNOUSERSITE=1") &&
+      call[userIndex + 1] === "root" &&
+      call[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
+      call[userIndex + 4] === "recover" &&
+      call.length === userIndex + 6
+    );
+  });
 }
 
 describe("sandbox connect auto-pair approval pass (#4263)", () => {
@@ -277,15 +282,18 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const controlExec = findGatewayControlExec(state.dockerCalls as string[][]);
-      expect(controlExec?.slice(0, 6)).toEqual([
-        "exec",
+      const userIndex = controlExec?.indexOf("--user") ?? -1;
+      expect(controlExec?.slice(userIndex, userIndex + 5)).toEqual([
         "--user",
         "root",
         `openshell-${sandboxName}-fixture`,
         "/usr/local/bin/nemoclaw-gateway-control",
         "recover",
       ]);
-      expect(controlExec?.[6]).toMatch(/^[0-9a-f]{64}$/);
+      expect(controlExec).toContain("LD_PRELOAD=");
+      expect(controlExec).toContain("PYTHONUSERBASE=");
+      expect(controlExec).toContain("PYTHONNOUSERSITE=1");
+      expect(controlExec?.[userIndex + 5]).toMatch(/^[0-9a-f]{64}$/);
       expect(state.gatewayRunning).toBe(true);
       const approvalExec = findApprovalExec(state.sandboxExecCalls as string[][]);
       expect(approvalExec).toBeDefined();

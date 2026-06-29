@@ -69,8 +69,18 @@ function writeGatewayControlDockerStub(
 function expectGatewayControlRecovery(callsFile: string): void {
   const calls = fs.readFileSync(callsFile, "utf8");
   expect(calls).toContain("ps --format {{.Names}}");
-  expect(calls).toMatch(
-    /^exec --user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
+  const recoveryCall = calls
+    .split("\n")
+    .find((line) => line.includes("/usr/local/bin/nemoclaw-gateway-control recover"));
+  expect(recoveryCall).toBeDefined();
+  expect(recoveryCall).toContain("--env LD_PRELOAD=");
+  expect(recoveryCall).toContain("--env LD_LIBRARY_PATH=");
+  expect(recoveryCall).toContain("--env LD_AUDIT=");
+  expect(recoveryCall).toContain("--env PYTHONPATH=");
+  expect(recoveryCall).toContain("--env PYTHONUSERBASE=");
+  expect(recoveryCall).toContain("--env PYTHONNOUSERSITE=1");
+  expect(recoveryCall).toMatch(
+    /^exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/,
   );
   expect(calls).not.toContain("OPENCLAW=");
   expect(calls).not.toContain("base64 -d | sh");

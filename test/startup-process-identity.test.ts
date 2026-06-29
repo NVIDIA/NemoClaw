@@ -78,6 +78,7 @@ def supervised_scenario(
     supervisor_cmdline=b"/opt/openshell/bin/openshell-sandbox\0",
     limit=32768,
     required_pid=None,
+    namespace_access=True,
 ):
     with tempfile.TemporaryDirectory() as root:
         proc_root = os.path.join(root, "proc")
@@ -109,11 +110,28 @@ def supervised_scenario(
             )
         guard.PROC_ROOT = proc_root
         guard.MAX_PROC_ENTRIES = limit
-        return guard._openshell_supervised_nonroot_start_is_live(
-            0,
-            1000,
-            required_pid,
-        )
+        original_namespace_reader = guard._proc_pid_namespace_inode
+        if not namespace_access:
+            guard._proc_pid_namespace_inode = lambda _proc_pid_fd: None
+        elif namespace_access == "child_only":
+            supervisor_stat = os.stat(os.path.join(proc_root, "1"))
+            def child_only_namespace_reader(proc_pid_fd):
+                proc_pid_stat = os.fstat(proc_pid_fd)
+                if (
+                    proc_pid_stat.st_dev == supervisor_stat.st_dev
+                    and proc_pid_stat.st_ino == supervisor_stat.st_ino
+                ):
+                    return None
+                return original_namespace_reader(proc_pid_fd)
+            guard._proc_pid_namespace_inode = child_only_namespace_reader
+        try:
+            return guard._openshell_supervised_nonroot_start_is_live(
+                0,
+                1000,
+                required_pid,
+            )
+        finally:
+            guard._proc_pid_namespace_inode = original_namespace_reader
 
 entrypoint = b"bash\0/usr/local/bin/nemoclaw-start\0"
 spoof = b"bash\0/tmp/nemoclaw-start-spoof\0"
@@ -137,6 +155,12 @@ proof.update({
     "openshell_supervised": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ]),
+    "openshell_landlock_all_namespaces_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ], namespace_access=False),
+    "openshell_landlock_supervisor_namespace_denied": supervised_scenario([
+        (412, "424242", entrypoint, 1000, 412, 1),
+    ], namespace_access="child_only"),
     "openshell_wrong_supervisor": supervised_scenario([
         (412, "424242", entrypoint, 1000, 412, 1),
     ], supervisor_cmdline=b"/usr/bin/foreign-supervisor\0"),
@@ -189,6 +213,8 @@ describe.each(GUARDS)("%s startup process identity", (_name, guardPath) => {
       duplicate: false,
       bounded: false,
       openshell_supervised: true,
+      openshell_landlock_all_namespaces_denied: true,
+      openshell_landlock_supervisor_namespace_denied: true,
       openshell_wrong_supervisor: false,
       openshell_root_child: false,
       openshell_nested_child: false,

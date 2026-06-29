@@ -324,6 +324,13 @@ const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
 state.dockerCalls.push(args);
 fs.writeFileSync(stateFile, JSON.stringify(state));
 const cmd = args.join(" ");
+const userIndex = args.indexOf("--user");
+const sanitizedPrefix =
+  userIndex > 1 &&
+  (userIndex - 1) % 2 === 0 &&
+  args.slice(1, userIndex).every((value, index) =>
+    index % 2 === 0 ? value === "--env" : /^[A-Z0-9_]+=.*$/.test(value)
+  );
 
 if (args[0] === "ps") {
   const directContainer = state.gatewaySupervisorRecovery
@@ -334,16 +341,19 @@ if (args[0] === "ps") {
 }
 
 if (
-  args.length === 7 &&
   args[0] === "exec" &&
-  args[1] === "--user" &&
-  args[2] === "root" &&
-  args[3] === "openshell-${sandboxName}-fixture" &&
-  args[4] === "/usr/local/bin/nemoclaw-gateway-control" &&
-  args[5] === "recover"
+  sanitizedPrefix &&
+  args.includes("LD_PRELOAD=") &&
+  args.includes("PYTHONUSERBASE=") &&
+  args.includes("PYTHONNOUSERSITE=1") &&
+  args.length === userIndex + 6 &&
+  args[userIndex + 1] === "root" &&
+  args[userIndex + 2] === "openshell-${sandboxName}-fixture" &&
+  args[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
+  args[userIndex + 4] === "recover"
 ) {
   state.gatewayControlCalls.push(args);
-  const nonce = args[6] || "";
+  const nonce = args[userIndex + 5] || "";
   if (!state.gatewaySupervisorRecovery || !/^[0-9a-f]{64}$/.test(nonce)) {
     fs.writeFileSync(stateFile, JSON.stringify(state));
     process.stderr.write("PRIVILEGED_CONTROL_UNAVAILABLE\\n");

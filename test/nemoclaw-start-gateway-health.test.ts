@@ -1164,11 +1164,12 @@ describe("respawn loop pidfile refresh (#4710)", () => {
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const pidFile = path.join(tmpDir, "gateway.pid");
     const initialPidFile = path.join(tmpDir, "initial.pid");
+    const restoreSentinel = path.join(tmpDir, "runtime-guards-restored");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\n[ -f ${JSON.stringify(restoreSentinel)} ] || exit 97\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(path.join(fakeBin, "gosu"), `#!/usr/bin/env bash\nshift\nexec "$@"\n`, {
@@ -1185,6 +1186,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
         '_DASHBOARD_PORT="19000"',
         `GATEWAY_PID_FILE=${JSON.stringify(pidFile)}`,
         "STEP_DOWN_PREFIX_GATEWAY=(gosu gateway)",
+        `prepare_openclaw_automatic_respawn() { printf restored >${JSON.stringify(restoreSentinel)}; }`,
         // The loop sleeps 2s between respawns; keep the test fast.
         "sleep() { command sleep 0.05; }",
         safeTmpHelpers(src),
@@ -1244,6 +1246,7 @@ describe("respawn loop pidfile refresh (#4710)", () => {
       expect(current, `no current pid in: ${stdout}`).toBeDefined();
       expect(current).not.toBe(initial);
       expect(stdout).toContain("RESPAWNED_ALIVE=1");
+      expect(fs.readFileSync(restoreSentinel, "utf-8")).toBe("restored");
       expect(fs.readFileSync(openclawLog, "utf-8")).toContain("gateway run --port 19000");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });

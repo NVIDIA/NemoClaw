@@ -47,7 +47,9 @@ OpenClaw config and inference changes are refused while shields are up.
 Run `$$nemoclaw <name> shields down` before the change, then restore lockdown with `$$nemoclaw <name> shields up`.
 Host-side OpenClaw config writes run under the per-sandbox transition lock and bind the replacement to the SHA-256 digest of the matching read.
 The root-only config guard validates bounded JSON input, transactionally publishes fresh config and hash inodes, and restores the prior mutable posture without adopting concurrent path changes.
-Gateway restart performs a read-only config and hash preflight, temporarily seals fresh inodes while PID 1 replaces the gateway child, and then restores the prior shields posture.
+In the direct root-entrypoint topology, gateway restart performs a read-only config and hash preflight, temporarily seals fresh inodes while the root PID 1 supervisor replaces the gateway child, and then restores the prior shields posture.
+In the OpenShell-managed topology, the installed root controller performs the config preflight while the nonroot `nemoclaw-start` supervisor replaces the gateway child.
+Mutable config in the managed topology keeps the same trust and time-of-check/time-of-use limits as a managed cold start and does not receive the direct root-entrypoint restart seal.
 If preflight detects an unsafe path, invalid config, invalid ownership posture, or locked hash drift, restart refuses while the old healthy gateway is still serving.
 
 </AgentOnly>
@@ -62,7 +64,7 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 | Network allow-list (custom hosts) | Runtime. Picks up at next request | `openshell policy set` or interactive approval prompt at the gateway |
 | Channel tokens (Slack / Discord / Telegram bot credentials) | Rebuild required (tokens are baked into the sandbox image at onboard so they never leave the host clear-text) | `$$nemoclaw <name> channels add <channel>` then accept the rebuild prompt |
 | Channel enable/disable (turn a configured channel off without removing the token) | Rebuild required (`/sandbox/.hermes/.env` and Hermes config are baked at image build time) | `$$nemoclaw <name> channels stop <channel>` then rebuild |
-| API/dashboard forward port | Runtime. The host-side forward is re-resolved on next `connect`; PID 1 continues to own the internal API and dashboard relays. | `$$nemoclaw <name> connect` or `openshell forward start` |
+| API/dashboard forward port | Runtime. The host-side forward is re-resolved on next `connect`; the Hermes entrypoint supervisor continues to own the internal API and dashboard relays. | `$$nemoclaw <name> connect` or `openshell forward start` |
 | Hermes plugin code, Langfuse settings, or other startup-only runtime config | Runtime after a supported host-side update and gateway restart | Bake plugin code into the image or use a supported host config command, then run `$$nemoclaw <name> gateway restart` |
 | Filesystem layout (Landlock zones, read-only mounts, container caps) | **Locked at creation**. No runtime change | Re-onboard with `$$nemoclaw onboard --recreate-sandbox` |
 | Sandbox name | **Locked at creation** | Re-onboard with a different `--name` |
@@ -73,10 +75,11 @@ If a row above conflicts with what you observe, the runtime source of truth for
 Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host
 registry caches metadata but the image and Hermes runtime read from the
 in-sandbox files.
-Do not edit `/sandbox/.hermes/config.yaml`, `/sandbox/.hermes/.env`, or their hash files directly and then expect `gateway restart` to adopt those bytes.
-Use supported host config and inference commands for intended changes because they refresh the strict root-owned config hash and compatibility hash together.
-On every restart, the PID 1 supervisor validates the Hermes secret boundary and runtime environment, then verifies the existing strict hash without recomputing it.
-Direct in-sandbox drift fails with `config hash mismatch`.
+Do not edit `/sandbox/.hermes/config.yaml`, `/sandbox/.hermes/.env`, or their hash files directly and then expect `gateway restart` to establish those bytes as trusted.
+Use supported host config and inference commands for intended changes because they update the managed config metadata together.
+In the direct root-entrypoint topology, PID 1 validates the Hermes secret boundary and runtime environment and verifies the strict root-owned hash without recomputing it.
+In the OpenShell-managed topology, the installed root controller validates the same secret boundary and verifies the strict hash when both config inputs are root-owned and locked.
+Mutable managed config has no durable root-owned hash anchor, so restart has the same trust and time-of-check/time-of-use limits as managed cold start and cannot promise a `config hash mismatch` for direct drift.
 
 Hermes host-side config writes run as a sealed transaction.
 NemoClaw binds the write to the SHA-256 digest of the matching read, temporarily seals the mutable config paths, atomically installs fresh config inodes, refreshes the strict and compatibility hashes, and then restores the prior shields posture.
@@ -99,21 +102,29 @@ Retry a command that the auto-restore deadline interrupts after you open a new s
 
 ## How Gateway Lifecycle Control Works
 
-Built-in OpenClaw and Hermes sandboxes use a root-owned PID 1 supervisor for `recover` and `gateway restart`.
-The host sends an authenticated request through registry-scoped privileged direct-container control.
-Ordinary `openshell sandbox exec` and manual in-sandbox relaunch are not fallback paths.
+Built-in OpenClaw and Hermes images support two direct-container lifecycle topologies.
 
-This control path requires a running direct sandbox container for the registered sandbox whose PID 1 is the built-in NemoClaw image entrypoint running as root.
-A VM host is supported only when its direct sandbox container uses that root entrypoint.
-Non-root direct-container entrypoints, including VM deployments that launch the image as non-root, cannot use this path and fail closed with `privileged control unavailable`; rebuild or recreate the sandbox with the current built-in image in a supported root-entrypoint deployment.
-Those non-root entrypoints do not publish the strict root-owned startup-ready marker.
-Host config and shields commands retain a degraded compatibility path when PID 1 is verifiably non-root, but they do not receive the root-entrypoint startup transaction guarantee; root-only gateway lifecycle control remains unavailable.
-Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
-Older direct-container images without the supervisor helper also report `privileged control unavailable`; update them with `$$nemoclaw <name> rebuild --yes`.
+| Topology | Process ownership | Lifecycle and trust boundary |
+|---|---|---|
+| Direct root entrypoint | `nemoclaw-start` is root PID 1, the gateway runs under the separate `gateway` UID, and the agent runs under the `sandbox` UID. | A root-only request channel reaches PID 1. The supervisor tracks the exact child, applies the restart seal, validates locked config, and launches the replacement under the gateway UID. |
+| OpenShell-managed | `/opt/openshell/bin/openshell-sandbox` is PID 1. It launches nonroot `nemoclaw-start`, which owns and reaps the gateway. The supervisor, gateway, and agent all use the `sandbox` UID. | A root-owned mode `0500` controller entered through sanitized registry-scoped direct-container control validates a stable OpenShell to `nemoclaw-start` to gateway process shape, signals the exact observed child through a pidfd, waits for the normal supervisor respawn, and proves the replacement listener and HTTP health. |
 
-The supervisor records each child by process ID and process start identity before it signals or reaps that child, so a reused PID is not treated as the tracked process.
-For Hermes, PID 1 supervises the gateway, dashboard, and internal API and dashboard relays.
+The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
+It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
+Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
+For Hermes, the managed controller always preflights the secret boundary and verifies the strict root-owned hash when the config and environment are locked.
+
+The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
+Four consecutive gateway health failures trigger exact-child recovery.
+Five gateway exits within 60 seconds quarantine relaunch until the sandbox is recreated.
 After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
+
+The host selects the matching controller automatically for `recover` and `gateway restart`.
+Ordinary `openshell sandbox exec` and manual in-sandbox relaunch are not fallback paths.
+A current built-in image supports both the direct root-entrypoint and OpenShell-managed topologies.
+An arbitrary nonroot entrypoint that does not match the managed OpenShell process shape fails closed with `privileged control unavailable`.
+Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
+Older images without the matching supervisor or managed controller helper must be updated with `$$nemoclaw <name> rebuild --yes`.
 
 ## Related Topics
 

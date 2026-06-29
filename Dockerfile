@@ -535,6 +535,7 @@ COPY scripts/lib/openclaw_device_approval_policy.py /usr/local/lib/nemoclaw/open
 COPY scripts/lib/clean_runtime_shell_env_shim.py /usr/local/lib/nemoclaw/clean_runtime_shell_env_shim.py
 COPY scripts/state-dir-guard.py /usr/local/lib/nemoclaw/state-dir-guard.py
 COPY scripts/openclaw-config-guard.py /usr/local/lib/nemoclaw/openclaw-config-guard.py
+COPY scripts/managed-gateway-control.py /usr/local/lib/nemoclaw/managed-gateway-control.py
 COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY scripts/gateway-control.sh /usr/local/bin/nemoclaw-gateway-control
 # Copy NODE_OPTIONS preload modules to a Landlock-accessible path. OpenShell ≥0.0.36
@@ -557,9 +558,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/state-dir-guard.py \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 700 /usr/local/bin/nemoclaw-gateway-control \
     && chmod 500 /usr/local/lib/nemoclaw/state-dir-guard.py \
         /usr/local/lib/nemoclaw/openclaw-config-guard.py \
+        /usr/local/lib/nemoclaw/managed-gateway-control.py \
     && chmod 444 /usr/local/lib/nemoclaw/gateway-supervisor.sh \
         /usr/local/lib/nemoclaw/sandbox-rlimits.sh \
     && chmod 644 /usr/local/lib/nemoclaw/openclaw_device_approval_policy.py \

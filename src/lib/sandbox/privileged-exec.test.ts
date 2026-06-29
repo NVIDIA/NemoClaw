@@ -173,6 +173,28 @@ describe("privileged sandbox exec routing", () => {
     ]);
   });
 
+  it("clears interpreter and dynamic-loader injection variables for root control", () => {
+    withPrivilegedExecMocks(
+      {
+        getSandbox: () => ({ name: "alpha", openshellDriver: "docker" }),
+        listSandboxes: () => ({ sandboxes: [{ name: "alpha" }], defaultSandbox: "alpha" }),
+        dockerCapture: () => "openshell-alpha\n",
+      },
+      ({ privilegedSandboxExecArgv }) => {
+        const argv = privilegedSandboxExecArgv("alpha", ["/trusted/control"], false, true);
+        expect(argv.slice(0, 1)).toEqual(["exec"]);
+        expect(argv).toContain("LD_PRELOAD=");
+        expect(argv).toContain("LD_LIBRARY_PATH=");
+        expect(argv).toContain("LD_AUDIT=");
+        expect(argv).toContain("PYTHONPATH=");
+        expect(argv).toContain("PYTHONUSERBASE=");
+        expect(argv).toContain("PYTHONNOUSERSITE=1");
+        expect(argv).toContain("BASH_ENV=");
+        expect(argv.slice(-4)).toEqual(["--user", "root", "openshell-alpha", "/trusted/control"]);
+      },
+    );
+  });
+
   it("fails before docker discovery when the sandbox registry entry is unavailable", () => {
     let dockerPsCalls = 0;
     withPrivilegedExecMocks(

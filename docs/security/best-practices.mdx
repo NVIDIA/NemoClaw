@@ -336,14 +336,16 @@ Refer to [Sandbox Hardening](../deployment/sandbox-hardening).
 
 ### Gateway Process Isolation
 
-The in-sandbox gateway runs as a separate `gateway` user, not as the `sandbox` user that runs the agent.
+Gateway and agent UID isolation depends on the container process topology.
+A direct root-entrypoint container runs the gateway as the separate `gateway` user and the agent as the `sandbox` user.
+An OpenShell-managed container has OpenShell as PID 1 and launches nonroot `nemoclaw-start`, so the supervisor, gateway, and agent all use the `sandbox` UID.
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint starts the gateway process using `gosu gateway`, isolating it from the agent's `sandbox` user. |
-| What you can change | This is not a user-facing knob. The entrypoint enforces it when running as root. In non-root mode (when OpenShell sets `no-new-privileges`), gateway process isolation does not work because `gosu` cannot change users. |
-| Risk if relaxed | If the gateway and agent run as the same user, the agent can kill the gateway process and restart it with a tampered configuration (the "fake-HOME" attack). |
-| Recommendation | No action needed. The entrypoint handles this automatically. Be aware that non-root mode disables this isolation. |
+| Default | Direct root entrypoints use `gosu gateway` for UID isolation. The OpenShell-managed topology runs the gateway and agent under the same sandbox UID because `no-new-privileges` prevents the nonroot entrypoint from changing users. |
+| What you can change | This is not a user-facing knob. The selected container topology determines whether the entrypoint can step down from root to the gateway UID. |
+| Risk if relaxed | A same-UID agent can signal peer processes and can attempt to imitate the expected gateway process shape. The root managed controller prevents PID-reuse mistakes, but it cannot prove provenance against a malicious same-UID process or provide the direct root-entrypoint restart seal for mutable config. |
+| Recommendation | Use a direct root-entrypoint deployment when separate gateway and agent UIDs are required. Treat the managed controller as authenticated lifecycle and exact-target safety, not as a same-UID provenance boundary. |
 
 ### No New Privileges
 
@@ -354,7 +356,7 @@ The `no-new-privileges` flag prevents processes from gaining additional privileg
 | Default | OpenShell sets `PR_SET_NO_NEW_PRIVS` using `prctl()` inside the sandbox process as part of the seccomp filter setup. The NemoClaw Compose example also shows the equivalent `security_opt: no-new-privileges:true` setting. |
 | What you can change | OpenShell's seccomp path enforces this inside the sandbox. It is not a user-facing knob. |
 | Risk if relaxed | Without this flag, a compromised process could execute a setuid binary to escalate to root inside the container, then attempt container escape techniques. |
-| Recommendation | No action needed. OpenShell enforces this automatically when the sandbox network policy is active. This flag prevents `gosu` from switching users, so non-root mode disables gateway process isolation in the NemoClaw entrypoint. |
+| Recommendation | No action needed. OpenShell enforces this automatically when the sandbox network policy is active. In the OpenShell-managed topology, this flag also means the nonroot entrypoint and gateway remain under the sandbox UID. |
 
 ### Process Limit
 
@@ -635,6 +637,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Limitation | Impact | Mitigation |
 |-----------|--------|------------|
 | Bypassing managed gateway paths | Network policy and inference auth are not enforced when an agent runtime is launched outside the NemoClaw-managed gateway path. | Use NemoClaw-managed sandbox entrypoints for production workflows. |
+| Same-UID lifecycle control in the OpenShell-managed topology | The root controller authenticates the host action, verifies a stable process shape, pidfd-targets the exact observed child, and proves replacement health. It cannot establish malicious process provenance when the supervisor, gateway, and agent share the sandbox UID. Mutable config also has managed cold-start trust and time-of-check/time-of-use limits unless it is root-owned and locked. | Use a direct root-entrypoint deployment when UID isolation and the root restart seal are required. Lock managed config before treating the strict hash as a trust anchor, and recreate a sandbox after suspected same-UID compromise. |
 | Direct filesystem writes bypass application-layer scanners | Application-layer scanners can intercept agent tool calls, not arbitrary raw filesystem writes (e.g., `echo secret > file`). | Landlock restricts writable paths. Application-layer scanning is defense-in-depth, not a filesystem-level control. |
 | Base64/hex-encoded secrets are not detected | Content-based regex scanning cannot detect encoded or obfuscated secrets. | Use environment variables or credential stores instead of writing secrets to files. |
 

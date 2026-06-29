@@ -174,4 +174,24 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       fs.rmSync(harness.tmpDir, { recursive: true, force: true });
     }
   });
+
+  it("refuses an automatic respawn when guard restoration fails", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf8");
+    const script = [
+      "set -uo pipefail",
+      "restore_openclaw_runtime_guard_chain() { printf 'restore-attempted\\n'; return 1; }",
+      extractShellFunction(source, "prepare_openclaw_automatic_respawn"),
+      "rc=0; prepare_openclaw_automatic_respawn || rc=$?",
+      'printf "rc:%s\\n" "$rc"',
+    ].join("\n");
+
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe("restore-attempted\nrc:1\n");
+    expect(result.stderr).toContain("refusing automatic respawn");
+  });
 });

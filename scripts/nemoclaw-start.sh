@@ -4370,6 +4370,14 @@ restore_openclaw_runtime_guard_chain() {
   validate_nemoclaw_tmp_permissions || return 1
 }
 
+prepare_openclaw_automatic_respawn() {
+  if restore_openclaw_runtime_guard_chain; then
+    return 0
+  fi
+  echo "[gateway] CRITICAL: runtime guard restoration failed; refusing automatic respawn" >&2
+  return 1
+}
+
 prepare_openclaw_gateway_restart() {
   OPENCLAW_RESTART_FAILURE_CODE=unsafe-config
   # Restart preflight is deliberately read-only. The gateway and sandbox code
@@ -4680,6 +4688,7 @@ if [ "$(id -u)" -ne 0 ]; then
     fi
     echo "[gateway] pid $EXITED_GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
     sleep 2
+    prepare_openclaw_automatic_respawn || exit 1
     nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
     GATEWAY_PID=$!
     capture_openclaw_pid_start_identity "$GATEWAY_PID" GATEWAY_PID_START_IDENTITY || exit 1
@@ -4969,6 +4978,7 @@ while :; do
     handle_openclaw_gateway_control_request || true
     continue
   fi
+  prepare_openclaw_automatic_respawn || exit 1
   launch_openclaw_gateway
   refresh_openclaw_supervised_child_pids
   echo "[gateway] respawned (pid $GATEWAY_PID)" >&2

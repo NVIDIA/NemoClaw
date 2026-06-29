@@ -256,11 +256,12 @@ export function executeGatewaySupervisorAction(
   const nonce = randomBytes(32).toString("hex");
   let argv: string[];
   try {
-    argv = privilegedSandboxExecArgv(sandboxName, [
-      "/usr/local/bin/nemoclaw-gateway-control",
-      action,
-      nonce,
-    ]);
+    argv = privilegedSandboxExecArgv(
+      sandboxName,
+      ["/usr/local/bin/nemoclaw-gateway-control", action, nonce],
+      false,
+      true,
+    );
   } catch (error) {
     const detail = error instanceof Error ? error.message : "privileged container unavailable";
     return {
@@ -336,7 +337,7 @@ function isSandboxGatewayRunning(sandboxName: string): boolean | null {
   if (execProbe !== null) return execProbe;
 
   // Built-in OpenClaw and Hermes lifecycle control is host-mediated through
-  // their root-owned PID 1 supervisors. If the trusted sandbox-exec path is
+  // the controller for the live topology. If the trusted sandbox-exec path is
   // unavailable or times out, do not silently cross back into the sandbox over
   // SSH just to classify the gateway and then make a privileged recovery
   // decision. Legacy custom gateway agents are the sole compatibility case:
@@ -436,7 +437,6 @@ function recoverSandboxProcesses(
     );
   const recoveredSsh = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasRecoveryMarker(result));
-
   if (persistedAgent === "hermes") {
     if (!isHermesAgent(agent)) {
       const detail = "Hermes agent definition could not be loaded.";

@@ -64,7 +64,7 @@ function selfSafeGatewayProcessPattern(command: string): string {
 
 /**
  * Build the legacy SSH recovery shell for custom gateway agents. OpenClaw and
- * Hermes are deliberately excluded: their root-owned PID 1 supervisors own
+ * Hermes are deliberately excluded: their topology-specific controllers own
  * lifecycle control and must never be raced by a second regex-based launcher.
  */
 export function buildRecoveryScript(

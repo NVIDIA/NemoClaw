@@ -330,6 +330,7 @@ function runTirithExplicitCommandDispatch(mode: "non-root" | "root") {
       "refresh_hermes_runtime_config_hashes() { :; }",
       "refresh_hermes_provider_placeholders() { :; }",
       "configure_messaging_channels() { :; }",
+      "prepare_hermes_nonroot_runtime() { retry_tirith_marker_if_needed; }",
       'cleanup_stale_hermes_gateway_runtime() { echo "unexpected gateway cleanup" >&2; return 99; }',
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "hermes.config-hash"))}`,

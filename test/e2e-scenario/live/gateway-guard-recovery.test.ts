@@ -135,7 +135,7 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
   });
   // Capture PID 1 and gateway evidence before the exit-code assertion can
   // abort the scenario and cleanup destroys the sandbox.
-  await sandbox.exec(
+  const recoveryDiagnostics = await sandbox.exec(
     instance.sandboxName,
     [
       "sh",
@@ -169,8 +169,8 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
 
   // A missing proxy-env file is still worth surfacing, but the warning must
   // describe trusted restoration instead of an unguarded launch.
-  await gateway.expectLogContains(instance, /restoring library guards from packaged preloads/);
-  await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/);
+  expect(recoveryDiagnostics.stdout).toMatch(/restoring library guards from packaged preloads/);
+  expect(recoveryDiagnostics.stdout).not.toMatch(/gateway launching without library guards/);
 
   // Gateway must be steady-state — no crash loop. This assertion is
   // the "would have caught DGX Spark" check, even on x86 runners,

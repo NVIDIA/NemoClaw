@@ -87,8 +87,8 @@ describe("CLI dispatch", () => {
         "  echo openshell-alpha",
         "  exit 0",
         "fi",
-        'if [ "$#" -eq 7 ] && [ "$1" = "exec" ] && [ "$2" = "--user" ] && [ "$3" = "root" ] && [ "$4" = "openshell-alpha" ] && [ "$5" = "/usr/local/bin/nemoclaw-gateway-control" ] && [ "$6" = "recover" ]; then',
-        '  nonce="$7"',
+        'if [[ "$*" == *"--env LD_PRELOAD="* ]] && [[ "$*" == *"--env PYTHONPATH="* ]] && [[ "$*" == *"--user root openshell-alpha /usr/local/bin/nemoclaw-gateway-control recover "* ]]; then',
+        '  nonce="${!#}"',
         '  case "$nonce" in *[!0-9a-f]*|"") exit 64 ;; esac',
         '  [ "${#nonce}" -eq 64 ] || exit 64',
         '  echo recovered > "$state_file"',
@@ -116,8 +116,12 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("config change requires gateway restart (plugins.installs)");
     const calls = fs.readFileSync(markerFile, "utf8");
     expect(calls).toMatch(
-      /^docker exec --user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
+      /^docker exec (?:--env [A-Z0-9_]+=[^ ]* )+--user root openshell-alpha \/usr\/local\/bin\/nemoclaw-gateway-control recover [0-9a-f]{64}$/m,
     );
+    expect(calls).toContain("--env LD_PRELOAD=");
+    expect(calls).toContain("--env PYTHONPATH=");
+    expect(calls).toContain("--env PYTHONUSERBASE=");
+    expect(calls).toContain("--env PYTHONNOUSERSITE=1");
     expect(calls).not.toContain("OPENCLAW=");
     // First probe succeeded, settle confirm observed the dropped listener.
     expect(fs.readFileSync(readyCountFile, "utf8").trim()).toBe("2");

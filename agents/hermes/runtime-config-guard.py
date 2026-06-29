@@ -424,7 +424,9 @@ def _startup_process_identity_is_live(
             os.close(proc_root_fd)
 
 
-def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
+def _openshell_supervisor_identity(
+    expected_effective_uid: int,
+) -> tuple[str, int | None] | None:
     proc_root_fd = -1
     proc_pid_fd = -1
     try:
@@ -440,6 +442,7 @@ def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
         first_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
+        first_start_time = _parse_process_start_time(first_stat)
         first_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
         second_cmdline = _read_proc_pid_file(
             proc_pid_fd, "cmdline", f"{PROC_ROOT}/1/cmdline"
@@ -450,6 +453,7 @@ def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
         second_stat = _read_proc_pid_file(
             proc_pid_fd, "stat", f"{PROC_ROOT}/1/stat"
         )
+        second_start_time = _parse_process_start_time(second_stat)
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
         pinned_after = os.fstat(proc_pid_fd)
         if not (
@@ -463,13 +467,21 @@ def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
             and second_status[1][-1] == 1
             and _parse_process_parent_pid(first_stat) == 0
             and _parse_process_parent_pid(second_stat) == 0
-            and first_namespace_inode is not None
-            and first_namespace_inode == second_namespace_inode
+            and first_start_time is not None
+            and second_start_time is not None
+            and secrets.compare_digest(first_start_time, second_start_time)
+            and (
+                (first_namespace_inode is None and second_namespace_inode is None)
+                or (
+                    first_namespace_inode is not None
+                    and first_namespace_inode == second_namespace_inode
+                )
+            )
             and pinned_before.st_dev == pinned_after.st_dev
             and pinned_before.st_ino == pinned_after.st_ino
         ):
             return None
-        return first_namespace_inode
+        return first_start_time, first_namespace_inode
     except (OSError, UnsafePathError):
         return None
     finally:
@@ -482,7 +494,7 @@ def _openshell_supervisor_namespace(expected_effective_uid: int) -> int | None:
 def _pinned_process_matches_supervised_nonroot_start(
     proc_root_fd: int,
     pid: str,
-    expected_namespace_inode: int,
+    supervisor_identity: tuple[str, int | None],
     expected_effective_uid: int,
 ) -> bool:
     proc_pid_fd = -1
@@ -519,6 +531,15 @@ def _pinned_process_matches_supervised_nonroot_start(
         )
         second_namespace_inode = _proc_pid_namespace_inode(proc_pid_fd)
         pinned_after = os.fstat(proc_pid_fd)
+        expected_namespace_inode = supervisor_identity[1]
+        namespace_matches = (
+            expected_namespace_inode is None
+            and first_namespace_inode == second_namespace_inode
+        ) or (
+            expected_namespace_inode is not None
+            and first_namespace_inode == expected_namespace_inode
+            and second_namespace_inode == expected_namespace_inode
+        )
         return bool(
             first_start_time is not None
             and second_start_time is not None
@@ -533,8 +554,7 @@ def _pinned_process_matches_supervised_nonroot_start(
             and second_status[1][-1] == numeric_pid
             and _cmdline_is_nemoclaw_start(first_cmdline)
             and _cmdline_is_nemoclaw_start(second_cmdline)
-            and first_namespace_inode == expected_namespace_inode
-            and second_namespace_inode == expected_namespace_inode
+            and namespace_matches
             and pinned_before.st_dev == pinned_after.st_dev
             and pinned_before.st_ino == pinned_after.st_ino
         )
@@ -550,8 +570,8 @@ def _openshell_supervised_nonroot_start_is_live(
     expected_sandbox_uid: int,
     required_pid: int | None = None,
 ) -> bool:
-    namespace_inode = _openshell_supervisor_namespace(expected_root_uid)
-    if namespace_inode is None:
+    supervisor_identity = _openshell_supervisor_identity(expected_root_uid)
+    if supervisor_identity is None:
         return False
     proc_root_fd = -1
     try:
@@ -569,7 +589,7 @@ def _openshell_supervised_nonroot_start_is_live(
                 if _pinned_process_matches_supervised_nonroot_start(
                     proc_root_fd,
                     entry.name,
-                    namespace_inode,
+                    supervisor_identity,
                     expected_sandbox_uid,
                 ):
                     matches += 1
@@ -579,7 +599,8 @@ def _openshell_supervised_nonroot_start_is_live(
         return bool(
             matches == 1
             and (required_pid is None or matched_pid == required_pid)
-            and _openshell_supervisor_namespace(expected_root_uid) == namespace_inode
+            and _openshell_supervisor_identity(expected_root_uid)
+            == supervisor_identity
         )
     except OSError:
         return False

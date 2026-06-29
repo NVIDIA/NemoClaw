@@ -60,6 +60,8 @@ MAX_VIOLATIONS = 64
 INSTALLED_BOUNDARY_VALIDATOR = (
     "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 )
+INSTALLED_ENV_ROOT = "/sandbox"
+INSTALLED_ENV_PATH = "/sandbox/.hermes/.env"
 
 
 class UnsafeEnvInputError(RuntimeError):
@@ -117,7 +119,7 @@ def _validate_env_file_metadata(path: str, st: os.stat_result) -> None:
     mode = stat.S_IMODE(st.st_mode)
     if (
         os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
-        and path == "/sandbox/.hermes/.env"
+        and path == INSTALLED_ENV_PATH
     ):
         sandbox_identity = _sandbox_identity()
         allowed = {(0, 0, 0o400), (0, 0, 0o444)}
@@ -153,7 +155,7 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
     mode = stat.S_IMODE(st.st_mode)
     if os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR:
         sandbox_identity = _sandbox_identity()
-        if path == "/sandbox":
+        if path == INSTALLED_ENV_ROOT:
             allowed = {(0, 0, 0o700), (0, 0, 0o755)}
             if sandbox_identity is not None:
                 sandbox_uid, sandbox_gid = sandbox_identity
@@ -168,11 +170,16 @@ def _validate_directory_descriptor(path: str, fd: int) -> tuple[int, int, int, i
                 raise UnsafeEnvInputError(
                     "/sandbox does not match a trusted owner/group/mode posture"
                 )
-        elif path == "/sandbox/.hermes":
+        elif path == os.path.dirname(INSTALLED_ENV_PATH):
             allowed = {(0, 0, 0o500), (0, 0, 0o700), (0, 0, 0o755)}
             if sandbox_identity is not None:
                 sandbox_uid, sandbox_gid = sandbox_identity
-                allowed.add((sandbox_uid, sandbox_gid, 0o3770))
+                allowed.update(
+                    {
+                        (sandbox_uid, sandbox_gid, 0o700),
+                        (sandbox_uid, sandbox_gid, 0o3770),
+                    }
+                )
             if (st.st_uid, st.st_gid, mode) not in allowed:
                 raise UnsafeEnvInputError(
                     "/sandbox/.hermes does not match a trusted owner/group/mode posture"
@@ -202,21 +209,29 @@ def _open_env_path(
     # /private/var compatibility symlink. Resolve that only for the explicit
     # source/dev fallback. The installed root validator never resolves an
     # ancestor symlink supplied as part of the sandbox path.
-    normalized = (
-        os.path.normpath(path)
-        if os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
-        else os.path.join(
+    installed_mode = os.path.abspath(__file__) == INSTALLED_BOUNDARY_VALIDATOR
+    if installed_mode:
+        if path != INSTALLED_ENV_PATH:
+            raise UnsafeEnvInputError(
+                "the installed validator only accepts the canonical Hermes env path"
+            )
+        normalized = path
+        relative = os.path.relpath(normalized, INSTALLED_ENV_ROOT)
+        if relative == os.pardir or relative.startswith(f"{os.pardir}{os.sep}"):
+            raise UnsafeEnvInputError("Hermes env path escapes the sandbox root")
+        components = [component for component in relative.split(os.sep) if component]
+    else:
+        normalized = os.path.join(
             os.path.realpath(os.path.dirname(path)), os.path.basename(path)
         )
-    )
-    components = [component for component in normalized.split(os.sep) if component]
+        components = [component for component in normalized.split(os.sep) if component]
     if not components:
         raise UnsafeEnvInputError("Hermes env path has no file component")
 
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     cloexec = getattr(os, "O_CLOEXEC", 0)
     directory_flags = os.O_RDONLY | os.O_DIRECTORY | nofollow | cloexec
-    file_flags = os.O_RDONLY | nofollow | cloexec
+    file_flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | nofollow | cloexec
     directory_fds: list[int] = []
     chain: list[tuple[int, str, int, tuple[int, int, int, int, int]]] = []
     file_fd = -1
@@ -224,15 +239,22 @@ def _open_env_path(
         # CodeQL cannot associate the dynamic descriptor stack with the close
         # loop below. Register each descriptor immediately, and close it here
         # too if list growth itself fails before ownership transfers.
-        root_fd = os.open(os.sep, directory_flags)  # codeql[py/file-not-closed]
+        root_path = INSTALLED_ENV_ROOT if installed_mode else os.sep
+        root_fd = os.open(root_path, directory_flags)  # codeql[py/file-not-closed]
         try:
             directory_fds.append(root_fd)
         except BaseException:
             os.close(root_fd)
             raise
-        _validate_directory_descriptor(os.sep, root_fd)
+        root_identity = _validate_directory_descriptor(root_path, root_fd)
+        if installed_mode:
+            # Landlock intentionally prevents the sandbox user from opening
+            # `/`. Pin and revalidate the directly-opened `/sandbox` anchor;
+            # its parent is not writable from inside the sandbox, so the entry
+            # itself cannot be replaced by the caller.
+            chain.append((root_fd, ".", root_fd, root_identity))
         current_fd = root_fd
-        display = ""
+        display = INSTALLED_ENV_ROOT if installed_mode else ""
         for component in components[:-1]:
             display = f"{display}/{component}"
             child_fd = os.open(  # codeql[py/file-not-closed]

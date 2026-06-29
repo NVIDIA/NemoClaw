@@ -12,7 +12,7 @@ export default class GatewayRestartCliCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Restart the sandbox agent gateway";
   static description =
-    "Restart the sandbox agent gateway through its root-owned PID 1 supervisor, wait for health, and check or recover host forwards.";
+    "Restart the sandbox agent gateway through its privileged lifecycle controller, wait for health, and check or recover host forwards.";
   static usage = ["<name> [--quiet|-q]"];
   static examples = [
     "<%= config.bin %> sandbox gateway restart alpha",

@@ -1169,6 +1169,7 @@ describe("Hermes sandbox provisioning", () => {
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
+    const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
       path.join(localBin, "nemoclaw-start"),
       gatewayControlPath,
@@ -1178,6 +1179,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "hermes-runtime-config-guard.py"),
       gatewaySupervisorPath,
       stateDirGuardPath,
+      managedGatewayControlPath,
       path.join(localLib, "sandbox-rlimits.sh"),
     ];
     const command = dockerRunCommandBetween(
@@ -1203,11 +1205,12 @@ describe("Hermes sandbox provisioning", () => {
 
       expect(result.status, result.stderr).toBe(0);
       expect(calls).toContain(
-        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath}`,
+        `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
+      expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

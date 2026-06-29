@@ -10,6 +10,25 @@ type SandboxEntry = {
 };
 
 const DIRECT_SANDBOX_DISCOVERY_TIMEOUT_MS = 5000;
+const SANITIZED_PRIVILEGED_ENV = [
+  "BASH_ENV=",
+  "ENV=",
+  "GCONV_PATH=",
+  "GLIBC_TUNABLES=",
+  "LD_AUDIT=",
+  "LD_LIBRARY_PATH=",
+  "LD_PRELOAD=",
+  "LOCPATH=",
+  "NODE_OPTIONS=",
+  "PERL5OPT=",
+  "PYTHONHOME=",
+  "PYTHONINSPECT=",
+  "PYTHONNOUSERSITE=1",
+  "PYTHONPATH=",
+  "PYTHONSTARTUP=",
+  "PYTHONUSERBASE=",
+  "RUBYOPT=",
+] as const;
 
 function normalizeDriver(driver: unknown): string | null {
   return typeof driver === "string" && driver.trim() ? driver.trim().toLowerCase() : null;
@@ -130,7 +149,12 @@ function resolveDirectSandboxContainer(sandboxName: string, driver: string | nul
   throw missingDirectContainerError(sandboxName, driver);
 }
 
-function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = false): string[] {
+function privilegedSandboxExecArgv(
+  sandboxName: string,
+  cmd: string[],
+  stdin = false,
+  sanitizeEnvironment = false,
+): string[] {
   const entry = readSandboxEntry(sandboxName);
   if (!entry) throw missingRegistryEntryError(sandboxName);
   const driver = normalizeDriver(entry?.openshellDriver);
@@ -143,7 +167,18 @@ function privilegedSandboxExecArgv(sandboxName: string, cmd: string[], stdin = f
   // clearly if no matching sandbox container is running.
   const container = findDirectSandboxContainer(sandboxName);
   if (container) {
-    return ["exec", ...(stdin ? ["-i"] : []), "--user", "root", container, ...cmd];
+    const sanitizedEnvArgs = sanitizeEnvironment
+      ? SANITIZED_PRIVILEGED_ENV.flatMap((value) => ["--env", value])
+      : [];
+    return [
+      "exec",
+      ...(stdin ? ["-i"] : []),
+      ...sanitizedEnvArgs,
+      "--user",
+      "root",
+      container,
+      ...cmd,
+    ];
   }
 
   throw missingDirectContainerError(sandboxName, driver);

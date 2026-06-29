@@ -626,13 +626,13 @@ Create a snapshot first when the sandbox is reachable enough to back up state. F
 ### `gateway restart` or `recover` reports `privileged control unavailable`
 
 Built-in OpenClaw and Hermes lifecycle commands require a running direct sandbox container that belongs to the named NemoClaw registry entry.
-The host uses registry-scoped privileged direct-container control to send an authenticated request to the root-owned PID 1 supervisor.
+The host uses registry-scoped privileged direct-container control to send an authenticated request to the controller for the live topology.
 It does not fall back to ordinary `openshell sandbox exec`, SSH, or a manual in-sandbox relaunch.
 
-This control path requires a direct sandbox container whose PID 1 is the built-in NemoClaw image entrypoint running as root.
-A VM host is supported only when its direct sandbox container uses that root entrypoint.
-Non-root direct-container entrypoints, including VM deployments that launch the image as non-root, cannot use this path and fail with `privileged control unavailable`.
-Rebuild or recreate those sandboxes with the current built-in image in a supported root-entrypoint deployment.
+Current built-in images support two direct-container shapes.
+A direct root-entrypoint container uses the root PID 1 supervisor.
+An OpenShell-managed container uses `/opt/openshell/bin/openshell-sandbox` as PID 1, exactly one nonroot `nemoclaw-start` supervisor, and the installed root-owned mode `0500` managed controller.
+An arbitrary nonroot entrypoint that does not match that managed process shape fails with `privileged control unavailable`.
 Kubernetes and other deployments without a matching direct container also fail closed with `privileged control unavailable`.
 Run the lifecycle command from a supported direct-container deployment rather than trying to launch the gateway by hand.
 
@@ -642,17 +642,18 @@ On a direct-container deployment, first confirm that the sandbox is running:
 $$nemoclaw <name> status
 ```
 
-If another lifecycle request is in progress, the helper reports `SUPERVISOR_BUSY`.
+If another direct root-entrypoint lifecycle request is in progress, the helper reports `SUPERVISOR_BUSY`.
 This error is retryable.
 Wait for the active request to finish and retry once.
-If the error mentions `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, or a missing `nemoclaw-gateway-control` helper, the sandbox image predates the supervisor contract.
+If the error mentions `SUPERVISOR_REBUILD_REQUIRED`, `SUPERVISOR_UNAVAILABLE`, a missing `nemoclaw-gateway-control` helper, or a missing managed controller, the sandbox image may predate the current lifecycle contract.
+The managed controller also refuses an ambiguous or changing process tree instead of guessing which same-UID process is the gateway.
 Rebuild the image before retrying:
 
 ```bash
 $$nemoclaw <name> rebuild --yes
 ```
 
-For a custom image, update its Dockerfile to preserve the current NemoClaw entrypoint, root-only gateway control helper, and shared supervisor library before rebuilding.
+For a custom image, update its Dockerfile to preserve the current NemoClaw entrypoint, root-only gateway control helper, root-only managed controller, and shared supervisor library before rebuilding.
 
 ### Hermes config or shields reports a mutation already in progress
 
@@ -1713,9 +1714,12 @@ For setup, refer to [Quickstart with Hermes](../../hermes/get-started/quickstart
 
 ### Hermes restart reports `config hash mismatch`
 
-Every Hermes restart verifies `/sandbox/.hermes/config.yaml` and `/sandbox/.hermes/.env` against the strict root-owned hash at `/etc/nemoclaw/hermes.config-hash`.
-The PID 1 supervisor validates the secret boundary and runtime environment before it stops the tracked gateway, then checks the strict hash again before launch.
-It does not recompute the trusted hash to adopt direct edits made inside the sandbox.
+A Hermes restart reports `config hash mismatch` when a strict root-owned hash is available and `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` does not match it.
+The direct root-entrypoint supervisor always uses the strict hash at `/etc/nemoclaw/hermes.config-hash`.
+The OpenShell-managed controller uses that hash when both config inputs are root-owned and locked.
+Mutable config in the managed topology has no durable root-owned hash anchor, so restart retains the same trust and time-of-check/time-of-use limits as managed cold start and cannot use this error to prove direct drift.
+Both controllers validate the secret boundary and supervisor runtime environment before they stop the tracked gateway.
+They do not recompute a trusted strict hash to adopt direct edits made inside the sandbox.
 
 For intended changes, use supported host commands such as `nemohermes <name> config set` and `nemohermes inference set` so NemoClaw updates the config and its strict and compatibility hashes together.
 Do not edit either hash file manually.
@@ -1728,7 +1732,8 @@ nemohermes <name> rebuild --yes
 
 If the command instead reports `secret-boundary refusal`, inspect `/sandbox/.hermes/.env` for raw secret-shaped values.
 Replace them through the supported credential flow so the file contains `openshell:resolve:env:<name>` placeholders, then run `nemohermes <name> recover`.
-Hermes PID 1 remains responsible for the gateway, dashboard, and internal API and dashboard relays throughout recovery.
+The Hermes entrypoint supervisor remains responsible for the gateway, dashboard, internal API relay, dashboard relay, and gateway log stream throughout recovery.
+In the OpenShell-managed topology, that nonroot supervisor repairs failed auxiliaries continuously, recovers a gateway after four consecutive failed listener or HTTP health checks, and quarantines relaunch after five exits within 60 seconds until the sandbox is recreated.
 The host only repairs the host-side OpenShell forwards after the supervised processes pass health checks.
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`

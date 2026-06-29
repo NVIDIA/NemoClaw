@@ -430,6 +430,235 @@ echo "state=1 lock=1 owner_active=1 token_match=0 original_locked=0 recovery_saf
 });
 
 describe("Hermes supervised auxiliary recovery", () => {
+  it("re-prepares runtime inputs and retries a refused non-root gateway respawn", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'hermes_tracked_role_is_current() { [ "$2" = "6262" ] && { trace "supervised:$2"; exit 0; }; return 1; }',
+      'wait() { trace "wait:$1"; return 143; }',
+      "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
+      'date() { printf "100\\n"; }',
+      "sleep() { :; }",
+      "prepare_calls=0",
+      "launch_calls=0",
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; [ "$prepare_calls" -ne 2 ]; }',
+      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); [ "$launch_calls" -eq 1 ] && GATEWAY_PID=5252 || GATEWAY_PID=6262; trace "launch:$GATEWAY_PID"; }',
+      'wait_for_hermes_gateway_internal() { trace "health:$1"; }',
+      "ensure_hermes_supervised_auxiliaries() { trace auxiliaries; }",
+      'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
+      "hermes_gateway_healthy() { return 0; }",
+      'hermes_stop_tracked_role() { trace "unexpected-stop:$2"; return 1; }',
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      extractShellFunction(source, "supervise_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "GATEWAY_PID=4242",
+      "supervise_hermes_gateway_current_user",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "wait:4242",
+      "mark-stopped",
+      "prepare:1",
+      "launch:5252",
+      "health:5252",
+      "auxiliaries",
+      "refresh:5252",
+      "wait:5252",
+      "mark-stopped",
+      "prepare:2",
+      "prepare:3",
+      "launch:6262",
+      "health:6262",
+      "auxiliaries",
+      "refresh:6262",
+      "supervised:6262",
+    ]);
+    expect(result.stderr).toContain("Hermes gateway respawned (pid 5252)");
+  });
+
+  it("quarantines after five gateway exits in one minute without a sixth launch", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "hermes_tracked_role_is_current() { return 1; }",
+      'wait() { trace "wait:$1"; return 137; }',
+      "mark_hermes_gateway_stopped() { GATEWAY_PID=0; }",
+      'date() { printf "100\\n"; }',
+      'sleep() { [ "$1" = "60" ] && { trace quarantine; exit 0; }; }',
+      'recover_hermes_gateway_current_user() { recover_calls=$((recover_calls + 1)); GATEWAY_PID=$((5000 + recover_calls)); trace "recover:$GATEWAY_PID"; }',
+      "recover_calls=0",
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      extractShellFunction(source, "supervise_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "GATEWAY_PID=4242",
+      "supervise_hermes_gateway_current_user",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.match(/^recover:/gm)).toHaveLength(4);
+    expect(result.stdout).toContain("recover:5004");
+    expect(result.stdout).not.toContain("recover:5005");
+    expect(result.stdout).toContain("quarantine");
+    expect(result.stderr).toContain("relaunch is quarantined until sandbox recreation");
+  });
+
+  it.each([
+    ["health validation", 1, 0],
+    ["auxiliary validation", 0, 1],
+  ])("counts repeated %s failures and never launches a sixth candidate", (_label, health, auxiliaries) => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "prepare_hermes_nonroot_runtime() { return 0; }",
+      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=$((6000 + launch_calls)); trace "launch:$GATEWAY_PID"; }',
+      `wait_for_hermes_gateway_internal() { return ${health}; }`,
+      `ensure_hermes_supervised_auxiliaries() { return ${auxiliaries}; }`,
+      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
+      "mark_hermes_gateway_stopped() { GATEWAY_PID=0; }",
+      "refresh_hermes_supervised_child_pids() { :; }",
+      'date() { printf "100\\n"; }',
+      'sleep() { [ "$1" = "60" ] && { trace quarantine; exit 0; }; }',
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "launch_calls=0",
+      "recover_hermes_gateway_current_user",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.match(/^launch:/gm)).toHaveLength(5);
+    expect(result.stdout).toContain("launch:6005");
+    expect(result.stdout).not.toContain("launch:6006");
+    expect(result.stdout.match(/^stop:/gm)).toHaveLength(5);
+    expect(result.stdout).toContain("quarantine");
+    expect(result.stderr).toContain("5 exits in 60s window");
+  });
+
+  it("does not count preparation refusals or launch before preparation succeeds", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'prepare_hermes_nonroot_runtime() { prepare_calls=$((prepare_calls + 1)); trace "prepare:$prepare_calls"; [ "$prepare_calls" -ge 3 ]; }',
+      'launch_hermes_gateway_current_user() { launch_calls=$((launch_calls + 1)); GATEWAY_PID=7001; trace "launch:$GATEWAY_PID"; }',
+      "wait_for_hermes_gateway_internal() { return 0; }",
+      "ensure_hermes_supervised_auxiliaries() { return 0; }",
+      "refresh_hermes_supervised_child_pids() { trace refresh; }",
+      'date() { trace unexpected-exit-record; printf "100\\n"; }',
+      'sleep() { trace "sleep:$1"; }',
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      extractShellFunction(source, "recover_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "prepare_calls=0",
+      "launch_calls=0",
+      "recover_hermes_gateway_current_user",
+      'trace "launch-count:$launch_calls"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "prepare:1",
+      "sleep:5",
+      "prepare:2",
+      "sleep:5",
+      "prepare:3",
+      "launch:7001",
+      "refresh",
+      "launch-count:1",
+    ]);
+    expect(result.stdout).not.toContain("unexpected-exit-record");
+  });
+
+  it("keeps the initial non-root supervisor alive and recovers a failed first child", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'launch_hermes_gateway_current_user() { GATEWAY_PID=4100; trace "launch:$GATEWAY_PID"; }',
+      "start_gateway_log_stream() { trace log-stream; }",
+      'refresh_hermes_supervised_child_pids() { trace "refresh:$GATEWAY_PID"; }',
+      "wait_for_hermes_gateway_internal() { trace initial-health-failed; return 1; }",
+      "ensure_hermes_supervised_auxiliaries() { trace unexpected-auxiliaries; return 0; }",
+      'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
+      "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
+      'recover_hermes_gateway_current_user() { GATEWAY_PID=4200; trace "recover:$GATEWAY_PID"; }',
+      'date() { printf "100\\n"; }',
+      'sleep() { trace "sleep:$1"; }',
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "record_hermes_managed_gateway_exit"),
+      extractShellFunction(source, "bootstrap_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "HERMES_MANAGED_GATEWAY_EXIT_TIMES=()",
+      "HERMES_MANAGED_GATEWAY_EXIT_COUNT=0",
+      "bootstrap_hermes_gateway_current_user",
+      'trace "final:$GATEWAY_PID"',
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "launch:4100",
+      "log-stream",
+      "refresh:4100",
+      "initial-health-failed",
+      "stop:4100",
+      "mark-stopped",
+      "sleep:2",
+      "recover:4200",
+      "refresh:4200",
+      "final:4200",
+    ]);
+    expect(result.stdout).not.toContain("unexpected-auxiliaries");
+    expect(result.stderr).toContain("stopping the exact child for supervised recovery");
+  });
+
+  it("quarantines instead of orphaning an unhealthy child whose exact stop fails", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      "hermes_tracked_role_is_current() { return 0; }",
+      'hermes_gateway_healthy() { health_calls=$((health_calls + 1)); trace "unhealthy:$health_calls"; return 1; }',
+      "ensure_hermes_supervised_auxiliaries() { trace unexpected-auxiliaries; }",
+      "refresh_hermes_supervised_child_pids() { :; }",
+      'hermes_stop_tracked_role() { trace "stop-refused:$2"; return 1; }',
+      'sleep() { [ "$1" = "60" ] && { trace quarantine; exit 0; }; }',
+      'wait() { trace "unexpected-wait:$1"; }',
+      "recover_hermes_gateway_current_user() { trace unexpected-recover; }",
+      extractShellFunction(source, "quarantine_hermes_managed_gateway_relaunch"),
+      extractShellFunction(source, "supervise_hermes_gateway_current_user"),
+      "INTERNAL_PORT=18642",
+      "GATEWAY_PID=4242",
+      "health_calls=0",
+      "supervise_hermes_gateway_current_user",
+      "trace unexpected-return",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "unhealthy:1",
+      "unhealthy:2",
+      "unhealthy:3",
+      "unhealthy:4",
+      "stop-refused:4242",
+      "quarantine",
+    ]);
+    expect(result.stderr).toContain("managed supervisor is quarantined without another launch");
+    expect(result.stdout).not.toContain("unexpected-wait");
+    expect(result.stdout).not.toContain("unexpected-recover");
+    expect(result.stdout).not.toContain("unexpected-return");
+  });
+
   it("refreshes exact role identities and clears a stale gateway wait PID before cleanup", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
@@ -454,7 +683,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     ]);
   });
 
-  it("binds a tracked role to PID 1 parent, effective uid, cmdline, and start time", () => {
+  it("binds a tracked role to the startup supervisor parent, effective uid, cmdline, and start time", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness(
       [
@@ -464,6 +693,7 @@ describe("Hermes supervised auxiliary recovery", () => {
         extractShellFunction(source, "hermes_process_start_identity"),
         extractShellFunction(source, "hermes_process_role_identity"),
         '_HERMES_PROC_ROOT="$PROC_ROOT"',
+        "HERMES_STARTUP_SUPERVISOR_PID=77",
         'identity="$(hermes_process_role_identity dashboard 4242 sandbox 19119)"',
         'trace "valid:$identity"',
         'cp "$BAD_STAT" "$PROC_ROOT/4242/stat"',
@@ -480,8 +710,8 @@ describe("Hermes supervised auxiliary recovery", () => {
           `4242 (hermes dashboard) ${["S", String(ppid), ...Array(17).fill("0"), "777"].join(" ")}\n`;
         const goodStat = path.join(tmpDir, "good.stat");
         const badStat = path.join(tmpDir, "bad.stat");
-        fs.writeFileSync(goodStat, makeStat(1));
-        fs.writeFileSync(badStat, makeStat(9));
+        fs.writeFileSync(goodStat, makeStat(77));
+        fs.writeFileSync(badStat, makeStat(1));
         fs.copyFileSync(goodStat, path.join(pidRoot, "stat"));
         fs.writeFileSync(path.join(pidRoot, "status"), "Uid:\t1000\t1000\t1000\t1000\n");
         fs.writeFileSync(
@@ -597,6 +827,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'gateway_control_stop_tracked_pid() { trace "unexpected-signal:$1"; }',
       extractShellFunction(source, "hermes_fatal_unproven_child"),
       extractShellFunction(source, "start_gateway_log_stream"),
+      "HERMES_STARTUP_SUPERVISOR_PID=1",
       "start_gateway_log_stream",
       "trace unexpected-return",
     ]);
@@ -604,6 +835,27 @@ describe("Hermes supervised auxiliary recovery", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("failed exact role identity capture");
     expect(result.stderr).toContain("exiting PID 1");
+    expect(result.stdout).not.toContain("unexpected-signal");
+    expect(result.stdout).not.toContain("unexpected-return");
+  });
+
+  it("quarantines a managed supervisor until an unproven direct child is reaped", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness([
+      'trace() { printf "%s\\n" "$*"; }',
+      'wait() { trace "wait:$1"; return 143; }',
+      'sleep() { trace "quarantine-sleep:$1"; exit 0; }',
+      'kill() { trace "unexpected-signal:$*"; return 1; }',
+      extractShellFunction(source, "hermes_fatal_unproven_child"),
+      "HERMES_STARTUP_SUPERVISOR_PID=77",
+      "hermes_fatal_unproven_child gateway 4242",
+      "trace unexpected-return",
+    ]);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(["wait:4242", "quarantine-sleep:60"]);
+    expect(result.stderr).toContain("quarantining the managed startup supervisor");
+    expect(result.stderr).toContain("remains quarantined until sandbox recreation");
     expect(result.stdout).not.toContain("unexpected-signal");
     expect(result.stdout).not.toContain("unexpected-return");
   });
@@ -726,6 +978,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n"; }',
       'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; [ "$1:$2" = "101:8642" ] || [ "$1:$2" = "303:18789" ]; }',
@@ -733,6 +986,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "start-forward:$*"; return 0; }',
+      "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
@@ -758,6 +1012,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "stop:303",
       "stop:202",
       "start-dashboard",
+      "gateway-log",
       "success",
       "final-dashboard:404",
       "final-bridge:505",
@@ -768,6 +1023,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n"; }',
       'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; [ "$1:$2" != "101:8642" ]; }',
@@ -776,6 +1032,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       'start_socat_forwarder() { trace "start-forward:$*"; printf -v "$4" 111; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace unexpected-dashboard-start; return 1; }",
+      "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
@@ -800,6 +1057,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "live:202",
       "live:303",
       "listener:303:18789",
+      "gateway-log",
       "success",
       "final-api-bridge:111",
     ]);
@@ -809,6 +1067,7 @@ describe("Hermes supervised auxiliary recovery", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n"; }',
       'gateway_control_pid_is_live() { trace "live:$1"; return 0; }',
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       'gateway_control_pid_owns_tcp_listener() { trace "listener:$1:$2"; return 0; }',
@@ -817,6 +1076,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
       "start_hermes_dashboard_sandbox_user() { trace start-dashboard; DASHBOARD_PID=404; DASHBOARD_SOCAT_PID=505; }",
       'start_socat_forwarder() { trace "unexpected-forward:$*"; return 1; }',
+      "ensure_gateway_log_stream() { trace gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "hermes_dashboard_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
@@ -840,6 +1100,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "stop:303",
       "stop:202",
       "start-dashboard",
+      "gateway-log",
       "success",
     ]);
   });
@@ -848,12 +1109,14 @@ describe("Hermes supervised auxiliary recovery", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness([
       'trace() { printf "%s\\n" "$*"; }',
+      'id() { [ "${1:-}" = "-u" ] && printf "0\\n"; }',
       'gateway_control_pid_is_live() { trace "live:$1"; return 1; }',
       'hermes_tracked_role_is_current() { gateway_control_pid_is_live "$2"; }',
       "gateway_control_pid_owns_tcp_listener() { return 1; }",
       'start_socat_forwarder() { trace "start-forward:$*"; return 1; }',
       "start_hermes_dashboard_sandbox_user() { trace unexpected-dashboard-start; return 0; }",
       'hermes_stop_tracked_role() { trace "stop:$2"; return 0; }',
+      "ensure_gateway_log_stream() { trace unexpected-gateway-log; }",
       extractShellFunction(source, "hermes_socat_bridge_healthy"),
       extractShellFunction(source, "ensure_hermes_supervised_auxiliaries"),
       "PUBLIC_PORT=8642",

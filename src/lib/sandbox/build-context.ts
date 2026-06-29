@@ -137,6 +137,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "gateway-control.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-gateway-control.py"),
+    path.join(stagedScriptsDir, "managed-gateway-control.py"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "state-dir-guard.py"),
     path.join(stagedScriptsDir, "state-dir-guard.py"),
   );

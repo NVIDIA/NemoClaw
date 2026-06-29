@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -252,6 +261,63 @@ describe("gateway supervisor listener ownership", () => {
 });
 
 describe("root-only gateway control helper", () => {
+  it("enters managed control with isolated Python before user-site startup hooks", () => {
+    const root = temporaryDirectory("nemoclaw-managed-python-isolation-");
+    const userBase = join(root, "attacker-userbase");
+    const marker = join(root, "pth-loaded");
+    const attackEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONUSERBASE: userBase };
+    delete attackEnv.PYTHONNOUSERSITE;
+    const userSite = spawnSync(
+      "python3",
+      ["-c", "import site; print(site.getusersitepackages())"],
+      { encoding: "utf-8", env: attackEnv },
+    );
+    expect(userSite.status, userSite.stderr).toBe(0);
+    const sitePackages = userSite.stdout.trim();
+    mkdirSync(sitePackages, { recursive: true });
+    writeFileSync(
+      join(sitePackages, "attacker.pth"),
+      `import pathlib; pathlib.Path(${JSON.stringify(marker)}).write_text("loaded")\n`,
+    );
+    const vulnerable = spawnSync("python3", ["-c", "pass"], { env: attackEnv });
+    expect(vulnerable.status).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+
+    const procRoot = join(root, "proc");
+    mkdirSync(join(procRoot, "1"), { recursive: true });
+    writeFileSync(
+      join(procRoot, "1", "cmdline"),
+      Buffer.from("/opt/openshell/bin/openshell-sandbox\0--managed\0"),
+    );
+    const managedHelper = join(root, "managed-gateway-control.py");
+    writeFileSync(
+      managedHelper,
+      [
+        "#!/usr/bin/env python3",
+        "import json",
+        "import sys",
+        'print(json.dumps({"isolated": sys.flags.isolated, "args": sys.argv[1:]}))',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const isolated = spawnSync(CONTROL_HELPER, ["restart", VALID_NONCE], {
+      encoding: "utf-8",
+      env: {
+        ...attackEnv,
+        NEMOCLAW_TEST_GATEWAY_CONTROL_PROC_ROOT: procRoot,
+        NEMOCLAW_TEST_MANAGED_GATEWAY_CONTROL_HELPER: managedHelper,
+        NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID: "0",
+      },
+    });
+    expect(isolated.status, isolated.stderr).toBe(0);
+    expect(JSON.parse(isolated.stdout)).toEqual({
+      isolated: 1,
+      args: ["restart", VALID_NONCE],
+    });
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it.each([
     ["bad action", ["replace", VALID_NONCE], "SUPERVISOR_INVALID_ACTION"],
     ["short nonce", ["restart", "abcd"], "SUPERVISOR_INVALID_NONCE"],

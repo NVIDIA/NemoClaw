@@ -9,6 +9,19 @@ set -eu
 # fixed interpreter and trusted system PATH before invoking any external tool.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+INSTALLED_CONTROL_HELPER="/usr/local/bin/nemoclaw-gateway-control"
+if [ "$0" = "$INSTALLED_CONTROL_HELPER" ]; then
+  CONTROL_PROC_ROOT="/proc"
+  CONTROL_MANAGED_HELPER="/usr/local/lib/nemoclaw/managed-gateway-control.py"
+  CONTROL_CALLER_UID="$(id -u)"
+else
+  # Source-checkout behavior tests use isolated fixtures. The installed helper
+  # ignores these seams and always binds to the fixed procfs and helper paths.
+  CONTROL_PROC_ROOT="${NEMOCLAW_TEST_GATEWAY_CONTROL_PROC_ROOT:-/proc}"
+  CONTROL_MANAGED_HELPER="${NEMOCLAW_TEST_MANAGED_GATEWAY_CONTROL_HELPER:-/usr/local/lib/nemoclaw/managed-gateway-control.py}"
+  CONTROL_CALLER_UID="${NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID:-$(id -u)}"
+fi
+
 CONTROL_DIR="${NEMOCLAW_GATEWAY_CONTROL_DIR:-/run/nemoclaw/gateway-control}"
 REQUEST_FILE="${CONTROL_DIR}/request"
 STATUS_FILE="${CONTROL_DIR}/status"
@@ -30,9 +43,16 @@ case "$NONCE" in
   *[!0-9a-f]* | '') fail "SUPERVISOR_INVALID_NONCE" ;;
 esac
 [ "${#NONCE}" -eq 64 ] || fail "SUPERVISOR_INVALID_NONCE"
-[ "$(id -u)" -eq 0 ] || fail "PRIVILEGED_CONTROL_UNAVAILABLE"
+[ "$CONTROL_CALLER_UID" -eq 0 ] || fail "PRIVILEGED_CONTROL_UNAVAILABLE"
 
-PID1_CMDLINE="$(tr '\0' ' ' </proc/1/cmdline 2>/dev/null || true)"
+PID1_CMDLINE="$(tr '\0' ' ' <"${CONTROL_PROC_ROOT}/1/cmdline" 2>/dev/null || true)"
+PID1_ARGV0="$(tr '\0' '\n' <"${CONTROL_PROC_ROOT}/1/cmdline" 2>/dev/null | sed -n '1p' || true)"
+if [ "$PID1_ARGV0" = "/opt/openshell/bin/openshell-sandbox" ]; then
+  [ -x "$CONTROL_MANAGED_HELPER" ] || fail "SUPERVISOR_REBUILD_REQUIRED"
+  # Isolated mode ignores Python startup hooks, user-site packages, and
+  # PYTHON* environment variables before the root helper imports anything.
+  exec python3 -I "$CONTROL_MANAGED_HELPER" "$ACTION" "$NONCE"
+fi
 case "$PID1_CMDLINE" in
   *nemoclaw-start*) ;;
   *) fail "SUPERVISOR_UNAVAILABLE" ;;

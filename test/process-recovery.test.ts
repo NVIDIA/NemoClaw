@@ -287,7 +287,99 @@ beta  127.0.0.1  18789  12345  running`;
     );
   });
 
-  it("waits for a recovered sandbox gateway before declaring recovery", () => {
+  const recoveredGateway = {
+    checked: true,
+    wasRunning: false,
+    recovered: true,
+    forwardRecovered: true,
+  };
+  const unrecoveredGateway = {
+    checked: true,
+    wasRunning: false,
+    recovered: false,
+    forwardRecovered: false,
+  };
+
+  it.each([
+    {
+      label: "PID 1 supervisor",
+      supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
+      expectedResult: recoveredGateway,
+      expectedHealthProbeCalls: 3,
+      probeStatuses: ["STOPPED", "STOPPED", "RUNNING"],
+      settleSeconds: "0",
+    },
+    {
+      label: "OpenShell managed controller",
+      supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
+      expectedResult: recoveredGateway,
+      expectedHealthProbeCalls: 4,
+      probeStatuses: ["STOPPED", "STOPPED", "RUNNING", "RUNNING"],
+      settleSeconds: "1",
+    },
+    {
+      label: "OpenShell managed controller wedge",
+      supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 4,
+      probeStatuses: ["STOPPED", "STOPPED", "RUNNING", "STOPPED"],
+      settleSeconds: "1",
+    },
+    {
+      label: "OpenShell managed controller timeout",
+      supervisorResult: { status: 0, stdout: "GATEWAY_PID=123\n", stderr: "" },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 4,
+      probeStatuses: ["STOPPED"],
+      settleSeconds: "1",
+    },
+    {
+      label: "non-exact unavailable marker",
+      supervisorResult: {
+        status: 1,
+        stdout: "",
+        stderr: "prefix SUPERVISOR_UNAVAILABLE suffix",
+      },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 1,
+      probeStatuses: ["STOPPED"],
+      settleSeconds: "0",
+    },
+    {
+      label: "unavailable marker with another error line",
+      supervisorResult: {
+        status: 1,
+        stdout: "",
+        stderr: "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED",
+      },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 1,
+      probeStatuses: ["STOPPED"],
+      settleSeconds: "0",
+    },
+    {
+      label: "unavailable marker on stdout",
+      supervisorResult: { status: 1, stdout: "SUPERVISOR_UNAVAILABLE", stderr: "" },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 1,
+      probeStatuses: ["STOPPED"],
+      settleSeconds: "0",
+    },
+    {
+      label: "unavailable marker with a nonstandard status",
+      supervisorResult: { status: 2, stdout: "", stderr: "SUPERVISOR_UNAVAILABLE" },
+      expectedResult: unrecoveredGateway,
+      expectedHealthProbeCalls: 1,
+      probeStatuses: ["STOPPED"],
+      settleSeconds: "0",
+    },
+  ])("waits for $label recovery before declaring success", ({
+    supervisorResult,
+    expectedResult,
+    expectedHealthProbeCalls,
+    probeStatuses,
+    settleSeconds,
+  }) => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -297,16 +389,12 @@ beta  127.0.0.1  18789  12345  running`;
     const previousWaitSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
     const previousPollInterval = process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS;
     const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=123\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => supervisorResult);
     let healthProbeCalls = 0;
 
     process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "2";
     process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "0";
-    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = settleSeconds;
 
     try {
       vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -314,7 +402,7 @@ beta  127.0.0.1  18789  12345  running`;
           const shellCommand = getSandboxExecShellCommand(rawArgs);
           if (shellCommand.includes("HTTP_CODE=$(curl")) {
             healthProbeCalls += 1;
-            const status = healthProbeCalls >= 3 ? "RUNNING" : "STOPPED";
+            const status = probeStatuses[Math.min(healthProbeCalls - 1, probeStatuses.length - 1)];
             return {
               status: 0,
               stdout: `__NEMOCLAW_SANDBOX_EXEC_STARTED__\n${status}\n`,
@@ -335,22 +423,16 @@ beta  127.0.0.1  18789  12345  running`;
         output: runningForward,
       });
 
-      expect(
-        withFakeOpenshellBinary(() =>
-          checkAndRecoverSandboxProcesses("beta", {
-            quiet: true,
-            requestGatewaySupervisorAction,
-          }),
-        ),
-      ).toEqual({
-        checked: true,
-        wasRunning: false,
-        recovered: true,
-        forwardRecovered: true,
-      });
+      const result = withFakeOpenshellBinary(() =>
+        checkAndRecoverSandboxProcesses("beta", {
+          quiet: true,
+          requestGatewaySupervisorAction,
+        }),
+      );
+      expect(result).toEqual(expectedResult);
       expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
       expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("beta", "recover");
-      expect(healthProbeCalls).toBe(3);
+      expect(healthProbeCalls).toBe(expectedHealthProbeCalls);
     } finally {
       if (previousWaitSeconds === undefined)
         delete process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS;
@@ -368,7 +450,7 @@ beta  127.0.0.1  18789  12345  running`;
     }
   });
 
-  it("recovers a stopped Hermes gateway through the PID 1 supervisor instead of SSH", () => {
+  it("waits for stopped Hermes recovery after managed OpenShell control succeeds", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -454,14 +536,20 @@ hermes-box  127.0.0.1  18789  12345  running`;
     }
   });
 
-  it("does not accept a recovery marker from a failed Hermes supervisor action", () => {
+  it.each([
+    ["a recovery marker from a failed action", "GATEWAY_PID=4242\n", "dashboard recovery failed"],
+    ["an unavailable managed supervisor", "", "SUPERVISOR_UNAVAILABLE"],
+    ["a non-exact self-recovery marker", "", "prefix SUPERVISOR_UNAVAILABLE suffix"],
+    ["an extra self-recovery error", "", "SUPERVISOR_UNAVAILABLE\nGATEWAY_FAILED"],
+    ["a self-recovery marker on stdout", "SUPERVISOR_UNAVAILABLE", ""],
+  ])("does not accept %s for Hermes", (_label, stdout, stderr) => {
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
     const childProcess = requireSource("node:child_process");
     const requestGatewaySupervisorAction = vi.fn(() => ({
       status: 1,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "dashboard recovery failed",
+      stdout,
+      stderr,
     }));
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -1047,17 +1135,16 @@ hermes-box  127.0.0.1  8642  12346  running`;
     );
   });
 
-  it("falls through when the Hermes PID 1 supervisor reports a healthy gateway", () => {
+  it.each([
+    ["PID 1 supervisor", { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" }],
+    ["OpenShell managed controller", { status: 0, stdout: "GATEWAY_PID=4242\n", stderr: "" }],
+  ])("falls through when the Hermes $label reports a healthy gateway", (_label, supervisorResult) => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
     const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
     const childProcess = requireSource("node:child_process");
-    const requestGatewaySupervisorAction = vi.fn(() => ({
-      status: 0,
-      stdout: "GATEWAY_PID=4242\n",
-      stderr: "",
-    }));
+    const requestGatewaySupervisorAction = vi.fn(() => supervisorResult);
 
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
