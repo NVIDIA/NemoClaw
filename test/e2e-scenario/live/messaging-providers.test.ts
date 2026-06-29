@@ -60,6 +60,43 @@ import {
 
 const runLiveTest = shouldRunLiveE2EScenarios() ? test : test.skip;
 
+interface TelegramVisibleStatusReport {
+  readonly signals?: ReadonlyArray<{
+    readonly label?: string;
+    readonly severity?: string;
+    readonly detail?: string;
+  }>;
+}
+
+interface TelegramDoctorReport {
+  readonly checks?: ReadonlyArray<{
+    readonly group?: string;
+    readonly label?: string;
+    readonly status?: string;
+    readonly detail?: string;
+  }>;
+}
+
+function parseTelegramVisibilityJson(text: string): TelegramVisibleStatusReport | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as TelegramVisibleStatusReport;
+  } catch {
+    return null;
+  }
+}
+
+function parseTelegramDoctorJson(text: string): TelegramDoctorReport | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as TelegramDoctorReport;
+  } catch {
+    return null;
+  }
+}
+
 runLiveTest(
   "messaging providers preserve placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
@@ -573,6 +610,67 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
         "M6h: OpenClaw channels list reports WhatsApp plugin installed",
       );
     }
+
+    const telegramVisibleStatus = await runHost(
+      host,
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "channels", "status", "--channel", "telegram", "--json"],
+      {
+        artifactName: "channels-status-telegram-visible-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    expectExitZero(telegramVisibleStatus, "M-V0: channels status --channel telegram exits 0");
+    const telegramVisibleReport = parseTelegramVisibilityJson(outputText(telegramVisibleStatus));
+    const telegramVisibleSignals = telegramVisibleReport?.signals ?? [];
+    const telegramGroupPolicySignal = telegramVisibleSignals.find(
+      (signal) => signal.label === "Telegram group policy",
+    );
+    check(
+      telegramGroupPolicySignal?.detail === "open groups (TELEGRAM_GROUP_POLICY=open)",
+      `M-V1: channels status renders Telegram group policy (got '${telegramGroupPolicySignal?.detail ?? "missing"}')`,
+    );
+    const telegramMentionSignal = telegramVisibleSignals.find(
+      (signal) => signal.label === "Telegram group mention mode",
+    );
+    check(
+      telegramMentionSignal?.detail === "mention-only (TELEGRAM_REQUIRE_MENTION=1)" ||
+        telegramMentionSignal?.detail === "mention-only (default)",
+      `M-V2: channels status renders Telegram mention mode (got '${telegramMentionSignal?.detail ?? "missing"}')`,
+    );
+
+    const telegramDoctorOutput = await runHost(
+      host,
+      "node",
+      [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"],
+      {
+        artifactName: "doctor-telegram-visible-messaging-providers",
+        env: state.env,
+        redactionValues,
+        timeoutMs: 60_000,
+      },
+    );
+    const telegramDoctorReport = parseTelegramDoctorJson(outputText(telegramDoctorOutput));
+    const telegramDoctorChecks = (telegramDoctorReport?.checks ?? []).filter(
+      (entry) => entry.group === "Messaging",
+    );
+    const doctorGroupPolicy = telegramDoctorChecks.find(
+      (entry) => entry.label === "Telegram group policy",
+    );
+    check(
+      doctorGroupPolicy?.detail === "open groups (TELEGRAM_GROUP_POLICY=open)",
+      `M-V3: doctor renders Telegram group policy (got '${doctorGroupPolicy?.detail ?? "missing"}')`,
+    );
+    const doctorMention = telegramDoctorChecks.find(
+      (entry) => entry.label === "Telegram group mention mode",
+    );
+    check(
+      doctorMention?.detail === "mention-only (TELEGRAM_REQUIRE_MENTION=1)" ||
+        doctorMention?.detail === "mention-only (default)",
+      `M-V4: doctor renders Telegram mention mode (got '${doctorMention?.detail ?? "missing"}')`,
+    );
 
     const telegramReach = await sandboxOutput(
       sandbox,
