@@ -84,6 +84,10 @@ class UnsafePathError(RuntimeError):
     """Raised when a mutable runtime config path is unsafe to trust."""
 
 
+class StrictHashMismatchError(UnsafePathError):
+    """Raised only when safe strict-hash bytes do not match safe config inputs."""
+
+
 def _no_follow_flag() -> int:
     flag = getattr(os, "O_NOFOLLOW", 0)
     if not flag:
@@ -1216,17 +1220,159 @@ def _read_hash_file(path: str) -> str:
 
 
 def _verify_strict_hash(hermes_dir: str, hash_file: str) -> None:
-    actual, _config_snapshot, _env_snapshot = _hash_text(
-        os.path.join(hermes_dir, "config.yaml"),
-        os.path.join(hermes_dir, ".env"),
-    )
-    if actual != _read_hash_file(hash_file):
-        raise UnsafePathError("strict hash verification failed for Hermes restart seal")
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    actual, _config_snapshot, _env_snapshot = _hash_text(config_path, env_path)
+    strict = _read_hash_file(hash_file)
+    _parse_two_file_hash(strict, config_path, env_path)
+    if actual != strict:
+        raise StrictHashMismatchError(
+            "strict hash verification failed for Hermes restart seal"
+        )
 
 
 def _verify_compat_hash(hash_file: str, compat_hash_file: str) -> None:
     if _read_hash_file(compat_hash_file) != _read_hash_file(hash_file):
         raise UnsafePathError("compat hash verification failed for Hermes restart seal")
+
+
+def _parse_two_file_hash(
+    text: str, config_path: str, env_path: str
+) -> tuple[str, str]:
+    parts = text.split("\n")
+    if len(parts) != 3 or parts[-1] != "":
+        raise UnsafePathError("refusing malformed Hermes config hash")
+    lines = parts[:-1]
+    expected_paths = (config_path, env_path)
+    if len(lines) != len(expected_paths):
+        raise UnsafePathError("refusing malformed Hermes config hash")
+    digests: list[str] = []
+    for line, expected_path in zip(lines, expected_paths, strict=True):
+        match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
+        if match is None or match.group(2) != expected_path:
+            raise UnsafePathError("refusing malformed Hermes config hash")
+        digests.append(match.group(1))
+    return digests[0], digests[1]
+
+
+def _without_single_generated_api_server_key(text: str) -> str:
+    retained: list[str] = []
+    removed = 0
+    for line in text.splitlines(keepends=True):
+        parsed = _parse_env_assignment(line)
+        if parsed is None or parsed[1] != "API_SERVER_KEY":
+            retained.append(line)
+            continue
+        if removed != 0 or re.fullmatch(r"API_SERVER_KEY=[0-9a-f]{64}\n", line) is None:
+            raise UnsafePathError(
+                "refusing unexpected API_SERVER_KEY change during non-root startup"
+            )
+        removed += 1
+    if removed != 1:
+        raise UnsafePathError(
+            "refusing missing API_SERVER_KEY change during non-root startup"
+        )
+    return "".join(retained)
+
+
+def _managed_nonroot_reconciliation_is_allowed() -> bool:
+    installed_current = os.path.abspath(__file__) == INSTALLED_RUNTIME_CONFIG_GUARD
+    if not installed_current:
+        return False
+    try:
+        sandbox_uid = pwd.getpwnam("sandbox").pw_uid
+    except KeyError:
+        return False
+    return _startup_ready_marker_absent() and _openshell_supervised_nonroot_start_is_live(
+        0, sandbox_uid
+    )
+
+
+def _reconcile_nonroot_startup_api_key_hash(
+    hermes_dir: str,
+    hash_file: str,
+    expected_config_sha256: str,
+    hermes_meta: dict[str, int],
+    file_states: dict[str, dict[str, object]],
+) -> None:
+    """Advance strict trust across the one non-root startup mutation we permit.
+
+    OpenShell starts the Hermes entrypoint as ``sandbox``. That process must
+    mint a per-sandbox API bearer token, but it cannot update the root-owned
+    strict hash. A later root config write may reconcile that exact append only
+    after the namespace has been frozen. Every other config or env difference
+    remains a hard refusal.
+    """
+
+    if not _managed_nonroot_reconciliation_is_allowed():
+        raise UnsafePathError(
+            "strict hash verification failed outside managed non-root startup"
+        )
+    if hermes_meta.get("mode") != 0o3770:
+        raise UnsafePathError(
+            "refusing strict hash reconciliation outside mutable Hermes posture"
+        )
+    for name in ("config.yaml", ".env", ".config-hash"):
+        original = file_states.get(name, {}).get("original")
+        if not isinstance(original, dict) or int(original.get("mode", 0)) & 0o222 == 0:
+            raise UnsafePathError(
+                "refusing strict hash reconciliation outside mutable Hermes posture"
+            )
+
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    compat_hash_path = os.path.join(hermes_dir, ".config-hash")
+    strict_text = _read_hash_file(hash_file)
+    strict_config_sha256, strict_env_sha256 = _parse_two_file_hash(
+        strict_text, config_path, env_path
+    )
+    actual_text, config_snapshot, env_snapshot = _hash_text(config_path, env_path)
+    actual_config_sha256, _actual_env_sha256 = _parse_two_file_hash(
+        actual_text, config_path, env_path
+    )
+
+    if not secrets.compare_digest(_read_hash_file(compat_hash_path), actual_text):
+        raise UnsafePathError(
+            "compat hash does not match frozen Hermes inputs during non-root reconciliation"
+        )
+    if not secrets.compare_digest(actual_config_sha256, expected_config_sha256):
+        raise UnsafePathError("Hermes config changed after the host read it; retry the command")
+    if not secrets.compare_digest(actual_config_sha256, strict_config_sha256):
+        raise UnsafePathError(
+            "refusing config drift during non-root strict hash reconciliation"
+        )
+
+    env_text, env_read_snapshot = _read_text(env_path, MAX_ENV_BYTES)
+    if env_read_snapshot != env_snapshot:
+        raise UnsafePathError("refusing raced Hermes env during strict hash reconciliation")
+    prior_env_text = _without_single_generated_api_server_key(env_text)
+    if not secrets.compare_digest(
+        hashlib.sha256(prior_env_text.encode("utf-8")).hexdigest(), strict_env_sha256
+    ):
+        raise UnsafePathError(
+            "refusing non-API-key env drift during non-root strict hash reconciliation"
+        )
+
+    # Recheck both path snapshots immediately before the root-owned commit.
+    # A writable descriptor retained before the namespace freeze must not race
+    # the bytes whose trust is being advanced.
+    for path, expected_snapshot in (
+        (config_path, config_snapshot),
+        (env_path, env_snapshot),
+    ):
+        opened = _open_regular(path)
+        try:
+            if opened.snapshot != expected_snapshot:
+                raise UnsafePathError(
+                    "refusing raced Hermes inputs during strict hash reconciliation"
+                )
+        finally:
+            opened.close()
+
+    # The compatibility anchor already commits the frozen current inputs.
+    # Advance the root-owned strict anchor last, then let the ordinary seal
+    # verification and inode replacement path re-prove both anchors.
+    _write_hash(hash_file, actual_text)
 
 
 def _state_file_parent_is_safe(path: str) -> None:
@@ -2039,6 +2185,7 @@ def seal_restart(
     state_file: str,
     purpose: str = "restart-seal",
     mutation_lock_token: str | None = None,
+    expected_config_sha256: str | None = None,
 ) -> bool:
     if os.path.exists(state_file):
         raise UnsafePathError("Hermes restart seal is already active")
@@ -2154,8 +2301,20 @@ def seal_restart(
 
         # Validate before creating replacement inodes. On mismatch the recovery
         # token restores both directory modes and leaves file paths untouched.
-        _verify_strict_hash(hermes_dir, hash_file)
         compat_hash_path = os.path.join(hermes_dir, ".config-hash")
+        try:
+            _verify_strict_hash(hermes_dir, hash_file)
+        except StrictHashMismatchError:
+            if purpose != "config-write" or expected_config_sha256 is None:
+                raise
+            _reconcile_nonroot_startup_api_key_hash(
+                hermes_dir,
+                hash_file,
+                expected_config_sha256,
+                hermes_meta,
+                file_states,
+            )
+            _verify_strict_hash(hermes_dir, hash_file)
         _verify_compat_hash(hash_file, compat_hash_path)
 
         for name in SEALED_FILE_NAMES:
@@ -3693,7 +3852,13 @@ def write_config_transaction(
     if len(config_bytes) > MAX_CONFIG_INPUT_BYTES:
         raise UnsafePathError("refusing oversized Hermes config input")
 
-    seal_restart(hermes_dir, hash_file, state_file, purpose="config-write")
+    seal_restart(
+        hermes_dir,
+        hash_file,
+        state_file,
+        purpose="config-write",
+        expected_config_sha256=expected_config_sha256,
+    )
     committed = False
     config_path = os.path.join(hermes_dir, "config.yaml")
     try:

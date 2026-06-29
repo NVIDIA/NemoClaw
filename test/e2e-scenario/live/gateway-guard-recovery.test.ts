@@ -144,6 +144,10 @@ test("gateway recovery restores /tmp guard chain after pod-recreate wipe (#2701)
         "tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true; " +
         "printf '%s\\n' '== gateway log ==' ; " +
         "tail -n 300 /tmp/gateway.log 2>&1 || true; " +
+        "printf '%s\\n' '== direct gateway health ==' ; " +
+        "curl -so /dev/null -w 'HTTP %{http_code}\\n' --max-time 3 http://127.0.0.1:18789/health 2>&1 || true; " +
+        "printf '%s\\n' '== gateway pid record ==' ; " +
+        "cat /tmp/nemoclaw-gateway.pid 2>&1 || true; " +
         "printf '%s\\n' '== supervisor status ==' ; " +
         "cat /run/nemoclaw/gateway-control/status 2>&1 || true",
     ],

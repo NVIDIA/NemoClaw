@@ -101,6 +101,30 @@ describe("waitForRecoveredSandboxGateway settle-window confirmation (#4710)", ()
     expect(sleeps).toEqual([25, 3]);
   });
 
+  it("uses the bounded recovery window for inconclusive post-settle transport", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
+    const sleeps: number[] = [];
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      probeImpl: makeProbe([true, null, null, true]),
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(true);
+    expect(sleeps).toEqual([25, 3, 3]);
+  });
+
+  it("fails closed when post-settle transport stays inconclusive for the bounded window", () => {
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS = "6";
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS = "3";
+    const sleeps: number[] = [];
+    const ok = waitForRecoveredSandboxGateway("my-sandbox", {
+      probeImpl: makeProbe([true, null]),
+      sleepImpl: (seconds: number) => sleeps.push(seconds),
+    });
+    expect(ok).toBe(false);
+    expect(sleeps).toEqual([25, 3, 3]);
+  });
+
   it("fails recovery when the gateway serves once and then drops its listener (wedge)", () => {
     const sleeps: number[] = [];
     const ok = waitForRecoveredSandboxGateway("my-sandbox", {
