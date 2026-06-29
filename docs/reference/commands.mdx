@@ -1874,6 +1874,12 @@ $$nemoclaw inference get
 $$nemoclaw inference get --json
 ```
 
+The sandbox-first grammar `$$nemoclaw <name> inference get` is also accepted and reads the same gateway-wide route, so it stays symmetric with `$$nemoclaw <name> inference set`.
+
+```bash
+$$nemoclaw my-assistant inference get
+```
+
 ### `$$nemoclaw inference set`
 
 Switch the active inference provider or model for a NemoClaw-managed OpenClaw or Hermes sandbox.
@@ -1896,6 +1902,12 @@ By default, the command syncs the default registered sandbox.
 
 ```bash
 $$nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]
+```
+
+You can also name the sandbox in sandbox-first position instead of passing `--sandbox`; `$$nemoclaw <name> inference set --provider <provider> --model <model>` targets `<name>` directly and is equivalent to `$$nemoclaw inference set --provider <provider> --model <model> --sandbox <name>`.
+
+```bash
+$$nemoclaw my-assistant inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
 Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
