@@ -1,9 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SpawnSyncReturns } from "node:child_process";
-
-import { runOpenshell } from "../adapters/openshell/runtime";
+import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
+import { captureOpenshell } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
@@ -56,7 +55,7 @@ export interface InferenceSetResult {
   inSandboxConfigSynced: boolean;
 }
 
-type OpenshellRunResult = Pick<SpawnSyncReturns<string>, "status" | "stdout" | "stderr">;
+const OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER = 64 * 1024;
 
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
@@ -76,10 +75,10 @@ export interface InferenceSetDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  runOpenshell: (
+  captureOpenshell: (
     args: string[],
-    opts?: { ignoreError?: boolean; stdio?: import("node:child_process").StdioOptions },
-  ) => OpenshellRunResult;
+    opts?: Pick<CaptureOpenshellOptions, "ignoreError" | "includeStreams" | "maxBuffer">,
+  ) => CaptureOpenshellResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
@@ -125,7 +124,7 @@ function defaultDeps(): InferenceSetDeps {
     readSandboxConfig,
     writeSandboxConfig,
     recomputeSandboxConfigHash,
-    runOpenshell: (args, opts) => runOpenshell(args, opts),
+    captureOpenshell: (args, opts) => captureOpenshell(args, opts),
     appendAuditEntry,
     log: console.log,
     isLocalInferenceProvider: (provider) =>
@@ -612,11 +611,12 @@ export async function runInferenceSet(
   }
 
   deps.log(`  Setting OpenShell inference route: ${provider} / ${model}`);
-  const setResult = deps.runOpenshell(
+  const setResult = deps.captureOpenshell(
     openshellInferenceSetArgs({ provider, model, noVerify: effectiveNoVerify }),
     {
       ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
+      includeStreams: true,
+      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
     },
   );
   if (setResult.status !== 0) {

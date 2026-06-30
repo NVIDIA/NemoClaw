@@ -9,7 +9,7 @@ import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 
 vi.mock("../adapters/openshell/runtime", () => ({
-  runOpenshell: vi.fn(),
+  captureOpenshell: vi.fn(),
 }));
 
 vi.mock("../inference/local", () => ({
@@ -39,6 +39,7 @@ vi.mock("../shields/audit", () => ({
 import type { ValidationResult } from "../inference/local";
 import {
   type InferenceSetDeps,
+  InferenceSetError,
   patchHermesInferenceConfig,
   patchOpenClawInferenceConfig,
   runInferenceSet,
@@ -119,7 +120,7 @@ function createDeps(options: {
   contextWindow?: number | null;
 }): InferenceSetDeps & {
   calls: {
-    runOpenshell: ReturnType<typeof vi.fn>;
+    captureOpenshell: ReturnType<typeof vi.fn>;
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
@@ -142,7 +143,12 @@ function createDeps(options: {
   const defaultSandbox =
     options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
   const calls = {
-    runOpenshell: vi.fn(() => ({ status: options.openshellStatus ?? 0, stdout: "", stderr: "" })),
+    captureOpenshell: vi.fn(() => ({
+      status: options.openshellStatus ?? 0,
+      output: "",
+      stdout: "",
+      stderr: "",
+    })),
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     updateSandbox: vi.fn(() => true),
@@ -172,7 +178,7 @@ function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
-    runOpenshell: calls.runOpenshell,
+    captureOpenshell: calls.captureOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
     isLocalInferenceProvider: (provider) =>
@@ -436,7 +442,7 @@ describe("runInferenceSet", () => {
       deps,
     );
 
-    expect(deps.calls.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
         "inference",
         "set",
@@ -448,7 +454,7 @@ describe("runInferenceSet", () => {
         "nvidia/nemotron-3-super-120b-a12b",
         "--no-verify",
       ],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
     );
     expect(config.agents).toEqual({
       defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
@@ -528,7 +534,7 @@ describe("runInferenceSet", () => {
       deps,
     );
 
-    expect(deps.calls.runOpenshell).toHaveBeenCalledWith(
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(
       [
         "inference",
         "set",
@@ -540,7 +546,7 @@ describe("runInferenceSet", () => {
         "openai/gpt-5.4-mini",
         "--no-verify",
       ],
-      { ignoreError: true, stdio: ["ignore", "pipe", "pipe"] },
+      { ignoreError: true, includeStreams: true, maxBuffer: 64 * 1024 },
     );
     expect(config).toEqual({
       _nemoclaw_upstream: {
@@ -689,7 +695,7 @@ describe("runInferenceSet", () => {
       ),
     ).rejects.toThrow(/without trusted durable endpoint metadata/);
 
-    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
@@ -726,7 +732,7 @@ describe("runInferenceSet", () => {
       /inference-api for 'compatible-endpoint' must be one of: openai-completions, openai-responses/,
     );
 
-    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
@@ -1078,7 +1084,7 @@ describe("runInferenceSet", () => {
       runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps),
     ).rejects.toThrow(/Pass --sandbox <name>/);
 
-    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
@@ -1095,7 +1101,7 @@ describe("runInferenceSet", () => {
       ),
     ).rejects.toThrow(/supports OpenClaw and Hermes/);
 
-    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
@@ -1110,6 +1116,47 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("keeps ENOBUFS failures bounded and redacted without writing sandbox state (#5924)", async () => {
+    const password = "overflow-password-secret";
+    const querySecret = "overflow-query-secret";
+    const deps = createDeps({
+      config: {},
+      entries: [
+        { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
+      ],
+    });
+    deps.calls.captureOpenshell.mockReturnValue({
+      status: null,
+      output: "",
+      stdout: "",
+      stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(1_000)}`,
+      error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
+      signal: "SIGTERM",
+    });
+
+    const err = await runInferenceSet(
+      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      deps,
+    ).catch((error: Error) => error);
+
+    expect(err).toBeInstanceOf(InferenceSetError);
+    expect((err as InferenceSetError).exitCode).toBe(1);
+    const message = (err as Error).message;
+    const detail = message.match(/^OpenShell detail: (.*)$/mu)?.[1];
+    expect(detail).toHaveLength(500);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain(querySecret);
+    expect(message).toContain("Registered providers: nvidia-prod");
+    expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(expect.any(Array), {
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: 64 * 1024,
+    });
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("includes registered providers and onboard tip when openshell reports provider not found (#5924)", async () => {
     const deps = createDeps({
       config: {},
@@ -1119,7 +1166,7 @@ describe("runInferenceSet", () => {
       ],
       openshellStatus: 1,
     });
-    deps.calls.runOpenshell.mockReturnValue({
+    deps.calls.captureOpenshell.mockReturnValue({
       status: 1,
       stdout: "",
       stderr: "error: provider 'openai-api' not found in gateway",
@@ -1141,7 +1188,7 @@ describe("runInferenceSet", () => {
 
   it("throws the generic error when openshell fails without a provider-not-found pattern (#5924)", async () => {
     const deps = createDeps({ config: {}, openshellStatus: 42 });
-    deps.calls.runOpenshell.mockReturnValue({
+    deps.calls.captureOpenshell.mockReturnValue({
       status: 42,
       stdout: "",
       stderr: "error: network timeout connecting to gateway NVIDIA_API_KEY=nvapi-secret-value",
@@ -1167,7 +1214,7 @@ describe("runInferenceSet", () => {
       entries: [{ name: "alpha", agent: "openclaw", provider: null, model: null }],
       openshellStatus: 1,
     });
-    deps.calls.runOpenshell.mockReturnValue({
+    deps.calls.captureOpenshell.mockReturnValue({
       status: 1,
       stdout: "error: provider 'openai-api' not found in gateway",
       stderr: "",
@@ -1186,7 +1233,7 @@ describe("runInferenceSet", () => {
 
   it("omits provider list and still shows onboard tip when listSandboxes throws (#5924)", async () => {
     const deps = createDeps({ config: {}, openshellStatus: 1 });
-    deps.calls.runOpenshell.mockReturnValue({
+    deps.calls.captureOpenshell.mockReturnValue({
       status: 1,
       stdout: "",
       stderr: "error: provider 'openai-api' not found in gateway",
@@ -1341,7 +1388,7 @@ describe("runInferenceSet local-provider verification", () => {
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
     expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
     expect(args).toContain("--no-verify");
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
   });
@@ -1361,7 +1408,7 @@ describe("runInferenceSet local-provider verification", () => {
     await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
 
     expect(deps.calls.ensureLocalProviderReachable).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
     expect(args).toContain("--no-verify");
     const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
     expect(logged).toMatch(/reachable/);
@@ -1381,7 +1428,7 @@ describe("runInferenceSet local-provider verification", () => {
     await expect(
       runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps),
     ).rejects.toThrow(/Cannot reach local provider 'ollama-local'/);
-    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
@@ -1398,7 +1445,7 @@ describe("runInferenceSet local-provider verification", () => {
 
     expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
     expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
-    const args = deps.calls.runOpenshell.mock.calls[0][0] as string[];
+    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
     expect(args).not.toContain("--no-verify");
   });
 });
