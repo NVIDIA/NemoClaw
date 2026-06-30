@@ -14,6 +14,13 @@
 // Removal criterion: drop this preload and its Teams manifest wiring once the
 // minimum @openclaw/msteams version installed by NemoClaw includes an equivalent
 // native mention hint in agentPrompt.messageToolHints.
+//
+// The manifest deliberately requires the compiled preload asset (`optional:
+// false`) so a missing or mispackaged file fails during sandbox setup. Runtime
+// patching is deliberately best-effort: an unexpected upstream export shape or
+// immutable plugin must not stop the Teams gateway. In that case, restore the
+// loader hook, emit one bounded warning without upstream error data, and keep
+// the unmodified upstream plugin running.
 
 type MSTeamsMessageHintsProcess = NodeJS.Process & {
   __nemoclawMSTeamsMessageHintsInstalled?: boolean;
