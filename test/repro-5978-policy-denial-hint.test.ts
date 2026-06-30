@@ -141,15 +141,25 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     }
   });
 
-  it("strips control characters so a crafted OPENSHELL_SANDBOX cannot inject TTY escapes", () => {
-    // ESC + newline in the name must not reach the terminal (security-boundary script).
+  it("allowlists the name: a crafted OPENSHELL_SANDBOX cannot inject TTY escapes", () => {
+    // ESC + newline make the value fail the RFC-1123 allowlist, so it is
+    // replaced by the placeholder rather than rendered (security-boundary script).
     const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa\u001b[31m-5978\nINJECTED" });
     const normalized = stdout.replace(/\r/g, "");
     expect(status).toBe(0);
     expect(stdout).not.toContain("\u001b");
-    // The newline must be stripped too — INJECTED must not land on its own line.
+    // The newline-carried payload must not reach the terminal at all.
     expect(normalized).not.toContain("\nINJECTED");
-    expect(stdout).toContain("logs --tail 50");
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+  });
+
+  it("allowlists the name: shell metacharacters fall back to <name>, not a runnable injection", () => {
+    // No control characters, but ';' / space are outside the RFC-1123 label, so
+    // the value must not be interpolated verbatim into the copyable command.
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa-5978; rm -rf /" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    expect(stdout).not.toContain("rm -rf");
   });
 
   it("falls back to <name> when OPENSHELL_SANDBOX is only control characters", () => {

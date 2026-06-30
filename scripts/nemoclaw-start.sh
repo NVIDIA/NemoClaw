@@ -3050,18 +3050,24 @@ PYAPPROVEAFTER
 # NEMOCLAW_NO_POLICY_HINT=1.
 _nemoclaw_policy_denial_hint_label() {
   # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
-  # versions set the boolean "1". Use the name when it looks like one, else a
-  # placeholder the user resolves with `nemoclaw list`.
+  # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
+  # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
+  # rather than merely stripping: only render it when it is a valid sandbox name
+  # — the RFC-1123 label the rest of NemoClaw enforces (lowercase alphanumerics
+  # and hyphens, 1..63 chars, no leading/trailing hyphen). Anything else
+  # (control characters, ANSI escapes, shell metacharacters, whitespace) falls
+  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
+  # globs match newlines as ordinary characters, so an embedded newline is
+  # rejected by the metacharacter class below.
   case "${OPENSHELL_SANDBOX:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
+    -* | *- | *[!a-z0-9-]*) printf '<name>' ;;
     *)
-      # OPENSHELL_SANDBOX is untrusted input printed into a TTY: strip control
-      # characters (newlines, ESC, …) so a crafted sandbox name cannot spoof
-      # output or inject terminal escape sequences. Fall back to the placeholder
-      # if nothing printable remains.
-      _nemoclaw_policy_hint_label="$(printf '%s' "$OPENSHELL_SANDBOX" | LC_ALL=C tr -d '[:cntrl:]')"
-      [ -n "$_nemoclaw_policy_hint_label" ] || _nemoclaw_policy_hint_label='<name>'
-      printf '%s' "$_nemoclaw_policy_hint_label"
+      if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
+        printf '%s' "$OPENSHELL_SANDBOX"
+      else
+        printf '<name>'
+      fi
       ;;
   esac
 }

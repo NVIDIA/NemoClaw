@@ -62,28 +62,6 @@ export type SandboxConnectOptions = {
   probeOnly?: boolean;
 };
 
-// Host-side companion to the in-sandbox policy-denial breadcrumb (#5978). The
-// in-sandbox hint can only print a `<name>` placeholder on OpenShell builds that
-// set OPENSHELL_SANDBOX=1 (not the sandbox name); here on the host we know the
-// real name, so the reporter's `connect` flow gets a directly runnable command.
-// Defense in depth: sandbox names are RFC-1123-validated at the policy/registry
-// boundaries (no control characters), but strip them here anyway so this TTY
-// sink can never be turned into a terminal-escape injection — mirroring the
-// `[:cntrl:]` strip the in-sandbox stanza applies to the untrusted
-// OPENSHELL_SANDBOX env value. For any legitimate name this is a no-op, so the
-// printed command stays byte-for-byte runnable.
-export function buildPolicyDenialConnectHint(sandboxName: string): string {
-  const safeName = sanitizeRouteValueForDisplay(sandboxName);
-  return (
-    "If a request is blocked by network policy ('CONNECT tunnel failed, response 403'), " +
-    `see why with \`${CLI_NAME} ${safeName} logs --tail 50\`.`
-  );
-}
-
-function isPolicyDenialHintSuppressed(env: NodeJS.ProcessEnv = process.env): boolean {
-  return ["1", "true"].includes(String(env.NEMOCLAW_NO_POLICY_HINT || ""));
-}
-
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
@@ -1096,9 +1074,12 @@ export async function connectSandbox(
     console.log(
       `  ${D}Type \`/exit\` to leave the chat, then \`exit\` to return to the host shell.${R}`,
     );
-    if (!isPolicyDenialHintSuppressed()) {
-      console.log(`  ${D}${buildPolicyDenialConnectHint(sandboxName)}${R}`);
-    }
+    // The policy-denial breadcrumb (#5978) is emitted once by the in-sandbox
+    // `nemoclaw-policy-denial-hint` stanza when this connect shell sources
+    // /tmp/nemoclaw-proxy-env.sh. We deliberately do NOT also print it here:
+    // doing so duplicated the hint in the normal connect flow, and the stanza
+    // already shows the real sandbox name on supported OpenShell (it reads
+    // OPENSHELL_SANDBOX) and covers every other interactive entry path too.
     console.log("");
   }
   const result = spawnSync(getOpenshellBinary(), ["sandbox", "connect", sandboxName], {
