@@ -22,6 +22,8 @@ const STRUCTURED_CREDENTIAL_KEY_PATTERN =
 // Keep bare/braced names bounded to provider credentials used by NemoClaw or
 // OpenClaw's ambient AWS auth. An explicitly prefixed secretref-env marker can
 // name a custom environment variable because the prefix carries provenance.
+// Re-audit this allowlist whenever OpenClaw changes its models.json credential
+// encoding; remove it once snapshots use only typed secret-reference markers.
 const MODELS_JSON_CREDENTIAL_ENV_REFERENCES: ReadonlySet<string> = new Set([
   "ANTHROPIC_API_KEY",
   "AWS_ACCESS_KEY_ID",

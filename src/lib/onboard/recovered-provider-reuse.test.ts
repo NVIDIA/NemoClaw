@@ -148,6 +148,22 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
   });
 
+  it.each([
+    ["missing target endpoint", null],
+    ["valid target endpoint", "https://inference.example/v1"],
+  ])("rejects an empty sibling endpoint with a %s", (_label, recovered) => {
+    expect(
+      assessRecoveredProviderCredentialReuse({
+        ...completeRecovery,
+        endpointIdentity: {
+          ...completeRecovery.endpointIdentity,
+          recovered,
+          otherRecorded: [""],
+        },
+      }),
+    ).toMatchObject({ kind: "reject", reason: expect.stringContaining("endpoint identity") });
+  });
+
   it("rejects provider-incompatible APIs and conflicting recorded custom endpoints", () => {
     expect(
       assessRecoveredProviderCredentialReuse({

@@ -392,38 +392,49 @@ async function restoreProxyEnv(
 }
 
 async function waitForRecoveryWarning(
-  gateway: {
-    expectLogContains(
-      instance: NemoClawInstance,
-      pattern: RegExp,
+  sandbox: {
+    exec(
+      name: string,
+      command: string[],
       options?: Record<string, unknown>,
-    ): Promise<void>;
-    expectLogDoesNotContain(
-      instance: NemoClawInstance,
-      pattern: RegExp,
-      options?: Record<string, unknown>,
-    ): Promise<void>;
+    ): Promise<{ exitCode: number | null; stdout: string; stderr: string }>;
   },
   instance: NemoClawInstance,
 ): Promise<void> {
-  let lastError: unknown;
+  const warning = /\[gateway-recovery\] WARNING: .*restoring library guards from packaged preloads/;
+  const unguarded = /gateway launching without library guards/;
+  let lastDiagnostics = "";
+  let lastExitCode: number | null = null;
+
   for (let attempt = 1; attempt <= 5; attempt += 1) {
-    try {
-      await gateway.expectLogContains(
-        instance,
-        /\[gateway-recovery\] WARNING: .*restoring library guards from packaged preloads/,
-        { lines: 200 },
-      );
-      await gateway.expectLogDoesNotContain(instance, /gateway launching without library guards/, {
-        lines: 200,
-      });
+    const diagnostics = await sandbox.exec(
+      instance.sandboxName,
+      [
+        "sh",
+        "-c",
+        "printf '%s\\n' '== entrypoint log =='; " +
+          "tail -n 300 /tmp/nemoclaw-start.log 2>&1 || true; " +
+          "printf '%s\\n' '== gateway log =='; " +
+          "tail -n 300 /tmp/gateway.log 2>&1 || true",
+      ],
+      {
+        artifactName: `missing-proxy-env-recovery-diagnostics-${attempt}`,
+        env: probeEnv(),
+        timeoutMs: 30_000,
+      },
+    );
+    lastExitCode = diagnostics.exitCode;
+    lastDiagnostics = `${diagnostics.stdout}\n${diagnostics.stderr}`;
+    if (diagnostics.exitCode === 0 && warning.test(lastDiagnostics)) {
+      expect(lastDiagnostics).not.toMatch(unguarded);
       return;
-    } catch (error) {
-      lastError = error;
-      await sleep(3_000);
     }
+    await sleep(3_000);
   }
-  throw lastError;
+
+  throw new Error(
+    `gateway recovery diagnostics (exit ${lastExitCode ?? "null"}) did not contain ${warning.source}:\n${lastDiagnostics}`,
+  );
 }
 
 async function sampleGatewayStability(
@@ -540,7 +551,7 @@ test("issue-2478: gateway recovery preserves guard chain and avoids crash loop",
     "missing-proxy-env-kill-gateway-tree",
   );
   await runProbeOnly(host, instance.sandboxName, "missing-proxy-env-connect-probe-only");
-  await waitForRecoveryWarning(gateway, instance);
+  await waitForRecoveryWarning(sandbox, instance);
   const negativePid = await waitForGatewayPid(gateway, instance, 45_000);
   expect(negativePid, "missing proxy-env warning path should still respawn gateway").not.toBeNull();
   await gateway.expectGuardChainActive(instance);

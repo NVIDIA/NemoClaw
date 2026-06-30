@@ -666,10 +666,14 @@ describe("OpenClaw npm integrity pins", () => {
     expect(fixtureBase.calls).toContain(`openclaw-${LEGACY_REBUILD_OPENCLAW_VERSION}.tgz`);
   });
 
-  it("guards production Docker build args from the legacy OpenClaw fixture flag", () => {
+  it("guards production Docker build args from legacy OpenClaw fixture inputs", () => {
     expect(runProductionBuildArgGuard(["--build-arg", "BASE_IMAGE=base"]).status).toBe(0);
     expect(
       runProductionBuildArgGuard(["--build-arg=NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0"]).status,
+    ).toBe(0);
+    expect(
+      runProductionBuildArgGuard(["--build-arg", `OPENCLAW_VERSION=${PINNED_OPENCLAW_VERSION}`])
+        .status,
     ).toBe(0);
 
     for (const args of [
@@ -687,6 +691,29 @@ describe("OpenClaw npm integrity pins", () => {
     });
     expect(envResult.status).toBe(1);
     expect(envResult.stderr).toContain("production Docker image build args");
+
+    for (const args of [
+      ["--build-arg", `OPENCLAW_VERSION=${LEGACY_REBUILD_OPENCLAW_VERSION}`],
+      ["--build-arg=OPENCLAW_VERSION=2026.4.24"],
+      ["OPENCLAW_2026_3_11_INTEGRITY=sha512-fixture"],
+      ["--build-arg=OPENCLAW_2026_4_24_TARBALL=https://fixture.invalid/package.tgz"],
+    ]) {
+      const result = runProductionBuildArgGuard(args);
+      expect(result.status, args.join(" ")).toBe(1);
+      expect(result.stderr).toContain("not allowed in production image builds");
+    }
+
+    const legacyEnvCases: ReadonlyArray<Record<string, string>> = [
+      { OPENCLAW_VERSION: LEGACY_REBUILD_OPENCLAW_VERSION },
+      { OPENCLAW_VERSION: "2026.4.24" },
+      { OPENCLAW_2026_3_11_TARBALL: LEGACY_REBUILD_OPENCLAW_TARBALL },
+      { OPENCLAW_2026_4_24_INTEGRITY: LEGACY_GATEWAY_UPGRADE_OPENCLAW_INTEGRITY },
+    ];
+    for (const env of legacyEnvCases) {
+      const result = runProductionBuildArgGuard([], env);
+      expect(result.status, JSON.stringify(env)).toBe(1);
+      expect(result.stderr).toContain("not allowed in production image builds");
+    }
   });
 
   it("fails closed before npm install when the registry integrity drifts", () => {

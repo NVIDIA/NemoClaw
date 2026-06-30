@@ -201,9 +201,9 @@ ARG OPENCLAW_2026_6_9_INTEGRITY=sha512-y0PGUdE87S8QtQXABPDL0CjNKhH3q/R1h9/WiRQkh
 ARG OPENCLAW_2026_6_9_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.6.9.tgz
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
-# behavior. Production workflows must reject
-# NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 before docker build.
-# Post-tag retirement criteria are tracked in #5896.
+# behavior. Production workflows reject the fixture flag, both legacy version
+# values, and these four pin overrides before docker build. Only explicit
+# fixture paths may select them; retirement is tracked in #5896 section 9.
 ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
 ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
 ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
@@ -219,6 +219,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Install OpenClaw CLI + PyYAML.
 # .openclaw is now writable by default, so exec-approvals writes to
 # ~/.openclaw/exec-approvals.json natively — no sed patch needed.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
 # hadolint ignore=DL3016
 RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/blueprint.yaml \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \

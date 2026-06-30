@@ -45,9 +45,9 @@ ARG OPENCLAW_DIAGNOSTICS_OTEL_2026_6_9_INTEGRITY=sha512-jU2q4L6L3qdZZDEIDXrWgwCW
 ARG OPENCLAW_BRAVE_PLUGIN_2026_6_9_INTEGRITY=sha512-8HawXB5ylo+vkvkmDJZAE9uhOtm0l9YtzrVqJdM4UqwXeF4uGAkVEOrR3Hxy0sI3Moi5ZBzq2Jx/K5ZQKdiWjQ==
 # E2E-only legacy fixture pins used by stale-sandbox/rebuild tests that
 # intentionally build an older OpenClaw base image before proving upgrade
-# behavior. Production workflows must reject
-# NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1 before docker build.
-# Post-tag retirement criteria are tracked in #5896.
+# behavior. Production workflows reject the fixture flag, both legacy version
+# values, and these four pin overrides before docker build. Only explicit
+# fixture paths may select them; retirement is tracked in #5896 section 9.
 ARG NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=0
 ARG OPENCLAW_2026_3_11_INTEGRITY=sha512-bxwiBmHPakwfpY5tqC9lrV5TCu5PKf0c1bHNc3nhrb+pqKcPEWV4zOjDVFLQUHr98ihgWA+3pacy4b3LQ8wduQ==
 ARG OPENCLAW_2026_3_11_TARBALL=https://registry.npmjs.org/openclaw/-/openclaw-2026.3.11.tgz
@@ -138,6 +138,8 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
 # Pack the already-reviewed tarball URL after verifying current registry
 # metadata. Re-resolving package@version here would introduce another mutable
 # registry selection between the reviewed identity check and installation.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
 #
 # hadolint ignore=DL3059,DL4006,DL3016
 RUN set -eu; \
@@ -188,6 +190,8 @@ RUN set -eu; \
 #
 # OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
 # blueprint minimum, which also supports the legacy direct-blueprint image path.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
 # hadolint ignore=DL3059,DL4006,DL3016
 RUN set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
@@ -834,6 +838,8 @@ USER sandbox
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /scripts/generate-openclaw-config.mts
 
 # Install non-messaging OpenClaw plugins that need to match the runtime.
+# Reviewed-archive invariants (#5896): registry SRI, packed-byte SRI, contained
+# basename in a fresh directory, local-archive-only install, and cleanup.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
     verify_openclaw_plugin_integrity() { \

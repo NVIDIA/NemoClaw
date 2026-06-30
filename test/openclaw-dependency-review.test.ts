@@ -240,6 +240,9 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("route-provenance additions remain with their");
     expect(review).toContain("`src/lib/state/sandbox.ts` is 100 lines smaller");
     expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
+    expect(review).toContain("Deferred #5896 Archive Consolidation Contract");
+    expect(review).toContain("issue #5896 section 2");
+    expect(review).toContain("issue #5896 section 9");
     expect(review).toContain("direct source- and target-traversal vectors");
     expect(review).toContain("Live gateway display output is treated as untrusted text");
     expect(review).toContain("gateway-provider-metadata.ts");
@@ -252,7 +255,7 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
   });
 
-  it("keeps Dockerfile installs archive-bound and OpenClaw build arg explicit", () => {
+  it("keeps every reviewed archive boundary on the deferred invariant matrix (#5896)", () => {
     const result = spawnSync(
       "bash",
       [
@@ -261,6 +264,9 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
 set -euo pipefail
 
 messaging_build_applier=${JSON.stringify(MESSAGING_BUILD_APPLIER)}
+
+boundary_marker_count="$(grep -hF 'Reviewed-archive invariants (#5896):' Dockerfile Dockerfile.base "$messaging_build_applier" | wc -l | tr -d ' ')"
+test "$boundary_marker_count" -eq 5
 
 check_contains() {
   haystack="$1"
@@ -280,6 +286,8 @@ check_contains "$codex_acp_block" 'npm pack "$pack_spec" --pack-destination "$pa
 check_contains "$codex_acp_block" 'CODEX_ACP_PACK_PATH="$(pack_reviewed_npm_tarball "$CODEX_ACP_TARBALL" "$CODEX_ACP_0_11_1_INTEGRITY" "$CODEX_ACP_PACK_DIR" "$CODEX_ACP_SPEC")"' "codex-acp pack path"
 check_contains "$codex_acp_block" '"$CODEX_ACP_PACK_PATH"' "codex-acp local install path"
 check_contains "$codex_acp_block" 'reported unsafe archive filename' "codex-acp unsafe filename guard"
+check_contains "$codex_acp_block" 'CODEX_ACP_PACK_DIR="$(mktemp -d)"' "codex-acp fresh pack directory"
+check_contains "$codex_acp_block" 'rm -rf "$CODEX_ACP_PACK_DIR"' "codex-acp cleanup"
 
 for dockerfile in Dockerfile Dockerfile.base; do
   case "$dockerfile" in
@@ -293,6 +301,8 @@ for dockerfile in Dockerfile Dockerfile.base; do
   check_contains "$openclaw_block" 'OPENCLAW_PACK_PATH="$(pack_reviewed_npm_tarball "$EXPECTED_TARBALL" "$EXPECTED_INTEGRITY" "$OPENCLAW_PACK_DIR"' "$dockerfile pack path"
   check_contains "$openclaw_block" '"$OPENCLAW_PACK_PATH"' "$dockerfile local install path"
   check_contains "$openclaw_block" 'reported unsafe archive filename' "$dockerfile unsafe filename guard"
+  check_contains "$openclaw_block" 'OPENCLAW_PACK_DIR="$(mktemp -d)"' "$dockerfile fresh pack directory"
+  check_contains "$openclaw_block" 'rm -rf "$OPENCLAW_PACK_DIR"' "$dockerfile cleanup"
 done
 
 optional_plugin_block="$(sed -n '/# Install non-messaging OpenClaw plugins that need to match the runtime./,/^RUN OPENCLAW_VERSION=/p' Dockerfile)"
@@ -301,10 +311,15 @@ check_contains "$optional_plugin_block" 'npm view "$plugin_spec" dist.tarball' "
 check_contains "$optional_plugin_block" 'npm pack "$expected_tarball" --pack-destination "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR" --json' "optional plugin pack"
 check_contains "$optional_plugin_block" 'openclaw plugins install "$plugin_archive" --pin' "optional plugin archive install"
 check_contains "$optional_plugin_block" 'reported unsafe archive filename' "optional plugin unsafe filename guard"
+check_contains "$optional_plugin_block" 'NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR="$(mktemp -d)"' "optional plugin fresh pack directory"
+check_contains "$optional_plugin_block" 'rm -rf "$NEMOCLAW_OPENCLAW_PLUGIN_PACK_DIR"' "optional plugin cleanup"
 
 	grep -Fq 'spawnSync("npm", ["pack", packageSpec, "--pack-destination", rootDir, "--json"]' "$messaging_build_applier"
 	grep -Fq '["openclaw", "plugins", "install", packed.archivePath, ...(install.pin ? ["--pin"] : [])]' "$messaging_build_applier"
+	grep -Fq 'npmViewString(install.npmPackageSpec, "dist.integrity", env)' "$messaging_build_applier"
 	grep -Fq 'downloaded tarball integrity mismatch' "$messaging_build_applier"
+	grep -Fq 'mkdtempSync(join(tmpdir(), "nemoclaw-openclaw-plugin-pack-"))' "$messaging_build_applier"
+	grep -Fq 'rmSync(rootDir, { recursive: true, force: true })' "$messaging_build_applier"
 	grep -Fq 'resolveNpmPackArchivePath(packageSpec, rootDir, filename)' "$messaging_build_applier"
 	grep -Fq 'reported unsafe archive filename' "$messaging_build_applier"
 	issue_4434_patch=${JSON.stringify(ISSUE_4434_PATCH)}
@@ -379,6 +394,19 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     ];
     expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(7);
     expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+
+    const productionWorkflowContract = JSON.stringify({ prSelfHosted, sandboxImages, baseImages });
+    for (const fixtureSelector of [
+      "NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1",
+      "OPENCLAW_VERSION=2026.3.11",
+      "OPENCLAW_VERSION=2026.4.24",
+      "OPENCLAW_2026_3_11_INTEGRITY",
+      "OPENCLAW_2026_3_11_TARBALL",
+      "OPENCLAW_2026_4_24_INTEGRITY",
+      "OPENCLAW_2026_4_24_TARBALL",
+    ]) {
+      expect(productionWorkflowContract).not.toContain(fixtureSelector);
+    }
   });
 
   it("runs and gates the real patched-distribution harness only from trusted main code", () => {

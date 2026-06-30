@@ -1138,6 +1138,9 @@ function resolveNpmPackArchivePath(packageSpec: string, rootDir: string, filenam
   return archivePath;
 }
 
+// Reviewed-archive invariants (#5896): registry SRI at the caller, packed-byte
+// SRI, a contained basename in a fresh directory, local-archive-only install,
+// and cleanup. This Node primitive is shared by all messaging plugin installs.
 function packNpmArchive(
   packageSpec: string,
   expectedIntegrity: string,

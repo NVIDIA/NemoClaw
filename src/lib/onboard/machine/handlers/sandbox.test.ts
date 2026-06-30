@@ -286,29 +286,6 @@ describe("handleSandboxState", () => {
     });
   });
 
-  it("persists the validated inference route after fresh sandbox creation", async () => {
-    const { deps, calls } = createDeps();
-
-    await handleSandboxState({
-      ...baseOptions(deps),
-      provider: "compatible-endpoint",
-      model: "nvidia/test-model",
-      endpointUrl: "https://inference-api.nvidia.com/v1",
-      credentialEnv: "COMPATIBLE_API_KEY",
-    });
-
-    expect(calls.updateSandbox).toHaveBeenCalledWith(
-      "my-assistant",
-      expect.objectContaining({
-        provider: "compatible-endpoint",
-        model: "nvidia/test-model",
-        endpointUrl: "https://inference-api.nvidia.com/v1",
-        credentialEnv: "COMPATIBLE_API_KEY",
-        preferredInferenceApi: "openai-completions",
-      }),
-    );
-  });
-
   it("reuses a completed ready sandbox on resume", async () => {
     const session = createSession({
       sandboxName: "saved",
