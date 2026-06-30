@@ -56,7 +56,7 @@ function lineReportsProviderNotFound(line: string, requestedProvider: string): b
       const hasProviderLabel =
         providerIndex >= 0 &&
         prefix.slice(providerIndex) === "provider" &&
-        !isWordCharacter(prefix[providerIndex - 1]);
+        (providerIndex === 0 || !isWordCharacter(prefix[providerIndex - 1]));
       if (hasProviderLabel) {
         const beforeProvider = prefix.slice(0, providerIndex);
         const afterProvider = line.slice(quotedIndex + quotedProvider.length).trimStart();
@@ -96,6 +96,8 @@ export function buildOpenshellInferenceSetFailureMessage(args: {
   stderr: string;
   stdout: string;
 }): string {
+  // `redact()` parses URL userinfo and sensitive query parameters; `redactFull()`
+  // then fully masks recognized tokens. Neither pass alone covers both shapes.
   const detail = compactText(redactFull(redact(`${args.stderr}\n${args.stdout}`))).slice(
     0,
     FAILURE_DETAIL_LIMIT,

@@ -3,6 +3,10 @@
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import { parseGatewayProviderNames } from "../credentials/provider-list";
+import {
+  buildOpenshellInferenceSetFailureMessage,
+  openshellReportsProviderNotFound,
+} from "./inference-set-error";
 
 const OPEN_SHELL_DIAGNOSTIC_MAX_BUFFER = 64 * 1024;
 const OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS = 5_000;
@@ -28,9 +32,31 @@ export function queryRegisteredGatewayProviders(
       return parseGatewayProviderNames(result.output).credentialNames;
     }
   } catch {
-    // #5924: diagnostics must never replace or expose details from the original
-    // route failure, so every provider-query failure uses the same static fallback.
+    // #5924: intentionally treat every thrown query or parsing error identically.
+    // Diagnostics must never replace the original route failure or log an exception
+    // that may contain credentials, so the static warning below is the only signal.
   }
   deps.log("  ⚠ Could not query registered OpenShell providers while formatting the failure.");
   return undefined;
+}
+
+export function buildInferenceSetFailure(
+  setResult: CaptureOpenshellResult,
+  provider: string,
+  deps: ProviderDiagnosticDeps,
+): { exitCode: number; message: string } {
+  const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
+  const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
+  const providerNotFound = openshellReportsProviderNotFound(`${stderr}\n${stdout}`, provider);
+  const exitCode = setResult.status ?? 1;
+  return {
+    exitCode,
+    message: buildOpenshellInferenceSetFailureMessage({
+      exitCode,
+      providerNotFound,
+      registeredProviders: providerNotFound ? queryRegisteredGatewayProviders(deps) : undefined,
+      stderr,
+      stdout,
+    }),
+  };
 }

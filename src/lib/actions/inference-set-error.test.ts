@@ -16,6 +16,9 @@ describe("inference set OpenShell failure diagnostics", () => {
         "openai-api",
       ),
     ).toBe(true);
+    expect(openshellReportsProviderNotFound("provider 'openai-api' not found", "openai-api")).toBe(
+      true,
+    );
     expect(
       openshellReportsProviderNotFound(
         "error: not found: provider `openai-api` is unavailable",

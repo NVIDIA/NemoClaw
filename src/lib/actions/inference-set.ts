@@ -29,11 +29,7 @@ import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
-import {
-  buildOpenshellInferenceSetFailureMessage,
-  openshellReportsProviderNotFound,
-} from "./inference-set-error";
-import { queryRegisteredGatewayProviders } from "./inference-set-provider-diagnostics";
+import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
 
 export interface InferenceSetOptions {
   provider: string;
@@ -624,24 +620,8 @@ export async function runInferenceSet(
     },
   );
   if (setResult.status !== 0) {
-    const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
-    const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
-    const combined = `${stderr}\n${stdout}`;
-    const exitCode = setResult.status ?? 1;
-    const providerNotFound = openshellReportsProviderNotFound(combined, provider);
-    const registeredProviders = providerNotFound
-      ? queryRegisteredGatewayProviders(deps)
-      : undefined;
-    throw new InferenceSetError(
-      buildOpenshellInferenceSetFailureMessage({
-        exitCode,
-        providerNotFound,
-        registeredProviders,
-        stderr,
-        stdout,
-      }),
-      exitCode,
-    );
+    const failure = buildInferenceSetFailure(setResult, provider, deps);
+    throw new InferenceSetError(failure.message, failure.exitCode);
   }
 
   // Write minimal registry state before any sandbox-facing config read so the
