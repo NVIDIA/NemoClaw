@@ -14,6 +14,7 @@ import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelManifest } from "../../manifest/types.ts";
+import { isProviderPlaceholderForEnvKey } from "../../provider-placeholders.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
@@ -1037,21 +1038,6 @@ function getJsonPath(root: JsonObject, pathValue: string): unknown {
     cursor = cursor[segment];
   }
   return cursor;
-}
-
-function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {
-  const openShellPrefix = "openshell:resolve:env:";
-  if (value.startsWith(openShellPrefix)) {
-    return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
-  }
-  const scopedMatch = value.match(/^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/);
-  return scopedMatch ? placeholderSuffixMatchesEnvKey(scopedMatch[2] as string, envKey) : false;
-}
-
-function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
-  if (suffix === envKey) return true;
-  const revisionMatch = suffix.match(/^v[0-9]+_(.+)$/);
-  return revisionMatch?.[1] === envKey;
 }
 
 function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerializableValue): void {

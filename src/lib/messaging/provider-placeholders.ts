@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
-const OPENSHELL_SCOPED_PLACEHOLDER_RE = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/;
+// Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+const SLACK_SCOPED_PLACEHOLDER_RE = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/;
 const PLACEHOLDER_CONTROL_CHAR_RE = /[\u0000\r\n\t]/;
 
 export function normalizeProviderPlaceholderForEnvKey(
@@ -18,7 +19,7 @@ export function normalizeProviderPlaceholderForEnvKey(
       ? `${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${envKey}`
       : null;
   }
-  const scopedMatch = value.match(OPENSHELL_SCOPED_PLACEHOLDER_RE);
+  const scopedMatch = value.match(SLACK_SCOPED_PLACEHOLDER_RE);
   const scopedPrefix = scopedMatch?.[1];
   const scopedSuffix = scopedMatch?.[2];
   if (!scopedPrefix || !scopedSuffix || !placeholderSuffixMatchesEnvKey(scopedSuffix, envKey)) {

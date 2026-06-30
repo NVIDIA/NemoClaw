@@ -82,6 +82,9 @@ describe("sandbox build context staging", () => {
       path.join("src", "lib", "messaging", "applier", "build", "messaging-build-applier.mts"),
     );
     writeFixture(
+      path.join("src", "lib", "messaging", "applier", "build", "validate-runtime-plan.mts"),
+    );
+    writeFixture(
       path.join("src", "lib", "messaging", "channels", "fixture", "hooks", "example.ts"),
     );
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
@@ -279,6 +282,19 @@ describe("sandbox build context staging", () => {
             "applier",
             "build",
             "messaging-build-applier.mts",
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            buildCtx,
+            "src",
+            "lib",
+            "messaging",
+            "applier",
+            "build",
+            "validate-runtime-plan.mts",
           ),
         ),
       ).toBe(true);

@@ -9,38 +9,16 @@ import type {
   MessagingAgentId,
 } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
+import {
+  createMessagingConfigCompatEnvKeyRemovalPolicy,
+  type MessagingConfigCompatEnvKeyRemovalPolicy,
+  selectMessagingConfigCompatEnvKeys,
+} from "./compat-removal-policy";
 
 export interface MessagingManifestMetadataOptions {
   readonly agent?: MessagingAgentId;
   readonly manifests?: readonly ChannelManifest[];
 }
-
-const CONFIG_COMPAT_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
-  TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
-  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
-  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
-  MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
-  MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
-  TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
-  MSTEAMS_PORT: ["TEAMS_PORT"],
-};
-
-const CONFIG_COMPAT_ENV_KEY_REMOVAL_POLICY = {
-  enforcement: "manual",
-  reviewCadence: "release",
-  releaseWindow: "one-full-release-after-sources-clear",
-  sourceBoundaries: [
-    "test/e2e/live/messaging-providers-helpers.ts",
-    "test/e2e/live/hermes-discord.test.ts",
-    "test/e2e/live/channels-stop-start-helpers.ts",
-    ".github/workflows/e2e.yaml",
-    "docs/manage-sandboxes/messaging-channels.mdx",
-    "docs/reference/troubleshooting.mdx",
-    "NVIDIA internal QA automation that exports legacy messaging env names",
-  ],
-  removalCondition:
-    "Remove manually after every source boundary stops exporting these legacy names for at least one full release.",
-} as const;
 
 export interface MessagingCredentialMetadata {
   readonly channelId: string;
@@ -205,26 +183,13 @@ export function listMessagingConfigEnvKeys(
 export function getMessagingConfigCompatEnvKeys(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
-  const configKeys = new Set(listMessagingConfigEnvKeys(options));
-  return Object.fromEntries(
-    Object.entries(CONFIG_COMPAT_ENV_KEYS).filter(([canonical]) => configKeys.has(canonical)),
-  );
+  return selectMessagingConfigCompatEnvKeys(listMessagingConfigEnvKeys(options));
 }
 
 export function getMessagingConfigCompatEnvKeyRemovalPolicy(
   options: MessagingManifestMetadataOptions = {},
-): Readonly<{
-  enforcement: string;
-  reviewCadence: string;
-  releaseWindow: string;
-  sourceBoundaries: readonly string[];
-  removalCondition: string;
-  canonicalKeys: readonly string[];
-}> {
-  return {
-    ...CONFIG_COMPAT_ENV_KEY_REMOVAL_POLICY,
-    canonicalKeys: Object.keys(getMessagingConfigCompatEnvKeys(options)),
-  };
+): MessagingConfigCompatEnvKeyRemovalPolicy {
+  return createMessagingConfigCompatEnvKeyRemovalPolicy(getMessagingConfigCompatEnvKeys(options));
 }
 
 export function listMessagingPolicyPresetMetadata(

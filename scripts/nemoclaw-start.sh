@@ -1194,7 +1194,8 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
-scoped_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+slack_scoped_placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 env_key_re = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 revision_re = re.compile(r"^v[0-9]+_")
 keys = set()
@@ -1211,7 +1212,7 @@ def walk(value):
     if isinstance(value, str):
         if value.startswith(prefix):
             add_key(value[len(prefix) :])
-        alias_match = scoped_alias_re.fullmatch(value)
+        alias_match = slack_scoped_placeholder_re.fullmatch(value)
         if alias_match:
             add_key(alias_match.group(2))
         return
@@ -1363,7 +1364,8 @@ import sys
 
 config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
-scoped_alias_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+slack_scoped_placeholder_re = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
 warnings = []
@@ -1447,7 +1449,7 @@ def walk_for_warnings(value, path):
                         f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
                     )
                 break
-        alias_match = scoped_alias_re.fullmatch(value)
+        alias_match = slack_scoped_placeholder_re.fullmatch(value)
         if alias_match:
             alias_env_key = alias_match.group(2)
             token_scheme = alias_match.group(1) + "-"
@@ -1531,7 +1533,8 @@ import sys
 
 EMPTY = {"credentialBindings": [], "nodePreloads": [], "secretScans": []}
 PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+SLACK_SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 PRELOAD_SOURCE_PREFIX = "/usr/local/lib/nemoclaw/preloads/"
 PRELOAD_TARGET_PREFIX = "/tmp/nemoclaw-"
 ENV_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
@@ -1574,7 +1577,7 @@ def provider_placeholder_matches_env_key(value, env_key):
         return False
     if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
         return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
-    scoped_match = SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
+    scoped_match = SLACK_SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
     if not scoped_match:
         return False
     return placeholder_suffix_matches_env_key(scoped_match.group(2), env_key)
@@ -1762,7 +1765,8 @@ import re
 import sys
 
 PROVIDER_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+SLACK_SCOPED_PROVIDER_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 
 
 def placeholder_suffix_matches_env_key(suffix, env_key):
@@ -1777,7 +1781,7 @@ def provider_placeholder_matches_env_key(value, env_key):
         return False
     if value.startswith(PROVIDER_PLACEHOLDER_PREFIX):
         return placeholder_suffix_matches_env_key(value[len(PROVIDER_PLACEHOLDER_PREFIX) :], env_key)
-    scoped_match = SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
+    scoped_match = SLACK_SCOPED_PROVIDER_PLACEHOLDER_RE.fullmatch(value)
     if not scoped_match:
         return False
     return placeholder_suffix_matches_env_key(scoped_match.group(2), env_key)

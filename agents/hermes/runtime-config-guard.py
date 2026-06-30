@@ -23,8 +23,9 @@ from dataclasses import dataclass
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SCOPED_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
-SCOPED_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
+SLACK_SCOPED_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
+# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
+SLACK_SCOPED_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
 PLACEHOLDER_CONTROL_CHARS = "\x00\r\n\t"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
 LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_CONDITION = (
@@ -454,7 +455,7 @@ def _normalize_provider_placeholder_for_env_key(
             reject(f"is not a provider placeholder for {env_key}")
             return None
         return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
-    scoped_match = SCOPED_PLACEHOLDER_RE.fullmatch(value)
+    scoped_match = SLACK_SCOPED_PLACEHOLDER_RE.fullmatch(value)
     if scoped_match is None:
         reject(f"is not a provider placeholder for {env_key}")
         return None
@@ -462,7 +463,7 @@ def _normalize_provider_placeholder_for_env_key(
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
         reject(f"is not a provider placeholder for {env_key}")
         return None
-    return f"{scoped_match.group(1)}{SCOPED_PLACEHOLDER_MARKER}{env_key}"
+    return f"{scoped_match.group(1)}{SLACK_SCOPED_PLACEHOLDER_MARKER}{env_key}"
 
 
 def _validate_runtime_plan_env_key(value: object, label: str) -> str:

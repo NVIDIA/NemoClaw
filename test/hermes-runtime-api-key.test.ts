@@ -12,6 +12,16 @@ import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const HERMES_DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
+const VALIDATE_RUNTIME_PLAN = path.join(
+  import.meta.dirname,
+  "..",
+  "src",
+  "lib",
+  "messaging",
+  "applier",
+  "build",
+  "validate-runtime-plan.mts",
+);
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
   "..",
@@ -265,10 +275,11 @@ function runHermesDockerfileRuntimePlanGuard(runtimePlan: unknown) {
       "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
       `node --experimental-strip-types ${shellQuote(applierPath)}`,
     )
-    .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
-    // Unit fixtures run as the invoking user, not Docker root; keep the
-    // executable reduced-shape guard intact while bypassing only image-owner metadata.
-    .replace("st.uid !== 0 || st.gid !== 0 || ", "");
+    .replace(
+      'node --experimental-strip-types /src/lib/messaging/applier/build/validate-runtime-plan.mts "$runtime_plan"',
+      `node --experimental-strip-types ${shellQuote(VALIDATE_RUNTIME_PLAN)} --allow-current-user-owner "$runtime_plan"`,
+    )
+    .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
 
   try {
     fs.mkdirSync(runtimeDir, { recursive: true });
