@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -16,7 +13,12 @@ import {
 
 type CiWorkflow = {
   on?: { pull_request?: { paths?: string[] } };
+  permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
+};
+
+type InstallerHashAction = CompositeAction & {
+  inputs?: Record<string, { required?: boolean }>;
 };
 
 type CodebaseGrowthGuardrailsWorkflow = {
@@ -137,67 +139,13 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
   });
 }
 
-function runInstallerChangeDetector(detectorScript: string, changedPath: string): string {
-  const repo = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-detector-"));
-  const output = path.join(repo, "github-output.txt");
-  const target = path.join(repo, changedPath);
-  try {
-    execFileSync("git", ["init", "-q"], { cwd: repo });
-    mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, "before\n");
-    execFileSync("git", ["add", "."], { cwd: repo });
-    execFileSync(
-      "git",
-      [
-        "-c",
-        "user.name=NemoClaw CI",
-        "-c",
-        "user.email=ci@example.invalid",
-        "commit",
-        "-qm",
-        "base",
-      ],
-      { cwd: repo },
-    );
-    const baseSha = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: repo,
-      encoding: "utf8",
-    }).trim();
-    writeFileSync(target, "after\n");
-    execFileSync("git", ["add", "."], { cwd: repo });
-    execFileSync(
-      "git",
-      [
-        "-c",
-        "user.name=NemoClaw CI",
-        "-c",
-        "user.email=ci@example.invalid",
-        "commit",
-        "-qm",
-        "head",
-      ],
-      { cwd: repo },
-    );
-    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
-      cwd: repo,
-      encoding: "utf8",
-    }).trim();
-    const result = spawnSync("bash", ["-c", detectorScript], {
-      cwd: repo,
-      encoding: "utf8",
-      env: { ...process.env, BASE_SHA: baseSha, GITHUB_OUTPUT: output, HEAD_SHA: headSha },
-    });
-    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
-    return readFileSync(output, "utf8").trim();
-  } finally {
-    rmSync(repo, { recursive: true, force: true });
-  }
-}
-
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const installerHashAction = readYaml<InstallerHashAction>(
+    ".github/actions/ci-installer-hash-check/action.yaml",
+  );
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
@@ -217,57 +165,102 @@ describe("pull request and main workflow contracts", () => {
     ".github/actions/resolve-hermes-base-image/action.yaml",
   );
 
-  it("keeps installer hash verification credential-free", () => {
+  it("runs pull request installer verification from immutable trusted code", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
-    const checkout = requiredWorkflowStep(job, "Checkout");
-    const changeDetector = requiredWorkflowStep(job, "Detect installer-affecting changes");
-    const hashCheck = requiredWorkflowStep(job, "Verify installer hashes are current");
+    const prCheckout = requiredWorkflowStep(job, "Checkout pull request head");
+    const baseCheckout = requiredWorkflowStep(job, "Checkout base-trusted installer hash action");
+    const trustedActionProbe = requiredWorkflowStep(
+      job,
+      "Detect base-trusted installer hash action",
+    );
+    const bootstrapCheckout = requiredWorkflowStep(
+      job,
+      "Checkout immutable installer hash bootstrap",
+    );
+    const baseVerification = requiredWorkflowStep(
+      job,
+      "Verify pull request installer hashes from base-trusted code",
+    );
+    const bootstrapVerification = requiredWorkflowStep(
+      job,
+      "Verify pull request installer hashes from immutable bootstrap",
+    );
+    const trustedEventVerification = requiredWorkflowStep(
+      job,
+      "Verify trusted event installer hashes",
+    );
 
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
-    expect(checkout.with?.["persist-credentials"]).toBe(false);
-    expect(checkout.with?.["fetch-depth"]).toBe(0);
-    expect(changeDetector.id).toBe("installer-changes");
-    expect(changeDetector.if).toBe("github.event_name == 'pull_request'");
-    expect(changeDetector.env).toEqual({
-      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
-      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
-    });
-    expect(changeDetector.run).toContain('git cat-file -e "${BASE_SHA}^{commit}"');
-    expect(changeDetector.run).toContain(
-      'git diff --quiet --no-ext-diff --no-renames "$BASE_SHA" "$HEAD_SHA" --',
+    expect(installerHashWorkflow.permissions).toEqual({ contents: "read" });
+    expect(prCheckout.with?.repository).toBe(
+      "${{ github.event.pull_request.head.repo.full_name }}",
     );
-    for (const installerPath of [
-      ".github/workflows/installer-hash-check.yaml",
-      "scripts/check-installer-hash.sh",
-      "scripts/brev-launchable-ci-cpu.sh",
-      "scripts/install-openshell.sh",
-      "scripts/install.sh",
-      "nemoclaw-blueprint/blueprint.yaml",
-      "src/lib/onboard/openshell-version.ts",
-      "src/lib/onboard/openshell-install.ts",
-      "test/brev-launchable-ci-cpu-checksum.test.ts",
-      "test/installer-hash-check.test.ts",
-    ]) {
-      expect(changeDetector.run).toContain(installerPath);
+    expect(prCheckout.with?.ref).toBe("${{ github.event.pull_request.head.sha }}");
+
+    for (const checkout of (job.steps ?? []).filter(
+      (step) => step.uses === trustedCheckoutAction,
+    )) {
+      expect(checkout.with?.["persist-credentials"], checkout.name).toBe(false);
     }
-    expect(hashCheck.env).toBeUndefined();
-    expect(hashCheck.if).toBe(
-      "github.event_name != 'pull_request' || steps.installer-changes.outputs.installer == 'true'",
+    expect(
+      (job.steps ?? [])
+        .filter((step) => step.uses?.startsWith("actions/checkout@"))
+        .every((step) => step.uses === trustedCheckoutAction),
+    ).toBe(true);
+
+    expect(baseCheckout.with?.ref).toBe("${{ github.event.pull_request.base.sha }}");
+    expect(baseCheckout.with?.path).toBe(".trusted-installer-hash");
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain(
+      ".github/actions/ci-installer-hash-check",
     );
-    expect(hashCheck.run).toBe("bash scripts/check-installer-hash.sh");
+    expect(baseCheckout.with?.["sparse-checkout"]).toContain("scripts/check-installer-hash.sh");
+
+    expect(trustedActionProbe.id).toBe("trusted-installer-hash");
+    expect(trustedActionProbe.run).toContain(
+      ".trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml",
+    );
+    expect(trustedActionProbe.run).not.toContain("scripts/check-installer-hash.sh");
+    expect(bootstrapCheckout.with?.ref).toBe("abaccacd476e7ad25388f03dec97418cbfc99839");
+    expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
+    expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
+
+    expect(baseVerification.uses).toBe(
+      "./.trusted-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+    expect(bootstrapVerification.uses).toBe(
+      "./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check",
+    );
+    expect(trustedEventVerification.uses).toBe("./.github/actions/ci-installer-hash-check");
+    expect(baseVerification.if).toBe(
+      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available == 'true'",
+    );
+    expect(bootstrapVerification.if).toBe(
+      "github.event_name == 'pull_request' && steps.trusted-installer-hash.outputs.available != 'true'",
+    );
+    expect(trustedEventVerification.if).toBe("github.event_name != 'pull_request'");
+    for (const verification of [
+      baseVerification,
+      bootstrapVerification,
+      trustedEventVerification,
+    ]) {
+      expect(verification.with?.["repo-root"], verification.name).toBe("${{ github.workspace }}");
+    }
+
+    expect(job.steps?.some((step) => step.name === "Detect installer-affecting changes")).toBe(
+      false,
+    );
+    expect(stepRuns(job).join("\n")).not.toContain("bash scripts/check-installer-hash.sh");
   });
 
-  it("sets the installer-change output only for installer-affecting diffs", () => {
-    const detectorScript = requiredWorkflowStep(
-      installerHashWorkflow.jobs["check-hash"],
-      "Detect installer-affecting changes",
-    ).run;
-    expect(detectorScript).toBeTypeOf("string");
-    expect(runInstallerChangeDetector(detectorScript ?? "", "scripts/install-openshell.sh")).toBe(
-      "installer=true",
-    );
-    expect(runInstallerChangeDetector(detectorScript ?? "", "docs/readme.mdx")).toBe(
-      "installer=false",
+  it("keeps the installer verifier inside the trusted composite action", () => {
+    const verification = requiredStep(installerHashAction, "Verify installer hashes are current");
+
+    expect(installerHashAction.inputs?.["repo-root"]?.required).toBe(true);
+    expect(verification.env).toEqual({
+      NEMOCLAW_INSTALLER_HASH_REPO_ROOT: "${{ inputs.repo-root }}",
+    });
+    expect(verification.run).toBe(
+      'bash "${{ github.action_path }}/../../../scripts/check-installer-hash.sh"',
     );
   });
 

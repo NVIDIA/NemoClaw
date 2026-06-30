@@ -174,7 +174,8 @@ function runFixture(
     | "duplicate-ollama-pin"
     | "failure"
     | "missing-ollama-pin"
-    | "partial",
+    | "partial"
+    | "pr-checker-bypass",
   openshellVersion?: string,
   trustedChecker = false,
 ) {
@@ -189,6 +190,12 @@ function runFixture(
   }
   const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
   const ollamaInstaller = path.join(fixtureRoot, "scripts", "install.sh");
+  if (mode === "pr-checker-bypass") {
+    fs.writeFileSync(
+      path.join(fixtureRoot, "scripts", "check-installer-hash.sh"),
+      "#!/usr/bin/env bash\necho PR_CHECKER_EXECUTED\nexit 0\n",
+    );
+  }
   if (mode === "missing-ollama-pin") {
     fs.writeFileSync(ollamaInstaller, "# missing required Ollama pin\n");
   } else if (mode === "duplicate-ollama-pin") {
@@ -197,7 +204,7 @@ function runFixture(
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   fs.writeFileSync(
     brevInstaller,
-    mode === "brev-mismatch"
+    mode === "brev-mismatch" || mode === "pr-checker-bypass"
       ? brevSource.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64))
       : brevSource,
   );
@@ -246,6 +253,17 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("expected exactly one OLLAMA_INSTALL_SHA256 pin");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("does not let a pull request replace the trusted verifier with a success stub", () => {
+    const result = runFixture("pr-checker-bypass", undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "STALE: Brev launchable openshell-x86_64-unknown-linux-musl.tar.gz",
+    );
+    expect(result.stdout).not.toContain("PR_CHECKER_EXECUTED");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

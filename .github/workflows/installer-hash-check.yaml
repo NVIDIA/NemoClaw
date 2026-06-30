@@ -3,8 +3,9 @@
 #
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
 # Checked: Ollama installer and OpenShell v0.0.72 release assets.
-# Reports the required check on every PR, verifies installer-affecting PRs, and
-# performs the full network-backed drift check on every push to main and weekly.
+# Reports the required network-backed drift check on every PR, every push to
+# main, and weekly. Pull requests execute checker code from their base commit;
+# the immutable bootstrap is used only for the PR that first adds that action.
 
 name: Security / Installer Hash Check
 
@@ -27,46 +28,86 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Checkout
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          # The event base SHA can predate the synthetic merge ref's shallow
-          # parents when main advances between PR events. Fetch full history so
-          # the required check can compare the exact event SHAs fail-closed.
-          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
-      - name: Detect installer-affecting changes
-        id: installer-changes
-        if: github.event_name == 'pull_request'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          git cat-file -e "${BASE_SHA}^{commit}"
-          git cat-file -e "${HEAD_SHA}^{commit}"
-          if git diff --quiet --no-ext-diff --no-renames "$BASE_SHA" "$HEAD_SHA" -- \
-            .github/workflows/installer-hash-check.yaml \
-            scripts/check-installer-hash.sh \
-            scripts/brev-launchable-ci-cpu.sh \
-            scripts/install-openshell.sh \
-            scripts/install.sh \
-            nemoclaw-blueprint/blueprint.yaml \
-            src/lib/onboard/openshell-version.ts \
-            src/lib/onboard/openshell-install.ts \
-            test/brev-launchable-ci-cpu-checksum.test.ts \
-            test/installer-hash-check.test.ts; then
-            installer_changed=false
-          else
-            diff_status=$?
-            if [[ "$diff_status" -ne 1 ]]; then
-              exit "$diff_status"
-            fi
-            installer_changed=true
-          fi
-          echo "installer=${installer_changed}" >>"$GITHUB_OUTPUT"
+      - name: Checkout trusted event
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Verify installer hashes are current
-        if: github.event_name != 'pull_request' || steps.installer-changes.outputs.installer == 'true'
-        run: bash scripts/check-installer-hash.sh
+      - name: Checkout base-trusted installer hash action
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Detect base-trusted installer hash action
+        id: trusted-installer-hash
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          if [[ -f .trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # invalidState: the first PR that introduces this action has no copy in
+      # its base commit. Running the mutable PR-side checker would let that PR
+      # authorize its own installer pins.
+      # sourceBoundary: this exact commit contains the reviewed action and
+      # checker; the PR head supplies only the installer files being inspected.
+      # whyNotSourceFix: a base commit cannot contain a new action before the
+      # introducing PR merges, so the bootstrap must name immutable code once.
+      # regressionTest: test/pr-workflow-contract.test.ts rejects mutable
+      # checker execution and any non-immutable bootstrap ref.
+      # removalCondition: remove the bootstrap checkout after this workflow has
+      # landed on every supported PR base and the availability fallback expires.
+      - name: Checkout immutable installer hash bootstrap
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: abaccacd476e7ad25388f03dec97418cbfc99839
+          path: .bootstrap-installer-hash
+          persist-credentials: false
+          sparse-checkout: |
+            .github/actions/ci-installer-hash-check
+            scripts/check-installer-hash.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Verify pull request installer hashes from base-trusted code
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available == 'true'
+        uses: ./.trusted-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
+      - name: Verify pull request installer hashes from immutable bootstrap
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.trusted-installer-hash.outputs.available != 'true'
+        uses: ./.bootstrap-installer-hash/.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
+
+      - name: Verify trusted event installer hashes
+        if: github.event_name != 'pull_request'
+        uses: ./.github/actions/ci-installer-hash-check
+        with:
+          repo-root: ${{ github.workspace }}
