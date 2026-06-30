@@ -1006,6 +1006,8 @@ The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and 
 
 For registered non-WhatsApp channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
 Secret inputs, including tokens, are not printed.
+If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
+Optional unset inputs remain informational.
 
 ```bash
 nemohermes my-assistant channels status
