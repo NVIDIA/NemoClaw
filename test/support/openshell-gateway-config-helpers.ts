@@ -24,7 +24,7 @@ export const GATEWAY_AUTH_REVIEW_NOTE = path.join(
   REPO_ROOT,
   "docs",
   "security",
-  "openshell-0.0.71-gateway-auth-review.md",
+  "openshell-0.0.71-gateway-auth-review.mdx",
 );
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 

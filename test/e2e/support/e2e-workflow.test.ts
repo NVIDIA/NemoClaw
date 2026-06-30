@@ -652,14 +652,10 @@ describe("e2e workflow boundary", () => {
   it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
-    expect(inventory.allowedJobs).toEqual(
-      expect.arrayContaining([
-        "openshell-version-pin",
-        "openshell-gateway-auth-contract",
-        "gateway-guard-recovery",
-        "upgrade-stale-sandbox",
-      ]),
-    );
+    expect(inventory.allowedJobs).toContain("openshell-version-pin");
+    expect(inventory.allowedJobs).toContain("openshell-gateway-auth-contract");
+    expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
+    expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox");
     expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
       "openshell-gateway-auth-contract",
     );
