@@ -13,6 +13,9 @@ function isPolicyObject(value: JsonValue): value is JsonObject {
 // equivalent are kept in behavioral parity by package-contract coverage. A
 // cross-root import would either violate both TypeScript rootDir boundaries or
 // make one published package depend on generated dist output.
+// removalCondition: revalidate at every stable OpenShell pin after 0.0.72;
+// remove only when the supported base-policy contract guarantees provider
+// entries are absent from every mutation read.
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {
   return Object.fromEntries(
     Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),

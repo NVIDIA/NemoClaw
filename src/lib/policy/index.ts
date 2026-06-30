@@ -10,6 +10,11 @@ import {
   listBuiltInMessagingChannelManifests,
   listMessagingPolicyPresetMetadata,
 } from "../messaging/channels";
+import {
+  buildPolicyGetCommand,
+  buildPolicyGetFullCommand,
+  buildPolicySetCommand,
+} from "./commands";
 import { stripProviderComposedPolicies, withoutProviderComposedPolicies } from "./merge";
 
 const fs = require("fs");
@@ -328,19 +333,6 @@ function parseCurrentPolicy(raw: string | null | undefined): string {
 }
 
 /**
- * Resolve the openshell binary, preferring an absolute path so spawnSync does
- * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
- * from PATH (issue #4224). Falls back to the literal "openshell" so callers
- * that build argv at module scope (or in tests that only check argv shape)
- * don't side-effect on a missing binary; command entry points call
- * `assertOpenshellResolvable()` before invoking openshell to surface the
- * actionable diagnostic.
- */
-function resolveOpenshellBinary(): string {
-  return openshellResolveModule.resolveOpenshell() ?? "openshell";
-}
-
-/**
  * Pre-spawn check used at command entry points before any
  * `run(buildPolicy*Command(...))`. If the binary cannot be resolved, prints
  * every location checked and an install hint, then exits nonzero — instead
@@ -374,27 +366,6 @@ function assertOpenshellResolvable(): void {
     "  Install OpenShell (https://github.com/NVIDIA/OpenShell) or set NEMOCLAW_OPENSHELL_BIN to an absolute, executable path.",
   );
   process.exit(1);
-}
-
-/**
- * Build the openshell policy set command as an argv array.
- */
-function buildPolicySetCommand(policyFile: string, sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "set", "--policy", policyFile, "--wait", sandboxName];
-}
-
-/**
- * Build the openshell base-policy get command used before policy mutations.
- */
-function buildPolicyGetCommand(sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];
-}
-
-/**
- * Build the effective-policy get command used by read-only diagnostics.
- */
-function buildPolicyGetFullCommand(sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -636,6 +607,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
+    // Mutations start from round-trippable --base, never provider-composed --full.
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
     /* ignored */
@@ -788,6 +760,7 @@ function applyPresetContent(
   // Get current policy YAML from sandbox
   let rawPolicy = "";
   try {
+    // Mutations start from round-trippable --base, never provider-composed --full.
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
     /* ignored */
@@ -906,6 +879,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
 
   let rawPolicy = "";
   try {
+    // Mutations start from round-trippable --base, never provider-composed --full.
     rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
   } catch {
     /* ignored */

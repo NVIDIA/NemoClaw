@@ -21,6 +21,53 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+
+test("openshell-version-pin: selects shipping 0.0.72 between older and too-new releases", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      "tsx",
+      "-e",
+      `
+const install = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-install.ts"))});
+const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
+const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
+const resolution = install.resolveOpenshellInstallVersion(
+  ["v0.0.71", "v0.0.73", "v0.0.72"],
+  { max: "0.0.72" },
+  { versionGte: version.versionGte },
+);
+const replacement = pin.computeOpenshellInstallEnv(
+  { INSTALLED_OPENSHELL_VERSION: "0.0.71" },
+  {
+    getBlueprintMinOpenshellVersion: () => "0.0.72",
+    getBlueprintMaxOpenshellVersion: () => "0.0.72",
+    versionGte: version.versionGte,
+    listReleases: () => ["v0.0.71", "v0.0.72", "v0.0.73"],
+  },
+);
+process.stdout.write(JSON.stringify({
+  installed: version.getInstalledOpenshellVersion("openshell 0.0.71"),
+  resolution,
+  replacement: replacement.env,
+}));`,
+    ],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual({
+    installed: "0.0.71",
+    resolution: { kind: "pin", version: "0.0.72", latest: "0.0.73", reason: "max-cap" },
+    replacement: {
+      INSTALLED_OPENSHELL_VERSION: "0.0.71",
+      NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.72",
+      NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.72",
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
+    },
+  });
+});
+
 const PINNED_OPEN_SHELL_SHA256 = {
   cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
   gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
