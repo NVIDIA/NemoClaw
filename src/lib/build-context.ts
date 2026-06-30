@@ -218,6 +218,21 @@ export function printSandboxCreateRecoveryHints(
     console.error(`  Recovery: ${CLI_NAME} onboard --resume --no-gpu`);
     return;
   }
+  if (failure.kind === "plugin_install_network_denied") {
+    console.error("  Hint: The sandbox Docker build failed at the OpenClaw plugin-install step.");
+    console.error(
+      "        Could not reach ClawHub or the npm registry — your sandbox network policy",
+    );
+    console.error(
+      "        may be blocking outbound plugin-install access. Check whether an active",
+    );
+    console.error("        preset allows egress to the npm registry and ClawHub, or disable the");
+    console.error(
+      "        feature that requires this plugin (e.g. NEMOCLAW_WEB_SEARCH_ENABLED=0).",
+    );
+    console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
+    return;
+  }
   console.error(`  Recovery: ${CLI_NAME} onboard --resume`);
   console.error(`  Or:      ${CLI_NAME} onboard`);
 }

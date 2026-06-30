@@ -67,4 +67,29 @@ describe("policy channel remove/enable flows", () => {
     );
     expect(exitSpy).not.toHaveBeenCalled();
   });
+
+  it("supports start dry runs without applying a preset or persisting the enabled plan", async () => {
+    const registry = requireDist("../../state/registry.js");
+    const policies = requireDist("../../policy/index.js");
+    const rebuild = requireDist("./rebuild.js");
+    vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "alpha" });
+    vi.spyOn(registry, "getConfiguredMessagingChannelsFromEntry").mockReturnValue(["telegram"]);
+    vi.spyOn(registry, "getDisabledChannels").mockReturnValue(["telegram"]);
+    const updateSandboxSpy = vi.spyOn(registry, "updateSandbox");
+    const applyPresetSpy = vi.spyOn(policies, "applyPreset");
+    const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox");
+    const policyChannel = requireDist(policyChannelModulePath) as PolicyChannelModule;
+
+    await expect(
+      policyChannel.startSandboxChannel("alpha", { channel: "telegram", dryRun: true }),
+    ).resolves.toBeUndefined();
+
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "--dry-run: would start channel 'telegram' for 'alpha'.",
+    );
+    expect(applyPresetSpy).not.toHaveBeenCalled();
+    expect(updateSandboxSpy).not.toHaveBeenCalled();
+    expect(rebuildSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
 });

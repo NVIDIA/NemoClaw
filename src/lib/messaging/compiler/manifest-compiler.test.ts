@@ -576,6 +576,7 @@ describe("ManifestCompiler", () => {
       }),
     );
     expect(JSON.stringify(plan.agentRender)).toContain('"port":3978');
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("groupAllowFrom");
     expect(JSON.stringify(plan.agentRender)).toContain('"requireMention":true');
@@ -607,6 +608,7 @@ describe("ManifestCompiler", () => {
       disabled: false,
     });
     expect(JSON.stringify(plan.agentRender)).toContain("channels.msteams");
+    expect(JSON.stringify(plan.agentRender)).toContain('"streaming":{"mode":"off"}');
     expect(JSON.stringify(plan.agentRender)).toContain('"groupPolicy":"open"');
     expect(JSON.stringify(plan.agentRender)).not.toContain("dmPolicy");
     expect(JSON.stringify(plan.agentRender)).not.toContain("allowFrom");

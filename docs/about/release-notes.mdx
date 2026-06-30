@@ -15,6 +15,32 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.69
+
+NemoClaw v0.0.69 improves sandbox recovery, Deep Agents Code workflows, Hermes messaging, inference setup, policy approval guidance, and release validation.
+
+- Sandbox lifecycle and onboarding flows now preserve state more predictably across destroy, recreate, rebuild, recovery, and validation failures.
+  Destroy wipes persistent workspace and state directories, GPU recreate rolls back failed pre-patch sandboxes, recovery can rediscover live sandboxes when the local registry is empty, and hosted endpoint validation failures keep a nonzero exit status.
+  For more information, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), [Backup and Restore](../manage-sandboxes/backup-restore), and [Troubleshooting](../reference/troubleshooting).
+- Deep Agents Code workflows now have clearer terminal and CLI behavior.
+  Session export reports actionable guidance for dash-prefixed arguments, warm-up sessions stay out of normal history, `nemo-deepagents` aliases share a consistent command surface, terminal runtime dispatch and version probes are more accurate, and status reports out-of-memory degradation with useful context.
+  For more information, refer to [Quickstart with LangChain Deep Agents Code](../get-started/quickstart-langchain-deepagents-code) and [NemoClaw CLI Commands Reference](../reference/commands).
+- Deep Agents Code rebuild and snapshot operations now protect more user state.
+  Skills created with `skill-creator` persist across rebuilds, the managed Python environment stays on `PATH`, rebuild warns before dropping user-managed files, and snapshot creation refuses to capture an active Deep Agents Code session.
+  For more information, refer to [Workspace Files](../manage-sandboxes/workspace-files), [Backup and Restore](../manage-sandboxes/backup-restore), and [Security Best Practices](../security/best-practices).
+- Hermes, messaging, and provider switching now use more explicit runtime state.
+  Hermes moves to the 2026.6.19 release line, supported messaging channels come from manifests, invalid channel values fail fast, reused sandboxes refresh stale messaging plans, Hermes preserves Slack-compatible aliases after upgrades, and provider switches retain endpoint, credential, and inference API metadata.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels), [NemoClaw Quickstart with Hermes](../get-started/quickstart-hermes), and [Switch Inference Providers](../inference/switch-inference-providers).
+- Inference setup now handles local and compatible endpoints with tighter validation.
+  DGX Station managed vLLM defaults to DeepSeek V4 Flash, Ollama setup records explicit interaction state, compatible endpoint smoke checks retry only recognized transient failures, and validation redacts sensitive error details.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options) and [Use a Local Inference Server](../inference/use-local-inference).
+- Security, policy, and observability paths now report safer runtime state.
+  Auto-restore seals the expected configuration hash, sandbox connect and login apply process and file-descriptor limits quietly, JSON agent failures keep parseable output with provenance warnings, log collection preserves per-source breadcrumbs, and in-sandbox Shields status no longer claims host posture it cannot verify.
+  For more information, refer to [Security Best Practices](../security/best-practices), [Credential Storage](../security/credential-storage), [NemoClaw CLI Commands Reference](../reference/commands), and [Monitor Sandbox Activity](../monitoring/monitor-sandbox-activity).
+- Documentation and release gates now cover more policy, approval, and live validation paths.
+  The docs include clearer policy round-trip and network-request approval examples, while the live release gates distinguish public NVIDIA API keys from hosted inference keys and exercise Deep Agents Code terminal behavior more directly.
+  For more information, refer to [Network Policies](../reference/network-policies), [Customize the Network Policy](../network-policy/customize-network-policy), and [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests).
+
 ## v0.0.68
 
 NemoClaw v0.0.68 improves onboarding recovery, messaging setup, agent-specific CLI behavior, local inference defaults, and release validation:
@@ -129,7 +155,7 @@ NemoClaw v0.0.61 improves sandbox network visibility, onboarding recovery, Herme
 - Onboarding and rebuild paths recover more reliably across host and provider drift. ARM64 image-tar upload failures receive a clear classification with an image-reference workaround, rebuild detaches sandbox providers before delete, rebuilt resume snapshots keep session state, and messaging selector key sequences work during onboarding. For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
 - Local inference and Hermes setup cover more restart and configuration edge cases. Managed inference hostnames bypass host proxies, managed vLLM restarts after host reboot, DGX Station managed vLLM defaults to `Qwen/Qwen3.6-27B-FP8`, Hermes rejects dashboard port collisions during configuration, and Hermes recovery enforces the environment-secret boundary. For more information, refer to [Use a Local Inference Server](../inference/use-local-inference).
 - Messaging setup gives clearer feedback and stores more deterministic state. Slack now notifies the sender when a channel `@mention` is denied, operator-supplied placeholder keys can be registered during onboarding, `messagingPlan` persists into resume state, and channel conflict detection now uses the manifest-plan architecture. For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels).
-- Release validation now runs real shell-boundary assertions through Vitest E2E support, includes an opt-in live scenario project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
+- Release validation now runs real shell-boundary assertions through E2E support, includes an opt-in live project, shards CLI coverage, adds a docs-only PR fast path, and trims slow CLI subprocess coverage.
 
 ## v0.0.60
 
@@ -267,8 +293,8 @@ NemoClaw v0.0.49 is a hardening release focused on reliability, clearer diagnost
 - `$$nemoclaw <name> snapshot restore --to <existing-sandbox>` now refuses to overwrite an existing destination unless you pass `--force`, which makes destructive clone restores an explicit opt-in.
 - Source-checkout installs bootstrap OpenShell when needed before running preflight, so `git clone` based installs can reach the same managed OpenShell setup path as packaged installs. The Linux installer, onboard preflight, and prerequisites docs also explain why NemoClaw needs Docker group membership and the privilege impact of granting it.
 - NVIDIA NIM preflight rejects WDDM placeholder GPU names on hosts without NVIDIA firmware, and Jetson onboarding refuses sandbox GPU passthrough instead of creating a configuration the sandbox cannot use.
-- CLI and E2E coverage cover more real user paths. Missing `channels` arguments now print the correct usage, scenario suites use supported sandbox subcommands, scenario tests build against the full repository CLI, and security-sensitive credential paths have broader coverage.
-- Release infrastructure now targets Node 24 in GitHub Actions. The E2E advisor also comments with clearer scenario guidance and waits for required PR checks before deciding.
+- CLI and E2E coverage cover more real user paths. Missing `channels` arguments now print the correct usage, E2E suites use supported sandbox subcommands, E2E tests build against the full repository CLI, and security-sensitive credential paths have broader coverage.
+- Release infrastructure now targets Node 24 in GitHub Actions. The E2E advisor also comments with clearer target guidance and waits for required PR checks before deciding.
 
 ## v0.0.48
 
@@ -292,8 +318,8 @@ NemoClaw v0.0.48 improves onboarding, sandbox builds, local inference, messaging
 
 NemoClaw v0.0.47 focused on release hardening and validation coverage:
 
-- The Vitest E2E fixture layer gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
-- Messaging provider scenarios now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
+- The E2E fixture layer gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
+- Messaging provider targets now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
 - CLI command registration was refactored so public display defaults stay consistent across sandbox channel, host, log, policy, skill, and snapshot commands.
 - PR review advisor automation was added for maintainers, with deterministic GitHub context gathering and structured review comments.
 - The release refreshed v0.0.46 documentation, AI-agent docs guidance, navigation, and version metadata.
