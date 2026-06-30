@@ -135,8 +135,9 @@ describe("inference options model task-fit docs (#4755)", () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const section = markdown.slice(start, end);
-    const nvidiaRow = section.split("\n").find((line) => line.startsWith("| NVIDIA Endpoints |"));
-    const hermesRow = section.split("\n").find((line) => line.startsWith("| Hermes Provider |"));
+    const lines = section.split("\n");
+    const nvidiaRow = lines.find((line) => line.startsWith("| NVIDIA Endpoints |"));
+    const hermesRow = lines.find((line) => line.startsWith("| Hermes Provider |"));
 
     expect(nvidiaRow).toBeDefined();
     expect(nvidiaRow).not.toMatch(/GLM-?5\.1|z-ai\/glm-5\.1/i);
