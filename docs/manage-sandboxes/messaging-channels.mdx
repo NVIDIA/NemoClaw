@@ -62,7 +62,7 @@ Refer to [Commands](../reference/commands) for details.
 | Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
 | WeChat (experimental) | None. Captured through host-side QR scan during `$$nemoclaw onboard` | `WECHAT_ALLOWED_IDS` for DM allowlisting |
 | WhatsApp (experimental) | None. Pair through QR after rebuild | None |
-| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
+| Microsoft Teams (experimental) | `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, `MSTEAMS_TENANT_ID` | `TEAMS_ALLOWED_USERS` for direct-message Microsoft Entra ID object ID allowlisting, `MSTEAMS_PORT` for the local webhook port, `TEAMS_REQUIRE_MENTION` for OpenClaw group and channel mention mode |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -113,9 +113,14 @@ No two active Teams sandboxes can share the same local webhook port, so NemoClaw
 Teams requires an app ID, client secret, and tenant ID.
 Set `MSTEAMS_APP_ID`, `MSTEAMS_APP_PASSWORD`, and `MSTEAMS_TENANT_ID`, or use the aliases `TEAMS_CLIENT_ID`, `TEAMS_CLIENT_SECRET`, and `TEAMS_TENANT_ID`.
 The client secret is stored as the `<sandbox>-teams-bridge` OpenShell provider and reaches the sandbox as an OpenShell placeholder, not as a raw value baked into the image.
-Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may interact with the bot.
+Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may direct-message the bot.
+This direct-message allowlist does not restrict OpenClaw group or channel senders.
+OpenClaw group and channel messages stay open by default, subject to mention mode.
+Operators who need group or channel sender allowlisting can configure OpenClaw directly with `channels.msteams.groupPolicy="allowlist"` and `channels.msteams.groupAllowFrom`.
+If `groupPolicy="allowlist"` is set without an effective group allowlist, OpenClaw denies group messages instead of treating the group as open.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
+NemoClaw configures OpenClaw Teams with `channels.msteams.streaming.mode: "off"` so the channel uses final-message delivery while the upstream Teams streaming path can duplicate or collapse preview and final messages.
 
 WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin installed into WeChat-enabled OpenClaw sandbox images and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
@@ -237,7 +242,7 @@ If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_
 You can omit `TELEGRAM_REQUIRE_MENTION` and `DISCORD_REQUIRE_MENTION` when you want the default mention-only mode.
 You can omit `TELEGRAM_GROUP_POLICY` when you want OpenClaw Telegram group access to stay open.
 Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user.
-For a repeatable live Telegram reply check, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
+For a repeatable live Telegram reply check, run `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/messaging-providers.test.ts --silent=false --reporter=default` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
 If you defer the rebuild, apply the change later:
 
 ```bash

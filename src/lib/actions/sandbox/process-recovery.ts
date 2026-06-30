@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { dockerSpawnSync } from "../../adapters/docker";
 import {
@@ -13,12 +12,6 @@ import {
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import {
-  buildHermesEnvFileBoundaryStandaloneCheck,
-  SECRET_BOUNDARY_OK_MARKER,
-  SECRET_BOUNDARY_REFUSED_MARKER,
-  SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER,
-} from "../../agent/hermes-recovery-boundary";
 import * as agentRuntime from "../../agent/runtime";
 import { G, R } from "../../cli/terminal-style";
 import { DASHBOARD_PORT } from "../../core/ports";
@@ -38,6 +31,16 @@ import {
   getHermesDashboardRecoveryConfig,
   recoverHermesDashboardProcessIfEnabled as recoverHermesDashboardProcess,
 } from "./hermes-dashboard-recovery";
+import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
+import {
+  type SandboxProcessRecoveryAttempt,
+  sandboxRecoveryAttempt,
+  sandboxRecoveryAttemptFromExecResult,
+} from "./markerless-recovery";
+import {
+  buildSandboxExecMarkedCommand,
+  extractSandboxExecCommandStdout,
+} from "./sandbox-exec-output";
 
 export {
   classifyForwardHealthWithReachability,
@@ -64,59 +67,6 @@ export type SandboxForwardListEntry = {
 };
 
 export type SandboxForwardHealth = boolean | "occupied" | null;
-
-const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
-
-function buildSandboxExecMarkedCommand(command: string): string {
-  if (!command.includes("validate-hermes-env-secret-boundary.py")) {
-    return `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
-  }
-  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
-  return [
-    `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
-    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
-    `printf '%s' '${encodedCommand}' | base64 -d | sh`,
-  ].join("; ");
-}
-
-function parseSandboxExecStdoutFrame(line: string): { text: string; framed: boolean } {
-  const trimmed = line.trimStart();
-  const stdoutPrefix = trimmed.match(/^(?:\[stdout\]|stdout:)\s*/i);
-  if (!stdoutPrefix) return { text: line, framed: false };
-  return { text: trimmed.slice(stdoutPrefix[0].length), framed: true };
-}
-
-/**
- * Extract child-command stdout from `openshell sandbox exec` output after the
- * sentinel printed by `markedCommand`. Some OpenShell versions frame child
- * stdout for humans, e.g. `stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__`, while
- * older versions pass raw stdout through unchanged. Normalize only recognized
- * stdout frame prefixes at this transport boundary so recovery, status, and
- * Hermes boundary callers keep consuming plain command stdout.
- *
- * Security boundary: the sentinel must occupy its own stdout line after optional
- * frame-prefix stripping. A preamble that merely contains the sentinel string is
- * rejected so sandbox output cannot move the parser boundary forward. Remove
- * this compatibility shim once OpenShell exposes a stable machine-readable exec
- * output mode that preserves child stdout/stderr without human framing.
- */
-function extractSandboxExecCommandStdout(output: string): string | null {
-  const stdout = output.trim();
-  if (!stdout) return null;
-  const lines = stdout.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
-  const exactMarkerIndex = lines.findIndex(
-    (line) => line.text.trim() === SANDBOX_EXEC_STARTED_MARKER,
-  );
-  if (exactMarkerIndex >= 0) {
-    return lines
-      .slice(exactMarkerIndex + 1)
-      .map((line) => line.text)
-      .join("\n")
-      .trim();
-  }
-
-  return null;
-}
 
 function isValidPort(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
@@ -380,7 +330,7 @@ export async function probeSandboxInferenceGatewayHealth(
  * Cleans stale lock/temp files, sources proxy config, and launches the gateway
  * in the background. Returns true on success.
  */
-function recoverSandboxProcesses(sandboxName: string): boolean {
+function recoverSandboxProcesses(sandboxName: string): SandboxProcessRecoveryAttempt {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
   const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort, {
@@ -394,19 +344,22 @@ function recoverSandboxProcesses(sandboxName: string): boolean {
   const recoveredSsh = (result: SandboxCommandResult | null) =>
     !!(result && result.status === 0 && hasRecoveryMarker(result));
 
-  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return false;
+  if (agentRuntime.isTerminalAgentRecoveryScript(agentScript)) return sandboxRecoveryAttempt(false);
   if (agentScript) {
     // Non-OpenClaw manifests do not yet declare a runtime user for root
     // sandbox exec. Recover them over SSH so the launch inherits the sandbox
     // login user instead of creating root-owned agent state under /sandbox.
-    return recoveredSsh(executeSandboxCommand(sandboxName, agentScript));
+    return sandboxRecoveryAttempt(recoveredSsh(executeSandboxCommand(sandboxName, agentScript)));
   }
 
   const script = agentRuntime.buildOpenClawRecoveryScript(dashboardPort);
   const execResult = executeSandboxExecCommand(sandboxName, script, 30000);
-  if (hasRecoveryMarker(execResult)) return true;
-  if (execResult !== null) return false;
-  return recoveredSsh(executeSandboxCommand(sandboxName, script));
+  const execAttempt = sandboxRecoveryAttemptFromExecResult(
+    execResult,
+    hasRecoveryMarker(execResult),
+  );
+  if (execAttempt) return execAttempt;
+  return sandboxRecoveryAttempt(recoveredSsh(executeSandboxCommand(sandboxName, script)));
 }
 
 function recoverDeclaredAgentForwardPorts(
@@ -635,109 +588,6 @@ function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | 
   return recoverHermesDashboardProcess(sandboxName, { executeCommand: executeSandboxCommand });
 }
 
-function isHermesAgent(agent: ReturnType<typeof agentRuntime.getSessionAgent>): boolean {
-  return !!agent && agent.name === "hermes";
-}
-
-type SecretBoundaryRefusalReason = "raw-secret" | "inconclusive";
-
-type HermesSecretBoundaryEnforcement =
-  | { refused: false }
-  | { refused: true; reason: SecretBoundaryRefusalReason; stderr: string };
-
-function printValidatorStderr(stderr: string): void {
-  if (!stderr.trim()) return;
-  for (const line of stderr.split(/\r?\n/)) {
-    if (line.trim()) console.error(`  ${line}`);
-  }
-}
-
-/**
- * Re-run the Hermes env-file secret-boundary validator against a running
- * gateway, before the probe path returns control to the caller. The
- * relaunch path already runs the same validator inline as part of
- * `buildRecoveryScript`, but the probe path returns early as soon as the
- * gateway is reported healthy, so a poisoned `.env` injected after cold
- * start would otherwise never be re-evaluated. The check is invoked via
- * `openshell sandbox exec` (root) so the validator's kill snippet can
- * actually signal the gateway-user process when refusing — a sandbox-user
- * SSH shell cannot (test/e2e-gateway-isolation.sh test 13). Every
- * refusal diagnostic — validator `[SECURITY]` stderr, the helper's own
- * context line, and the remediation hint — is written to `console.error`
- * unconditionally, so the offending key (e.g. `TELEGRAM_BOT_TOKEN (line
- * N)`) and the reason for refusal always reach the operator, including
- * on the quiet probe/recover path. Returns `null` only when the persisted
- * sandbox registry entry is not Hermes (no boundary to enforce). When
- * the registry says Hermes but the in-memory agent definition failed to
- * load (`getSessionAgent()` returned `null` from its catch path), the
- * helper fails safe with an inconclusive refusal rather than silently
- * skipping the boundary. A running Hermes gateway whose root exec
- * channel is unreachable is also treated as a fail-safe inconclusive
- * refusal rather than a healthy path. Non-zero validator status without
- * a `SECRET_BOUNDARY_REFUSED` marker is reported as inconclusive, not as
- * a raw-secret refusal, so a shell or validator crash does not
- * masquerade as a poisoned env file.
- */
-function enforceHermesSecretBoundaryOnRunningGateway(
-  sandboxName: string,
-  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
-): HermesSecretBoundaryEnforcement | null {
-  const persistedAgent = registry.getSandbox(sandboxName)?.agent;
-  if (persistedAgent !== "hermes") return null;
-  if (!isHermesAgent(agent)) {
-    console.error("");
-    console.error(
-      `  ${R}Hermes agent definition could not be loaded for sandbox '${sandboxName}'.${R}`,
-    );
-    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    return { refused: true, reason: "inconclusive", stderr: "" };
-  }
-  const script = buildHermesEnvFileBoundaryStandaloneCheck();
-  const result = executeSandboxExecCommand(sandboxName, script, 30000);
-  if (!result) {
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary check could not run against the Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    return { refused: true, reason: "inconclusive", stderr: "" };
-  }
-  const stdoutMarker = result.stdout
-    .split(/\r?\n/)
-    .reverse()
-    .find((line) => line.trim().startsWith("SECRET_BOUNDARY_"));
-  if (stdoutMarker === SECRET_BOUNDARY_REFUSED_MARKER) {
-    printValidatorStderr(result.stderr);
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary check refused recovery of Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error("  /sandbox/.hermes/.env contains raw secret-shaped values. Replace them with");
-    console.error(
-      "  openshell:resolve:env:<name> placeholders and re-run `nemoclaw <sandbox> recover`.",
-    );
-    return { refused: true, reason: "raw-secret", stderr: result.stderr };
-  }
-  if (stdoutMarker === SECRET_BOUNDARY_OK_MARKER) {
-    return { refused: false };
-  }
-  if (stdoutMarker === SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER) {
-    console.error(
-      `  [boundary] Hermes secret-boundary validator missing in sandbox '${sandboxName}'; recover proceeded without re-evaluating /sandbox/.hermes/.env. Re-image the sandbox to enable per-run enforcement.`,
-    );
-    return { refused: false };
-  }
-  printValidatorStderr(result.stderr);
-  console.error("");
-  console.error(
-    `  ${R}Secret-boundary check did not complete cleanly for Hermes gateway in '${sandboxName}'.${R}`,
-  );
-  console.error(
-    "  Refusing recovery; inspect the validator output above before re-running `nemoclaw <sandbox> recover`.",
-  );
-  return { refused: true, reason: "inconclusive", stderr: result.stderr };
-}
-
 /**
  * Detect and recover from a sandbox that survived a gateway restart but
  * whose OpenClaw processes are not running. Also re-establishes the
@@ -765,7 +615,11 @@ export function checkAndRecoverSandboxProcesses(
   }
   const recoveryPort = resolveSandboxDashboardPort(sandboxName);
   if (running) {
-    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(sandboxName, recoveryAgent);
+    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(
+      sandboxName,
+      recoveryAgent,
+      executeSandboxExecCommand,
+    );
     if (enforcement?.refused) {
       return {
         checked: true,
@@ -855,11 +709,21 @@ export function checkAndRecoverSandboxProcesses(
     console.log("  Recovering...");
   }
 
-  const recovered = recoverSandboxProcesses(sandboxName);
+  const recoveryAttempt = recoverSandboxProcesses(sandboxName);
+  let recovered = recoveryAttempt.recovered;
+  let recoveredHealthVerified = false;
+  if (
+    !recovered &&
+    recoveryAttempt.mayHaveStarted &&
+    waitForRecoveredSandboxGateway(sandboxName, { quiet })
+  ) {
+    recovered = true;
+    recoveredHealthVerified = true;
+  }
   if (recovered) {
     // Wait for gateway to bind its HTTP port before declaring success. The
     // recovered process can be alive before the OpenAI-compatible API is ready.
-    if (!waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
+    if (!recoveredHealthVerified && !waitForRecoveredSandboxGateway(sandboxName, { quiet })) {
       if (!quiet) {
         console.error("  Gateway process started but is not responding.");
         printGatewayWedgeDiagnostics(sandboxName, executeSandboxExecCommand);
@@ -870,6 +734,21 @@ export function checkAndRecoverSandboxProcesses(
         );
       }
       return { checked: true, wasRunning: false, recovered: false, forwardRecovered: false };
+    }
+    const enforcement = enforceHermesSecretBoundaryOnRunningGateway(
+      sandboxName,
+      recoveryAgent,
+      executeSandboxExecCommand,
+    );
+    if (enforcement?.refused) {
+      return {
+        checked: true,
+        wasRunning: false,
+        recovered: false,
+        forwardRecovered: false,
+        secretBoundaryRefused: true,
+        secretBoundaryReason: enforcement.reason,
+      };
     }
     const forwardRecovered = ensureSandboxPortForward(sandboxName);
     const dashboardForwardRecovered = ensureHermesDashboardPortForwardIfEnabled(sandboxName);

@@ -15,7 +15,6 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 // an OpenAI-compatible mock endpoint so payload-shape and retry regressions
 // do not require a GPU/Ollama runner to catch.
 //
-// Replaces test/e2e/test-strict-tool-call-probe.sh per #5119 retirement
 // pattern: caller-level mock-driven probes belong in test/, not in live E2E
 // scenario/fixture surfaces or the regression-e2e bash workflow. Refs #5098, #4349.
 //

@@ -141,6 +141,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
     && mv /etc/bash.bashrc.new /etc/bash.bashrc \
     && chmod 444 /etc/bash.bashrc
 
+# Build-time assertion: fail immediately if the validator was not installed or
+# made executable. Catches COPY path drift or a silent chmod failure.
+RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
+    || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
+
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
 # a direct `docker exec ... hermes gateway run` able to start the gateway with
