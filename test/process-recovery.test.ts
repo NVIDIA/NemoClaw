@@ -272,7 +272,7 @@ describe("executeSandboxExecCommand", () => {
     expect(result).toBeNull();
   });
 
-  it("passes a newline-free Hermes validator payload to OpenShell", () => {
+  it("passes the Hermes validator payload to OpenShell without base64 wrapping", () => {
     const childProcess = requireSource("node:child_process");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -290,10 +290,11 @@ describe("executeSandboxExecCommand", () => {
     const args = spawn.mock.calls[0]?.[1] as string[];
     const shellPayload = args.at(-1) ?? "";
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(shellPayload.includes("\n")).toBe(false);
+    expect(shellPayload).toContain("validate-hermes-env-secret-boundary.py");
+    expect(shellPayload.includes("\n")).toBe(true);
     expect(shellPayload.includes("\r")).toBe(false);
     expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
-    expect(shellPayload).toContain("base64 -d | sh");
+    expect(shellPayload).not.toContain("base64 -d | sh");
   });
 
   it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
