@@ -619,6 +619,43 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("next: not-a-secret-value");
   });
 
+  it("reproduces the public `nemoclaw hermes exec -- hermes config show` dispatch path with masked output (#5981)", () => {
+    // `nemoclaw hermes exec -- <argv>` resolves to `openshell sandbox exec
+    // --name <sandbox> -- <argv>`, which runs `<argv>` inside the sandbox
+    // container with `argv[0]` resolved against the in-sandbox PATH. Inside
+    // the Hermes sandbox image (see `agents/hermes/Dockerfile`),
+    // `/usr/local/bin/hermes` is the wrapper script tested here; the real
+    // binary is at `/usr/local/bin/hermes.real`. The dispatcher adds no
+    // masking layer of its own, so invoking the wrapper directly through
+    // `bash <wrapper> config show` is behaviourally equivalent to the public
+    // command for the masking contract. The fixture mirrors the issue's
+    // exact `◆ Model` shape on stdout and an api_key-shaped diagnostic on
+    // stderr; both must reach the user masked.
+    const fixture = [
+      "◆ Model",
+      "  Model:        {'default': 'meta/llama-3.1-8b-instruct', 'provider': 'custom',",
+      "                 'base_url': 'https://inference.local/v1',",
+      "                 'api_key': 'sk-OPENSHELL-PROXY-REWRITE'}",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: {
+          stdout: fixture,
+          stderr: "api_key: sk-OPENSHELL-PROXY-REWRITE",
+          exitCode: 0,
+        },
+      },
+    );
+
+    expect(run.status).toBe(0);
+    const combined = `${run.stdout}\n${run.stderr}`;
+    expect(combined).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain("'api_key': 'sk-****'");
+    expect(run.stderr).toContain("api_key: sk-****");
+  });
+
   it("documents the narrower contract: unlabelled free-form credential diagnostics pass through unmasked (out of scope)", () => {
     const fixture = [
       "Warning: using sk-freeform-leak-12345 for connection",
