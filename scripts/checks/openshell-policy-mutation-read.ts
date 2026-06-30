@@ -11,23 +11,34 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const MUTATION_READS = [
   {
     relativePath: "src/lib/policy/index.ts",
-    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true })",
+    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
+    unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true })",
     fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
     diagnosticFullRead: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
     baseCommand: '["openshell", "policy", "get", "--base", sandboxName]',
+    unsafeBaseCommand: undefined,
     fullCommand: '["openshell", "policy", "get", "--full", sandboxName]',
     diagnosticFullRead: undefined,
   },
 ];
 
 const violations: string[] = [];
-for (const { relativePath, baseCommand, fullCommand, diagnosticFullRead } of MUTATION_READS) {
+for (const {
+  relativePath,
+  baseCommand,
+  unsafeBaseCommand,
+  fullCommand,
+  diagnosticFullRead,
+} of MUTATION_READS) {
   const source = readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
   if (!source.includes(baseCommand)) {
     violations.push(`${relativePath}: expected the audited policy mutation read to use --base`);
+  }
+  if (unsafeBaseCommand && source.includes(unsafeBaseCommand)) {
+    violations.push(`${relativePath}: policy mutation reads must preserve command failures`);
   }
   if (!diagnosticFullRead && source.includes(fullCommand)) {
     violations.push(`${relativePath}: audited policy mutation read must never use --full output`);

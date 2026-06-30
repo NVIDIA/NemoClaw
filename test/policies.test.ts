@@ -724,10 +724,7 @@ exit 1
     it("logs egress endpoints before applying", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const exitSpy = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("exit");
-      });
-
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", "/usr/bin/true");
       try {
         try {
           policies.applyPreset("test-sandbox", "npm");
@@ -743,7 +740,7 @@ exit 1
       } finally {
         logSpy.mockRestore();
         errSpy.mockRestore();
-        exitSpy.mockRestore();
+        vi.unstubAllEnvs();
       }
     });
 
@@ -969,7 +966,10 @@ exit 1
     it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
       const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
 
-      const resolveSpy = vi.spyOn(resolveOpenshellModule, "resolveOpenshell").mockReturnValue(null);
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValueOnce(fakeOpenshell)
+        .mockReturnValue(null);
       const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);

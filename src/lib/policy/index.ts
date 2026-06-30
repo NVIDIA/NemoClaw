@@ -608,7 +608,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   let rawPolicy = "";
   try {
     // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
     /* ignored */
   }
@@ -758,16 +758,16 @@ function applyPresetContent(
   }
 
   // Get current policy YAML from sandbox
-  let rawPolicy = "";
+  let rawPolicy: string | null = null;
   try {
     // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
-    /* ignored */
+    /* Refused below. */
   }
 
   const currentPolicy = parseCurrentPolicy(rawPolicy);
-  if (rawPolicy.trim() && !currentPolicy) {
+  if (rawPolicy === null || (rawPolicy.trim() && !currentPolicy)) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
@@ -877,16 +877,16 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const uniquePresetNames = [...new Set(presetNames)].filter(Boolean);
   if (uniquePresetNames.length === 0) return true;
 
-  let rawPolicy = "";
+  let rawPolicy: string | null = null;
   try {
     // Mutations start from round-trippable --base, never provider-composed --full.
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName));
   } catch {
-    /* ignored */
+    /* Refused below. */
   }
 
   let merged = parseCurrentPolicy(rawPolicy);
-  if (rawPolicy.trim() && !merged) {
+  if (rawPolicy === null || (rawPolicy.trim() && !merged)) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
     );
