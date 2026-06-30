@@ -63,10 +63,16 @@ export function buildConfigStatusSignals(
     channelManifestRegistry.list(),
   );
   const parser = manifest ? getBuiltInRenderedConfigParser(manifest.id) : null;
+  const manifestConfigInputs = (manifest?.inputs ?? []).filter(
+    (input): input is ChannelConfigInputSpec => input.kind === "config",
+  );
+  const manifestConfigInputIds = new Set(manifestConfigInputs.map((input) => input.id));
   const renderSources =
     parser && manifest && agentId
       ? resolveRenderedConfigSources(
-          parser.listConfigVisibilityKeys({ manifest, agentId, inputs: channelPlan.inputs }),
+          parser
+            .listConfigVisibilityKeys({ manifest, agentId, inputs: channelPlan.inputs })
+            .filter((key) => manifestConfigInputIds.has(key.inputId)),
           agentId,
           agent,
         )
@@ -79,10 +85,9 @@ export function buildConfigStatusSignals(
       .filter((input) => input.kind === "config")
       .map((input) => [input.inputId, input] as const),
   );
-  const signals: DiagnosticSignal[] = configSourceReadSignals(sandboxName, sourceReads.targetReads);
+  const signals: DiagnosticSignal[] = configSourceReadSignals(sandboxName, sourceReads);
 
-  for (const input of manifest?.inputs ?? []) {
-    if (input.kind !== "config") continue;
+  for (const input of manifestConfigInputs) {
     const signal = configInputSignal(input, configInputs.get(input.id), renderSources, sourceReads);
     if (signal) signals.push(signal);
   }
@@ -214,6 +219,7 @@ type ConfigTargetRead =
 type ConfigSourceReads = {
   readonly sourceValues: ReadonlyMap<string, ConfigSourceRead>;
   readonly targetReads: ReadonlyMap<string, ConfigTargetRead>;
+  readonly targetParseErrors: ReadonlyMap<string, string>;
 };
 
 type ParsedConfigSourceRead =
@@ -228,10 +234,10 @@ type ParsedConfigSourceRead =
 
 function configSourceReadSignals(
   sandboxName: string,
-  targetReads: ReadonlyMap<string, ConfigTargetRead>,
+  sourceReads: ConfigSourceReads,
 ): DiagnosticSignal[] {
   const signals: DiagnosticSignal[] = [];
-  for (const [target, read] of targetReads.entries()) {
+  for (const [target, read] of sourceReads.targetReads.entries()) {
     if (read.ok) continue;
     signals.push({
       label: "Rendered config source",
@@ -240,11 +246,19 @@ function configSourceReadSignals(
       hint: `inspect \`${target}\` with \`${CLI_NAME} ${sandboxName} exec -- cat ${target}\`, then re-run \`${CLI_NAME} ${sandboxName} rebuild\` if the channel block needs to be regenerated`,
     });
   }
+  for (const [target, error] of sourceReads.targetParseErrors.entries()) {
+    signals.push({
+      label: "Rendered config source",
+      severity: "warn",
+      detail: `${error}; config comparisons not checked`,
+      hint: `inspect \`${target}\` with \`${CLI_NAME} ${sandboxName} exec -- cat ${target}\`, then re-run \`${CLI_NAME} ${sandboxName} rebuild\` if the channel block needs to be regenerated`,
+    });
+  }
   return signals;
 }
 
 function emptyConfigSourceReads(): ConfigSourceReads {
-  return { sourceValues: new Map(), targetReads: new Map() };
+  return { sourceValues: new Map(), targetReads: new Map(), targetParseErrors: new Map() };
 }
 
 function resolveRenderedConfigSources(
@@ -299,6 +313,7 @@ function readConfigSourceValues(
   }
 
   const reads = new Map<string, ConfigSourceRead>();
+  const targetParseErrors = new Map<string, string>();
   for (const source of sources) {
     const targetRead = targetReads.get(source.resolvedTarget);
     const key = configSourceKey(source);
@@ -314,12 +329,13 @@ function readConfigSourceValues(
       source.resolvedTarget,
       source.kind,
     );
+    if (!parsed.ok) targetParseErrors.set(source.resolvedTarget, parsed.error);
     reads.set(
       key,
       parsed.ok ? { ok: true, value: parser.getValue(source, parsed.source) } : parsed,
     );
   }
-  return { sourceValues: reads, targetReads };
+  return { sourceValues: reads, targetReads, targetParseErrors };
 }
 
 function parseEnvLines(raw: string): Map<string, string> {

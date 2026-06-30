@@ -34,4 +34,35 @@ describe("discord rendered config parser", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("preserves requireMention value types when guilds differ", () => {
+    const requireMentionKey = discordRenderedConfigParser
+      .listConfigVisibilityKeys({
+        agentId: "openclaw",
+        manifest: { id: "discord" } as ChannelManifest,
+        inputs: [],
+      })
+      .find((key) => key.key === "guildRequireMention");
+
+    expect(requireMentionKey).toBeDefined();
+    expect(
+      discordRenderedConfigParser.getValue(requireMentionKey!, {
+        kind: "structured",
+        value: {
+          channels: {
+            discord: {
+              guilds: {
+                "1504155275899437177": {
+                  requireMention: true,
+                },
+                "1504155275899437178": {
+                  requireMention: false,
+                },
+              },
+            },
+          },
+        },
+      }),
+    ).toEqual([true, false]);
+  });
 });

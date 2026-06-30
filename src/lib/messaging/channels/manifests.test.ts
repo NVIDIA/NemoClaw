@@ -15,6 +15,7 @@ import type {
   ChannelInputSpec,
   ChannelManifest,
   ChannelRenderSpec,
+  MessagingAgentId,
 } from "../manifest";
 import {
   BUILT_IN_CHANNEL_MANIFESTS,
@@ -229,6 +230,23 @@ describe("built-in channel manifests", () => {
         Boolean(getBuiltInRenderedConfigParser(manifest.id)),
       ]),
     ).toEqual(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [manifest.id, true]));
+  });
+
+  it("keeps rendered config parser keys limited to manifest config inputs", () => {
+    const agentIds: readonly MessagingAgentId[] = ["openclaw", "hermes"];
+    expect(
+      BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) => {
+        const configInputIds: ReadonlySet<string> = new Set(
+          manifest.inputs.filter((input) => input.kind === "config").map((input) => input.id),
+        );
+        const parser = getBuiltInRenderedConfigParser(manifest.id);
+        return agentIds.flatMap((agentId) =>
+          (parser?.listConfigVisibilityKeys({ manifest, agentId, inputs: [] }) ?? [])
+            .filter((key) => !configInputIds.has(key.inputId))
+            .map((key) => `${manifest.id}.${agentId}.${key.inputId}`),
+        );
+      }),
+    ).toEqual([]);
   });
 
   it("keeps phase-1 manifest and hook files free of production side-effect imports", () => {

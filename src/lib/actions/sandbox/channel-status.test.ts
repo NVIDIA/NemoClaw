@@ -852,6 +852,57 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(sourceReadFailures).toHaveLength(1);
   });
 
+  it("warns once when a shared rendered config source is malformed", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: "{not-json",
+        stderr: "",
+      }),
+      sandbox: entry(["teams"], [], {
+        teams: [
+          {
+            channelId: "teams",
+            inputId: "appId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_ID",
+            statePath: "teamsConfig.appId",
+            value: "2542103c-7a1e-408a-b2f3-667e09e86783",
+          },
+          {
+            channelId: "teams",
+            inputId: "tenantId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_TENANT_ID",
+            statePath: "teamsConfig.tenantId",
+            value: "43083d15-7273-40c1-b7db-39efd9ccc17a",
+          },
+        ],
+      }),
+      appliedPresets: ["teams"],
+    });
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "teams",
+    });
+
+    const signals = result && "signals" in result ? result.signals : [];
+    expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
+      expect.objectContaining({
+        severity: "warn",
+        detail: "could not parse /sandbox/.openclaw/openclaw.json; config comparisons not checked",
+      }),
+    ]);
+    expect(
+      signals.find((signal) => signal.label === "Microsoft Teams Client ID (MSTEAMS_APP_ID)"),
+    ).toMatchObject({
+      severity: "info",
+      detail: "2542103c-7a1e-408a-b2f3-667e09e86783 (not checked)",
+    });
+  });
+
   it("treats 0/1 registry config as matching boolean rendered config", async () => {
     const { deps } = makeDeps({
       exec: () => ({
@@ -1385,5 +1436,51 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     const dump = out_lines.join("\n");
     expect(dump).not.toMatch(/Telegram User ID \(for DM access\)/);
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open \(default\)/);
+  });
+
+  it("accepts Telegram disabled group policy from rendered config", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: JSON.stringify({
+          channels: {
+            telegram: {
+              accounts: {
+                default: {
+                  groupPolicy: "disabled",
+                },
+              },
+            },
+          },
+        }),
+        stderr: "",
+      }),
+      sandbox: entry(["telegram"], [], {
+        telegram: [
+          {
+            channelId: "telegram",
+            inputId: "groupPolicy",
+            kind: "config",
+            required: false,
+            sourceEnv: "TELEGRAM_GROUP_POLICY",
+            statePath: "telegramConfig.groupPolicy",
+            value: "disabled",
+          },
+        ],
+      }),
+      appliedPresets: ["telegram"],
+    });
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "telegram",
+    });
+
+    const signals = result && "signals" in result ? result.signals : [];
+    expect(
+      signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
+    ).toMatchObject({
+      severity: "ok",
+      detail: "disabled",
+    });
   });
 });
