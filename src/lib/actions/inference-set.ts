@@ -5,7 +5,6 @@ import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
-import { compactText } from "../core/url-utils";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
@@ -25,13 +24,16 @@ import {
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
-import { redactFull } from "../security/redact";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import {
+  buildOpenshellInferenceSetFailureMessage,
+  openshellReportsProviderNotFound,
+} from "./inference-set-error";
 
 export interface InferenceSetOptions {
   provider: string;
@@ -363,28 +365,6 @@ function openshellInferenceSetArgs(options: {
   return args;
 }
 
-function openshellFailureDetail(stderr: string, stdout: string): string {
-  return compactText(redactFull(`${stderr}\n${stdout}`)).slice(0, 500);
-}
-
-const OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS = [
-  /\bprovider\s+["'`]([^"'`\r\n]+)["'`]\s+(?:was\s+)?not found\b/iu,
-  /\bnot found\b[^\r\n]*\bprovider\s+["'`]([^"'`\r\n]+)["'`]/iu,
-];
-
-/**
- * OpenShell 0.0.71 exposes provider lookup failures only as subprocess text.
- * Parse the reviewed quoted-provider shape and keep unknown or drifted output
- * generic. Remove this compatibility parser when OpenShell returns a structured
- * provider-not-found error with the missing provider as a field.
- */
-function openshellReportsProviderNotFound(output: string, requestedProvider: string): boolean {
-  const missingProvider = OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS.map(
-    (pattern) => output.match(pattern)?.[1]?.trim() ?? null,
-  ).find((candidate): candidate is string => candidate !== null);
-  return missingProvider === requestedProvider;
-}
-
 function getPreferredInferenceApi(config: ConfigObject): string | null {
   const models = config.models;
   if (!isConfigObject(models)) return null;
@@ -643,12 +623,12 @@ export async function runInferenceSet(
     const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
     const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
     const combined = `${stderr}\n${stdout}`;
-    const failureDetail = openshellFailureDetail(stderr, stdout);
-    const failureDetailLine = failureDetail ? `OpenShell detail: ${failureDetail}\n` : "";
-    if (openshellReportsProviderNotFound(combined, provider)) {
-      let providerList: string | null = null;
+    const exitCode = setResult.status ?? 1;
+    const providerNotFound = openshellReportsProviderNotFound(combined, provider);
+    let registeredProviders: string[] | undefined;
+    if (providerNotFound) {
       try {
-        const registeredProviders = [
+        registeredProviders = [
           ...new Set(
             deps
               .listSandboxes()
@@ -656,25 +636,19 @@ export async function runInferenceSet(
               .filter((p): p is string => typeof p === "string" && p.length > 0),
           ),
         ];
-        providerList =
-          registeredProviders.length > 0
-            ? `Registered providers: ${registeredProviders.join(", ")}`
-            : "No providers registered";
       } catch {
-        // Registry unavailable — still show the onboard tip without provider details.
+        deps.log("  ⚠ Could not read registered providers while formatting the OpenShell failure.");
       }
-      throw new InferenceSetError(
-        `OpenShell inference route update failed with exit ${setResult.status ?? 1}.\n` +
-          failureDetailLine +
-          `${providerList ? `${providerList}\n` : ""}` +
-          `Tip: register a new provider with \`${CLI_NAME} onboard\`.`,
-        setResult.status ?? 1,
-      );
     }
     throw new InferenceSetError(
-      `OpenShell inference route update failed with exit ${setResult.status ?? 1}.` +
-        `${failureDetail ? `\nOpenShell detail: ${failureDetail}` : ""}`,
-      setResult.status ?? 1,
+      buildOpenshellInferenceSetFailureMessage({
+        exitCode,
+        providerNotFound,
+        registeredProviders,
+        stderr,
+        stdout,
+      }),
+      exitCode,
     );
   }
 

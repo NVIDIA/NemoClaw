@@ -1,0 +1,76 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import {
+  buildOpenshellInferenceSetFailureMessage,
+  openshellReportsProviderNotFound,
+} from "./inference-set-error";
+
+describe("inference set OpenShell failure diagnostics", () => {
+  it("correlates only a quoted missing provider with the requested provider (#5924)", () => {
+    expect(
+      openshellReportsProviderNotFound(
+        "error: provider 'openai-api' not found in gateway",
+        "openai-api",
+      ),
+    ).toBe(true);
+    expect(
+      openshellReportsProviderNotFound(
+        "error: not found: provider `openai-api` is unavailable",
+        "openai-api",
+      ),
+    ).toBe(true);
+    expect(
+      openshellReportsProviderNotFound(
+        "error: provider 'anthropic-prod' not found in gateway",
+        "openai-api",
+      ),
+    ).toBe(false);
+    expect(
+      openshellReportsProviderNotFound("error: provider openai-api not found", "openai-api"),
+    ).toBe(false);
+  });
+
+  it("fully redacts and caps enhanced provider-not-found details (#5924)", () => {
+    const envSecret = "plainsecret123456"; // gitleaks:allow
+    const bearerSecret = "plainbearersecret123456"; // gitleaks:allow
+    const querySecret = "plainquerysecret123456";
+    const message = buildOpenshellInferenceSetFailureMessage({
+      exitCode: 1,
+      providerNotFound: true,
+      registeredProviders: ["nvidia-prod"],
+      stderr: [
+        "error: provider 'openai-api' not found in gateway",
+        `OPENAI_API_KEY=${envSecret}`,
+        `Authorization: Bearer ${bearerSecret}`,
+        `https://gateway.example.test/fail?token=${querySecret}`,
+        "x".repeat(1_000),
+      ].join(" "),
+      stdout: "",
+    });
+    const detail = message.match(/^OpenShell detail: (.*)$/mu)?.[1];
+
+    expect(detail).toHaveLength(500);
+    expect(message).toContain("Registered providers: nvidia-prod");
+    expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
+    expect(message).not.toContain(envSecret);
+    expect(message).not.toContain(bearerSecret);
+    expect(message).not.toContain(querySecret);
+  });
+
+  it("keeps malformed and mismatched diagnostics on the generic path (#5924)", () => {
+    const malformed = `error: provider '${"a".repeat(10_000)}`;
+    expect(openshellReportsProviderNotFound(malformed, "openai-api")).toBe(false);
+
+    const message = buildOpenshellInferenceSetFailureMessage({
+      exitCode: 42,
+      providerNotFound: false,
+      stderr: "error: network timeout connecting to gateway",
+      stdout: "",
+    });
+    expect(message).toContain("OpenShell detail: error: network timeout connecting to gateway");
+    expect(message).not.toMatch(/Registered providers|No providers registered|onboard/);
+  });
+});

@@ -1144,8 +1144,7 @@ describe("runInferenceSet", () => {
     deps.calls.runOpenshell.mockReturnValue({
       status: 42,
       stdout: "",
-      stderr:
-        "error: network timeout connecting to gateway OPENAI_API_KEY=plainsecret123456 Authorization: Bearer plainbearersecret123456 https://gateway.example.test/fail?token=plainquerysecret123456", // gitleaks:allow
+      stderr: "error: network timeout connecting to gateway NVIDIA_API_KEY=nvapi-secret-value",
     });
 
     const err = await runInferenceSet(
@@ -1157,35 +1156,9 @@ describe("runInferenceSet", () => {
     const message = (err as Error).message;
     expect(message).toMatch(/OpenShell inference route update failed with exit 42/);
     expect(message).toMatch(/network timeout connecting to gateway/);
-    expect(message).not.toContain("plainsecret123456");
-    expect(message).not.toContain("plainbearersecret123456");
-    expect(message).not.toContain("plainquerysecret123456");
+    expect(message).not.toContain("nvapi-secret-value");
     expect(message).not.toMatch(/Registered providers/);
     expect(message).not.toMatch(/onboard/);
-  });
-
-  it("keeps the error generic when openshell names a different missing provider (#5924)", async () => {
-    const deps = createDeps({
-      config: {},
-      entries: [
-        { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
-      ],
-      openshellStatus: 1,
-    });
-    deps.calls.runOpenshell.mockReturnValue({
-      status: 1,
-      stdout: "",
-      stderr: "error: provider 'anthropic-prod' not found in gateway",
-    });
-
-    const err = await runInferenceSet(
-      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
-      deps,
-    ).catch((e: Error) => e);
-    const message = (err as Error).message;
-
-    expect(message).toMatch(/provider 'anthropic-prod' not found/);
-    expect(message).not.toMatch(/Registered providers|No providers registered|onboard/);
   });
 
   it("shows 'No providers registered' when no sandbox has a provider on provider-not-found (#5924)", async () => {
@@ -1232,6 +1205,10 @@ describe("runInferenceSet", () => {
     expect(message).not.toMatch(/Registered providers/);
     expect(message).not.toMatch(/No providers registered/);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  ⚠ Could not read registered providers while formatting the OpenShell failure.",
+    );
+    expect(deps.calls.log).not.toHaveBeenCalledWith(expect.stringContaining("registry corrupted"));
   });
 
   it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
