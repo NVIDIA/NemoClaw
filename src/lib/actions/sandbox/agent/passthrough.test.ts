@@ -32,6 +32,11 @@ vi.mock("../../../agent/defs", () => ({
   listAgents: listAgentsMock,
   loadAgent: loadAgentMock,
 }));
+// Default to no recent shields auto-restore so tests that don't inject
+// getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
+vi.mock("../../../shields/audit", () => ({
+  readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
+}));
 
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
 
@@ -147,22 +152,23 @@ describe("runAgentPassthrough", () => {
     );
   });
 
-  it("keeps --json after an unknown future value flag on the normal passthrough path", async () => {
+  it("keeps --json-something --json on the normal passthrough path", async () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
+    // The first unknown flag selects conservative passthrough before the later --json token.
     await runAgentPassthrough(
       "alpha",
-      { extraArgs: ["--agent", "work", "--some-future-value-flag", "--json"] },
+      { extraArgs: ["--agent", "work", "--json-something", "--json"] },
       { execJson },
     );
 
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--some-future-value-flag", "--json"],
+      ["openclaw", "agent", "--agent", "work", "--json-something", "--json"],
       { tty: false },
     );
   });

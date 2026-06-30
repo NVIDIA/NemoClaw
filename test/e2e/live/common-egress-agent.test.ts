@@ -25,6 +25,7 @@ import {
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { stripAnsi } from "./json-envelope.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
 //
@@ -87,6 +88,11 @@ interface CleanupAttempt {
   exitCode: number | null;
   missingSandboxTolerated: boolean;
   outputTail: string;
+}
+
+interface ActivePolicyPreset {
+  name: string;
+  provenance: string;
 }
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -352,6 +358,8 @@ async function runOnboard(
     sandboxName: string;
     skip: SkipFn;
     tier: "balanced" | "open";
+    extraEnv?: NemoEnv;
+    extraRedactionValues?: string[];
   },
 ): Promise<ShellProbeResult> {
   const onboard = await host.command(
@@ -368,12 +376,13 @@ async function runOnboard(
       cwd: REPO_ROOT,
       env: commandEnv({
         ...args.hosted.env,
+        ...args.extraEnv,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
         NEMOCLAW_SANDBOX_NAME: args.sandboxName,
       }),
-      redactionValues: [args.hosted.apiKey],
+      redactionValues: [args.hosted.apiKey, ...(args.extraRedactionValues ?? [])],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
@@ -438,6 +447,46 @@ async function assertPolicyAbsent(
   });
   expect(policy.exitCode, text(policy)).toBe(0);
   expect(text(policy), `${label}: unexpected policy entry ${needle}`).not.toContain(needle);
+}
+
+async function listActivePolicyPresets(
+  host: HostCliClient,
+  sandboxName: string,
+  label: string,
+): Promise<ActivePolicyPreset[]> {
+  const result = await host.command("node", [CLI_ENTRYPOINT, sandboxName, "policy-list"], {
+    artifactName: `policy-list-${label}`,
+    env: commandEnv(),
+    timeoutMs: 60_000,
+  });
+  expect(result.exitCode, text(result)).toBe(0);
+  return stripAnsi(text(result))
+    .split(/\r?\n/u)
+    .flatMap((line) => {
+      const match = line.match(/^\s*●\s+([a-z0-9-]+)\s+\[([^\]]+)\]/iu);
+      return match?.[1] && match[2]
+        ? [{ name: match[1].toLowerCase(), provenance: match[2].toLowerCase() }]
+        : [];
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function addPolicyPreset(
+  host: HostCliClient,
+  sandboxName: string,
+  preset: string,
+): Promise<void> {
+  const result = await host.command(
+    "node",
+    [CLI_ENTRYPOINT, sandboxName, "policy-add", preset, "--yes"],
+    {
+      artifactName: `policy-add-${preset}`,
+      env: commandEnv(),
+      timeoutMs: 60_000,
+    },
+  );
+  expect(result.exitCode, text(result)).toBe(0);
+  await sleep(2_000);
 }
 
 async function runOpenClawAgentAssertion(
@@ -696,17 +745,19 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
-    "C1 OpenClaw balanced permits a verified wttr.in curl",
+    "C1 OpenClaw balanced excludes weather until explicitly added, then permits a verified wttr.in curl",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
+      const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.writeJson("target.json", {
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         contract: [
-          "OpenClaw balanced onboarding applies weather common-egress endpoints",
+          "OpenClaw balanced onboarding applies exactly six expected presets without weather",
+          "explicit policy-add weather applies the weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
           "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
         ],
@@ -719,7 +770,39 @@ describe.sequential("common-egress agent live targets", () => {
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         skip,
         tier: "balanced",
+        extraEnv: { BRAVE_API_KEY: braveApiKey },
+        extraRedactionValues: [braveApiKey],
       });
+
+      expect(
+        await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
+      ).toEqual([
+        { name: "brave", provenance: "from balanced tier" },
+        { name: "brew", provenance: "from balanced tier" },
+        { name: "huggingface", provenance: "from balanced tier" },
+        { name: "npm", provenance: "from balanced tier" },
+        { name: "openclaw-pricing", provenance: "from openclaw agent" },
+        { name: "pypi", provenance: "from balanced tier" },
+      ]);
+      await assertPolicyAbsent(
+        sandbox,
+        OPENCLAW_BALANCED_SANDBOX,
+        "c1-weather-before-add",
+        "wttr.in",
+      );
+
+      await addPolicyPreset(host, OPENCLAW_BALANCED_SANDBOX, "weather");
+      expect(
+        await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
+      ).toEqual([
+        { name: "brave", provenance: "from balanced tier" },
+        { name: "brew", provenance: "from balanced tier" },
+        { name: "huggingface", provenance: "from balanced tier" },
+        { name: "npm", provenance: "from balanced tier" },
+        { name: "openclaw-pricing", provenance: "from openclaw agent" },
+        { name: "pypi", provenance: "from balanced tier" },
+        { name: "weather", provenance: "user-added" },
+      ]);
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
         "api.open-meteo.com",
         "geocoding-api.open-meteo.com",
