@@ -177,31 +177,34 @@ function materializeReviewedTarball(
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter(Boolean);
-  if (reportedFilenames.length !== 1) {
-    throw new Error("npm pack reviewed OpenClaw tarball did not report exactly one archive");
-  }
+  reportedFilenames.length === 1 ||
+    runtimeMismatch(
+      String(reportedFilenames.length),
+      "exactly one archive",
+      "npm pack reviewed OpenClaw tarball archive count",
+    );
 
-  const filename = reportedFilenames[0];
+  const filename = reportedFilenames[0] as string;
   const filenameParts = filename.split(/[\\/]+/);
-  if (
+  const unsafeFilename =
     path.isAbsolute(filename) ||
     filename === "." ||
     filename === ".." ||
     filename.includes("/") ||
     filename.includes("\\") ||
     filenameParts.includes("..") ||
-    filenameParts.includes("")
-  ) {
-    throw new Error(
-      `npm pack reviewed OpenClaw tarball reported unsafe archive filename: ${filename}`,
+    filenameParts.includes("");
+  !unsafeFilename ||
+    runtimeMismatch(
+      filename,
+      "one safe archive filename",
+      "npm pack reviewed OpenClaw tarball unsafe archive filename",
     );
-  }
 
   const packRoot = path.resolve(destination);
   const tarballPath = path.resolve(packRoot, filename);
-  if (!tarballPath.startsWith(`${packRoot}${path.sep}`)) {
-    throw new Error(`npm pack reviewed OpenClaw tarball escaped pack directory: ${filename}`);
-  }
+  tarballPath.startsWith(`${packRoot}${path.sep}`) ||
+    runtimeMismatch(tarballPath, `path under ${packRoot}`, "OpenClaw tarball path");
   fs.existsSync(tarballPath) || runtimeMismatch("missing", "present", tarballPath);
   requireRuntimeEqual(sha512Sri(tarballPath), expectedIntegrity, "OpenClaw tarball SRI");
   return tarballPath;
