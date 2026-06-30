@@ -44,6 +44,7 @@ type WrapperRun = {
 
 type StubBehaviour = {
   stdout?: string;
+  stderr?: string;
   exitCode?: number;
 };
 
@@ -73,11 +74,15 @@ function runWrapper(
 
     const marker = path.join(dir, "real-invoked.txt");
     const stubStdout = opts.stub?.stdout ?? "";
+    const stubStderr = opts.stub?.stderr ?? "";
     const stubExit = opts.stub?.exitCode ?? 0;
     const stubScript = [
       "#!/usr/bin/env bash",
       `printf '%s' "$*" > ${JSON.stringify(marker)}`,
       stubStdout ? `cat <<'__NEMOCLAW_STUB_EOF__'\n${stubStdout}\n__NEMOCLAW_STUB_EOF__` : "",
+      stubStderr
+        ? `cat <<'__NEMOCLAW_STUB_ERR_EOF__' >&2\n${stubStderr}\n__NEMOCLAW_STUB_ERR_EOF__`
+        : "",
       `exit ${stubExit}`,
       "",
     ].join("\n");
@@ -298,33 +303,107 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
   });
 
   it("masks credential-shaped values that hermes emits on stderr", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-stderr-"));
-    try {
-      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.chmodSync(path.join(dir, "hermes"), 0o755);
-      const marker = path.join(dir, "real-invoked.txt");
-      const stderrPayload = "api_key: sk-stderr-leaked-secret-12345";
-      const stubScript = [
-        "#!/usr/bin/env bash",
-        `printf '%s' "$*" > ${JSON.stringify(marker)}`,
-        `printf 'api_key: ok\\n'`,
-        `printf '%s\\n' '${stderrPayload}' >&2`,
-        "exit 0",
-        "",
-      ].join("\n");
-      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
-      const result = spawnSync("bash", [path.join(dir, "hermes"), "config", "show"], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: process.env.PATH ?? "", HOME: dir },
-      });
-      expect(result.status).toBe(0);
-      expect(result.stderr).not.toContain("sk-stderr-leaked-secret-12345");
-      expect(result.stderr).toContain("api_key: sk-****");
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: {
+          stdout: "api_key: ok",
+          stderr: "api_key: sk-stderr-leaked-secret-12345",
+          exitCode: 0,
+        },
+      },
+    );
+
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toContain("sk-stderr-leaked-secret-12345");
+    expect(run.stderr).toContain("api_key: sk-****");
+  });
+
+  it("fails closed when the stderr masker exits non-zero while hermes writes credential-shaped diagnostics", () => {
+    const stderrOnlyFailValidator = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      "data = sys.stdin.read()",
+      'if "FAIL-MARKER" in data:',
+      '    sys.stderr.write("stderr masker boom\\n")',
+      "    sys.exit(3)",
+      "sys.stdout.write(data)",
+      "",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: {
+          stdout: "api_key: ok",
+          stderr: "FAIL-MARKER api_key: sk-stderr-only-leak-12345",
+          exitCode: 0,
+        },
+        validatorScript: stderrOnlyFailValidator,
+      },
+    );
+
+    expect(run.status).toBe(3);
+    expect(run.stderr).toContain("output masker failed (stderr)");
+    expect(run.stderr).not.toContain("sk-stderr-only-leak-12345");
+  });
+
+  it("masks api_secret and auth_token fields beyond the explicit api_key/access_token shapes", () => {
+    const fixture = [
+      "{'api_secret': 'leaked-api-secret-12345', 'auth_token': 'leaked-auth-token-12345'}",
+      '{"api_secret": "leaked-api-secret-67890"}',
+      "auth_token: leaked-auth-token-67890",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-api-secret-12345");
+    expect(run.stdout).not.toContain("leaked-auth-token-12345");
+    expect(run.stdout).not.toContain("leaked-api-secret-67890");
+    expect(run.stdout).not.toContain("leaked-auth-token-67890");
+    expect(run.stdout).toContain("'api_secret': 'sk-****'");
+    expect(run.stdout).toContain("'auth_token': 'sk-****'");
+    expect(run.stdout).toContain('"api_secret": "sk-****"');
+    expect(run.stdout).toContain("auth_token: sk-****");
+  });
+
+  it("masks every api_key emitted by the generated Hermes config (model, providers, custom_providers) on combined stdout and stderr", () => {
+    const fixture = [
+      "◆ Model",
+      "  Model:        {'default': 'meta/llama-3.1-8b-instruct', 'provider': 'custom',",
+      "                 'base_url': 'https://inference.local/v1',",
+      "                 'api_key': 'sk-OPENSHELL-PROXY-REWRITE'}",
+      "  Providers:    {'nemoclaw-inference': {'name': 'nemoclaw-inference',",
+      "                  'api': 'https://inference.local/v1',",
+      "                  'api_key': 'sk-OPENSHELL-PROXY-REWRITE',",
+      "                  'default_model': 'meta/llama-3.1-8b-instruct',",
+      "                  'discover_models': True}}",
+      "  Custom providers: [{'name': 'nemoclaw-inference',",
+      "                  'base_url': 'https://inference.local/v1',",
+      "                  'api_key': 'sk-OPENSHELL-PROXY-REWRITE',",
+      "                  'discover_models': True}]",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: {
+          stdout: fixture,
+          stderr: "api_key: sk-OPENSHELL-PROXY-REWRITE",
+          exitCode: 0,
+        },
+      },
+    );
+
+    expect(run.status).toBe(0);
+    const combined = `${run.stdout}\n${run.stderr}`;
+    expect(combined).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain("'api_key': 'sk-****'");
+    expect(run.stdout).toContain("'default': 'meta/llama-3.1-8b-instruct'");
+    expect(run.stdout).toContain("'base_url': 'https://inference.local/v1'");
+    expect(run.stdout).toContain("'discover_models': True");
+    expect(run.stderr).toContain("api_key: sk-****");
   });
 
   it("fails closed when the masker exits non-zero even though hermes succeeded", () => {

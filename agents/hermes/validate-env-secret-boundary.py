@@ -187,7 +187,8 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
 
 
 _SECRET_FIELD_RE = re.compile(
-    r"(?i)\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|secret[_-]?key|"
+    r"(?i)\b(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|"
+    r"client[_-]?secret|secret[_-]?key|"
     r"authorization|bearer|credential|password|secret|token)\b"
 )
 _MASK_PY = "sk-****"

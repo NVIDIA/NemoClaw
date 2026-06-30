@@ -69,20 +69,35 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
     exit 127
   }
-  # Mask both stdout and stderr. Process substitution routes Hermes' stderr
-  # through the same masker as stdout so a diagnostic that quotes `api_key`
-  # cannot leak the value on the side channel. The masker buffers in-memory
-  # and writes on success, so a mid-stream crash never produces a partial
-  # secret on either stream.
-  "$REAL_HERMES" "$@" \
-    2> >("$PYTHON3" "$GUARD" mask-config-output >&2) \
-    | "$PYTHON3" "$GUARD" mask-config-output
+  # Buffer Hermes stderr to a temp file so its masker's exit status is
+  # observable. A process-substitution `2> >(... mask ...)` cannot be checked
+  # via PIPESTATUS — Bash does not record the substituted command's exit
+  # status — so a stderr-side masker that crashed or refused unexpected input
+  # would silently fall back to whatever the substitution wrote (which on
+  # failure is nothing, but the wrapper would also miss observing the failure
+  # and return the Hermes status as if everything succeeded). Buffering lets
+  # us mask after Hermes exits and fail closed on either stream. The masker
+  # itself buffers in memory and writes only on success, so neither stream
+  # produces a partial secret. The temp file is removed via EXIT trap.
+  _stderr_buf="$(mktemp)" || {
+    echo "[SECURITY] Refusing hermes config show: cannot create stderr buffer" >&2
+    exit 1
+  }
+  # shellcheck disable=SC2064
+  trap "rm -f \"$_stderr_buf\"" EXIT
+  "$REAL_HERMES" "$@" 2>"$_stderr_buf" | "$PYTHON3" "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
-  masker_status="${statuses[1]}"
-  if [ "$masker_status" -ne 0 ]; then
-    echo "[SECURITY] Refusing hermes config show: output masker failed" >&2
-    exit "$masker_status"
+  stdout_masker_status="${statuses[1]}"
+  "$PYTHON3" "$GUARD" mask-config-output <"$_stderr_buf" >&2
+  stderr_masker_status=$?
+  if [ "$stdout_masker_status" -ne 0 ]; then
+    echo "[SECURITY] Refusing hermes config show: output masker failed (stdout)" >&2
+    exit "$stdout_masker_status"
+  fi
+  if [ "$stderr_masker_status" -ne 0 ]; then
+    echo "[SECURITY] Refusing hermes config show: output masker failed (stderr)" >&2
+    exit "$stderr_masker_status"
   fi
   exit "$hermes_status"
 fi
