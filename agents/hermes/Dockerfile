@@ -148,9 +148,9 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
 # wrapper in its place; the wrapper reuses the same validator and execs the real
 # binary for every non-gateway subcommand. Re-assert --version through the
 # wrapper so a broken relocation fails the build.
-COPY agents/hermes/hermes-wrapper.sh /usr/local/lib/nemoclaw/hermes-wrapper.sh
+COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
-    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.sh /usr/local/bin/hermes \
+    && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.py /usr/local/bin/hermes \
     && chmod 755 /usr/local/bin/hermes.real \
     && /usr/local/bin/hermes --version
 

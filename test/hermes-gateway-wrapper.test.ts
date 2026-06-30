@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Coverage for the hermes CLI wrapper (agents/hermes/hermes-wrapper.sh), which
+// Coverage for the hermes CLI wrapper (agents/hermes/hermes-wrapper.py), which
 // closes the #4975 bypass: `docker exec ... hermes gateway run` must enforce the
 // same runtime-env secret boundary as the nemoclaw-start entrypoint, refusing
 // raw secret-shaped env vars and never reaching the real gateway.
 //
-// Linux + python3 gated: the wrapper uses bash `exec` and invokes python3 (the
-// shared validator). CI runs on Linux with python3 available, so the suite
-// runs every PR; the gate exists so a maintainer cloning on macOS or Windows
-// does not see a spurious red on `npm test`. See `.github/workflows/` for the
-// canonical CI runner image.
+// Linux + python3 gated: the wrapper is a Python script invoked via its
+// `#!/usr/bin/python3 -I` shebang. CI runs on Linux with python3 available, so
+// the suite runs every PR; the gate exists so a maintainer cloning on macOS or
+// Windows does not see a spurious red on `npm test`. See `.github/workflows/`
+// for the canonical CI runner image.
 
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
@@ -23,7 +23,7 @@ import { describe, expect, it } from "vitest";
 import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
 import { buildOpenshellExecArgs } from "../src/lib/actions/sandbox/exec.ts";
 
-const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.sh");
+const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.py");
 const VALIDATOR = path.join(
   import.meta.dirname,
   "..",
@@ -121,7 +121,7 @@ function runWrapper(
       pathPrefix = `${evilBin}${path.delimiter}`;
     }
 
-    const result = spawnSync("bash", [path.join(dir, "hermes"), ...args], {
+    const result = spawnSync(path.join(dir, "hermes"), args, {
       encoding: "utf-8",
       timeout: 10000,
       env: { PATH: `${pathPrefix}${process.env.PATH ?? ""}`, HOME: dir, ...env },
@@ -140,7 +140,7 @@ function runWrapper(
   }
 }
 
-describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
+describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
   it("refuses `gateway` with a raw secret-shaped env var and never starts the gateway (#4975)", () => {
     const run = runWrapper(["gateway", "run"], { SLACK_BOT_TOKEN: "xoxb-real-1234567890" });
 
@@ -578,7 +578,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
         ].join("\n"),
       );
 
-      const result = spawnSync("bash", [path.join(dir, "hermes"), "config", "show"], {
+      const result = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
         encoding: "utf-8",
         timeout: 10_000,
         env: { PATH: `${evilBin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: dir },
@@ -831,7 +831,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       );
       fs.copyFileSync(wrapperPath, path.join(decoyDir, "hermes"));
 
-      const result = spawnSync("bash", [path.join(decoyDir, "hermes"), "config", "show"], {
+      const result = spawnSync(path.join(decoyDir, "hermes"), ["config", "show"], {
         encoding: "utf-8",
         timeout: 10_000,
         env: { PATH: process.env.PATH ?? "", HOME: dir },
@@ -881,12 +881,12 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       const wrapperContent = fs
         .readFileSync(WRAPPER, "utf-8")
         .replace(
-          'REAL_HERMES="/usr/local/bin/hermes.real"',
-          `REAL_HERMES=${JSON.stringify(installedReal)}`,
+          '_INSTALLED_REAL = "/usr/local/bin/hermes.real"',
+          `_INSTALLED_REAL = ${JSON.stringify(installedReal)}`,
         )
         .replace(
-          'GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"',
-          `GUARD=${JSON.stringify(installedGuard)}`,
+          '_INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"',
+          `_INSTALLED_GUARD = ${JSON.stringify(installedGuard)}`,
         );
       const installedWrapper = path.join(binDir, "hermes");
       fs.writeFileSync(installedWrapper, wrapperContent, { mode: 0o755 });
@@ -912,7 +912,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       ].join("\n");
       fs.writeFileSync(installedReal, stubScript, { mode: 0o755 });
 
-      const result = spawnSync("bash", [installedWrapper, "config", "show"], {
+      const result = spawnSync(installedWrapper, ["config", "show"], {
         encoding: "utf-8",
         timeout: 10_000,
         env: { PATH: process.env.PATH ?? "", HOME: prefix },
