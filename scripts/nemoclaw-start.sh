@@ -3081,6 +3081,8 @@ _nemoclaw_policy_denial_hint_label() {
   # is only ever called inside $(…) command substitution (a subshell), so the
   # assignment cannot leak into the interactive shell.
   LC_ALL=C
+  # Allowlist pattern mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (RFC-1123 label: /^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63). Keep them in sync.
   case "${OPENSHELL_SANDBOX:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
     [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
