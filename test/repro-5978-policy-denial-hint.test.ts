@@ -45,6 +45,15 @@ const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
 // pulled base image. Run with:
 //   NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E=1 vitest run \
 //     test/repro-5978-policy-denial-hint.test.ts --project integration
+//
+// Kept opt-in rather than promoted to a required CI lane on purpose: it requires
+// a Docker daemon plus the multi-hundred-MB sandbox base image, which the fast
+// always-run CLI/integration lanes deliberately do not provision. The behavior
+// itself is fully covered hermetically by the always-run stanza tests above
+// (emitted shell sourced under a PTY, name allowlist, once-per-session gating,
+// proactive-only contract); this scenario is the end-to-end reporter-workflow
+// proof, meant for local runs and image-aware lanes. Promote it to a required
+// job (or a periodic image-aware signal) once such a lane exists.
 const DOCKER_E2E = process.env.NEMOCLAW_RUN_POLICY_HINT_DOCKER_E2E === "1";
 const SANDBOX_BASE_IMAGE =
   process.env.NEMOCLAW_SANDBOX_BASE_IMAGE ?? "ghcr.io/nvidia/nemoclaw/sandbox-base:latest";
