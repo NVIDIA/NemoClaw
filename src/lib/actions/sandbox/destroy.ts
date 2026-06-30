@@ -40,7 +40,7 @@ import {
   selectGatewayForSandboxDestroy,
 } from "./destroy-gateway";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
+import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -292,10 +292,10 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
+export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
 export { wipeSandboxState };
-export type { WipeSandboxStateDeps };
 
 export async function destroySandbox(
   sandboxName: string,
@@ -389,19 +389,54 @@ export async function destroySandbox(
     ignoreError: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
-  const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+  const {
+    output: deleteOutput,
+    alreadyGone,
+    gatewayUnreachable,
+  } = getSandboxDeleteOutcome(deleteResult);
 
-  if (deleteResult.status !== 0 && !alreadyGone) {
+  // When the OpenShell gateway is down, every gateway call (including the final
+  // delete) gets a connection-refused/transport error. That used to abort
+  // destroy with no bypass, leaving no supported way to remove the sandbox
+  // record (#6046). Under --force, fall back to local cleanup; otherwise keep
+  // failing but point at the recovery paths.
+  const forcedLocalCleanup =
+    deleteResult.status !== 0 && !alreadyGone && gatewayUnreachable && normalized.force === true;
+
+  if (deleteResult.status !== 0 && !alreadyGone && !forcedLocalCleanup) {
     if (deleteOutput) {
       console.error(`  ${deleteOutput}`);
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
+    if (gatewayUnreachable) {
+      console.error(
+        `  The OpenShell gateway is unreachable. Start it (run '${CLI_NAME} ${sandboxName} status'),`,
+      );
+      console.error(
+        `  or re-run with --force to remove the local sandbox record without the gateway.`,
+      );
+    }
     process.exit(deleteResult.status || 1);
   }
 
+  if (forcedLocalCleanup) {
+    if (deleteOutput) {
+      console.error(`  ${deleteOutput}`);
+    }
+    console.warn(
+      `  ${YW}⚠${R} OpenShell gateway unreachable; removing the local record for '${sandboxName}' (--force).`,
+    );
+    console.warn(
+      `  ${YW}⚠${R} If the gateway comes back, the sandbox may still exist — re-run destroy or remove it via openshell.`,
+    );
+  }
+
+  // Forced local cleanup removes the registry entry/local artifacts but cannot
+  // confirm the gateway-side delete, so it must not trigger gateway teardown.
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
+  const proceedWithLocalCleanup = deleteSucceededOrAlreadyGone || forcedLocalCleanup;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
-    deleteSucceededOrAlreadyGone,
+    deleteSucceededOrAlreadyGone: proceedWithLocalCleanup,
     registeredSandboxCount: registry.listSandboxes().sandboxes.length,
     sandboxStillRegistered: !!registry.getSandbox(sandboxName),
   });
