@@ -94,6 +94,14 @@ describe("multilineExecMessage", () => {
     const message = multilineExecMessage("nemoclaw", "alpha", ["printf", "\r"], 1);
     expect(message).toContain("1 character spanning 2 lines");
   });
+
+  it("counts a trailing newline as a second (empty) line", () => {
+    // A single trailing "\n" splits into ["first", ""], so the size description
+    // reports 2 lines even though only one line carries text. This pins the
+    // documented bare-CR/trailing-break counting behavior.
+    const message = multilineExecMessage("nemoclaw", "alpha", ["bash", "-lc", "first\n"], 2);
+    expect(message).toContain("6 characters spanning 2 lines");
+  });
 });
 
 describe("execSandbox multi-line guard (#5980)", () => {
@@ -150,6 +158,38 @@ describe("execSandbox multi-line guard (#5980)", () => {
       "bash",
       "-lc",
       "echo line1; echo line2",
+    ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("forwards a Unicode line-separator argument through dispatch (OpenShell accepts U+2028/U+2029; only CR/LF are guarded)", async () => {
+    // The guard mirrors OpenShell's CR/LF-only rejection, so an argument that
+    // carries U+2028 passes the guard and dispatches unchanged at the
+    // execSandbox boundary — confirming the documented assumption end-to-end on
+    // the dispatch path, not just in findMultilineExecArg.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      execSandbox(
+        "bug5980test",
+        ["printf", "a\u2028b"],
+        {},
+        { run, resolveBinary: () => "openshell" },
+      ),
+    ).rejects.toThrow("exit:0");
+
+    expect(run).toHaveBeenCalledWith("openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "bug5980test",
+      "--",
+      "printf",
+      "a\u2028b",
     ]);
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
