@@ -250,6 +250,21 @@ Manage later
 If you picked a different option, the `Model` line shows that provider's model and label instead.
 For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
+## Confirm Onboarding Finished Before You Chat
+
+The sandbox exists only after `nemoclaw onboard` completes.
+The installer auto-launches the wizard, but some paths do not run it for you: remote or Brev hosts where the installer cannot locate the freshly installed binary, or any host where a blocking preflight check fails.
+In those cases the installer prints a `To finish setup, run:` block instead of starting the wizard, and the sandbox does not exist yet.
+
+If you did not see the **NemoClaw is ready** summary above, run onboarding explicitly before you connect or chat:
+
+```bash
+nemoclaw onboard
+```
+
+To confirm the sandbox exists, run `nemoclaw <sandbox-name> status`.
+Do not run `nemoclaw <sandbox-name> connect` or `openclaw tui` until onboarding has created the sandbox; otherwise the connect step fails because no sandbox exists.
+
 ## Run Your First Agent Prompt
 
 Chat with the agent from the terminal or the browser.
