@@ -40,8 +40,7 @@ function appendAuditEntry(entry: AuditRecord) {
 
 function requireEvent(result: ShieldsAutoRestoreReadResult): ShieldsAutoRestoreEvent {
   expect(result.kind).toBe("event");
-  if (result.kind !== "event") throw new Error(`expected event result, got ${result.kind}`);
-  return result.event;
+  return (result as Extract<ShieldsAutoRestoreReadResult, { kind: "event" }>).event;
 }
 
 describe("shields-audit", () => {
