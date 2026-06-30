@@ -641,7 +641,10 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       const installedGuard = path.join(libDir, "validate-hermes-env-secret-boundary.py");
       const wrapperContent = fs
         .readFileSync(WRAPPER, "utf-8")
-        .replace('REAL_HERMES="/usr/local/bin/hermes.real"', `REAL_HERMES=${JSON.stringify(installedReal)}`)
+        .replace(
+          'REAL_HERMES="/usr/local/bin/hermes.real"',
+          `REAL_HERMES=${JSON.stringify(installedReal)}`,
+        )
         .replace(
           'GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"',
           `GUARD=${JSON.stringify(installedGuard)}`,
