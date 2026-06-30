@@ -38,6 +38,16 @@ The only supported managed path is authenticated Streamable HTTP through an Open
 Host-side MCP data-plane bridges, proxies, relays, listeners, and stdio translation are explicitly out of scope for this feature.
 The original issue's Claude-style `-e KEY=VALUE -- <command>`, plaintext `http://host.docker.internal:<port>`, stored environment value, and `127.0.0.1` proxy clauses are rejected by this decision rather than deferred implementation work.
 
+| Decision boundary | Accepted native OpenShell design | Superseded host proxy design |
+| --- | --- | --- |
+| Credential boundary | OpenShell stores the raw value and resolves a sandbox placeholder only on an authorized request. | A NemoClaw host process would receive and retain the raw value while proxying traffic. |
+| Policy enforcement | OpenShell evaluates the destination, path, adapter identity, pinned addresses, and MCP methods before credential replacement. | The proxy would become a second authorization implementation outside OpenShell policy. |
+| Data-plane exposure | The sandbox connects through OpenShell's existing egress path; NemoClaw leaves no host listener or MCP traffic process. | A host listener and stdio-to-HTTP relay would expand the data plane and local attack surface. |
+| Failure behavior | Provider, policy, and adapter mutations fail closed and preserve retryable registry state when ownership or readiness cannot be proven. | Proxy failure could strand a listener, subprocess, or partially persisted secret-bearing launch state. |
+| Crash recovery | Randomized provider ownership records and per-sandbox lifecycle locks let `restart`, `rebuild`, `remove`, and `destroy` reconcile durable state. | Recovery would also have to discover and terminate orphan host processes and reconstruct their secret-bearing invocation state. |
+
+The accepted design record is tracked in [NVIDIA/NemoClaw#566](https://github.com/NVIDIA/NemoClaw/issues/566), and [NVIDIA/NemoClaw#5876](https://github.com/NVIDIA/NemoClaw/pull/5876) is its implementation.
+
 ## Add an MCP Server
 
 Use the same workflow for OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
@@ -63,7 +73,7 @@ Choose a dedicated name such as `MY_SERVICE_MCP_TOKEN`.
 NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands. Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well because OpenShell attaches provider keys to fresh sandbox execs; use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
 NemoClaw requires exactly one `--env` bearer credential per server.
-Every endpoint must use HTTPS, including endpoints reached through an OpenShell host alias.
+Every endpoint must use HTTPS.
 URLs with query strings are rejected because the URL is persisted and displayed.
 Use a distinct environment variable name for each managed MCP server in the same sandbox.
 OpenShell static credential keys are sandbox-wide and cannot be attached twice.
@@ -76,9 +86,10 @@ The CONNECT path passes the returned list directly to `TcpStream::connect` at `c
 The explicit HTTP-forward path carries the same returned list from `crates/openshell-supervisor-network/src/proxy.rs:3885-3893` to `crates/openshell-supervisor-network/src/proxy.rs:4123-4125`.
 A DNS change to a private, special-use, or otherwise unpinned address therefore fails closed instead of widening the route.
 `restart` resolves the hostname again before updating that policy.
-An OpenShell host alias can identify a native MCP service you already run, but NemoClaw does not start or wrap that service.
-For that exact alias, NemoClaw omits `allowed_ips` and relies on OpenShell `v0.0.72`'s trusted, driver-specific gateway-address path instead of granting private-network CIDRs.
-That service must present a certificate valid for the alias, signed by a CA already trusted by the sandbox supervisor; installing a new CA requires restarting the supervisor before registration.
+Authenticated MCP rejects `host.openshell.internal`, `host.docker.internal`, and `host.containers.internal` on stable OpenShell `v0.0.72`.
+That release has a trusted-gateway branch for one narrow link-local topology, but it does not expose an attested driver gateway address that NemoClaw can pin; non-link-local driver aliases otherwise fall back to mutable exact-host resolution.
+Host-alias support is deferred until OpenShell exposes attested gateway state for exact policy pinning.
+Use a normal HTTPS DNS endpoint with public address records in the meantime.
 
 ## Authenticated MCP Security Boundary
 
@@ -222,6 +233,9 @@ NemoClaw cleans only resources whose ownership it can prove and keeps the regist
 If the generated policy or provider has drifted, `restart` fails closed instead of overwriting same-name state.
 Resolve the reported OpenShell ownership or content mismatch, then retry.
 `remove --force` can continue cleaning other independently owned resources, but it does not claim or delete the drifted resource.
+
+Registry entries created by an earlier preview branch with an OpenShell host-alias URL or a credential name that is now reserved remain visible so they can be removed safely, but `status` reports the unsupported boundary and `restart` and `rebuild` fail closed.
+Remove the legacy entry before rebuilding or destroying the sandbox, then add a normal public HTTPS DNS endpoint with a dedicated service credential name.
 
 If NemoClaw reports that MCP policy capability is unavailable, install the required OpenShell build and rerun onboarding.
 NemoClaw checks inspectable installed OpenShell artifacts for the `protocol: mcp` capability and does not enable managed MCP from a version number alone.

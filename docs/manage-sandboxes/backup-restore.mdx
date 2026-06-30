@@ -54,6 +54,10 @@ $$nemoclaw my-assistant snapshot restore
 
 `snapshot list` prints a table of version, name, timestamp, and path.
 NemoClaw computes versions (`v1`, `v2`, ..., `vN`) from timestamp order, so `vN` is always the newest snapshot.
+`snapshot create` requires shields to be down.
+Snapshot creation and restore share the per-sandbox transition lock with the shields auto-restore timer.
+If a timed shields-down window expires during snapshot work, auto-restore can interrupt the operation and restore lockdown instead of allowing state or policy changes to continue past the deadline.
+Retry the snapshot in a new shields-down window if the deadline interrupts it.
 
 To tag a snapshot with a human-readable label, pass `--name`:
 
@@ -76,6 +80,9 @@ If the destination sandbox already exists, NemoClaw refuses to overwrite it unle
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
 $$nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
 ```
+
+The force-overwrite path restores and verifies lockdown on a destination with an active shields timer, then revokes that timer before it deletes the destination.
+It clears the remaining local shields state only after deletion succeeds, before a same-name replacement is created.
 
 <AgentOnly variant="openclaw">
 

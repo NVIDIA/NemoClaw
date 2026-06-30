@@ -26,11 +26,11 @@ afterEach(() => {
 });
 
 describe("cross-agent MCP status", () => {
-  it("reports sandbox-scoped provider risk in JSON and text status", () => {
+  it("reports unsupported persisted boundaries without starting an unsafe sandbox child", () => {
     const home = createTempHome("nemoclaw-mcp-status-risk-");
     const script = String.raw`
 process.env.HOME = ${JSON.stringify(home)};
-process.env.EXPECTED_TOKEN = "host-only-secret";
+process.env.LD_PRELOAD = "/tmp/legacy-attached-loader.so";
 const registry = require("./src/lib/state/registry.js");
 const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
 const globalActions = require("./src/lib/actions/global.js");
@@ -46,7 +46,7 @@ globalActions.runOpenshellProviderCommand = (args) => {
   if (args[0] === "provider" && args[1] === "get") {
     return {
       status: 0,
-      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: EXPECTED_TOKEN\n",
+      stdout: "Id: 11111111-2222-4333-8444-555555555555\nType: generic\nResource version: 4\nCredential keys: LD_PRELOAD\n",
       stderr: "",
     };
   }
@@ -60,11 +60,9 @@ globalActions.runOpenshellProviderCommand = (args) => {
   throw new Error("Unexpected OpenShell call: " + args.join(" "));
 };
 policies.getPresetContentGatewayState = () => "match";
-processRecovery.executeSandboxCommand = () => ({
-  status: 0,
-  stdout: "registered\n",
-  stderr: "",
-});
+processRecovery.executeSandboxCommand = () => {
+  throw new Error("unsafe sandbox child must not start while LD_PRELOAD is attached");
+};
 registry.registerSandbox({
   name: "alpha",
   agent: "openclaw",
@@ -72,8 +70,8 @@ registry.registerSandbox({
     server: "fake",
     agent: "openclaw",
     adapter: "mcporter",
-    url: "https://mcp.example.test/mcp",
-    env: ["EXPECTED_TOKEN"],
+    url: "https://host.openshell.internal:31337/mcp",
+    env: ["LD_PRELOAD"],
     providerName: "alpha-mcp-fake",
     providerId: "11111111-2222-4333-8444-555555555555",
     policyName: "mcp-bridge-fake",
@@ -110,15 +108,31 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const payload = JSON.parse(result.stdout) as {
-      status: { warnings: string[]; provider: { attached: boolean | null } };
+      status: {
+        warnings: string[];
+        provider: { attached: boolean | null };
+        adapter: { registered: boolean | null; detail?: string };
+      };
       text: string;
     };
     expect(payload.status.provider.attached).toBe(true);
+    expect(payload.status.adapter).toEqual({
+      registered: null,
+      detail: expect.stringMatching(/inspection was skipped.*legacy credential/i),
+    });
     expect(payload.status.warnings).toEqual([
       expect.stringMatching(/provider at sandbox scope.*endpoint-exclusive credential binding/i),
+      expect.stringMatching(/persisted MCP URL no longer satisfies.*remove this server/i),
+      expect.stringMatching(
+        /persisted MCP credential name no longer satisfies.*remove this server/i,
+      ),
     ]);
     expect(payload.text).toMatch(
       /warning: OpenShell currently attaches this credential provider at sandbox scope/i,
+    );
+    expect(payload.text).toMatch(/warning: This persisted MCP URL no longer satisfies/i);
+    expect(payload.text).toMatch(
+      /warning: This persisted MCP credential name no longer satisfies/i,
     );
   });
 
@@ -196,13 +210,19 @@ registry.registerSandbox({
   agent: "legacy-disabled",
   mcp: { bridges: { github: {
     server: "github",
-    url: "https://mcp.example.test/mcp",
+    url: "https://host.openshell.internal:31337/mcp",
     env: [],
     policyName: "mcp-bridge-github",
     adapter: "mcporter",
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
   } } },
+});
+registry.addCustomPolicy("legacy-sandbox", {
+  name: "mcp-bridge-github",
+  content: "network_policies:\\n  mcp_bridge_github:\\n    endpoints: []\\n",
+  sourcePath: "generated:nemoclaw-mcp-bridge",
+  appliedAt: "2026-06-01T00:00:00.000Z",
 });
 const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
 bridge.removeMcpBridge("legacy-sandbox", "github").then(
@@ -222,7 +242,7 @@ bridge.removeMcpBridge("legacy-sandbox", "github").then(
       env: { ...process.env, HOME: home, NODE_OPTIONS: sourceNodeOptions },
     });
 
-    expect(result.status).toBe(0);
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
     const jsonStart = result.stdout.indexOf("{");
     const sandbox = JSON.parse(result.stdout.slice(jsonStart)) as {
       mcp?: unknown;

@@ -19,7 +19,7 @@ import type { StdioOptions } from "node:child_process";
  */
 
 import { listMessagingCredentialMetadata } from "../messaging/channels";
-import { SECRET_PATTERNS, TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
+import { SECRET_BLOCK_PATTERNS, SECRET_PATTERNS, TOKEN_PREFIX_PATTERNS } from "./secret-patterns";
 
 const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   "NVIDIA_INFERENCE_API_KEY",
@@ -118,6 +118,10 @@ const FULL_REDACT_PATTERNS: [RegExp, string][] = [
     new RegExp(p.source, p.flags),
     "<REDACTED>",
   ]),
+  ...SECRET_BLOCK_PATTERNS.map((p): [RegExp, string] => [
+    new RegExp(p.source, p.flags),
+    "<REDACTED>",
+  ]),
   [/(Bearer )\S+/gi, "$1<REDACTED>"],
   [/\/bot[^/\s]+\//g, "/bot<REDACTED>/"],
 ];
@@ -131,6 +135,16 @@ export function redactFull(text: string): string {
   return result;
 }
 
+/** Redact self-identifying tokens and secret blocks without rewriting surrounding structure. */
+export function redactStandaloneSecretsFull(text: string): string {
+  let result = text;
+  for (const pattern of [...TOKEN_PREFIX_PATTERNS, ...SECRET_BLOCK_PATTERNS]) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, "<REDACTED>");
+  }
+  return result.replace(/\/bot[^/\s]+\//g, "/bot<REDACTED>/");
+}
+
 // ── Sensitive text redaction (onboard-session.ts style) ─────────
 
 export function redactSensitiveText(value: unknown): string | null {
@@ -138,7 +152,7 @@ export function redactSensitiveText(value: unknown): string | null {
   let result = value
     .replace(SENSITIVE_ENV_ASSIGNMENT_PATTERN, "$1=<REDACTED>")
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
-  for (const pattern of TOKEN_PREFIX_PATTERNS) {
+  for (const pattern of [...TOKEN_PREFIX_PATTERNS, ...SECRET_BLOCK_PATTERNS]) {
     pattern.lastIndex = 0;
     result = result.replace(pattern, "<REDACTED>");
   }

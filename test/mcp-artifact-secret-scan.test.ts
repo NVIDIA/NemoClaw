@@ -7,8 +7,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { scanMcpArtifactSecrets } from "../tools/e2e-scenarios/assert-mcp-artifact-secrets-absent.mts";
-import { MCP_BRIDGE_TEST_CREDENTIALS } from "./e2e-scenario/fixtures/mcp-bridge-credentials.ts";
+import { scanMcpArtifactSecrets } from "../tools/e2e/assert-mcp-artifact-secrets-absent.mts";
+import { MCP_BRIDGE_TEST_CREDENTIALS } from "./e2e/fixtures/mcp-bridge-credentials.ts";
 
 const roots: string[] = [];
 

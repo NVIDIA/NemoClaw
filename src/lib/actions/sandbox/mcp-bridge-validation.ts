@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import crypto from "node:crypto";
-import dns from "node:dns/promises";
 
+import { resolveHostAddresses } from "../../adapters/dns/resolve";
 import {
   isBlockedMcpUrlTargetHost,
   isOpenShellMcpHostAlias,
@@ -83,6 +83,14 @@ const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = [
 ];
 const MCP_PROVIDER_HASH_BYTES = 8;
 
+function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
+  if (!isOpenShellMcpHostAlias(hostname)) return;
+  throw new McpBridgeError(
+    `Authenticated MCP OpenShell host alias '${hostname}' is unavailable with OpenShell v0.0.72 because that release does not expose an attested driver gateway address for exact policy pinning. Use a normal HTTPS DNS endpoint with public address records.`,
+    2,
+  );
+}
+
 export function validateSandboxName(name: string): void {
   if (!name || name.length > 63 || !VALID_SANDBOX_RE.test(name)) {
     throw new McpBridgeError(
@@ -102,12 +110,7 @@ export function validateMcpServerName(name: string): void {
 }
 
 export function validateMcpCredentialEnvName(name: string): void {
-  if (!VALID_ENV_RE.test(name)) {
-    throw new McpBridgeError(
-      `Invalid environment variable name '${name}'. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
-      2,
-    );
-  }
+  validatePersistedMcpCredentialEnvName(name);
   if (isSubprocessEnvNameAllowed(name)) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is reserved for host subprocess control and could be forwarded outside the provider mutation. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
@@ -132,6 +135,16 @@ export function validateMcpCredentialEnvName(name: string): void {
   ) {
     throw new McpBridgeError(
       `MCP credential environment name '${name}' is reserved for sandbox runtime control and could alter or prevent agent commands. Use a dedicated secret name such as MY_SERVICE_MCP_TOKEN.`,
+      2,
+    );
+  }
+}
+
+/** Validate syntax only for cleanup of durable entries created by older builds. */
+export function validatePersistedMcpCredentialEnvName(name: string): void {
+  if (!VALID_ENV_RE.test(name)) {
+    throw new McpBridgeError(
+      `Invalid environment variable name '${name}'. Names must match [A-Za-z_][A-Za-z0-9_]*.`,
       2,
     );
   }
@@ -204,11 +217,14 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
       2,
     );
   }
-  if (isOpenShellMcpHostAlias(parsed.hostname) && parsed.hostname.endsWith(".")) {
-    // OpenShell's trusted host-alias matcher requires the canonical spelling.
-    parsed.hostname = parsed.hostname.slice(0, -1);
-  }
+  rejectUnsupportedOpenShellMcpHostAlias(parsed.hostname);
   validateMcpServerUrlTarget(parsed);
+  if (parsed.hostname.endsWith(".")) {
+    throw new McpBridgeError(
+      "MCP server URL hostnames must use canonical spelling without a trailing dot.",
+      2,
+    );
+  }
   if (!parsed.pathname) parsed.pathname = "/";
   const normalized = parsed.toString();
   if (normalized.length > MCP_SERVER_URL_MAX_LENGTH) {
@@ -223,27 +239,20 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
 function validateMcpServerUrlTarget(parsed: URL): void {
   if (isBlockedMcpUrlTargetHost(parsed.hostname)) {
     throw new McpBridgeError(
-      `MCP server URL host '${parsed.hostname}' is a private, local, or special-use IP address. Use host.openshell.internal for host MCP endpoints.`,
+      `MCP server URL host '${parsed.hostname}' is a private, local, or special-use IP address. Use a normal HTTPS DNS endpoint with public address records.`,
       2,
     );
   }
 }
 
-export async function validateMcpServerUrlResolvedTarget(
-  parsed: URL,
-): Promise<string[] | undefined> {
-  if (isOpenShellMcpHostAlias(parsed.hostname)) {
-    return undefined;
-  }
+export async function validateMcpServerUrlResolvedTarget(parsed: URL): Promise<string[]> {
+  rejectUnsupportedOpenShellMcpHostAlias(parsed.hostname);
   if (isBlockedMcpUrlTargetHost(parsed.hostname)) {
     validateMcpServerUrlTarget(parsed);
   }
   let addresses: Array<{ address: string }>;
   try {
-    addresses = await dns.lookup(parsed.hostname, {
-      all: true,
-      verbatim: true,
-    });
+    addresses = await resolveHostAddresses(parsed.hostname);
   } catch (error) {
     const detail = error instanceof Error && error.message ? ` ${error.message}` : "";
     throw new McpBridgeError(
@@ -260,7 +269,7 @@ export async function validateMcpServerUrlResolvedTarget(
   for (const { address } of addresses) {
     if (isBlockedMcpUrlTargetHost(address)) {
       throw new McpBridgeError(
-        `MCP server URL host '${parsed.hostname}' resolves to private, local, or special-use address '${address}'. Use host.openshell.internal for host MCP endpoints.`,
+        `MCP server URL host '${parsed.hostname}' resolves to private, local, or special-use address '${address}'. Use a normal HTTPS DNS endpoint with public address records.`,
         2,
       );
     }
@@ -369,14 +378,35 @@ export function assertAuthenticatedCredentialReference(env: readonly ParsedEnvRe
   validateMcpCredentialEnvName(env[0].name);
 }
 
-export function assertAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+export function assertPersistedAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
   if (!Array.isArray(entry.env) || entry.env.length !== 1 || !entry.providerName) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no complete authenticated credential binding. Remove it with --force, then add it again with --env KEY.`,
       2,
     );
   }
+  validatePersistedMcpCredentialEnvName(entry.env[0]);
+}
+
+export function assertAuthenticatedBridgeEntry(entry: McpBridgeEntry): void {
+  assertPersistedAuthenticatedBridgeEntry(entry);
   validateMcpCredentialEnvName(entry.env[0]);
+}
+
+/**
+ * Read values only for local display redaction while cleaning legacy state.
+ * Never pass this map to a subprocess environment or provider mutation.
+ */
+export function resolvePersistedCredentialEnvForRedaction(
+  envNames: readonly string[],
+): Record<string, string> {
+  const resolved: Record<string, string> = {};
+  for (const name of envNames) {
+    validatePersistedMcpCredentialEnvName(name);
+    const value = process.env[name];
+    if (value !== undefined && value !== "") resolved[name] = value;
+  }
+  return resolved;
 }
 
 export function resolveCredentialEnv(env: readonly ParsedEnvReference[]): Record<string, string> {
@@ -405,10 +435,11 @@ export function buildMcpBridgeProviderName(
     .toLowerCase()
     .replace(/_/g, "-")
     .replace(/[^a-z0-9-]/g, "-");
+  const rawBase = `${sandboxName}-mcp-${server}${instanceId ? `-${instanceId}` : ""}`;
   const base = `${sandboxName}-mcp-${serverSlug}${instanceId ? `-${instanceId}` : ""}`
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
-  if (base.length <= 63) return base;
+  if (base.length <= 63 && base === rawBase) return base;
   const hash = crypto
     .createHash("sha256")
     .update(`${sandboxName}:${server}:${instanceId ?? "stable"}`)

@@ -11,8 +11,28 @@ import {
   MCP_BRIDGE_ALLOWED_METHODS,
   MCP_BRIDGE_POLICY_MAX_BODY_BYTES,
 } from "./mcp-bridge";
+import { applyGeneratedPolicy } from "./mcp-bridge-policy";
 
 describe("MCP OpenShell policy", () => {
+  it("refuses to apply a generated policy without exact public address pins", () => {
+    expect(() =>
+      applyGeneratedPolicy(
+        "alpha",
+        {
+          server: "github",
+          agent: "openclaw",
+          adapter: "mcporter",
+          url: "https://api.githubcopilot.com/mcp",
+          env: ["GITHUB_MCP_TOKEN"],
+          providerName: "alpha-mcp-github-0123456789abcdef",
+          policyName: "mcp-bridge-github",
+          addedAt: "2026-06-01T00:00:00.000Z",
+        },
+        [],
+      ),
+    ).toThrow(/without exact public address pins/);
+  });
+
   it("pins DNS answers while constraining the generic mcporter Node grant", () => {
     const policyName = buildMcpBridgePolicyName("GitHub_Server");
     const policy = YAML.parse(
@@ -117,21 +137,17 @@ describe("MCP OpenShell policy", () => {
     expect(endpoint).not.toHaveProperty("tls");
   });
 
-  it("relies on OpenShell's trusted gateway address for its exact host alias", () => {
-    const policy = YAML.parse(
-      buildMcpBridgePolicyYaml("local", "https://host.openshell.internal:31337/mcp", "mcporter"),
-    ) as {
-      network_policies: Record<
-        string,
-        { endpoints: Array<{ host: string; port: number; allowed_ips?: string[] }> }
-      >;
-    };
-
-    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).toMatchObject({
-      host: "host.openshell.internal",
-      port: 31337,
-    });
-    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).not.toHaveProperty("allowed_ips");
+  it("refuses to generate authenticated policies for unpinnable OpenShell host aliases", () => {
+    for (const host of [
+      "host.openshell.internal",
+      "host.openshell.internal.",
+      "host.docker.internal",
+      "host.containers.internal",
+    ]) {
+      expect(() =>
+        buildMcpBridgePolicyYaml("local", `https://${host}:31337/mcp`, "mcporter"),
+      ).toThrow(/does not expose an attested driver gateway address/);
+    }
   });
 
   it("scopes binaries to the selected agent adapter", () => {
@@ -157,15 +173,20 @@ describe("MCP OpenShell policy", () => {
     ]);
   });
 
-  it("uses stable provider names with a length guard", () => {
-    expect(buildMcpBridgeProviderName("alpha", "GitHub_Server")).toBe("alpha-mcp-github-server");
+  it("uses stable collision-resistant provider names with a length guard", () => {
+    expect(buildMcpBridgeProviderName("alpha", "github-server")).toBe("alpha-mcp-github-server");
+    const caseNormalized = buildMcpBridgeProviderName("alpha", "GitHub-Server");
+    const underscoreNormalized = buildMcpBridgeProviderName("alpha", "github_server");
+    expect(caseNormalized).toMatch(/^alpha-mcp-github-server-[a-f0-9]{16}$/);
+    expect(underscoreNormalized).toMatch(/^alpha-mcp-github-server-[a-f0-9]{16}$/);
+    expect(new Set([caseNormalized, underscoreNormalized, "alpha-mcp-github-server"]).size).toBe(3);
     const long = buildMcpBridgeProviderName(
       "sandbox-name-with-a-long-prefix",
       "ServerNameThatWouldOtherwiseExceedTheProviderNameLimit",
     );
     expect(long.length).toBeLessThanOrEqual(63);
     expect(long).toMatch(/^sandbox-name-with-a-long-prefix-mcp-servername-[a-f0-9]{16}$/);
-    expect(buildMcpBridgeProviderName("alpha", "GitHub_Server", "0123456789abcdef")).toBe(
+    expect(buildMcpBridgeProviderName("alpha", "github-server", "0123456789abcdef")).toBe(
       "alpha-mcp-github-server-0123456789abcdef",
     );
   });

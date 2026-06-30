@@ -7,14 +7,17 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 
-import { afterAll, afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
 import { MCP_BRIDGE_ALLOWED_METHODS } from "../src/lib/actions/sandbox/mcp-bridge-policy";
 import {
+  buildCloudflaredQuickTunnelArgs,
+  parseTryCloudflareOrigin,
   type StartedHttpServer,
   startCompatibleMock,
   startFakeMcpHttpsServer,
-} from "./e2e-scenario/live/mcp-bridge-servers";
+  startPublicMcpHttpsTunnel,
+} from "./e2e/live/mcp-bridge-servers";
 
 const servers: StartedHttpServer[] = [];
 const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-fixture-tls-"));
@@ -54,6 +57,94 @@ afterEach(async () => {
 });
 
 describe("authenticated MCP live fixtures", () => {
+  it("builds a bounded public HTTPS quick-tunnel origin without embedding credentials", () => {
+    expect(buildCloudflaredQuickTunnelArgs(43123)).toEqual([
+      "tunnel",
+      "--no-autoupdate",
+      "--protocol",
+      "http2",
+      "--url",
+      "https://127.0.0.1:43123",
+      "--no-tls-verify",
+      "--loglevel",
+      "info",
+    ]);
+    expect(() => buildCloudflaredQuickTunnelArgs(0)).toThrow(/invalid local MCP HTTPS port/);
+    expect(() => buildCloudflaredQuickTunnelArgs(65_536)).toThrow(/invalid local MCP HTTPS port/);
+  });
+
+  it("accepts only an exact public trycloudflare origin from tunnel output", () => {
+    expect(
+      parseTryCloudflareOrigin(
+        '{"message":"https://mcp-fixture-123.trycloudflare.com registered"}',
+      ),
+    ).toBe("https://mcp-fixture-123.trycloudflare.com");
+    expect(parseTryCloudflareOrigin("http://mcp-fixture.trycloudflare.com")).toBeNull();
+    expect(
+      parseTryCloudflareOrigin("https://mcp-fixture.trycloudflare.com.attacker.invalid"),
+    ).toBeNull();
+  });
+
+  it("waits for public readiness and registers unconditional process cleanup", async () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cloudflared-fixture-"));
+    const cloudflared = path.join(directory, "cloudflared");
+    const priorAmbientSecret = process.env.MCP_TUNNEL_MUST_NOT_LEAK;
+    const priorOpenShellSecret = process.env.OPENSHELL_OIDC_CLIENT_SECRET;
+    process.env.MCP_TUNNEL_MUST_NOT_LEAK = "ambient-ci-secret";
+    process.env.OPENSHELL_OIDC_CLIENT_SECRET = "ambient-openshell-secret";
+    fs.writeFileSync(
+      cloudflared,
+      [
+        "#!/bin/sh",
+        '[ -z "${MCP_TUNNEL_MUST_NOT_LEAK:-}" ] || exit 9',
+        '[ -z "${OPENSHELL_OIDC_CLIENT_SECRET:-}" ] || exit 10',
+        "printf '%s\\n' 'https://fixture-cleanup-123.trycloudflare.com' >&2",
+        "trap 'exit 0' TERM INT",
+        "while :; do sleep 1; done",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce({ body: null, status: 502 } as Response)
+      .mockResolvedValue({ body: null, status: 405 } as Response);
+    let cleanupName = "";
+    let cleanupProcess: (() => Promise<void>) | undefined;
+
+    try {
+      const tunnel = await startPublicMcpHttpsTunnel({
+        cloudflaredBin: cloudflared,
+        cleanup: {
+          add: (name, run) => {
+            cleanupName = name;
+            cleanupProcess = async () => {
+              await run();
+            };
+          },
+        },
+        label: "unit MCP fixture",
+        server: { port: 43123, close: async () => {} },
+      });
+
+      expect(tunnel).toMatchObject({
+        origin: "https://fixture-cleanup-123.trycloudflare.com",
+        url: "https://fixture-cleanup-123.trycloudflare.com/mcp",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(cleanupName).toBe("stop unit MCP fixture cloudflared quick tunnel");
+      expect(cleanupProcess).toBeTypeOf("function");
+    } finally {
+      await cleanupProcess?.();
+      fetchMock.mockRestore();
+      if (priorAmbientSecret === undefined) delete process.env.MCP_TUNNEL_MUST_NOT_LEAK;
+      else process.env.MCP_TUNNEL_MUST_NOT_LEAK = priorAmbientSecret;
+      if (priorOpenShellSecret === undefined) delete process.env.OPENSHELL_OIDC_CLIENT_SECRET;
+      else process.env.OPENSHELL_OIDC_CLIENT_SECRET = priorOpenShellSecret;
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("implements stateless Streamable HTTP and validates the tool challenge", async () => {
     const secret = "fixture-secret";
     const challenge = "fixture-challenge";
@@ -106,6 +197,9 @@ describe("authenticated MCP live fixtures", () => {
       });
 
     expect((await request("HEAD")).status).toBe(405);
+    expect(server.requests, "public tunnel readiness must not pollute security assertions").toEqual(
+      [],
+    );
     const initialize = await request("POST", {
       jsonrpc: "2.0",
       id: 1,

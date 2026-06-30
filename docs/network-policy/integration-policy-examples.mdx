@@ -250,8 +250,9 @@ The Brave Search API key is still configured separately during onboarding or thr
 ## Weather and Public Reference Lookups
 
 Use the `weather` preset when the agent needs read-only weather or geocoding lookups.
-The Balanced and Open tiers include it by default.
-The preset covers Open-Meteo, geocoding, and National Weather Service endpoints without enabling messaging or productivity APIs.
+The Open tier includes it by default.
+Balanced and Restricted sandboxes require the explicit `policy-add weather` step below.
+The preset covers read-only public weather and geocoding lookups, including current conditions, forecasts, geocoding, and weather alerts, without enabling messaging or productivity APIs.
 
 ```bash
 $$nemoclaw my-assistant policy-add weather --dry-run

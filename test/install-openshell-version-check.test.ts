@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildRebuildHermesChildEnv } from "./e2e-scenario/live/rebuild-hermes-env.ts";
+import { buildRebuildHermesChildEnv } from "./e2e/live/rebuild-hermes-env.ts";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const PINNED_OPEN_SHELL_SHA256 = {
@@ -503,8 +503,8 @@ exit 0`,
         `#!/usr/bin/env bash
 dest="\${@: -1}"
 mkdir -p "$(dirname "$dest")"
-cat > "$dest" <<'EOF'
-#!/usr/bin/env bash
+  cat > "$dest" <<'EOF'
+  #!/usr/bin/env bash
 if [ "\${1:-}" = "--version" ]; then echo "openshell ${REQUIRED_OPENSHELL_VERSION}"; exit 0; fi
 # ${OPENSHELL_FEATURE_MARKERS}
 exit 0

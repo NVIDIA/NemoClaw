@@ -5,7 +5,6 @@ import YAML from "yaml";
 
 import type { AgentMcpAdapter } from "../../agent/defs";
 import * as policies from "../../policy";
-import { isOpenShellMcpHostAlias } from "../../security/mcp-url-target";
 import type { McpBridgeEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -91,16 +90,8 @@ function binariesForAdapter(adapter: AgentMcpAdapter): Array<{ path: string }> {
 }
 
 function allowedIpsForEndpoint(
-  hostname: string,
   resolvedAddresses: readonly string[] | undefined,
 ): string[] | undefined {
-  if (isOpenShellMcpHostAlias(hostname)) {
-    // OpenShell v0.0.72 recognizes the driver-specific gateway address as a
-    // trusted target for this exact host alias. Omitting allowed_ips delegates
-    // only that address mapping to OpenShell instead of granting broad private
-    // CIDRs; host, port, path, protocol, MCP methods, and binaries remain exact.
-    return undefined;
-  }
   // OpenShell resolves this hostname for every new connection, validates every
   // current answer against allowed_ips, and connects to those same validated
   // socket addresses. Retaining the add-time public answers here makes a DNS
@@ -116,7 +107,7 @@ export function buildMcpBridgePolicyYaml(
 ): string {
   const parsed = parseMcpUrl(url);
   const key = buildMcpBridgePolicyKey(server);
-  const allowedIps = allowedIpsForEndpoint(parsed.hostname, resolvedAddresses);
+  const allowedIps = allowedIpsForEndpoint(resolvedAddresses);
   return YAML.stringify({
     preset: {
       name: buildMcpBridgePolicyName(server),
@@ -221,8 +212,13 @@ function reconcileGeneratedPolicyRegistration(
 export function applyGeneratedPolicy(
   sandboxName: string,
   entry: McpBridgeEntry,
-  resolvedAddresses?: readonly string[],
+  resolvedAddresses: readonly string[],
 ): void {
+  if (resolvedAddresses.length === 0) {
+    throw new McpBridgeError(
+      `Refusing to apply generated MCP policy '${entry.policyName}' without exact public address pins.`,
+    );
+  }
   const adapter = isAgentMcpAdapter(entry.adapter) ? entry.adapter : "mcporter";
   const content = buildMcpBridgePolicyYaml(entry.server, entry.url, adapter, resolvedAddresses);
   const policyKey = buildMcpBridgePolicyKey(entry.server);

@@ -55,7 +55,10 @@ if len(errors) != len(bad):
   it("keeps Hermes and host MCP URL rejection boundaries in parity", () => {
     const cases = [
       { url: "https://mcp.example.com/mcp", accepted: true },
-      { url: "https://host.openshell.internal:31337/mcp", accepted: true },
+      { url: "https://mcp.example.com./mcp", accepted: false },
+      { url: "https://host.openshell.internal:31337/mcp", accepted: false },
+      { url: "https://host.docker.internal:31337/mcp", accepted: false },
+      { url: "https://host.containers.internal:31337/mcp", accepted: false },
       { url: "https://8.8.8.8/mcp", accepted: true },
       { url: "http://mcp.example.com/mcp", accepted: false },
       { url: "https://localhost/mcp", accepted: false },
@@ -115,6 +118,59 @@ print(json.dumps(results))
     expect(hostResults).toEqual(expected);
     expect(result.status, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual(expected);
+  });
+
+  it("rejects every OpenShell host alias when the Hermes validator is called directly", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+errors = []
+for host in ("host.openshell.internal", "host.docker.internal", "host.containers.internal"):
+    payload = {
+        "server": "fake",
+        "url": f"https://{host}:31337/mcp",
+        "headers": {"Authorization": "Bearer openshell:resolve:env:FAKE_TOKEN"},
+        "replace_existing": False,
+    }
+    try:
+        module._validate_payload("add", payload)
+    except ValueError as error:
+        errors.append(str(error))
+print(json.dumps(errors))
+if len(errors) != 3:
+    raise SystemExit(9)
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
+      "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72",
+    ]);
+  });
+
+  it("accepts a legacy host alias only for exact cleanup payloads", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+payload = {
+    "server": "fake",
+    "url": "https://host.openshell.internal:31337/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:GCP_PROJECT_ID"},
+    "force": True,
+}
+module._validate_payload("remove", payload)
+print(json.dumps({"ok": True}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ ok: true });
   });
 
   it("accepts only HTTPS endpoint definitions with one OpenShell placeholder", () => {
@@ -694,6 +750,34 @@ else:
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("expected gateway identity");
     expect(result.stdout).toContain("does not identify the trusted launcher");
+  });
+
+  it("trusts the current real Hermes launcher and retained compatibility paths", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+arguments = {
+    1: [b"/usr/local/bin/hermes.real", b"gateway", b"run"],
+    2: [b"/opt/hermes/.venv/bin/python", b"/usr/local/bin/hermes.real", b"gateway", b"run"],
+    3: [b"/usr/local/lib/nemoclaw/hermes", b"gateway", b"run"],
+    4: [b"/opt/hermes/.venv/bin/hermes", b"gateway", b"run"],
+    5: [b"/usr/local/bin/hermes", b"gateway", b"run"],
+}
+module._process_arguments = lambda pid: arguments[pid]
+print(json.dumps({str(pid): module._is_trusted_gateway_process(pid) for pid in arguments}))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      "1": true,
+      "2": true,
+      "3": true,
+      "4": true,
+      "5": false,
+    });
   });
 
   it("allows an ordinary same-UID sandbox exec to reload the trusted gateway", () => {

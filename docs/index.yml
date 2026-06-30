@@ -140,9 +140,15 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.openclaw.generated.mdx
                 slug: credential-storage
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
+                slug: trusted-computing-base
               - page: "OpenShell 0.0.72 Compatibility Review"
                 path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
                 slug: openshell-0.0.72-compatibility-review
+              - page: "OpenShell 0.0.71 Review"
+                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
+                slug: openshell-0.0.71-gateway-auth-review
               - page: "OpenClaw Controls"
                 path: security/openclaw-controls.mdx
                 slug: openclaw-controls
@@ -292,9 +298,15 @@ navigation:
               - page: "Credential Storage"
                 path: _build/agent-variants/security/credential-storage.hermes.generated.mdx
                 slug: credential-storage
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
+                slug: trusted-computing-base
               - page: "OpenShell 0.0.72 Compatibility Review"
                 path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
                 slug: openshell-0.0.72-compatibility-review
+              - page: "OpenShell 0.0.71 Review"
+                path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
+                slug: openshell-0.0.71-gateway-auth-review
           - section: "Reference"
             slug: reference
             collapsed: open-by-default

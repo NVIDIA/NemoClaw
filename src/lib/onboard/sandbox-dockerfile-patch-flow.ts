@@ -12,6 +12,8 @@ type EnforceDockerGpuPatchPreserveNetwork =
   typeof import("./docker-gpu-local-inference").enforceDockerGpuPatchPreserveNetwork;
 type PatchStagedDockerfile = typeof import("./dockerfile-patch").patchStagedDockerfile;
 
+const STABLE_MANAGED_BUILD_ID_AGENTS = new Set(["openclaw", "hermes"]);
+
 export type SandboxDockerfilePatchDeps = {
   pullAndResolveBaseImageDigest?: PullAndResolveBaseImageDigest;
   dockerImageInspect?: (target: string, opts?: Record<string, unknown>) => DockerRunResult;
@@ -140,6 +142,14 @@ export async function prepareSandboxDockerfilePatch({
     },
   );
   const darwinVmCompat = false;
+  // Preserve the compatibility ARG only for managed Dockerfiles that are
+  // checked in here and known not to consume it. Custom --from Dockerfiles
+  // and other managed agents retain the historical per-run rewrite.
+  const managedAgentName = agent?.name ?? "openclaw";
+  const buildIdPolicy =
+    !fromDockerfile && STABLE_MANAGED_BUILD_ID_AGENTS.has(managedAgentName)
+      ? "preserve"
+      : "rewrite";
   (deps.patchStagedDockerfile ?? patchStagedDockerfile)(
     stagedDockerfile,
     model,
@@ -152,6 +162,7 @@ export async function prepareSandboxDockerfilePatch({
     darwinVmCompat,
     null,
     hermesToolGateways,
+    { buildIdPolicy },
   );
 
   return { buildId, resolvedBaseImage: resolved };

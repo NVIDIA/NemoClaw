@@ -7,6 +7,7 @@ import os from "node:os";
 import { performance } from "node:perf_hooks";
 
 import { isErrnoException } from "../core/errno";
+import { buildSubprocessEnv } from "../subprocess-env";
 
 const LOCK_SCHEMA_VERSION = 1;
 const OWNER_IDENTITY_CACHE_MS = 1_000;
@@ -116,6 +117,7 @@ export function readMcpLockProcessIdentity(pid: number, fresh = false): string |
   } else {
     const result = spawnSync("ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
+      env: buildSubprocessEnv(),
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 1_000,
     });

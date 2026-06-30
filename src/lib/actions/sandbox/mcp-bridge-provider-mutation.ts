@@ -17,6 +17,7 @@ import {
 } from "./mcp-bridge-provider-inspection";
 import {
   assertAuthenticatedBridgeEntry,
+  assertPersistedAuthenticatedBridgeEntry,
   resolveCredentialEnv,
   uniqueEnvNames,
   validateMcpCredentialEnvName,
@@ -194,7 +195,8 @@ function inspectMcpProviderForMutation(
 ): McpProviderInspection | null {
   if (!entry.providerName) return null;
   try {
-    assertAuthenticatedBridgeEntry(entry);
+    if (operation === "attach") assertAuthenticatedBridgeEntry(entry);
+    else assertPersistedAuthenticatedBridgeEntry(entry);
     if (!entry.providerId) {
       throw new McpBridgeError(
         `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing to ${operation} same-name provider '${entry.providerName}'.`,
@@ -263,7 +265,7 @@ export function detachProvider(
   options: { bestEffort?: boolean } = {},
 ): ProviderDetachOutcome {
   if (!entry.providerName) return "absent";
-  assertAuthenticatedBridgeEntry(entry);
+  assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     if (options.bestEffort) return "unknown";
     throw new McpBridgeError(
@@ -320,7 +322,7 @@ export function detachMissingProviderReference(
   entry: McpBridgeEntry,
 ): ProviderDetachOutcome {
   if (!entry.providerName) return "absent";
-  assertAuthenticatedBridgeEntry(entry);
+  assertPersistedAuthenticatedBridgeEntry(entry);
   const before = inspectMcpProvider(entry.providerName);
   if (before.exists !== false) {
     const detail =

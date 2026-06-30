@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
 type SandboxStateModule = typeof import("../../state/sandbox");
@@ -263,7 +264,7 @@ describe("warnUnpreservedUserManagedFiles", () => {
     vi.restoreAllMocks();
   });
 
-  it("emits warning when user-managed files exist in the sandbox", () => {
+  it("warns directly before a rebuild replaces user-managed MCP files", () => {
     probeSpy.mockReturnValue({
       declared: [".env", ".mcp.json"],
       existing: [".env", ".mcp.json"],

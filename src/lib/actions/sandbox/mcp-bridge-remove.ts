@@ -30,16 +30,31 @@ import {
 } from "./mcp-bridge-state";
 import {
   assertAuthenticatedBridgeEntry,
-  resolveCredentialEnv,
+  assertPersistedAuthenticatedBridgeEntry,
+  resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
+
+function requiresProviderDetachBeforeAdapterCleanup(entry: McpBridgeEntry): boolean {
+  assertPersistedAuthenticatedBridgeEntry(entry);
+  try {
+    assertAuthenticatedBridgeEntry(entry);
+    return false;
+  } catch {
+    // Older durable entries can contain names that current builds reject
+    // because OpenShell exposes or interprets them in every fresh child. Such
+    // a provider must be detached before any adapter capability or mutation
+    // command is allowed to start inside the sandbox.
+    return true;
+  }
+}
 
 function assertExactMcpRemoveProvider(
   entry: McpBridgeEntry,
   options: { allowMissing: boolean; force?: boolean },
 ): void {
-  assertAuthenticatedBridgeEntry(entry);
+  assertPersistedAuthenticatedBridgeEntry(entry);
   if (!entry.providerId) {
     throw new McpBridgeError(
       `MCP server '${entry.server}' has no stable OpenShell provider ID. Refusing destructive cleanup of same-name provider '${entry.providerName}'. Remove the legacy bridge with --force only after independently cleaning that provider.`,
@@ -109,6 +124,9 @@ async function removeMcpBridgeUnlocked(
   const adapter = isAgentMcpAdapter(entry.adapter)
     ? entry.adapter
     : getBridgeAdapter(getSandboxAgent(sandbox));
+  const detachBeforeAdapterCleanup = entry.providerName
+    ? requiresProviderDetachBeforeAdapterCleanup(entry)
+    : false;
   await ensureSandboxGatewaySelected(sandboxName);
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
@@ -170,25 +188,47 @@ async function removeMcpBridgeUnlocked(
     }
   }
 
+  let providerDetachedBeforeAdapterCleanup = false;
+  if (detachBeforeAdapterCleanup && providerOwnershipProved && entry.providerName) {
+    try {
+      const detachOutcome = providerWasMissing
+        ? missingProviderReferenceDetached
+          ? "detached"
+          : "unknown"
+        : detachProvider(sandboxName, entry);
+      providerDetachedBeforeAdapterCleanup = detachOutcome !== "unknown";
+      if (!providerDetachedBeforeAdapterCleanup) {
+        throw new McpBridgeError(
+          `Provider detach state for '${entry.providerName}' is unknown; refusing to start an adapter child while legacy credential '${entry.env[0]}' may still be attached.`,
+        );
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!options.force) throw new McpBridgeError(detail);
+      failures.push(detail);
+    }
+  }
+
   // A dangling provider name can prevent fresh sandbox execs on OpenShell
   // main, so clear that host-side spec reference before mutating the in-sandbox
   // adapter.
-  assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
-
-  const adapterEnvValues = resolveCredentialEnv(entry.env.map((envName) => ({ name: envName })));
-  let adapterCleanupProved = true;
-  try {
-    unregisterAgentAdapter(
-      sandboxName,
-      (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
-      entry,
-      { force: options.force === true, envValues: adapterEnvValues },
-    );
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (!options.force) throw new McpBridgeError(detail);
-    adapterCleanupProved = false;
-    failures.push(detail);
+  const adapterEnvValues = resolvePersistedCredentialEnvForRedaction(entry.env);
+  let adapterCleanupProved = !detachBeforeAdapterCleanup || providerDetachedBeforeAdapterCleanup;
+  if (adapterCleanupProved) {
+    try {
+      assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+      unregisterAgentAdapter(
+        sandboxName,
+        (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,
+        entry,
+        { force: options.force === true, envValues: adapterEnvValues },
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (!options.force) throw new McpBridgeError(detail);
+      adapterCleanupProved = false;
+      failures.push(detail);
+    }
   }
   let reservationCleanupProved = !entry.providerName && adapterCleanupProved;
   if (adapterCleanupProved && providerOwnershipProved && entry.providerName) {
@@ -200,13 +240,17 @@ async function removeMcpBridgeUnlocked(
         ? missingProviderReferenceDetached
           ? "detached"
           : "unknown"
-        : detachProvider(sandboxName, entry);
+        : providerDetachedBeforeAdapterCleanup
+          ? "detached"
+          : detachProvider(sandboxName, entry);
       if (detachOutcome !== "unknown") {
         // A missing provider has no credential left to revoke. Its stock CLI
         // detach result is authoritative for the sandbox-spec reference, and
         // skipping a fresh-exec probe lets cleanup proceed even if another
         // unrelated provider reference is also dangling.
-        if (!providerWasMissing) waitForDetachedMcpCredential(sandboxName, entry);
+        if (!providerWasMissing && !providerDetachedBeforeAdapterCleanup) {
+          waitForDetachedMcpCredential(sandboxName, entry);
+        }
         reservationCleanupProved = true;
       }
     } catch (error) {

@@ -34,7 +34,7 @@ describe("MCP CLI parsing", () => {
     }
   });
 
-  it("rejects a private DNS answer and skips DNS for an explicit OpenShell host alias", async () => {
+  it("rejects private DNS answers and OpenShell host aliases before DNS", async () => {
     const lookup = vi
       .spyOn(dns, "lookup")
       .mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }] as never);
@@ -44,7 +44,7 @@ describe("MCP CLI parsing", () => {
       ).rejects.toThrow(/resolves to private, local, or special-use address '127\.0\.0\.1'/);
       await expect(
         validateMcpServerUrlResolvedTarget(new URL("https://host.openshell.internal:31337/mcp")),
-      ).resolves.toBeUndefined();
+      ).rejects.toThrow(/does not expose an attested driver gateway address/);
       expect(lookup).toHaveBeenCalledOnce();
     } finally {
       lookup.mockRestore();
@@ -274,7 +274,29 @@ describe("MCP CLI parsing", () => {
     ).rejects.toThrow(/materialized as a raw child-process value/);
   });
 
-  it("rejects local and private URL targets except OpenShell host aliases", () => {
+  it("rejects hostile OpenShell alias registrations before sandbox or network side effects", async () => {
+    const lookup = vi.spyOn(dns, "lookup");
+    try {
+      for (const host of [
+        "host.openshell.internal",
+        "host.docker.internal",
+        "host.containers.internal",
+      ]) {
+        await expect(
+          addMcpBridge("missing-sandbox", {
+            server: "local",
+            url: `https://${host}:31337/mcp`,
+            env: [{ name: "SAFE_MCP_TOKEN", value: "host-only-secret" }],
+          }),
+        ).rejects.toThrow(/does not expose an attested driver gateway address/);
+      }
+      expect(lookup).not.toHaveBeenCalled();
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("rejects local, private, and OpenShell host-alias URL targets", () => {
     expect(() => normalizeMcpServerUrl("https://localhost:31337/mcp")).toThrow(
       /private, local, or special-use IP/,
     );
@@ -309,9 +331,16 @@ describe("MCP CLI parsing", () => {
     expect(() => normalizeMcpServerUrl("http://host.openshell.internal:31337/mcp")).toThrow(
       /must use https/,
     );
-    expect(normalizeMcpServerUrl("https://host.openshell.internal.:31337/mcp")).toBe(
-      "https://host.openshell.internal:31337/mcp",
-    );
+    for (const host of [
+      "host.openshell.internal",
+      "host.openshell.internal.",
+      "host.docker.internal",
+      "host.containers.internal",
+    ]) {
+      expect(() => normalizeMcpServerUrl(`https://${host}:31337/mcp`)).toThrow(
+        /does not expose an attested driver gateway address/,
+      );
+    }
   });
 
   it("resolves host env values without requiring them for provider reuse", () => {

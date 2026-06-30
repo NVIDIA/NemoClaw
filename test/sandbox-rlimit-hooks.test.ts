@@ -222,6 +222,10 @@ function expectRlimitLibRejectsUnboundedPosixShNoFile(rlimitLib: string): void {
   const probe = [
     "set -e",
     `. ${JSON.stringify(rlimitLib)}`,
+    // This probe isolates nofile validation. Host nproc hard/soft defaults vary
+    // (notably on macOS), so do not let an unrelated nproc diagnostic mask the
+    // deliberately unbounded nofile result asserted below.
+    '_nemoclaw_supports_resource_limit() { [ "$1" = "n" ]; }',
     'current_nproc="$(command ulimit -u 2>/dev/null || printf "%s" 512)"',
     'case "$current_nproc" in "" | *[!0-9]*) current_nproc=512 ;; esac',
     'current_nofile="$(command ulimit -n 2>/dev/null || printf "%s" 0)"',
@@ -408,7 +412,11 @@ describe("sandbox rlimit system hooks (#2173)", () => {
     const preloadDir = path.join(localLib, "preloads");
     const safetyNet = path.join(preloadDir, "sandbox-safety-net.js");
     const ciaoGuard = path.join(preloadDir, "ciao-network-guard.js");
+    const gatewaySupervisor = path.join(localLib, "gateway-supervisor.sh");
+    const stateDirGuard = path.join(localLib, "state-dir-guard.py");
+    const managedGatewayControl = path.join(localLib, "managed-gateway-control.py");
     const startBin = path.join(tmp, "nemoclaw-start");
+    const gatewayControl = path.join(tmp, "nemoclaw-gateway-control");
     const bashrc = path.join(tmp, "bash.bashrc");
     const expectedRlimitShim = rlimitShim(rlimitLib);
 
@@ -427,16 +435,22 @@ describe("sandbox rlimit system hooks (#2173)", () => {
       fs.chmodSync(preloadDir, 0o777);
       fs.chmodSync(safetyNet, 0o666);
       fs.chmodSync(ciaoGuard, 0o666);
+      fs.writeFileSync(gatewaySupervisor, "# gateway supervisor fixture\n");
+      fs.writeFileSync(stateDirGuard, "# state-dir guard fixture\n");
+      fs.writeFileSync(managedGatewayControl, "# managed gateway control fixture\n");
       fs.writeFileSync(startBin, "#!/usr/bin/env bash\n");
+      fs.writeFileSync(gatewayControl, "#!/usr/bin/env sh\n");
       fs.writeFileSync(bashrc, "# stale hermes bashrc\n");
       const fixtureOwner = fs.statSync(startBin);
-      const command = dockerRunCommandBetween(
+      const replay = dockerRunCommandBetween(
         dockerfile,
         "# Copy startup script and the secret-boundary validator.",
         "# Wrap the hermes CLI",
       )
         .replaceAll("/usr/local/bin/nemoclaw-start", startBin)
+        .replaceAll("/usr/local/bin/nemoclaw-gateway-control", gatewayControl)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-init.sh", initLib)
+        .replaceAll("/usr/local/lib/nemoclaw/gateway-supervisor.sh", gatewaySupervisor)
         .replaceAll("/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py", validator)
         .replaceAll("/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py", dashboardSeeder)
         .replaceAll("/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py", runtimeGuard)
@@ -444,11 +458,15 @@ describe("sandbox rlimit system hooks (#2173)", () => {
         .replaceAll("/usr/local/lib/nemoclaw/preloads/sandbox-safety-net.js", safetyNet)
         .replaceAll("/usr/local/lib/nemoclaw/preloads/ciao-network-guard.js", ciaoGuard)
         .replaceAll("/usr/local/lib/nemoclaw/preloads", preloadDir)
-        .replaceAll("chown root:root", `chown ${fixtureOwner.uid}:${fixtureOwner.gid}`)
+        .replaceAll("/usr/local/lib/nemoclaw/state-dir-guard.py", stateDirGuard)
+        .replaceAll("/usr/local/lib/nemoclaw/managed-gateway-control.py", managedGatewayControl)
         .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
         .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", profileHook)
         .replaceAll("/etc/profile.d", path.dirname(profileHook))
         .replaceAll("/etc/bash.bashrc", bashrc);
+      // The Docker image has a root:root group contract. macOS names gid 0
+      // "wheel", so stub chown while preserving every chmod and hook write.
+      const command = ["chown() { :; }", replay].join("\n");
 
       const result = runLoggedDockerShell(command, tmp);
       expect(result.status, result.stderr).toBe(0);

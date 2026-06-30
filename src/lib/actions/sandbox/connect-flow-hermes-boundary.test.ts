@@ -78,7 +78,18 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
-  it("stops non-probe connect before downstream setup when the boundary refuses", async () => {
+  it.each([
+    [
+      "raw-secret",
+      "refused to confirm Hermes gateway in 'alpha'",
+      "Replace raw secret values with openshell:resolve:env:<name> placeholders",
+    ],
+    [
+      "validator-missing",
+      "the secret-boundary validator is missing from Hermes gateway in 'alpha'",
+      "Re-image the sandbox with a current Hermes build before connecting",
+    ],
+  ] as const)("stops non-probe connect before downstream setup when the boundary refuses with %s", async (reason, summary, guidance) => {
     const harness = createConnectHarness({
       processCheck: {
         checked: true,
@@ -86,7 +97,7 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
         recovered: false,
         forwardRecovered: false,
         secretBoundaryRefused: true,
-        secretBoundaryReason: "raw-secret",
+        secretBoundaryReason: reason,
       },
     });
     const agentRuntime = requireDist("../../src/lib/agent/runtime.js");
@@ -103,10 +114,8 @@ describe("connectSandbox Hermes secret-boundary refusals", () => {
       expect.any(Object),
     );
     const errorOutput = harness.errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
-    expect(errorOutput).toContain("Connect failed: refused to confirm Hermes gateway in 'alpha'");
-    expect(errorOutput).toContain(
-      "Replace raw secret values with openshell:resolve:env:<name> placeholders and re-run.",
-    );
+    expect(errorOutput).toContain(`Connect failed: ${summary}`);
+    expect(errorOutput).toContain(guidance);
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 

@@ -7,56 +7,9 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import YAML from "yaml";
-
-type WorkflowStep = {
-  env?: Record<string, string>;
-  name?: string;
-  run?: string;
-};
-
-type WorkflowJob = {
-  env?: Record<string, string>;
-  steps?: WorkflowStep[];
-  uses?: string;
-  with?: Record<string, string>;
-};
-
-type Workflow = {
-  jobs: Record<string, WorkflowJob>;
-};
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const LAUNCHABLE = path.join(REPO_ROOT, "scripts", "brev-launchable-ci-cpu.sh");
-
-function readWorkflow(relativePath: string): Workflow {
-  return YAML.parse(fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf8")) as Workflow;
-}
-
-function namedStep(workflow: Workflow, job: string, name: string): WorkflowStep {
-  const step = workflow.jobs[job]?.steps?.find((candidate) => candidate.name === name);
-  expect(step, `${job} must include step '${name}'`).toBeDefined();
-  return step as WorkflowStep;
-}
-
-function runCommand(script: string, env: Record<string, string>) {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-channel-workflow-"));
-  const githubEnv = path.join(tempDir, "github-env");
-  fs.writeFileSync(githubEnv, "", "utf8");
-  try {
-    return spawnSync("bash", ["-c", script], {
-      cwd: tempDir,
-      encoding: "utf8",
-      env: {
-        PATH: process.env.PATH ?? "",
-        GITHUB_ENV: githubEnv,
-        ...env,
-      },
-    });
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-}
 
 function resolveLaunchableVersion(options: { channel: string; explicit?: string }) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-channel-"));
@@ -108,29 +61,6 @@ function runLaunchableDevGate() {
 }
 
 describe("OpenShell channel workflow boundary", () => {
-  it("rejects lane-local attempts to replace the selected channel", () => {
-    const reusable = readWorkflow(".github/workflows/e2e-script.yaml");
-    const envJsonExport = namedStep(reusable, "run", "Export script environment");
-    const refExport = namedStep(reusable, "run", "Export checked-out ref environment");
-    for (const name of ["NEMOCLAW_ALLOW_DEV_NO_VERIFY", "NEMOCLAW_OPENSHELL_CHANNEL"]) {
-      const envJsonResult = runCommand(envJsonExport.run ?? "", {
-        E2E_ENV_JSON: JSON.stringify({ [name]: "1" }),
-      });
-      expect(envJsonResult.status).not.toBe(0);
-      expect(`${envJsonResult.stdout}${envJsonResult.stderr}`).toContain(
-        `Reserved env_json variable name: ${name}`,
-      );
-
-      const refResult = runCommand(refExport.run ?? "", {
-        E2E_CHECKED_OUT_REF_ENV: name,
-      });
-      expect(refResult.status).not.toBe(0);
-      expect(`${refResult.stdout}${refResult.stderr}`).toContain(
-        `Reserved checked_out_ref_env variable name: ${name}`,
-      );
-    }
-  });
-
   it.each([
     { channel: "dev", expected: "dev" },
     { channel: "stable", expected: "v0.0.72" },

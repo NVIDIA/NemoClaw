@@ -62,12 +62,45 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const child of children) child.kill("SIGKILL");
   children.clear();
   fs.rmSync(stateDir, { recursive: true, force: true });
 });
 
 describe("MCP lifecycle lock", () => {
+  it("does not forward an MCP credential to the macOS process-identity probe", () => {
+    const childProcess = requireDist("node:child_process");
+    const platform = vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const spawnSync = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "Mon Jun 30 12:00:00 2026\n",
+      stderr: "",
+    } as never);
+    const priorSecret = process.env.TEST_MCP_RAW_TOKEN;
+    const priorGateway = process.env.OPENSHELL_GATEWAY;
+    process.env.TEST_MCP_RAW_TOKEN = "must-reach-only-provider-mutation";
+    process.env.OPENSHELL_GATEWAY = "nemoclaw-19080";
+
+    try {
+      expect(lifecycleLock.readMcpLockProcessIdentity(4242, true)).toBe(
+        "darwin:Mon Jun 30 12:00:00 2026",
+      );
+      const options = spawnSync.mock.calls[0]?.[2] as { env?: NodeJS.ProcessEnv };
+      expect(options.env?.TEST_MCP_RAW_TOKEN).toBeUndefined();
+      expect(options.env?.OPENSHELL_GATEWAY).toBe("nemoclaw-19080");
+      expect(options.env?.PATH).toBe(process.env.PATH);
+    } finally {
+      priorSecret === undefined
+        ? delete process.env.TEST_MCP_RAW_TOKEN
+        : (process.env.TEST_MCP_RAW_TOKEN = priorSecret);
+      priorGateway === undefined
+        ? delete process.env.OPENSHELL_GATEWAY
+        : (process.env.OPENSHELL_GATEWAY = priorGateway);
+      platform.mockRestore();
+    }
+  });
+
   it.skipIf(process.platform === "win32")(
     "does not follow a symlink when observing lock ownership",
     async () => {

@@ -110,6 +110,109 @@ bridge.removeMcpBridge("alpha", "fake").then(
   return result;
 }
 
+function runLegacyReservedCredentialCleanup() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-legacy-cleanup-"));
+  const script = String.raw`
+process.env.HOME = ${JSON.stringify(home)};
+const registry = require("./src/lib/state/registry.js");
+const agentDefs = require("./src/lib/agent/defs.js");
+const gatewayRuntime = require("./src/lib/gateway-runtime-action.js");
+const policies = require("./src/lib/policy/index.js");
+const processRecovery = require("./src/lib/actions/sandbox/process-recovery.js");
+const globalActions = require("./src/lib/actions/global.js");
+const expectedId = "11111111-2222-4333-8444-555555555555";
+let providerExists = true;
+let attached = true;
+let policyState = "match";
+const calls = [];
+agentDefs.loadAgent = () => { throw new Error("persisted adapter must be used"); };
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({
+  recovered: true,
+  attempted: false,
+  before: { state: "healthy_named" },
+  after: { state: "healthy_named" },
+});
+globalActions.runOpenshellProviderCommand = (args) => {
+  calls.push(args.join(" "));
+  if (args[0] === "status") return { status: 0, stdout: "ready", stderr: "" };
+  if (args[0] === "provider" && args[1] === "get") {
+    return providerExists
+      ? {
+          status: 0,
+          stdout: "Id: " + expectedId + "\nType: generic\nResource version: 4\nCredential keys: LD_PRELOAD\n",
+          stderr: "",
+        }
+      : { status: 1, stdout: "", stderr: "NotFound: provider" };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "list") {
+    return {
+      status: 0,
+      stdout: attached
+        ? "NAME TYPE CREDENTIAL_KEYS CONFIG_KEYS\nalpha-mcp-fake generic 1 0\n"
+        : "No providers attached to sandbox alpha.\n",
+      stderr: "",
+    };
+  }
+  if (args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    attached = false;
+    return { status: 0, stdout: "Detached provider alpha-mcp-fake from sandbox alpha.", stderr: "" };
+  }
+  if (args[0] === "provider" && args[1] === "delete") {
+    providerExists = false;
+    return { status: 0, stdout: "deleted", stderr: "" };
+  }
+  throw new Error("unexpected call: " + args.join(" "));
+};
+policies.getPresetContentGatewayState = () => policyState;
+policies.removePreset = () => { policyState = "absent"; return true; };
+const runSandboxChild = () => {
+  calls.push("sandbox-child attached=" + attached);
+  if (attached) throw new Error("sandbox child started while LD_PRELOAD remained attached");
+  return { status: 0, stdout: "", stderr: "" };
+};
+processRecovery.executeSandboxCommand = runSandboxChild;
+processRecovery.executeSandboxExecCommand = runSandboxChild;
+const entry = {
+  server: "fake",
+  agent: "openclaw",
+  adapter: "mcporter",
+  url: "https://mcp.example.test/mcp",
+  env: ["LD_PRELOAD"],
+  providerName: "alpha-mcp-fake",
+  providerId: expectedId,
+  policyName: "mcp-bridge-fake",
+  addedAt: "2026-06-01T00:00:00.000Z",
+};
+registry.registerSandbox({
+  name: "alpha",
+  agent: "legacy-disabled",
+  mcp: { bridges: { fake: entry } },
+});
+registry.addCustomPolicy("alpha", {
+  name: entry.policyName,
+  content: "network_policies: {}\n",
+  sourcePath: "generated:nemoclaw-mcp-bridge",
+});
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+bridge.removeMcpBridge("alpha", "fake").then(
+  () => process.stdout.write(JSON.stringify({
+    calls,
+    bridgePresent: !!registry.getSandbox("alpha")?.mcp?.bridges?.fake,
+    providerExists,
+    attached,
+  })),
+  (error) => { console.error(error); process.exit(1); },
+);
+`;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, HOME: home },
+  });
+  fs.rmSync(home, { recursive: true, force: true });
+  return result;
+}
+
 describe("MCP provider ownership", () => {
   for (const boundary of ["detach", "delete"] as const) {
     it(`rechecks stable identity immediately before provider ${boundary}`, () => {
@@ -133,6 +236,28 @@ describe("MCP provider ownership", () => {
       expect(payload.bridgePresent).toBe(true);
     });
   }
+
+  it("removes an exact legacy provider whose credential name is now reserved", () => {
+    const result = runLegacyReservedCredentialCleanup();
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout.slice(result.stdout.indexOf("{"))) as {
+      calls: string[];
+      bridgePresent: boolean;
+      providerExists: boolean;
+      attached: boolean;
+    };
+    expect(payload).toMatchObject({
+      bridgePresent: false,
+      providerExists: false,
+      attached: false,
+    });
+    expect(payload.calls).toContain("sandbox provider detach alpha alpha-mcp-fake");
+    expect(payload.calls).toContain("provider delete alpha-mcp-fake");
+    expect(payload.calls.indexOf("sandbox provider detach alpha alpha-mcp-fake")).toBeLessThan(
+      payload.calls.indexOf("sandbox-child attached=false"),
+    );
+  });
 
   it("reports a same-shape provider with a different stable ID as drift", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mcp-provider-status-owner-"));

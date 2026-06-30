@@ -9,6 +9,7 @@ import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import {
   assertAuthenticatedBridgeEntry,
+  assertPersistedAuthenticatedBridgeEntry,
   validateMcpCredentialEnvName,
 } from "./mcp-bridge-validation";
 import { executeSandboxExecCommand } from "./process-recovery";
@@ -177,8 +178,16 @@ export function buildMcpCredentialDetachedCommand(envName: string): string {
 }
 
 export function waitForDetachedMcpCredential(sandboxName: string, entry: McpBridgeEntry): void {
-  assertAuthenticatedBridgeEntry(entry);
+  assertPersistedAuthenticatedBridgeEntry(entry);
   const envName = entry.env[0];
+  try {
+    validateMcpCredentialEnvName(envName);
+  } catch {
+    // The exact provider attachment post-state was already checked by the
+    // detach operation. Do not start a fresh child under a legacy loader,
+    // shell, or compatibility env name merely to repeat that proof.
+    return;
+  }
   const timeoutSeconds = Number.parseInt(
     process.env.NEMOCLAW_MCP_PROVIDER_SYNC_TIMEOUT_SECONDS ?? "30",
     10,

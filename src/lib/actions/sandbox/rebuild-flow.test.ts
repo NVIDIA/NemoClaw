@@ -12,14 +12,12 @@ const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "./rebuild.js";
 requireDist(rebuildModulePath);
 delete require.cache[requireDist.resolve(rebuildModulePath)];
-
 type RebuildFlowStep = {
   status: string;
   startedAt: string | null;
   completedAt: string | null;
   error: string | null;
 };
-
 type RebuildFlowSession = Record<string, unknown> & {
   lastStepStarted: string | null;
   status: string;
@@ -32,7 +30,6 @@ type RebuildFlowSession = Record<string, unknown> & {
   };
   steps: Record<string, RebuildFlowStep>;
 };
-
 type RebuildFlowOverrides = {
   applyPreset?: (presetName: string) => boolean;
   baseImagePreflight?: {
@@ -75,7 +72,6 @@ type RebuildFlowOverrides = {
   hermesProviderExists?: boolean;
   customImagePreflight?: { ok: true; imageTag: string | null } | { ok: false; detail: string };
 };
-
 type RebuildFlowHarness = {
   rebuildSandbox: RebuildSandbox;
   applyPresetSpy: MockInstance;
@@ -103,9 +99,7 @@ type RebuildFlowHarness = {
   warnUnpreservedUserManagedFilesSpy: MockInstance;
   session: RebuildFlowSession;
 };
-
 const originalSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
-
 function snapshotEnv(names: readonly string[]): () => void {
   const saved = names.map((name) => [name, process.env[name]] as const);
   return () => {
@@ -120,11 +114,9 @@ function snapshotEnv(names: readonly string[]): () => void {
     );
   };
 }
-
 function createStep(status: string): RebuildFlowStep {
   return { status, startedAt: null, completedAt: null, error: null };
 }
-
 function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
   return {
     sandboxName: "alpha",
@@ -154,7 +146,6 @@ function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSe
     },
   };
 }
-
 function installTerminalStepFailureMock(
   onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
   session: RebuildFlowSession,
@@ -432,7 +423,6 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     session,
   };
 }
-
 function makeActiveTeamsMessagingPlan() {
   return {
     schemaVersion: 1,
@@ -502,12 +492,10 @@ function makeActiveTeamsMessagingPlan() {
     healthChecks: [],
   };
 }
-
 describe("rebuildSandbox flow", () => {
   beforeEach(() => {
     delete process.env.NEMOCLAW_SANDBOX_NAME;
   });
-
   afterEach(() => {
     vi.restoreAllMocks();
     delete require.cache[requireDist.resolve(rebuildModulePath)];
@@ -517,7 +505,6 @@ describe("rebuildSandbox flow", () => {
       process.env.NEMOCLAW_SANDBOX_NAME = originalSandboxName;
     }
   });
-
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
     const mcpEntry = {
       server: "github",
@@ -707,13 +694,19 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("prunes disabled messaging channel presets from the final registry policies", async () => {
+  it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
     const disabledSlackPlan = {
       schemaVersion: 1,
       sandboxName: "alpha",
       agent: "openclaw",
       workflow: "rebuild",
-      channels: [],
+      channels: [
+        { channelId: "telegram", disabled: false },
+        { channelId: "discord", disabled: false },
+        { channelId: "whatsapp", disabled: false },
+        { channelId: "wechat", disabled: false },
+        { channelId: "slack", disabled: true },
+      ],
       disabledChannels: ["slack"],
       credentialBindings: [],
       networkPolicy: { presets: [], entries: [] },
@@ -724,7 +717,7 @@ describe("rebuildSandbox flow", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      backupPolicyPresets: ["slack", "npm"],
+      backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],
       buildMessagingRebuildPlan: () => disabledSlackPlan,
     });
 
@@ -732,11 +725,17 @@ describe("rebuildSandbox flow", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "slack");
+    expect(harness.applyPresetSpy.mock.calls.map((call) => call[1])).toEqual([
+      "npm",
+      "pypi",
+      "telegram",
+      "discord",
+      "whatsapp",
+      "wechat",
+    ]);
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
-      policies: ["npm"],
+      policies: ["npm", "pypi", "telegram", "discord", "whatsapp", "wechat"],
       policyTier: null,
       policyPresetsFinalized: undefined,
     });

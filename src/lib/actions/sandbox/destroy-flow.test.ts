@@ -13,9 +13,11 @@ const destroyModulePath = "./destroy.js";
 type DestroyHarness = {
   cleanupGatewaySpy: MockInstance;
   destroySandbox: DestroySandbox;
+  events: string[];
   finalizeMcpBridgesAfterSandboxDeleteSpy: MockInstance;
   gatewayPinsAtMcpPrepare: Array<string | undefined>;
   gatewayPinsAtSandboxList: Array<string | undefined>;
+  killTimerSpy: MockInstance;
   killStaleProxySpy: MockInstance;
   logSpy: MockInstance;
   prepareMcpBridgesForAbsentSandboxDestroySpy: MockInstance;
@@ -29,11 +31,13 @@ type DestroyHarness = {
 };
 
 type DestroyHarnessOptions = {
+  activeTimer?: boolean;
   deleteStatus?: number;
   deleteOutput?: string;
   finalizeMcpError?: string;
   mcpServers?: string[];
   sandboxPresent?: boolean;
+  shieldsUpError?: Error;
 };
 
 const sandboxEntry = {
@@ -62,6 +66,7 @@ function sandboxListJson(names: string[]): string {
 
 function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarness {
   delete require.cache[requireDist.resolve(destroyModulePath)];
+  const events: string[] = [];
 
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
@@ -77,6 +82,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const onboardSession = requireDist("../../state/onboard-session.js");
   const registry = requireDist("../../state/registry.js");
   const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const shields = requireDist("../../shields/index.js");
   const timerControl = requireDist("../../shields/timer-control.js");
   const mcpBridge = requireDist("./mcp-bridge.js");
 
@@ -108,6 +114,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const runOpenshellSpy = vi.spyOn(runtime, "runOpenshell").mockImplementation((args: unknown) => {
     const argv = Array.isArray(args) ? args : [];
     switch (`${String(argv[0])}:${String(argv[1])}`) {
+      case "sandbox:exec":
+        events.push("wipe");
+        return { status: 0, stdout: "", stderr: "" };
       case "sandbox:list":
         gatewayPinsAtSandboxList.push(process.env.OPENSHELL_GATEWAY);
         return {
@@ -116,6 +125,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
           stderr: "",
         };
       case "sandbox:delete":
+        events.push("delete");
         return {
           status: options.deleteStatus ?? 0,
           stdout: options.deleteOutput ?? "",
@@ -132,8 +142,9 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   const cleanupGatewaySpy = vi
     .spyOn(destroyGateway, "cleanupGatewayAfterLastSandbox")
     .mockImplementation(() => undefined);
-  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockReturnValue({
-    failures: [],
+  vi.spyOn(sandboxProviderCleanup, "runSandboxProviderPreDeleteCleanup").mockImplementation(() => {
+    events.push("detach");
+    return { failures: [] };
   });
   vi.spyOn(sandboxProviderCleanup, "emitProviderDetachResidualHint").mockImplementation(
     () => undefined,
@@ -149,7 +160,25 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     .spyOn(ollamaProxy, "unloadOllamaModels")
     .mockImplementation(() => undefined);
   vi.spyOn(tunnelServices, "stopAll").mockImplementation(() => undefined);
-  vi.spyOn(timerControl, "killTimer").mockReturnValue({ warnings: [] });
+  vi.spyOn(timerControl, "readTimerMarker").mockReturnValue(
+    options.activeTimer
+      ? {
+          pid: 4242,
+          sandboxName: "alpha",
+          snapshotPath: "/tmp/policy.yaml",
+          restoreAt: "2026-06-27T06:00:00.000Z",
+          processToken: "a".repeat(32),
+        }
+      : null,
+  );
+  vi.spyOn(shields, "shieldsUp").mockImplementation(() => {
+    events.push("harden");
+    if (options.shieldsUpError) throw options.shieldsUpError;
+  });
+  const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
+    events.push("timer-cleanup");
+    return { warnings: [] };
+  });
   const mcpPreparation = {
     entries: (options.mcpServers ?? []).map((server) => ({ server })),
     detachedProviderEntries: (options.mcpServers ?? []).map((server) => ({
@@ -190,9 +219,11 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   return {
     cleanupGatewaySpy,
     destroySandbox: requireDist(destroyModulePath).destroySandbox,
+    events,
     finalizeMcpBridgesAfterSandboxDeleteSpy,
     gatewayPinsAtMcpPrepare,
     gatewayPinsAtSandboxList,
+    killTimerSpy,
     killStaleProxySpy,
     logSpy,
     prepareMcpBridgesForAbsentSandboxDestroySpy,
@@ -317,6 +348,35 @@ describe("destroySandbox flow", () => {
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
     expect(harness.cleanupGatewaySpy).not.toHaveBeenCalled();
     expect(exitSpy).toHaveBeenCalledWith(7);
+  });
+
+  it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
+    const harness = createDestroyHarness({ activeTimer: true });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+
+    expect(harness.events).toEqual(
+      expect.arrayContaining(["wipe", "harden", "detach", "delete", "timer-cleanup"]),
+    );
+    expect(harness.events.indexOf("wipe")).toBeLessThan(harness.events.indexOf("harden"));
+    expect(harness.events.indexOf("harden")).toBeLessThan(harness.events.indexOf("delete"));
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("timer-cleanup"));
+  });
+
+  it("does not delete when active-window hardening fails after the wipe", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      shieldsUpError: new Error("injected hardening failure"),
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "injected hardening failure",
+    );
+
+    expect(harness.events).toContain("wipe");
+    expect(harness.events).toContain("harden");
+    expect(harness.events).not.toContain("delete");
+    expect(harness.killTimerSpy).not.toHaveBeenCalled();
   });
 
   it("detaches MCP providers before delete and finalizes them only after delete succeeds", async () => {

@@ -98,6 +98,7 @@ BLOCKED_IPV4_NETWORKS = tuple(
     )
 )
 TRUSTED_HERMES_GATEWAY_LAUNCHERS = {
+    b"/usr/local/bin/hermes.real",
     b"/usr/local/lib/nemoclaw/hermes",
     b"/opt/hermes/.venv/bin/hermes",
 }
@@ -225,12 +226,16 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
         raise ValueError("MCP mutation payload URL has an invalid port") from error
     if port == 0:
         raise ValueError("MCP mutation payload URL port must be nonzero")
-    host_alias = hostname in {
+    host_aliases = {
         "host.openshell.internal",
         "host.docker.internal",
         "host.containers.internal",
     }
-    if not host_alias and (
+    if action == "add" and hostname in host_aliases:
+        raise ValueError(
+            "Authenticated MCP OpenShell host aliases are unavailable with OpenShell v0.0.72"
+        )
+    if not (action == "remove" and hostname in host_aliases) and (
         hostname in {"localhost", "local", "internal", "metadata"}
         or any(
             hostname.endswith(f".{suffix}")

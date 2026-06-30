@@ -24,7 +24,9 @@ import {
   getSandboxOrThrow,
 } from "./mcp-bridge-state";
 import {
-  resolveCredentialEnv,
+  assertAuthenticatedBridgeEntry,
+  normalizeMcpServerUrl,
+  resolvePersistedCredentialEnvForRedaction,
   validateMcpServerName,
   validateSandboxName,
 } from "./mcp-bridge-validation";
@@ -39,6 +41,29 @@ export interface McpBridgeJsonSummary {
 
 const SANDBOX_SCOPED_PROVIDER_WARNING =
   "OpenShell currently attaches this credential provider at sandbox scope, not exclusively to this MCP endpoint. Keep other inspected routes for the same adapter binary at least as restrictive until OpenShell supports endpoint-exclusive credential binding plus Host, scheme, and query enforcement.";
+const UNSUPPORTED_STORED_URL_WARNING =
+  "This persisted MCP URL no longer satisfies the authenticated endpoint boundary. Restart and rebuild fail closed for it; remove this server (use --force if cleanup is partial), then add a normal public HTTPS DNS endpoint.";
+const UNSUPPORTED_STORED_CREDENTIAL_WARNING =
+  "This persisted MCP credential name no longer satisfies the host-only credential boundary. Restart and rebuild fail closed for it; remove this server, then add it again with a dedicated service credential name.";
+
+function storedUrlWarning(entry: McpBridgeEntry): string | undefined {
+  try {
+    return normalizeMcpServerUrl(entry.url) === entry.url
+      ? undefined
+      : UNSUPPORTED_STORED_URL_WARNING;
+  } catch {
+    return UNSUPPORTED_STORED_URL_WARNING;
+  }
+}
+
+function storedCredentialWarning(entry: McpBridgeEntry): string | undefined {
+  try {
+    assertAuthenticatedBridgeEntry(entry);
+    return undefined;
+  } catch {
+    return UNSUPPORTED_STORED_CREDENTIAL_WARNING;
+  }
+}
 
 function getAdapterRegistration(
   sandboxName: string,
@@ -60,7 +85,7 @@ function getAdapterRegistration(
     if (output === "registered") return { registered: true };
     return { registered: false, detail: output || "not found" };
   }
-  const envValues = resolveCredentialEnv(entry.env.map((envName) => ({ name: envName })));
+  const envValues = resolvePersistedCredentialEnvForRedaction(entry.env);
   return {
     registered: false,
     detail: redactBridgeSecretsForDisplay(
@@ -139,10 +164,21 @@ export async function statusMcpBridge(
       entry?.providerId,
     );
     const attached = providerAttached(sandboxName, entry?.providerName);
+    const warnings: string[] = [];
+    if (attached === true) warnings.push(SANDBOX_SCOPED_PROVIDER_WARNING);
+    let credentialWarning: string | undefined;
+    if (entry) {
+      const urlWarning = storedUrlWarning(entry);
+      if (urlWarning) warnings.push(urlWarning);
+      credentialWarning = storedCredentialWarning(entry);
+      if (credentialWarning) warnings.push(credentialWarning);
+    }
+    const unsafeCredentialMayBeAttached =
+      !!credentialWarning && !!entry?.providerName && attached !== false;
     return {
       server: name,
       agent: entry?.agent ?? agent.name,
-      warnings: attached === true ? [SANDBOX_SCOPED_PROVIDER_WARNING] : [],
+      warnings,
       support,
       ...(entry ? { url: entry.url } : {}),
       ...(entry?.addState ? { addState: entry.addState } : {}),
@@ -167,7 +203,13 @@ export async function statusMcpBridge(
         registryPresent: !!registeredPolicy,
         gatewayPresent: getPolicyPresence(sandboxName, entry),
       },
-      adapter: getAdapterRegistration(sandboxName, support.adapter, entry),
+      adapter: unsafeCredentialMayBeAttached
+        ? {
+            registered: null,
+            detail:
+              "Adapter inspection was skipped because the unsupported legacy credential may still be attached to fresh sandbox children.",
+          }
+        : getAdapterRegistration(sandboxName, support.adapter, entry),
       ...(entry?.addedAt ? { addedAt: entry.addedAt } : {}),
       ...(entry?.updatedAt ? { updatedAt: entry.updatedAt } : {}),
     };

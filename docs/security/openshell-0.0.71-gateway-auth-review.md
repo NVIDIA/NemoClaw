@@ -21,7 +21,7 @@ Issue #5591 is the dependency-update umbrella. Its literal proposed-design claus
 - `Latest version of OpenShell`: this PR pins and validates OpenShell `0.0.71`.
 - `Latest stable version of OpenClaw`: handled by PR #5595 (`dep/openclaw-2026.6.9`), not by this OpenShell PR.
 
-Issue #2478 is not an acceptance target for this OpenShell version-pin PR. Its crash-loop clauses include "Every time it boots, it crashes on the same line" and "`connect` doesn't auto-recover" because `@homebridge/ciao` calls `os.networkInterfaces()` under sandbox netlink restrictions. The source fix remains the existing guard-chain/preload work validated by `test/e2e-scenario/live/issue-2478-crash-loop-recovery.test.ts`. This PR only updates markerless recovery wrapper behavior: newer OpenShell relaunch output can be accepted after, and only after, the gateway health probe succeeds.
+Issue #2478 is not an acceptance target for this OpenShell version-pin PR. Its crash-loop clauses include "Every time it boots, it crashes on the same line" and "`connect` doesn't auto-recover" because `@homebridge/ciao` calls `os.networkInterfaces()` under sandbox netlink restrictions. The source fix remains the existing guard-chain/preload work validated by `test/e2e/live/issue-2478-crash-loop-recovery.test.ts`. This PR only updates markerless recovery wrapper behavior: newer OpenShell relaunch output can be accepted after, and only after, the gateway health probe succeeds.
 
 ## Source Review
 
@@ -51,7 +51,7 @@ Package-managed Docker-driver gateways also reject `NEMOCLAW_GATEWAY_BIND_ADDRES
 
 ## Upstream Contract Coverage
 
-`test/e2e-scenario/live/openshell-gateway-auth-source-contract.test.ts` is the live/source-contract scenario for this PR. It uses OpenShell 0.0.71 plus NemoClaw-generated `OPENSHELL_GATEWAY_CONFIG` and verifies:
+`test/e2e/live/openshell-gateway-auth-source-contract.test.ts` is the live/source-contract scenario for this PR. It uses OpenShell 0.0.71 plus NemoClaw-generated `OPENSHELL_GATEWAY_CONFIG` and verifies:
 
 - no-token Docker sandbox-origin access to a user-callable gateway API is rejected or unreachable;
 - valid sandbox JWT access from Docker origin to an allowlisted sandbox method reaches OpenShell auth over `host.openshell.internal` with the generated guest mTLS material, and a token minted for one sandbox is rejected when it requests another sandbox config;

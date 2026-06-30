@@ -27,7 +27,7 @@ runs:
         }
 
         # Build-time package/import guard only. Authenticated HTTPS execution is
-        # validated by test/e2e-scenario/live/mcp-bridge.test.ts against a
+        # validated by test/e2e/live/mcp-bridge.test.ts against a
         # final Hermes sandbox image and OpenShell policy.
         mcp_client_imports_ok() {
           local ref="$1"

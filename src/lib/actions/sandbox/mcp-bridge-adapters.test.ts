@@ -395,7 +395,7 @@ describe("MCP adapters", () => {
         baseEntry,
       );
 
-      expect(redacted).toBe("failed header Authorization=Bearer ***REDACTED*** raw ***REDACTED***");
+      expect(redacted).toBe("failed header Authorization=Bearer ***REDACTED***");
     } finally {
       prior === undefined ? delete process.env.GITHUB_TOKEN : (process.env.GITHUB_TOKEN = prior);
     }
@@ -411,9 +411,7 @@ describe("MCP adapters", () => {
         { GITHUB_TOKEN: "inline-provider-secret" },
       );
 
-      expect(redacted).toBe(
-        "adapter echoed Authorization=Bearer ***REDACTED*** and ***REDACTED***",
-      );
+      expect(redacted).toBe("adapter echoed Authorization=Bearer ***REDACTED***");
     } finally {
       prior === undefined ? delete process.env.GITHUB_TOKEN : (process.env.GITHUB_TOKEN = prior);
     }
@@ -424,13 +422,14 @@ describe("MCP adapters", () => {
     delete process.env.GITHUB_TOKEN;
     try {
       const redacted = redactBridgeSecretsForDisplay(
-        '{"headers":{"Authorization":"Bearer resolved-provider-secret"},"raw":"Authorization: Bearer another-secret"}',
+        '{"headers":{"Authorization":"Bearer resolved-provider-secret"},"raw":"Authorization: Bearer another-secret","status":"kept"}',
         baseEntry,
       );
 
-      expect(redacted).not.toContain("resolved-provider-secret");
-      expect(redacted).not.toContain("another-secret");
-      expect(redacted).toContain("Bearer ***REDACTED***");
+      expect(redacted).toBe(
+        '{"headers":{"Authorization":"Bearer ***REDACTED***"},"raw":"Authorization: Bearer ***REDACTED***","status":"kept"}',
+      );
+      expect(JSON.parse(redacted)).toMatchObject({ status: "kept" });
     } finally {
       prior === undefined ? delete process.env.GITHUB_TOKEN : (process.env.GITHUB_TOKEN = prior);
     }
@@ -443,7 +442,7 @@ describe("MCP adapters", () => {
       { LONG: "raw-long-secret", SHORT: "raw" },
     );
 
-    expect(redacted).toBe("Authorization: ***REDACTED*** ***REDACTED*** ***REDACTED***[31m");
+    expect(redacted).toBe("Authorization: ***REDACTED***");
     expect(redacted).not.toContain("secret");
     expect(redacted).not.toContain("\u001b");
   });
@@ -456,6 +455,35 @@ describe("MCP adapters", () => {
     expect(redacted).toBe('Bearer ***REDACTED*** Authorization="***REDACTED***"');
     expect(redacted).not.toContain("opaque-value");
     expect(redacted).not.toContain("second-value");
+  });
+
+  it("bounds generic values to one line while preserving quoted structured output", () => {
+    const redacted = redactBridgeSecretsForDisplay(
+      [
+        "Authorization: Bearer alpha beta, gamma",
+        "next line kept",
+        '{"Authorization":"Bearer quoted secret,with,commas","status":"kept"}',
+        "MCP_TOKEN='assignment secret,with commas' status=kept",
+      ].join("\n"),
+    );
+
+    expect(redacted).toBe(
+      [
+        "Authorization: Bearer ***REDACTED***",
+        "next line kept",
+        '{"Authorization":"Bearer ***REDACTED***","status":"kept"}',
+        "MCP_TOKEN='***REDACTED***' status=kept",
+      ].join("\n"),
+    );
+  });
+
+  it("removes display controls before recognizing and redacting sensitive keys", () => {
+    const redacted = redactBridgeSecretsForDisplay(
+      "Authori\u001bzation: Bearer alpha\u0000 beta\nnext line kept",
+    );
+
+    expect(redacted).toBe("Authorization: Bearer ***REDACTED***\nnext line kept");
+    expect(redacted).not.toMatch(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/);
   });
 });
 

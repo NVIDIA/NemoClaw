@@ -56,14 +56,15 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 54 entries", () => {
-      // 48 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 48 visible includes the sessions group (root + list + reset + delete +
+    it("should return exactly 55 entries", () => {
+      // 49 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 49 visible includes the sessions group (root + list + reset + delete +
       // export), the agents quartet (add + apply + delete + list), the
       // singular `agent` passthrough that forwards to `openclaw agent`, and
       // the download + upload host-side openshell wrappers, plus five MCP
-      // bridge display entries under the `mcp` parent.
-      expect(sandboxCommands()).toHaveLength(54);
+      // bridge display entries under the `mcp` parent and the gateway restart
+      // command under the `gateway` parent.
+      expect(sandboxCommands()).toHaveLength(55);
     });
 
     it("every entry has scope sandbox", () => {
@@ -219,9 +220,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 30 unique action tokens including empty string", () => {
+    it("returns exactly 31 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(30);
+      expect(tokens).toHaveLength(31);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "agent",
@@ -251,6 +252,7 @@ describe("command-registry", () => {
         "config",
         "channels",
         "mcp",
+        "gateway",
         "gateway-token",
         "upload",
         "",

@@ -81,6 +81,19 @@ function sameMcpAddIntent(existing: McpBridgeEntry, requested: McpBridgeEntry): 
   );
 }
 
+function resolvedTargetPins(
+  resolvedByServer: ReadonlyMap<string, string[]>,
+  entry: McpBridgeEntry,
+): string[] {
+  const addresses = resolvedByServer.get(entry.server);
+  if (!addresses || addresses.length === 0) {
+    throw new McpBridgeError(
+      `MCP server '${entry.server}' has no validated public address pins. Refusing policy mutation.`,
+    );
+  }
+  return addresses;
+}
+
 export function assertMcpAdapterMutationRuntimeCapabilities(
   sandboxName: string,
   sandbox: SandboxEntry,
@@ -458,7 +471,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
     let entry = storedEntry;
     const envRefs = entry.env.map((envName) => ({ name: envName }));
     const adapterEnvValues = resolveCredentialEnv(envRefs);
-    const resolvedAddresses = resolvedByServer.get(entry.server);
+    const resolvedAddresses = resolvedTargetPins(resolvedByServer, entry);
     let credentialRevisionSnapshotPath: string | undefined;
     try {
       assertNoAttachedProviderCredentialCollision(sandboxName, entry);
@@ -534,7 +547,7 @@ export async function restoreExistingMcpBridgeRuntime(
       );
     }
     assertNoAttachedProviderCredentialCollision(sandboxName, entry);
-    applyGeneratedPolicy(sandboxName, entry, resolvedByServer.get(entry.server));
+    applyGeneratedPolicy(sandboxName, entry, resolvedTargetPins(resolvedByServer, entry));
     attachProvider(sandboxName, entry);
     waitForAttachedMcpCredential(sandboxName, entry);
     const adapter =

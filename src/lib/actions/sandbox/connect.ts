@@ -55,7 +55,11 @@ import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-st
 import { getSandboxTargetGatewayName } from "./gateway-target";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
 import type { SecretBoundaryRefusalReason } from "./hermes-secret-boundary-recovery";
-import { checkAndRecoverSandboxProcesses, executeSandboxExecCommand } from "./process-recovery";
+import {
+  checkAndRecoverSandboxProcesses,
+  executeSandboxExecCommand,
+  resolveSandboxDashboardPort,
+} from "./process-recovery";
 import { runTerminalAgentConnectProbe } from "./terminal-connect-probe";
 import { applyOpenShellVmDnsMonkeypatch, shouldApplyVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
@@ -229,6 +233,22 @@ function exitOnSecretBoundaryRefusal(
   process.exit(1);
 }
 
+function exitOnForwardRecoveryFailure(
+  sandboxName: string,
+  agentName: string,
+  port: number,
+  detail?: string,
+): never {
+  console.error("");
+  console.error(
+    `  Probe failed: ${agentName} gateway is running in '${sandboxName}', but ${detail ?? "the dashboard/API host forward could not be restored"}.`,
+  );
+  console.error(
+    `  Run \`openshell forward start --background ${port} ${sandboxName}\` manually and re-run \`nemoclaw ${sandboxName} recover\`.`,
+  );
+  process.exit(1);
+}
+
 function runSandboxConnectProbe(sandboxName: string): void {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
@@ -252,6 +272,18 @@ function runSandboxConnectProbe(sandboxName: string): void {
   }
   if ("secretBoundaryRefused" in processCheck && processCheck.secretBoundaryRefused) {
     exitOnSecretBoundaryRefusal(sandboxName, agentName, processCheck, "Probe");
+  }
+  if ("forwardRecoveryFailed" in processCheck && processCheck.forwardRecoveryFailed) {
+    const detail =
+      "forwardRecoveryFailureDetail" in processCheck
+        ? String(processCheck.forwardRecoveryFailureDetail)
+        : undefined;
+    exitOnForwardRecoveryFailure(
+      sandboxName,
+      agentName,
+      resolveSandboxDashboardPort(sandboxName),
+      detail,
+    );
   }
   if (processCheck.wasRunning) {
     ensureSandboxInferenceRoute(sandboxName, { quiet: true });

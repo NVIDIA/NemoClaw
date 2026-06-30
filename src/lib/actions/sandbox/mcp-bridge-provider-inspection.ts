@@ -261,7 +261,7 @@ export function assertMcpProviderRecoverable(entry: McpBridgeEntry): McpProvider
 
 export async function preflightMcpEntryTargets(
   entries: readonly McpBridgeEntry[],
-): Promise<Map<string, string[] | undefined>> {
+): Promise<Map<string, string[]>> {
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
   const results = await Promise.all(
     entries.map(async (entry) => {

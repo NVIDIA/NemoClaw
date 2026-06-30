@@ -23,6 +23,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
         },
         "anthropic-prod",
         "claude-sonnet-4-20250514",
+        { inferenceProbeResponses: ["OK 200", "OK 200"] },
       );
       const bogus = { NEMOCLAW_VLLM_MODEL: "definitely-not-a-real-vllm-model" };
       const PREFLIGHT_HINT = "NEMOCLAW_VLLM_MODEL is consumed by";
@@ -35,6 +36,13 @@ describe("sandbox connect inference route swap (#1248)", () => {
       // mean it failed for some other reason before the skipped preflight.
       expect(probe.status).toBe(0);
       expect(probeOut).not.toContain(PREFLIGHT_HINT);
+
+      // A fixture remains truthful across repeated CLI invocations in one
+      // test: its advertised running forward keeps listening until afterEach.
+      const repeatedProbe = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, [
+        "--probe-only",
+      ]);
+      expect(repeatedProbe.status).toBe(0);
 
       // A full connect still runs the preflight and fails fast on the bogus value.
       const full = runConnect(fixture.tmpDir, fixture.sandboxName, bogus, []);

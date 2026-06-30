@@ -68,6 +68,7 @@ function runHermesRuntimeApiServerKeyMint(
     envFile?: string;
     mode?: "strict" | "compat";
     fakeRoot?: boolean;
+    locked?: boolean;
     envPathKind?: "regular" | "symlink" | "hardlink";
     configPathKind?: "regular" | "symlink";
   } = {},
@@ -105,6 +106,12 @@ function runHermesRuntimeApiServerKeyMint(
   writeEnvPath[opts.envPathKind ?? "regular"]();
   writeHermesHash(hashPath, configPath, envPath);
   writeHermesHash(compatHashPath, configPath, envPath);
+  for (const _locked of opts.locked ? [true] : []) {
+    fs.chmodSync(hermesHome, 0o755);
+    fs.chmodSync(configPath, 0o444);
+    fs.chmodSync(envPath, 0o444);
+    fs.chmodSync(compatHashPath, 0o444);
+  }
 
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   fs.writeFileSync(
@@ -357,6 +364,58 @@ function runHermesRuntimeProviderPlaceholderRefresh(opts: {
 }
 
 describe("agents/hermes/start.sh runtime API server key", () => {
+  it("runs the startup guard in isolated mode as the calling shell's direct child", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-direct-child-"));
+    const hermesHome = path.join(tmpDir, ".hermes");
+    const fakePython = path.join(tmpDir, "python");
+    const ppidFile = path.join(tmpDir, "guard.ppid");
+    const argsFile = path.join(tmpDir, "guard.args");
+    const script = path.join(tmpDir, "run.sh");
+    fs.mkdirSync(hermesHome);
+    fs.writeFileSync(path.join(hermesHome, ".env"), "API_SERVER_KEY=fixture\n");
+    fs.writeFileSync(
+      fakePython,
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$PPID" >"$PPID_FILE"\nprintf "%s\\n" "$@" >"$ARGS_FILE"\nprintf "minted=0\\n"\n',
+      { mode: 0o700 },
+    );
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    fs.writeFileSync(
+      script,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        extractShellFunctionFromSource(source, "ensure_hermes_runtime_api_server_key"),
+        `HERMES_DIR=${shellQuote(hermesHome)}`,
+        `HERMES_HASH_FILE=${shellQuote(path.join(tmpDir, "strict.hash"))}`,
+        `_HERMES_PYTHON=${shellQuote(fakePython)}`,
+        `_HERMES_RUNTIME_CONFIG_GUARD=${shellQuote(RUNTIME_CONFIG_GUARD)}`,
+        `PPID_FILE=${shellQuote(ppidFile)}`,
+        `ARGS_FILE=${shellQuote(argsFile)}`,
+        "export PPID_FILE ARGS_FILE",
+        "EXPECTED_PARENT=$BASHPID",
+        "ensure_hermes_runtime_api_server_key strict",
+        'ACTUAL_PARENT="$(cat "$PPID_FILE")"',
+        'printf "expected=%s actual=%s\\n" "$EXPECTED_PARENT" "$ACTUAL_PARENT"',
+        '[ "$EXPECTED_PARENT" = "$ACTUAL_PARENT" ]',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [script], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toMatch(/^expected=([0-9]+) actual=\1\n$/);
+      expect(fs.readFileSync(argsFile, "utf-8").trim().split("\n").slice(0, 2)).toEqual([
+        "-I",
+        RUNTIME_CONFIG_GUARD,
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("mints API_SERVER_KEY at startup and refreshes Hermes config hashes", () => {
     const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true });
 
@@ -369,6 +428,17 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.compatHashContent).toContain("/.hermes/.env");
     expect(run.result.stderr).toContain("Minted Hermes API_SERVER_KEY for this sandbox");
     expect(run.result.stderr).not.toContain(run.apiServerKey ?? "missing-key");
+  });
+
+  it("refuses to mint an API key into a shields-up env", () => {
+    const run = runHermesRuntimeApiServerKeyMint({ fakeRoot: true, locked: true });
+
+    expect(run.result.status).not.toBe(0);
+    expect(run.result.stderr).toContain("cannot update .env while shields are up");
+    expect(run.apiServerKey).toBeNull();
+    expect(run.envFileMode).toBe("444");
+    expect(run.strictHashValid).toBe(true);
+    expect(run.compatHashValid).toBe(true);
   });
 
   it("does not rotate an existing API_SERVER_KEY on restart", () => {
@@ -704,12 +774,16 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
     );
     expect(run.envFileContent).not.toContain("openshell:resolve:env");
-    expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN");
-    expect(run.result.stderr).toContain("Normalized SLACK_APP_TOKEN");
+    expect(run.result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for SLACK_BOT_TOKEN",
+    );
+    expect(run.result.stderr).toContain(
+      "[config] Refreshed Hermes provider placeholder for SLACK_APP_TOKEN",
+    );
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refresh_hermes_provider_placeholders passes --runtime-plan only for regular artifacts", () => {
+  it("refreshes provider placeholders through isolated Python and passes only regular artifacts", () => {
     const present = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "regular" });
     const absent = runExtractedProviderPlaceholderRefresh({ runtimePlanPathKind: "absent" });
     const brokenSymlink = runExtractedProviderPlaceholderRefresh({
@@ -719,13 +793,16 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(present.result.status, present.result.stderr).toBe(0);
     expect(absent.result.status, absent.result.stderr).toBe(0);
     expect(brokenSymlink.result.status, brokenSymlink.result.stderr).toBe(0);
+    expect(present.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
+    expect(absent.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
+    expect(brokenSymlink.args.slice(0, 2)).toEqual(["-I", RUNTIME_CONFIG_GUARD]);
     expect(present.args).toContain("--runtime-plan");
     expect(present.args).toContain(present.runtimePlanPath);
     expect(absent.args).not.toContain("--runtime-plan");
     expect(absent.args).not.toContain(absent.runtimePlanPath);
     expect(brokenSymlink.args).not.toContain("--runtime-plan");
     expect(brokenSymlink.args).not.toContain(brokenSymlink.runtimePlanPath);
-  });
+  }, 15_000);
 
   it.each([
     {

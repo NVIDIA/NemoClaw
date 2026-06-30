@@ -26,7 +26,8 @@ import {
 } from "../../onboard/sandbox-provider-cleanup";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { redact } from "../../security/redact";
-import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
+import { withTimerBoundShieldsMutationLockAsync } from "../../shields/timer-bound-lock";
+import { killTimer as defaultKillShieldsTimer, readTimerMarker } from "../../shields/timer-control";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
@@ -454,80 +455,114 @@ async function destroySandboxUnlocked(
     destroyAlreadyPrepared: false,
     destroyAlreadyPending: false,
   };
-  const mcpPreparation =
-    Object.keys(sb?.mcp?.bridges ?? {}).length > 0
-      ? sandboxConfirmedAbsent
-        ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, {
-            force: normalized.force === true,
-          })
-        : await prepareMcpBridgesForDestroy(sandboxName)
-      : emptyMcpPreparation;
+  const destructiveResult = await withTimerBoundShieldsMutationLockAsync(
+    sandboxName,
+    "destroy sandbox",
+    async () => {
+      const mcpPreparation =
+        Object.keys(sb?.mcp?.bridges ?? {}).length > 0
+          ? sandboxConfirmedAbsent
+            ? await prepareMcpBridgesForAbsentSandboxDestroy(sandboxName, {
+                force: normalized.force === true,
+              })
+            : await prepareMcpBridgesForDestroy(sandboxName)
+          : emptyMcpPreparation;
 
-  if (sandboxConfirmedAbsent && mcpPreparation.entries.length > 0) {
-    console.warn(
-      `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
-    );
-  }
-
-  // Wipe persistent state AFTER the gateway is selected so the exec targets
-  // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
-  // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
-  // PRA-2's later ask to defer past delete is physically impossible and
-  // contradicts PRA-5; the wipe-state docstring covers the full source-
-  // boundary justification.
-  if (!sandboxConfirmedAbsent) wipeSandboxState(sandboxName);
-
-  const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
-    ? { detached: [], failures: [] }
-    : runSandboxProviderPreDeleteCleanup(sandboxName, {
-        runOpenshell,
-        redact,
-      });
-  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
-
-  if (deleteResult.status !== 0 && !alreadyGone) {
-    let mcpRecoveryFailure: string | undefined;
-    if (!sandboxConfirmedAbsent) {
-      try {
-        await restoreMcpBridgesAfterDestroyAbort(sandboxName, mcpPreparation);
-      } catch (error) {
-        mcpRecoveryFailure = error instanceof Error ? error.message : String(error);
+      if (sandboxConfirmedAbsent && mcpPreparation.entries.length > 0) {
+        console.warn(
+          `  ${YW}⚠${R} Sandbox '${sandboxName}' is already absent, so its retained-volume MCP adapter entry cannot be scrubbed in place. Exact OpenShell providers will be deleted so any stale credential placeholder cannot authenticate; same-name onboarding may need to replace stale MCP adapter config.`,
+        );
       }
+
+      // Wipe persistent state AFTER the gateway is selected so the exec targets
+      // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
+      // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
+      // Keep the same timer-bound lock across MCP detachment, wipe, provider
+      // cleanup, delete, and final MCP cleanup so an auto-restore timer cannot
+      // mutate this sandbox or a same-name replacement between phases.
+      if (!sandboxConfirmedAbsent) {
+        wipeSandboxState(sandboxName);
+
+        // The wipe needs the timed mutable posture so the sandbox user can
+        // remove manifest state. Convert it back to a verified locked posture
+        // immediately afterward and before delete.
+        if (readTimerMarker(sandboxName)) {
+          const { shieldsUp: hardenShields } =
+            require("../../shields") as typeof import("../../shields");
+          hardenShields(sandboxName, {
+            throwOnError: true,
+            allowLegacyHermesProtocol: true,
+          });
+        }
+      }
+
+      const detachOutcome: DetachSandboxProvidersResult = sandboxConfirmedAbsent
+        ? { detached: [], failures: [] }
+        : runSandboxProviderPreDeleteCleanup(sandboxName, {
+            runOpenshell,
+            redact,
+          });
+      const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+
+      if (deleteResult.status !== 0 && !alreadyGone) {
+        let mcpRecoveryFailure: string | undefined;
+        if (!sandboxConfirmedAbsent) {
+          try {
+            await restoreMcpBridgesAfterDestroyAbort(sandboxName, mcpPreparation);
+          } catch (error) {
+            mcpRecoveryFailure = error instanceof Error ? error.message : String(error);
+          }
+        }
+        return {
+          ok: false as const,
+          deleteOutput,
+          exitCode: deleteResult.status || 1,
+          mcpRecoveryFailure,
+        };
+      }
+
+      // The live sandbox is now gone while this name remains serialized.
+      // Revoke the timer and local shields state before releasing the lock so
+      // neither can target a subsequently created sandbox with the same name.
+      cleanupShieldsDestroyArtifacts(sandboxName);
+      try {
+        await finalizeMcpBridgesAfterSandboxDelete(sandboxName, mcpPreparation, {
+          force: normalized.force === true,
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        console.error(
+          `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
+        );
+        console.error(
+          `  MCP cleanup state was preserved. Re-run destroy to finish without requiring the host MCP secret environment variable.`,
+        );
+        throw error;
+      }
+      return { ok: true as const, detachOutcome, deleteResult, alreadyGone };
+    },
+  );
+  if (!destructiveResult.ok) {
+    if (destructiveResult.deleteOutput) {
+      console.error(`  ${destructiveResult.deleteOutput}`);
     }
-    if (deleteOutput) {
-      console.error(`  ${deleteOutput}`);
-    }
-    if (mcpRecoveryFailure) {
+    if (destructiveResult.mcpRecoveryFailure) {
       console.error(
-        `  Failed to restore MCP runtime state after the sandbox delete failed: ${mcpRecoveryFailure}`,
+        `  Failed to restore MCP runtime state after the sandbox delete failed: ${destructiveResult.mcpRecoveryFailure}`,
       );
       console.error(
         `  MCP definitions and OpenShell providers were preserved; fix the reported cause and retry MCP restart or destroy.`,
       );
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    process.exit(deleteResult.status || 1);
+    process.exit(destructiveResult.exitCode);
   }
-
+  const { detachOutcome, deleteResult, alreadyGone } = destructiveResult;
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
-  try {
-    await finalizeMcpBridgesAfterSandboxDelete(sandboxName, mcpPreparation, {
-      force: normalized.force === true,
-    });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error(
-      `  Sandbox '${sandboxName}' is gone, but authenticated MCP provider cleanup is incomplete: ${detail}`,
-    );
-    console.error(
-      `  MCP cleanup state was preserved. Re-run destroy to finish without requiring the host MCP secret environment variable.`,
-    );
-    throw error;
-  }
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
     deleteSucceededOrAlreadyGone,
     registeredSandboxCount: registry.listSandboxes().sandboxes.length,
@@ -537,7 +572,6 @@ async function destroySandboxUnlocked(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  cleanupShieldsDestroyArtifacts(sandboxName);
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.
