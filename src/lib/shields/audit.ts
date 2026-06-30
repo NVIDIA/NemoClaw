@@ -93,9 +93,12 @@ function readAuditTail(auditFile: string): string {
 
     // The bounded read can begin in the middle of a JSONL entry. Drop that
     // partial first line and retain only complete entries from the tail. If
-    // there is no newline, the tail contains no complete JSONL entry.
+    // there is no newline, an oversized unterminated entry has consumed the
+    // entire tail; report degraded visibility instead of treating it as an
+    // empty audit log.
     const firstNewline = content.indexOf("\n");
-    return firstNewline === -1 ? "" : content.slice(firstNewline + 1);
+    if (firstNewline === -1) throw new Error("audit JSONL entry exceeds bounded tail");
+    return content.slice(firstNewline + 1);
   } finally {
     closeSync(fd);
   }
@@ -118,10 +121,13 @@ function readAuditTail(auditFile: string): string {
  * this advisory check into a denial-of-service boundary. Future-dated entries
  * are rejected so a crafted row cannot pin the warning permanently.
  *
- * Only the last 1 MiB is read. This bounds synchronous work on the dispatch
- * path while retaining thousands of normal audit entries; if the matching
- * `shields_down` row falls outside that tail, the event remains useful with a
- * null timeout and the caller uses its safe fallback suggestion.
+ * Only the last 1 MiB is read. This intentionally keeps the one-shot CLI read
+ * synchronous so the warning is ordered before dispatch while bounding the
+ * work to thousands of normal audit entries. If the matching `shields_down`
+ * row falls outside that tail, the event remains useful with a null timeout
+ * and the caller uses its safe fallback suggestion. Revisit the synchronous
+ * API if audit storage moves off the local filesystem or into a long-lived
+ * process.
  *
  * Remove this reader when OpenClaw exposes a structured relock cause or when
  * extend-on-activity removes the mid-session relock condition.

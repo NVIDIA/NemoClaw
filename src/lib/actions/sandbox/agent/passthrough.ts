@@ -325,9 +325,11 @@ function requestsOpenClawJsonOutput(extraArgs: readonly string[]): boolean {
   // a value by another OpenClaw option. Source boundary: upstream OpenClaw owns
   // the complete argv grammar; NemoClaw mirrors documented flags only to choose
   // the host transport path. Unknown options fail conservative to normal
-  // passthrough, where OpenClaw parses argv itself. Regression tests cover each
-  // documented value flag, documented equals-form value flags, documented
-  // boolean flags, unknown flag fallback, and the `--` terminator. Removal
+  // passthrough, where OpenClaw parses argv itself. Any newly documented value
+  // flag, including a `--json-*` name, must be added to the value-flag set and
+  // its tests together. Regression tests cover each documented value flag,
+  // documented equals-form value flags, documented boolean flags, unknown flag
+  // fallback, and the `--` terminator. Removal
   // condition: OpenClaw exposes a machine-readable argv schema or NemoClaw stops
   // special-casing the JSON transport path.
   let skipNextValue = false;

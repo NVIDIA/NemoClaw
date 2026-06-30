@@ -158,16 +158,17 @@ describe("runAgentPassthrough", () => {
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
+    // Unknown --json-* flags stay conservative until added to the documented value-flag set.
     await runAgentPassthrough(
       "alpha",
-      { extraArgs: ["--agent", "work", "--json-output", "--json"] },
+      { extraArgs: ["--agent", "work", "--json-something", "--json"] },
       { execJson },
     );
 
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--json-output", "--json"],
+      ["openclaw", "agent", "--agent", "work", "--json-something", "--json"],
       { tty: false },
     );
   });

@@ -370,11 +370,11 @@ describe("readRecentShieldsAutoRestore", () => {
     expect(event.timestamp).toBe(timestamp);
   });
 
-  it("returns no event when the bounded tail has no complete JSONL entry (#5922)", () => {
+  it("reports an oversized unterminated JSONL entry as unreadable (#5922)", () => {
     fs.writeFileSync(auditPath, "x".repeat(1024 * 1024 + 100));
 
     expect(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath)).toEqual({
-      kind: "none",
+      kind: "unreadable",
     });
   });
 });
