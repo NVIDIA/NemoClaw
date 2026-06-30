@@ -117,10 +117,6 @@ function primaryModel(config: OpenClawConfig): string {
   return config.agents.defaults.model.primary;
 }
 
-function inferenceModelRef(model: string): string {
-  return model.startsWith("inference/") ? model : `inference/${model}`;
-}
-
 function allowedOrigins(config: OpenClawConfig): string[] {
   return config.gateway.controlUi.allowedOrigins;
 }
@@ -190,12 +186,14 @@ function runConfigHashCheck(
   label: string,
   env: Record<string, string> = {},
 ): string {
+  // Keep the one-shot container alive long enough for its tiny fd3 marker to
+  // drain through Docker attach; the JSON capture above is naturally larger.
   const result = runContainer(
     dockerLog,
     image,
     `${label} config hash check`,
     env,
-    'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\\n" >&3; else printf "FAIL\\n" >&3; fi',
+    'cd /sandbox/.openclaw && if sha256sum -c .config-hash --status; then printf "OK\\n" >&3; else printf "FAIL\\n" >&3; fi; sleep 0.1',
   );
   expect(result.status, resultText(result)).toBe(0);
   return result.stdout.trim();
@@ -288,7 +286,7 @@ runtimeOverridesTest(
       const modelOverride = captureConfig(dockerLog, image, "model override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
       });
-      expect(primaryModel(modelOverride)).toBe(inferenceModelRef(overrideModel));
+      expect(primaryModel(modelOverride)).toBe(overrideModel);
       expect(
         runConfigHashCheck(dockerLog, image, "model override", {
           NEMOCLAW_MODEL_OVERRIDE: overrideModel,
@@ -337,9 +335,7 @@ runtimeOverridesTest(
         NEMOCLAW_REASONING: "true",
         NEMOCLAW_CORS_ORIGIN: "https://multi.example.com",
       });
-      expect(primaryModel(combined)).toBe(
-        inferenceModelRef("nvidia/llama-3.3-nemotron-super-49b-v1.5"),
-      );
+      expect(primaryModel(combined)).toBe("nvidia/llama-3.3-nemotron-super-49b-v1.5");
       expect(firstProviderModel(combined)).toMatchObject({
         contextWindow: 65536,
         maxTokens: 8192,
