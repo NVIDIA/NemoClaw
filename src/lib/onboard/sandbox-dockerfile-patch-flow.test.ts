@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
-
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import { prepareSandboxDockerfilePatch } from "./sandbox-dockerfile-patch-flow";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 const sandboxGpuConfig: SandboxGpuConfig = {
   mode: "auto",
@@ -74,12 +73,14 @@ describe("prepareSandboxDockerfilePatch", () => {
       false,
       null,
       ["github"],
+      { buildIdPolicy: "preserve" },
     );
   });
 
   it("skips base-image resolution for agent default Dockerfiles", async () => {
     const pullAndResolveBaseImageDigest = vi.fn();
     const dockerImageInspect = vi.fn();
+    const patchStagedDockerfile = vi.fn();
     const result = await prepareSandboxDockerfilePatch({
       agent: { name: "hermes" } as any,
       fromDockerfile: null,
@@ -98,7 +99,7 @@ describe("prepareSandboxDockerfilePatch", () => {
         pullAndResolveBaseImageDigest,
         dockerImageInspect,
         enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
-        patchStagedDockerfile: vi.fn(),
+        patchStagedDockerfile,
         now: () => 1,
       },
     });
@@ -106,6 +107,9 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(result.resolvedBaseImage).toBeNull();
     expect(pullAndResolveBaseImageDigest).not.toHaveBeenCalled();
     expect(dockerImageInspect).not.toHaveBeenCalled();
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
+      buildIdPolicy: "preserve",
+    });
   });
 
   it("resolves the base image when an agent uses a custom Dockerfile", async () => {
@@ -148,6 +152,38 @@ describe("prepareSandboxDockerfilePatch", () => {
     expect(patchStagedDockerfile.mock.calls[0]?.[7]).toBe(
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:customagent",
     );
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
+      buildIdPolicy: "rewrite",
+    });
+  });
+
+  it("keeps the per-run rewrite for managed agents that consume the build id", async () => {
+    const patchStagedDockerfile = vi.fn();
+
+    await prepareSandboxDockerfilePatch({
+      agent: { name: "langchain-deepagents-code" } as any,
+      fromDockerfile: null,
+      sandboxBaseImage: "ghcr.io/nvidia/nemoclaw/sandbox-base",
+      sandboxBaseTag: "latest",
+      stagedDockerfile: "/tmp/Dockerfile",
+      model: "model-a",
+      chatUiUrl: "http://127.0.0.1:7000",
+      provider: null,
+      preferredInferenceApi: null,
+      webSearchConfig: null,
+      hermesToolGateways: [],
+      sandboxGpuConfig,
+      deps: {
+        isLinuxDockerDriverGatewayEnabled: vi.fn(() => false),
+        enforceDockerGpuPatchPreserveNetwork: vi.fn(async () => false),
+        patchStagedDockerfile,
+        now: () => 1,
+      },
+    });
+
+    expect(patchStagedDockerfile.mock.calls[0]?.[11]).toEqual({
+      buildIdPolicy: "rewrite",
+    });
   });
 
   it("warns when the base image cannot be resolved but cached latest exists", async () => {

@@ -653,8 +653,12 @@ describe("e2e workflow boundary", () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
     expect(inventory.allowedJobs).toContain("openshell-version-pin");
+    expect(inventory.allowedJobs).toContain("openshell-gateway-auth-contract");
     expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
     expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox");
+    expect(inventory.targetToJob.get("openshell-gateway-auth-contract")).toBe(
+      "openshell-gateway-auth-contract",
+    );
     expect(inventory.targetToJob.get("openshell-version-pin")).toBe("openshell-version-pin");
     expect(inventory.targetToJob.get("upgrade-stale-sandbox")).toBe("upgrade-stale-sandbox");
     expect(inventory.targetToJob.get("credential-migration")).toBe("credential-migration");

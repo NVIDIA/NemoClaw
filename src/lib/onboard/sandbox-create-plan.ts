@@ -10,6 +10,29 @@ import type { MessagingChannel } from "./messaging-state";
 import { resolveQrSelectedChannels } from "./messaging-state";
 import { buildSandboxGpuCreateArgs, type SandboxGpuCreateConfig } from "./sandbox-gpu-create";
 
+// Known canonical policy tier names. Kept inline so the create-time path
+// validates the env value without pulling `../policy/tiers` (which transitively
+// requires `runner.ts` and breaks vitest source resolution for this module's
+// tests). The list mirrors `nemoclaw-blueprint/policies/tiers.yaml`; adding a
+// tier there requires updating this set so an explicit tier env value reaches
+// the create-time policy decision.
+const KNOWN_POLICY_TIER_NAMES = new Set(["restricted", "balanced", "open"]);
+
+function readPolicyTierEnv(): string | null {
+  // Only trust the env value in non-interactive mode. Interactive flows let the
+  // operator override the tier via the selector after sandbox creation; if the
+  // env said balanced but the operator picks restricted, an interactive trust
+  // of the env would have already let create-time OTEL through. Fail closed:
+  // interactive mode returns null so the OTEL preset is deferred to the
+  // post-boot policy step.
+  const isNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  if (!isNonInteractive) return null;
+  const raw = process.env.NEMOCLAW_POLICY_TIER;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim().toLowerCase();
+  return KNOWN_POLICY_TIER_NAMES.has(trimmed) ? trimmed : null;
+}
+
 type MessagingTokenDef = {
   name?: string;
   envKey: string;
@@ -49,6 +72,7 @@ export type PrepareSandboxCreatePlanInput = {
   getMessagingChannelForEnvKey(envKey: string): string | null;
   getHermesToolGatewayProviderName(sandboxName: string): string;
   agentName?: string | null;
+  policyTier?: string | null;
   deps?: SandboxCreatePlanDeps;
 };
 
@@ -205,6 +229,7 @@ export function prepareSandboxCreatePlan({
   getMessagingChannelForEnvKey,
   getHermesToolGatewayProviderName,
   agentName,
+  policyTier = readPolicyTierEnv(),
   deps = {},
 }: PrepareSandboxCreatePlanInput): SandboxCreatePlan {
   const enabledMessagingTokenDefs = filterMessagingTokenDefsByEnabledChannel(
@@ -234,6 +259,7 @@ export function prepareSandboxCreatePlan({
     dockerGpuPatch: useDockerGpuPatch,
     additionalPresets: hermesToolGateways,
     agentName,
+    policyTier,
   });
   const createArgs = [
     "--from",

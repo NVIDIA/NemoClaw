@@ -67,6 +67,7 @@ function createDeps(overrides: Partial<PoliciesStateOptions<Agent, WebSearchConf
           "unsupported",
         ),
         disabledMessagingPolicyPresetApplied: false,
+        suppressedAgentRequiredPresetsLive: false,
       }),
     ),
     appliedCheck: vi.fn(() => false),
@@ -234,6 +235,7 @@ describe("handlePoliciesState", () => {
       policyPresets: [...(options.recordedPolicyPresets ?? []), ...options.hermesToolGateways],
       recordedPolicyPresetsNeedReconcile: false,
       disabledMessagingPolicyPresetApplied: false,
+      suppressedAgentRequiredPresetsLive: false,
     }));
     const { deps, calls, setSession } = createDeps({
       preparePolicyPresetResumeSelection: prepareResume,
