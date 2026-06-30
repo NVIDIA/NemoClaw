@@ -687,27 +687,27 @@ exit 0`,
   it("accepts an installed OpenShell dev-channel Docker-driver build", () => {
     const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/dev channel/);
     expect(result.stdout).toMatch(/Dev channel install skips SHA-256 verification/);
   });
 
-  it("fails closed for dev-channel installs without explicit no-verify opt-in", () => {
+  it("fails closed for dev-channel installs without explicit risk acceptance", () => {
     const result = runWithInstalledVersion("0.0.72.dev84+g6b2180425", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain(
-      "Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs.",
+      "Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install.",
     );
   });
 
   it("upgrades stable OpenShell when the dev channel is requested", () => {
     const result = runWithInstalledVersion("0.0.36", {
       NEMOCLAW_OPENSHELL_CHANNEL: "dev",
-      NEMOCLAW_ALLOW_DEV_NO_VERIFY: "1",
+      NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL: "1",
     });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);

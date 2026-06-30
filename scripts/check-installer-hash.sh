@@ -8,6 +8,7 @@
 # Checked installers:
 #   1. Ollama installer    — scripts/install.sh      (OLLAMA_INSTALL_SHA256)
 #   2. OpenShell v0.0.72   — scripts/install-openshell.sh release-asset table
+#   3. Brev OpenShell CLI  — scripts/brev-launchable-ci-cpu.sh release-asset table
 #
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
@@ -100,9 +101,10 @@ register "Ollama installer" \
 # release-asset digests or an equivalent independent verifier replaces it.
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
+  local brev_installer="${REPO_ROOT}/scripts/brev-launchable-ci-cpu.sh"
   local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_RELEASE_VERSION}"
-  local workspace manifests spec manifest expected actual asset pinned upstream matches
-  local count=0 published_count=0 failures=0
+  local workspace manifests spec manifest expected actual source asset pinned upstream matches
+  local count=0 brev_count=0 published_count=0 failures=0
   local -a manifest_specs=(
     "openshell-checksums-sha256.txt:0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
     "openshell-gateway-checksums-sha256.txt:3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
@@ -138,15 +140,19 @@ check_openshell_release_assets() {
     cat "${workspace}/${manifest}" >>"$manifests"
   done
 
-  while IFS=$'\t' read -r asset pinned; do
-    count=$((count + 1))
+  while IFS=$'\t' read -r source asset pinned; do
+    if [[ "$source" == "installer" ]]; then
+      count=$((count + 1))
+    else
+      brev_count=$((brev_count + 1))
+    fi
     matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
     upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
     if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
       published_count=$((published_count + 1))
-      echo "  OK: ${asset} (${pinned})"
+      echo "  OK: ${source} ${asset} (${pinned})"
     else
-      echo "  STALE: ${asset} does not match exactly one v${OPENSHELL_RELEASE_VERSION} checksum entry."
+      echo "  STALE: ${source} ${asset} does not match exactly one v${OPENSHELL_RELEASE_VERSION} checksum entry."
       echo "    pinned:   ${pinned}"
       echo "    upstream: ${upstream:-missing}"
       echo "    matches:  ${matches}"
@@ -163,17 +169,34 @@ check_openshell_release_assets() {
       }
       in_function && /printf .*"[a-f0-9]+"/ {
         split($0, fields, "\"")
-        print asset "\t" fields[2]
+        print "installer\t" asset "\t" fields[2]
       }
     ' "$installer"
+    awk -v marker="v${OPENSHELL_RELEASE_VERSION}:" '
+      /^openshell_cli_pinned_sha256\(\)/ { in_function = 1; next }
+      in_function && /^}/ { exit }
+      in_function && index($0, marker) {
+        asset = substr($0, index($0, marker) + length(marker))
+        sub(/\).*$/, "", asset)
+        next
+      }
+      in_function && /printf .*"[a-f0-9]+"/ {
+        split($0, fields, "\"")
+        print "Brev launchable\t" asset "\t" fields[2]
+      }
+    ' "$brev_installer"
   )
 
   if [[ "$count" -ne 8 ]]; then
     echo "  STALE: expected 8 pinned OpenShell v${OPENSHELL_RELEASE_VERSION} assets, found ${count}."
     failures=$((failures + 1))
   fi
-  if [[ "$published_count" -ne 8 ]]; then
-    echo "  STALE: expected all 8 pinned assets in the v${OPENSHELL_RELEASE_VERSION} checksum manifests, matched ${published_count}."
+  if [[ "$brev_count" -ne 2 ]]; then
+    echo "  STALE: expected 2 pinned Brev OpenShell v${OPENSHELL_RELEASE_VERSION} CLI assets, found ${brev_count}."
+    failures=$((failures + 1))
+  fi
+  if [[ "$published_count" -ne 10 ]]; then
+    echo "  STALE: expected all 10 pinned asset references in the v${OPENSHELL_RELEASE_VERSION} checksum manifests, matched ${published_count}."
     failures=$((failures + 1))
   fi
   return "$failures"

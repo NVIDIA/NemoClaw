@@ -179,11 +179,13 @@ describe("pull request and main workflow contracts", () => {
     for (const installerPath of [
       ".github/workflows/installer-hash-check.yaml",
       "scripts/check-installer-hash.sh",
+      "scripts/brev-launchable-ci-cpu.sh",
       "scripts/install-openshell.sh",
       "scripts/install.sh",
       "nemoclaw-blueprint/blueprint.yaml",
       "src/lib/onboard/openshell-version.ts",
       "src/lib/onboard/openshell-install.ts",
+      "test/brev-launchable-ci-cpu-checksum.test.ts",
       "test/installer-hash-check.test.ts",
     ]) {
       expect(changeDetector.run).toContain(installerPath);

@@ -116,6 +116,16 @@ function createFixture(openshellVersion = "0.0.72"): string {
     path.join(scriptsDir, "install-openshell.sh"),
     `openshell_pinned_sha256() {\n  case "\${1}:\${2}" in\n${cases}\n  esac\n}\n`,
   );
+  const brevCases = ASSETS.slice(0, 2)
+    .map(
+      (asset) =>
+        `    v${openshellVersion}:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
+    )
+    .join("\n");
+  fs.writeFileSync(
+    path.join(scriptsDir, "brev-launchable-ci-cpu.sh"),
+    `openshell_cli_pinned_sha256() {\n  case "\${1}:\${2}" in\n${brevCases}\n  esac\n}\n`,
+  );
   fs.writeFileSync(
     path.join(binDir, "curl"),
     `#!/usr/bin/env bash
@@ -157,8 +167,19 @@ esac
   return fixtureRoot;
 }
 
-function runFixture(mode: "complete" | "failure" | "partial", openshellVersion?: string) {
+function runFixture(
+  mode: "brev-mismatch" | "complete" | "failure" | "partial",
+  openshellVersion?: string,
+) {
   const fixtureRoot = createFixture(openshellVersion);
+  const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
+  const brevSource = fs.readFileSync(brevInstaller, "utf8");
+  fs.writeFileSync(
+    brevInstaller,
+    mode === "brev-mismatch"
+      ? brevSource.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64))
+      : brevSource,
+  );
   return spawnSync("bash", ["scripts/check-installer-hash.sh"], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -166,14 +187,14 @@ function runFixture(mode: "complete" | "failure" | "partial", openshellVersion?:
       ...process.env,
       GITHUB_TOKEN: "",
       GH_TOKEN: "",
-      NEMOCLAW_TEST_CURL_MODE: mode,
+      NEMOCLAW_TEST_CURL_MODE: mode === "brev-mismatch" ? "complete" : mode,
       PATH: `${path.join(fixtureRoot, "bin")}:${process.env.PATH ?? ""}`,
     },
   });
 }
 
 describe("installer hash verification", () => {
-  it("verifies all eight pins from complete token-free checksum manifests", () => {
+  it("verifies all installer and Brev pins from token-free checksum manifests", () => {
     const result = runFixture("complete");
 
     expect(result.status).toBe(0);
@@ -193,7 +214,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).toContain("12 hash(es) are stale");
+    expect(result.stdout).toContain("14 hash(es) are stale");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -202,7 +223,17 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("digest does not match the pinned v0.0.72 release asset");
-    expect(result.stdout).toContain("expected all 8 pinned assets");
+    expect(result.stdout).toContain("expected all 10 pinned asset references");
+    expect(result.stdout).not.toContain("All installer hashes are current");
+  });
+
+  it("fails closed when the Brev launchable pin drifts from the release manifest", () => {
+    const result = runFixture("brev-mismatch");
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      "STALE: Brev launchable openshell-x86_64-unknown-linux-musl.tar.gz",
+    );
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 });

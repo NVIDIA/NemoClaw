@@ -39,6 +39,16 @@ NemoClaw cannot make an upstream release mutable source trustworthy after public
 `install-openshell-version-check.test.ts` compares all eight archive mappings with the checked-in installer table, and `docker-driver-gateway-runtime.test.ts` locks the stable supervisor default while preserving an explicit operator override.
 These version-specific pins are removed only when NemoClaw drops `0.0.72` support or replaces them with independently verified artifacts for a newly supported release.
 
+### Dev Channel Opt-In
+
+- `invalidState`: A mutable development artifact is installed without SHA-256 verification or an explicit operator risk acknowledgment.
+- `sourceBoundary`: NVIDIA/OpenShell owns the mutable `dev` tag; NemoClaw owns the opt-in that permits consuming it for pre-release compatibility tests.
+- `whyNotSourceFix`: NemoClaw cannot make an upstream development tag immutable, so it must fail closed unless the operator explicitly accepts that unverified install.
+- `regressionTest`: `test/install-openshell-version-check.test.ts` proves the development channel fails without `NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1` and succeeds with it.
+- `removalCondition`: Remove the opt-in when NemoClaw no longer tests unreleased OpenShell builds or the development channel publishes artifacts through an independently verified immutable pipeline.
+
+The development channel is compatibility evidence only. Use it in trusted test environments, never as the stable shipping configuration.
+
 ## Round-Trippable Policy Boundary
 
 OpenShell `0.0.72` reserves the `_provider_*` network-policy namespace for provider composition.

@@ -48,6 +48,7 @@ type HarnessOptions = {
     kill: () => boolean;
   };
   run?: (cmd: unknown) => { status: number };
+  runCapture?: () => string;
 };
 
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
@@ -70,7 +71,9 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   let openClawPosture: "locked" | "mutable" = "mutable";
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
-  vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");
+  vi.spyOn(runner, "runCapture").mockImplementation(
+    options.runCapture ?? (() => "version: 1\nnetwork_policies:\n  test: {}\n"),
+  );
   const runSpy = vi.spyOn(runner, "run").mockImplementation((cmd: unknown) => {
     return options.run ? options.run(cmd) : { status: 0 };
   });
@@ -207,6 +210,24 @@ describe("shields command flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Config unlocked for openclaw (no auto-lockdown timer",
     );
+  });
+
+  it("shieldsDown never relaxes policy when the base-policy read fails", () => {
+    const harness = createHarness({
+      runCapture: () => {
+        throw new Error("policy get failed with status 42");
+      },
+    });
+
+    expect(() => harness.shieldsDown("openclaw", { skipTimer: true, throwOnError: true })).toThrow(
+      "Cannot capture current policy",
+    );
+    expect(harness.runSpy).not.toHaveBeenCalled();
+    expect(
+      fs
+        .readdirSync(path.join(tmpDir, ".nemoclaw", "state"))
+        .filter((name) => /^(policy-snapshot-|shields-openclaw)/.test(name)),
+    ).toEqual([]);
   });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {

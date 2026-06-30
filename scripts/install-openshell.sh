@@ -61,8 +61,8 @@ else
 fi
 
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
-  if [ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]; then
-    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  if [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
   fi
   warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi

@@ -23,6 +23,13 @@ const MUTATION_READS = [
     fullCommand: '["openshell", "policy", "get", "--full", sandboxName]',
     diagnosticFullRead: undefined,
   },
+  {
+    relativePath: "src/lib/shields/index.ts",
+    baseCommand: "runCapture(buildPolicyGetCommand(sandboxName))",
+    unsafeBaseCommand: "runCapture(buildPolicyGetCommand(sandboxName), {",
+    fullCommand: "runCapture(buildPolicyGetFullCommand(sandboxName))",
+    diagnosticFullRead: undefined,
+  },
 ];
 
 const violations: string[] = [];
