@@ -114,6 +114,17 @@ describe("runAgentPassthrough shields-relock warning", () => {
     expect(output).not.toContain("nemoclaw alpha; touch /tmp/pwn");
   });
 
+  it("escapes embedded single quotes in recovery command suggestions (#5922)", async () => {
+    const output = await runWarning(
+      {
+        kind: "event",
+        event: { timestamp: new Date().toISOString(), timeoutSeconds: 20 },
+      },
+      "alpha'beta",
+    );
+    expect(output).toContain("nemoclaw 'alpha'\\''beta' shields down --timeout 20s");
+  });
+
   it("keeps JSON stdout parseable while warning from a real audit file on stderr (#5922)", async () => {
     const actualAudit =
       await vi.importActual<typeof import("../../../shields/audit")>("../../../shields/audit");

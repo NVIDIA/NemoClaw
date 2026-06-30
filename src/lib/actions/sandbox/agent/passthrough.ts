@@ -68,22 +68,9 @@
 //      selector case is intercepted; everything else still flows through to
 //      the in-sandbox binary.
 //
-// 4. Recent shields-relock diagnostic (advisory audit mirror).
-//
-//    - Invalid state: after shields auto-relock, the next host CLI
-//      `openclaw agent` dispatch can fail with only `missing scope:
-//      operator.write`, which does not explain the recovery action. An older
-//      relock warning is also stale once the user lowers shields again.
-//    - Source boundary: OpenShell/OpenClaw own current scope state. NemoClaw's
-//      local audit JSONL is non-authoritative and is used only to add likely
-//      relock context. Validated audit chronology can suppress stale context
-//      but never establishes current policy state; unreadable history never
-//      blocks dispatch, and terminal runtimes are excluded from this
-//      OpenClaw-specific diagnostic.
-//    - Source-fix constraint: an already-running in-sandbox OpenClaw TUI has no
-//      host CLI interception point. Covering that surface requires an upstream
-//      structured relock error or a separate extend-on-activity design. This
-//      wrapper intentionally covers only `nemoclaw <name> agent` dispatches.
+// 4. Recent shields-relock diagnostic (advisory audit mirror). Its complete
+//    source-boundary analysis lives with the focused implementation in
+//    `passthrough-shields-warning.ts`.
 //
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
@@ -92,10 +79,7 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout. `passthrough-shields-warning.test.ts` covers the
-// OpenClaw-only relock diagnostic, validated and fallback timeouts, unreadable
-// and absent audit history, newer-down suppression, and terminal-runtime
-// exclusion.
+// machine-readable stdout. The focused shields diagnostic owns its tests.
 //
 // Removal conditions:
 //
@@ -107,12 +91,6 @@
 //     missing selector with a clean exit 2 and an actionable message.
 //   - Drop the simple-token parser when terminal runtime manifests expose
 //     argv arrays natively.
-//   - Drop the shields-relock warning when OpenClaw exposes the relock cause
-//     directly (e.g., a distinct exit code or structured error field for
-//     missing-scope-after-relock), or when NemoClaw implements
-//     extend-on-activity so the scope never lapses mid-session.
-//     (shields_auto_restore audit entries are written by the shields timer
-//     and inline expired-timer recovery paths.)
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";

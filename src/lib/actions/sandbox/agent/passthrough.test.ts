@@ -152,13 +152,13 @@ describe("runAgentPassthrough", () => {
     );
   });
 
-  it("keeps --json after an unknown future value flag on the normal passthrough path", async () => {
+  it("keeps --json-something --json on the normal passthrough path", async () => {
     const execJson = vi.fn(((): never => {
       throw new Error("__unexpected-json");
     }) as NonNullable<AgentPassthroughDeps["execJson"]>);
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
 
-    // Unknown --json-* flags stay conservative until added to the documented value-flag set.
+    // The first unknown flag selects conservative passthrough before the later --json token.
     await runAgentPassthrough(
       "alpha",
       { extraArgs: ["--agent", "work", "--json-something", "--json"] },

@@ -9,6 +9,30 @@ import {
   type ShieldsAutoRestoreReadResult,
 } from "../../../shields/audit";
 
+// Source-of-truth boundary for the host CLI relock diagnostic:
+//
+// - Invalid state: after shields auto-relock, OpenClaw can report only
+//   `missing scope: operator.write`; an older relock warning also becomes stale
+//   after the user lowers shields again.
+// - Source boundary: OpenShell/OpenClaw own current scope state. NemoClaw audit
+//   JSONL is non-authoritative context. Validated chronology may suppress stale
+//   context but never establishes current policy state, and unreadable history
+//   never blocks dispatch. The audit writers are the shields timer and inline
+//   expired-timer recovery paths.
+// - Presentation boundary: sandbox names are user-controlled command text and
+//   must remain shell-quoted. Direct stderr output is deliberate so the warning
+//   is visible in a one-shot CLI while machine-readable stdout stays clean.
+// - Source-fix constraint: an already-running in-sandbox TUI has no host CLI
+//   interception point. That surface needs an upstream structured relock error
+//   or a separate extend-on-activity design; this helper covers only host
+//   `nemoclaw <name> agent` dispatches.
+// - Regression tests cover validated/fallback timeouts, shell metacharacters
+//   and embedded quotes, real-file JSON stdout separation, unreadable/absent
+//   history, newer-down suppression, and terminal-runtime exclusion.
+// - Removal condition: drop this diagnostic when OpenClaw exposes the relock
+//   cause directly or NemoClaw prevents mid-session relock by extending on
+//   activity.
+
 // A relock remains useful context briefly after it happens. This is a
 // relevance window measured from the restore event, independent of the
 // original shields-down timeout; a longer window risks stale-session warnings.

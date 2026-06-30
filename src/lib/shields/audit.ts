@@ -119,7 +119,9 @@ function readAuditTail(auditFile: string): string {
  * caller can surface degraded audit visibility while still dispatching the
  * agent. Fail-open is intentional: blocking dispatch on EACCES/EIO would turn
  * this advisory check into a denial-of-service boundary. Future-dated entries
- * are rejected so a crafted row cannot pin the warning permanently.
+ * are rejected strictly so a crafted row cannot pin the warning permanently;
+ * the same host clock writes and reads this local log, and a rare false
+ * negative after a backward clock adjustment is safer than stale guidance.
  *
  * Only the last 1 MiB is read. This intentionally keeps the one-shot CLI read
  * synchronous so the warning is ordered before dispatch while bounding the
