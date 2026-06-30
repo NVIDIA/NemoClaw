@@ -120,6 +120,7 @@ Operators who need group or channel sender allowlisting can configure OpenClaw d
 If `groupPolicy="allowlist"` is set without an effective group allowlist, OpenClaw denies group messages instead of treating the group as open.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
+NemoClaw configures OpenClaw Teams with `channels.msteams.streaming.mode: "off"` so the channel uses final-message delivery while the upstream Teams streaming path can duplicate or collapse preview and final messages.
 
 WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin installed into WeChat-enabled OpenClaw sandbox images and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
