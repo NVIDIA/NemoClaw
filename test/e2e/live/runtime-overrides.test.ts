@@ -117,6 +117,10 @@ function primaryModel(config: OpenClawConfig): string {
   return config.agents.defaults.model.primary;
 }
 
+function inferenceModelRef(model: string): string {
+  return model.startsWith("inference/") ? model : `inference/${model}`;
+}
+
 function allowedOrigins(config: OpenClawConfig): string[] {
   return config.gateway.controlUi.allowedOrigins;
 }
@@ -284,7 +288,7 @@ runtimeOverridesTest(
       const modelOverride = captureConfig(dockerLog, image, "model override", {
         NEMOCLAW_MODEL_OVERRIDE: overrideModel,
       });
-      expect(primaryModel(modelOverride)).toBe(overrideModel);
+      expect(primaryModel(modelOverride)).toBe(inferenceModelRef(overrideModel));
       expect(
         runConfigHashCheck(dockerLog, image, "model override", {
           NEMOCLAW_MODEL_OVERRIDE: overrideModel,
@@ -333,7 +337,9 @@ runtimeOverridesTest(
         NEMOCLAW_REASONING: "true",
         NEMOCLAW_CORS_ORIGIN: "https://multi.example.com",
       });
-      expect(primaryModel(combined)).toBe("nvidia/llama-3.3-nemotron-super-49b-v1.5");
+      expect(primaryModel(combined)).toBe(
+        inferenceModelRef("nvidia/llama-3.3-nemotron-super-49b-v1.5"),
+      );
       expect(firstProviderModel(combined)).toMatchObject({
         contextWindow: 65536,
         maxTokens: 8192,
