@@ -355,7 +355,10 @@ RUN set -eu; \
     # Reviewed against openclaw@2026.5.27 dist fetch-guard: \
     # resolveGuardedFetchMode() returns explicit params.mode, then the deprecated \
     # proxy+dangerous opt-in, then STRICT. Remove the deprecated proxy opt-in and \
-    # make omitted mode resolve to trusted_env_proxy only when OPENSHELL_SANDBOX=1. \
+    # make omitted mode resolve to trusted_env_proxy only when OPENSHELL_SANDBOX=1 \
+    # and no caller-owned dispatcher behavior would be discarded. A plain env-proxy \
+    # policy is equivalent to the sandbox default; direct, explicit-proxy, connect, \
+    # and proxyTls policies retain STRICT semantics. \
     mode_files="$(grep -RIlE --include='*.js' 'function resolveGuardedFetchMode\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$mode_files" ]; then \
         patched_mode_default=0; \
@@ -368,14 +371,14 @@ RUN set -eu; \
                 grep -Fq 'return GUARDED_FETCH_MODE.STRICT;' "$f" \
                     || patch_fail "Patch 4 target $f is missing reviewed strict default"; \
                 sed -i -E '/function resolveGuardedFetchMode\(params\)/,/return GUARDED_FETCH_MODE\.STRICT;/ { /if \(params\.proxy === "env" \&\& params\.dangerouslyAllowEnvProxyWithoutPinnedDns === true\) return GUARDED_FETCH_MODE\.TRUSTED_ENV_PROXY;/ d; /if \(params\.proxy === "env" \&\& params\.dangerouslyAllowEnvProxyWithoutPinnedDns === true\) \{/,/^[[:space:]]*\}/ d; }' "$f"; \
-                sed -i -E '/function resolveGuardedFetchMode\(params\)/,/return GUARDED_FETCH_MODE\.STRICT;/ s#return GUARDED_FETCH_MODE\.STRICT;#if (process.env.OPENSHELL_SANDBOX === "1") return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */#' "$f"; \
-                grep -Fq 'if (process.env.OPENSHELL_SANDBOX === "1") return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */' "$f" \
+                sed -i -E '/function resolveGuardedFetchMode\(params\)/,/return GUARDED_FETCH_MODE\.STRICT;/ s#return GUARDED_FETCH_MODE\.STRICT;#if (process.env.OPENSHELL_SANDBOX === "1" \&\& (!params.dispatcherPolicy || (params.dispatcherPolicy.mode === "env-proxy" \&\& !params.dispatcherPolicy.connect \&\& !params.dispatcherPolicy.proxyTls))) return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */#' "$f"; \
+                grep -Fq 'if (process.env.OPENSHELL_SANDBOX === "1" && (!params.dispatcherPolicy || (params.dispatcherPolicy.mode === "env-proxy" && !params.dispatcherPolicy.connect && !params.dispatcherPolicy.proxyTls))) return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */' "$f" \
                     || patch_fail "Patch 4 verification failed to add sandbox default in $f"; \
                 patched_resolver="$(sed -n '/function resolveGuardedFetchMode(params)/,/nemoclaw: default bare guarded fetches to trusted env proxy/p' "$f")"; \
                 if printf '%s\n' "$patched_resolver" | grep -Fq 'params.proxy === "env"'; then \
                     patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
                 fi; \
-                if printf '%s\n' "$patched_resolver" | grep -Fq 'params.dangerouslyAllowEnvProxyWithoutPinnedDns === true'; then \
+                if grep -Fq 'dangerouslyAllowEnvProxyWithoutPinnedDns' "$f"; then \
                     patch_fail "Patch 4 verification left deprecated dangerous env-proxy opt-in in $f"; \
                 fi; \
                 patched_mode_default=1; \

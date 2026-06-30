@@ -1142,6 +1142,9 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
       expect(resolverBlock).not.toContain('params.proxy === "env"');
       expect(patched).toContain('params.proxy === "env";');
       expect(patched).toContain("process.env.OPENSHELL_SANDBOX");
+      expect(patched).toContain(
+        'process.env.OPENSHELL_SANDBOX === "1" && (!params.dispatcherPolicy || (params.dispatcherPolicy.mode === "env-proxy" && !params.dispatcherPolicy.connect && !params.dispatcherPolicy.proxyTls))',
+      );
       expect(patched).not.toContain("OPENCLAW_PROXY_ACTIVE");
 
       const mod = await import(`${modulePath}?${Date.now()}`);
@@ -1150,9 +1153,24 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
         // In-sandbox, omitted mode uses trusted env proxy and avoids local DNS pinning.
         process.env.OPENSHELL_SANDBOX = "1";
         expect(mod.g({})).toBe("trusted_env_proxy");
+        // A plain env-proxy policy is equivalent to the sandbox default.
+        expect(mod.g({ dispatcherPolicy: { mode: "env-proxy" } })).toBe("trusted_env_proxy");
+        // Caller-owned dispatcher behavior must not be discarded.
+        expect(
+          mod.g({ dispatcherPolicy: { mode: "env-proxy", connect: { cert: "client-cert" } } }),
+        ).toBe("strict");
+        expect(
+          mod.g({ dispatcherPolicy: { mode: "env-proxy", proxyTls: { ca: "proxy-ca" } } }),
+        ).toBe("strict");
+        expect(mod.g({ dispatcherPolicy: { mode: "direct" } })).toBe("strict");
+        expect(mod.g({ dispatcherPolicy: { mode: "explicit-proxy" } })).toBe("strict");
         // Explicit mode remains caller-owned.
         expect(mod.g({ mode: "strict" })).toBe("strict");
         expect(mod.g({ mode: "trusted_env_proxy" })).toBe("trusted_env_proxy");
+        expect(mod.g({ mode: "strict", dispatcherPolicy: { mode: "env-proxy" } })).toBe("strict");
+        expect(mod.g({ mode: "trusted_env_proxy", dispatcherPolicy: { mode: "direct" } })).toBe(
+          "trusted_env_proxy",
+        );
 
         // Outside the sandbox -> omitted mode remains strict.
         delete process.env.OPENSHELL_SANDBOX;
@@ -1162,6 +1180,42 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
         if (prevSandbox === undefined) delete process.env.OPENSHELL_SANDBOX;
         else process.env.OPENSHELL_SANDBOX = prevSandbox;
       }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the deprecated dangerous proxy opt-in survives outside the resolver", () => {
+    const tmp = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-fetch-guard-mode-dangerous-survivor-"),
+    );
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "fetch-guard-mode-dangerous-survivor.js"),
+      [
+        "const withStrictGuardedFetchMode = Symbol('strict');",
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "const GUARDED_FETCH_MODE = { STRICT: 'strict', TRUSTED_ENV_PROXY: 'trusted_env_proxy' };",
+        REVIEWED_OPENCLAW_2026_5_27_GUARDED_MODE_SHAPE,
+        "function staleDangerousProxyOptIn(params) {",
+        "  return params.dangerouslyAllowEnvProxyWithoutPinnedDns === true;",
+        "}",
+        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(
+        dist,
+        tmp,
+        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+      );
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain(
+        "Patch 4 verification left deprecated dangerous env-proxy opt-in",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
