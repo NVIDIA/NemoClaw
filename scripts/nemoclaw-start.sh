@@ -3052,16 +3052,17 @@ _nemoclaw_policy_denial_hint_label() {
   # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
   # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
   # interpolated into a copyable `nemoclaw … logs` command, so allowlist it
-  # rather than merely stripping: only render it when it is a valid sandbox name
-  # — the RFC-1123 label the rest of NemoClaw enforces (lowercase alphanumerics
-  # and hyphens, 1..63 chars, no leading/trailing hyphen). Anything else
-  # (control characters, ANSI escapes, shell metacharacters, whitespace) falls
-  # back to a placeholder the user resolves with `nemoclaw list`. Shell `case`
-  # globs match newlines as ordinary characters, so an embedded newline is
-  # rejected by the metacharacter class below.
+  # rather than merely stripping: only render it when it is a valid sandbox name.
+  # This mirrors NAME_VALID_PATTERN in src/lib/name-validation.ts
+  # (/^[a-z]([a-z0-9-]*[a-z0-9])?$/, max 63): starts with a lowercase letter,
+  # then lowercase alphanumerics/hyphens, no trailing hyphen. Anything else
+  # (digit-leading labels, control characters, ANSI escapes, shell
+  # metacharacters, whitespace) falls back to a placeholder the user resolves
+  # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
+  # characters, so an embedded newline is rejected by the metacharacter class.
   case "${OPENSHELL_SANDBOX:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
-    -* | *- | *[!a-z0-9-]*) printf '<name>' ;;
+    [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;
     *)
       if [ "${#OPENSHELL_SANDBOX}" -le 63 ]; then
         printf '%s' "$OPENSHELL_SANDBOX"

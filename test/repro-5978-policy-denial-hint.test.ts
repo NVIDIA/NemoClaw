@@ -168,6 +168,15 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).toContain("nemoclaw <name> logs --tail 50");
   });
 
+  it("falls back to <name> for a digit-leading OPENSHELL_SANDBOX (matches NAME_VALID_PATTERN)", () => {
+    // NAME_VALID_PATTERN requires a leading lowercase letter, so a real
+    // sandbox name is never digit-leading; reject 9abc rather than render it.
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "9abc" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    expect(stdout).not.toContain("nemoclaw 9abc logs");
+  });
+
   it("emits a tool-agnostic breadcrumb naming the 403 signature and `logs --tail 50`", () => {
     const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa-5978" });
     expect(status).toBe(0);
