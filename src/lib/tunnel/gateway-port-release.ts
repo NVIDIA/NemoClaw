@@ -321,7 +321,10 @@ export function releaseManagedGatewayPort(
   const attemptedStop = stopResult.stopped.length > 0 || lsofPids.length > 0;
   if (!scanned) {
     // Could not probe the port (lsof absent or failing). Trust the stopper:
-    // released unless it reported a process it could not kill.
+    // released unless it reported a process it could not kill. Known limitation:
+    // with lsof unavailable we cannot observe a non-pid-file squatter still holding
+    // the port, so `released` may be optimistic in that case. `stopAll` only claims
+    // teardown succeeded when `released` is true, and otherwise warns.
     released = stopResult.failed.length === 0;
   } else if (!attemptedStop) {
     // Nothing was bound to the port to begin with — already free.

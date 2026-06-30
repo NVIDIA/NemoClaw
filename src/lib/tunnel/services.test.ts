@@ -556,4 +556,49 @@ describe("stopAll", () => {
     expect(output).toContain("Could not release the NemoClaw gateway port: registry boom");
     expect(output).toContain("All services stopped");
   });
+
+  it("warns that the gateway port was not confirmed released when release is unconfirmed (#5968)", () => {
+    // The release ran but a matched process still holds the port: do not imply
+    // teardown succeeded — warn with the port and still-bound PID.
+    releaseGatewaySpy.mockReturnValue({
+      port: 8080,
+      released: false,
+      stopped: [],
+      remaining: [4242],
+      scanned: true,
+      skipped: false,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAll({ pidDir, sandboxName: "nemoclaw-5968" });
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).toContain("gateway port 8080 was not confirmed released");
+    expect(output).toContain("still bound by PID 4242");
+    expect(output).toContain("All services stopped");
+  });
+
+  it("does not warn about release when an invalid binding was skipped (#5968)", () => {
+    // `skipped` invalid-binding cases warn inside the helper; stopAll must not
+    // double-report them as unconfirmed.
+    releaseGatewaySpy.mockReturnValue({
+      port: null,
+      released: false,
+      stopped: [],
+      remaining: [],
+      scanned: false,
+      skipped: true,
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAll({ pidDir, sandboxName: "nemoclaw-5968" });
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    logSpy.mockRestore();
+
+    expect(output).not.toContain("was not confirmed released");
+    expect(output).toContain("All services stopped");
+  });
 });

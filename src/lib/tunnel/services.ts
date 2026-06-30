@@ -633,7 +633,20 @@ export function stopAll(opts: ServiceOptions = {}): void {
   // different worktree's default gateway.
   if (sandboxName) {
     try {
-      gatewayPortRelease.releaseManagedGatewayPort({ sandboxName });
+      const release = gatewayPortRelease.releaseManagedGatewayPort({ sandboxName });
+      // Best-effort, but do not imply teardown succeeded when it didn't: when the
+      // destructive path ran yet could not confirm the port is free, warn with the
+      // port and any still-bound PIDs. (`skipped` invalid-binding cases warn inside
+      // the helper, so they are not re-reported here.)
+      if (!release.released && !release.skipped) {
+        const boundBy = release.remaining.length
+          ? ` (still bound by PID ${release.remaining.join(", ")})`
+          : "";
+        warn(
+          `NemoClaw gateway port ${release.port ?? "?"} was not confirmed released${boundBy}. ` +
+            "Run: sudo pkill -f openshell-gateway",
+        );
+      }
     } catch (error) {
       warn(
         `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,

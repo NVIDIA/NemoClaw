@@ -134,9 +134,11 @@ export function reapHostGatewayBeforeLaunchOrFail(
   return result;
 }
 
-// Ephemeral sentinel state dir for the reuse-path duplicate reap. It never holds
-// the live gateway's pid-file or runtime marker, so a successful stop of a
-// duplicate cannot clear the breadcrumbs of the gateway being reused.
+// Sentinel state dir for the reuse-path duplicate reap, used purely as an
+// identifier so the stopper's runtime-file cleanup targets this throwaway path
+// instead of the live gateway's pid-file/runtime marker. Nothing is ever written
+// here: the only access is the stopper's best-effort rmSync(force), which no-ops
+// because this directory is never created.
 const DUPLICATE_REAP_SENTINEL_DIR = path.join(os.tmpdir(), "nemoclaw-gateway-duplicate-reap");
 
 /**
