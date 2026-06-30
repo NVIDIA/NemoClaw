@@ -128,6 +128,52 @@ const { setupPoliciesWithSelection } = require(${onboardPath});
 `;
 }
 
+/**
+ * Run one `setupPoliciesWithSelection` scenario end-to-end in a child process:
+ * build the stub preamble, drive the call with `selectionOptions`, and return
+ * the parsed `{ chosen, appliedCalls, removedCalls, finalApplied }` payload after
+ * asserting the script ran cleanly. Collapses the identical preamble + IIFE +
+ * run/parse boilerplate each scenario would otherwise repeat; callers keep only
+ * their scenario-specific assertions.
+ */
+function runPolicyScenario({
+  tierEnv,
+  policyMode,
+  policyPresets,
+  alreadyApplied,
+  selectionOptions = {},
+}: {
+  tierEnv?: string;
+  policyMode?: string;
+  policyPresets?: string;
+  alreadyApplied?: string[];
+  selectionOptions?: Record<string, unknown>;
+} = {}): {
+  chosen: string[];
+  appliedCalls: string[];
+  removedCalls: string[];
+  finalApplied: string[];
+} {
+  const script =
+    buildPreamble({ tierEnv, policyMode, policyPresets, alreadyApplied }) +
+    String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", ${JSON.stringify(selectionOptions)});
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+  const result = runScript(script);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+  return payload;
+}
+
 describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // In non-interactive mode a user who runs onboard twice — first with Balanced
   // defaults (applies 5 presets), second with NEMOCLAW_POLICY_PRESETS=npm —
@@ -421,32 +467,14 @@ console.log = () => {};
   // onboard. The Slack tests above pass purely because Slack happens to be
   // requiredAtCreate; these tests guard the channels that are not.
   it("resume selection applies the Discord policy required by a configured Discord channel (#5967)", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        // Discord is not injected at create time, so it is absent from the
-        // already-applied boot presets — unlike Slack.
-        alreadyApplied: [],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      selectedPresets: ["npm", "pypi"],
-      enabledChannels: ["discord"],
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      // Discord is not injected at create time, so it is absent from the
+      // already-applied boot presets — unlike Slack.
+      alreadyApplied: [],
+      selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["discord"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
     assert.ok(
@@ -457,29 +485,12 @@ console.log = () => {};
   });
 
   it("custom non-interactive selection applies the Discord policy required by Discord messaging (#5967)", () => {
-    const script =
-      buildPreamble({
-        policyMode: "custom",
-        policyPresets: "npm,pypi",
-        alreadyApplied: [],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      enabledChannels: ["discord"],
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,pypi",
+      alreadyApplied: [],
+      selectionOptions: { enabledChannels: ["discord"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen.slice().sort(), ["discord", "npm", "pypi"]);
     assert.ok(
@@ -490,32 +501,50 @@ console.log = () => {};
   });
 
   it("custom non-interactive selection removes disabled Discord while honoring the explicit preset list (#5967)", () => {
-    const script =
-      buildPreamble({
-        policyMode: "custom",
-        policyPresets: "npm",
-        alreadyApplied: ["npm", "pypi", "discord"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      disabledChannels: ["discord"],
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm",
+      alreadyApplied: ["npm", "pypi", "discord"],
+      selectionOptions: { disabledChannels: ["discord"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen, ["npm"]);
     assert.deepEqual(payload.removedCalls.slice().sort(), ["discord", "pypi"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  // The #5967 fix is channel-agnostic — it iterates the channel→preset registry
+  // rather than special-casing Slack/Discord. Telegram is another channel that is
+  // not `requiredAtCreate`, so its egress preset is never injected at create time;
+  // exercising it end-to-end through the real `setupPoliciesWithSelection` path
+  // guards the security-critical egress-policy application for a second, distinct
+  // non-required channel (not just Discord).
+  it("resume selection applies the Telegram policy required by a configured Telegram channel (#5967)", () => {
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: [],
+      selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["telegram"] },
+    });
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "telegram"]);
+    assert.ok(
+      payload.appliedCalls.includes("telegram"),
+      `Telegram must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "telegram"]);
+  });
+
+  it("custom non-interactive selection removes disabled Telegram while honoring the explicit preset list (#5967)", () => {
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm",
+      alreadyApplied: ["npm", "pypi", "telegram"],
+      selectionOptions: { disabledChannels: ["telegram"] },
+    });
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", "telegram"]);
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
