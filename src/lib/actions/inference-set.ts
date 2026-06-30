@@ -5,6 +5,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
 import { CLI_NAME } from "../cli/branding";
+import { compactText } from "../core/url-utils";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
@@ -12,8 +13,8 @@ import {
   type SandboxInferenceConfig,
 } from "../inference/config";
 import { resolveContextWindowForModel } from "../inference/context-window";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { type ValidationResult, validateLocalProvider } from "../inference/local";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { ensureLocalProviderReachable } from "../onboard/local-inference-topology";
 import {
   type AgentConfigTarget,
@@ -24,6 +25,7 @@ import {
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
+import { redact } from "../security/redact";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
@@ -72,7 +74,10 @@ export interface InferenceSetDeps {
     config: ConfigObject,
   ) => void;
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
-  runOpenshell: (args: string[], opts?: { ignoreError?: boolean; stdio?: import("node:child_process").StdioOptions }) => OpenshellRunResult;
+  runOpenshell: (
+    args: string[],
+    opts?: { ignoreError?: boolean; stdio?: import("node:child_process").StdioOptions },
+  ) => OpenshellRunResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
   isLocalInferenceProvider: (provider: string) => boolean;
@@ -358,6 +363,10 @@ function openshellInferenceSetArgs(options: {
   return args;
 }
 
+function openshellFailureDetail(stderr: string, stdout: string): string {
+  return compactText(redact(`${stderr}\n${stdout}`)).slice(0, 500);
+}
+
 function getPreferredInferenceApi(config: ConfigObject): string | null {
   const models = config.models;
   if (!isConfigObject(models)) return null;
@@ -616,6 +625,8 @@ export async function runInferenceSet(
     const stderr = typeof setResult.stderr === "string" ? setResult.stderr : "";
     const stdout = typeof setResult.stdout === "string" ? setResult.stdout : "";
     const combined = `${stderr}\n${stdout}`;
+    const failureDetail = openshellFailureDetail(stderr, stdout);
+    const failureDetailLine = failureDetail ? `OpenShell detail: ${failureDetail}\n` : "";
     if (/provider.*not found/i.test(combined) || /not found.*provider/i.test(combined)) {
       let providerList: string | null = null;
       try {
@@ -636,13 +647,15 @@ export async function runInferenceSet(
       }
       throw new InferenceSetError(
         `OpenShell inference route update failed with exit ${setResult.status ?? 1}.\n` +
+          failureDetailLine +
           `${providerList ? `${providerList}\n` : ""}` +
           `Tip: register a new provider with \`${CLI_NAME} onboard\`.`,
         setResult.status ?? 1,
       );
     }
     throw new InferenceSetError(
-      `OpenShell inference route update failed with exit ${setResult.status ?? 1}.`,
+      `OpenShell inference route update failed with exit ${setResult.status ?? 1}.` +
+        `${failureDetail ? `\nOpenShell detail: ${failureDetail}` : ""}`,
       setResult.status ?? 1,
     );
   }

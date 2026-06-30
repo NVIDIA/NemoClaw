@@ -1122,15 +1122,17 @@ describe("runInferenceSet", () => {
     deps.calls.runOpenshell.mockReturnValue({
       status: 1,
       stdout: "",
-      stderr: "error: provider 'bad-provider' not found in gateway",
+      stderr: "error: provider 'openai-api' not found in gateway",
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
+    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
+    expect(err.message).toMatch(/provider 'openai-api' not found/);
     expect(err.message).toMatch(/Registered providers: nvidia-prod, anthropic-prod/);
     expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
@@ -1142,7 +1144,7 @@ describe("runInferenceSet", () => {
     deps.calls.runOpenshell.mockReturnValue({
       status: 42,
       stdout: "",
-      stderr: "error: network timeout connecting to gateway",
+      stderr: "error: network timeout connecting to gateway NVIDIA_API_KEY=nvapi-secret-value",
     });
 
     const err = await runInferenceSet(
@@ -1151,7 +1153,10 @@ describe("runInferenceSet", () => {
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
+    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
     expect(err.message).toMatch(/OpenShell inference route update failed with exit 42/);
+    expect(err.message).toMatch(/network timeout connecting to gateway/);
+    expect(err.message).not.toContain("nvapi-secret-value");
     expect(err.message).not.toMatch(/Registered providers/);
     expect(err.message).not.toMatch(/onboard/);
   });
@@ -1169,11 +1174,12 @@ describe("runInferenceSet", () => {
     });
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
+    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
     expect(err.message).toMatch(/No providers registered/);
     expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
@@ -1190,11 +1196,12 @@ describe("runInferenceSet", () => {
     };
 
     const err = await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/model-a" },
+      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
       deps,
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
+    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
     expect(err.message).not.toMatch(/Registered providers/);
     expect(err.message).not.toMatch(/No providers registered/);
     expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
