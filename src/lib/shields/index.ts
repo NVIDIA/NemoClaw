@@ -83,6 +83,8 @@ const {
 }: typeof import("./openclaw-config-lock") = require("./openclaw-config-lock");
 const {
   inspectMutableConfigPerms: inspectMutableConfigPermsCore,
+  MUTABLE_OPENCLAW_DIR_MODE,
+  MUTABLE_OPENCLAW_FILE_MODE,
   repairMutableConfigPerms: repairMutableConfigPermsCore,
 }: typeof import("./mutable-config-perms") = require("./mutable-config-perms");
 type MutableConfigPermsInspection = import("./mutable-config-perms").MutableConfigPermsInspection;
@@ -1787,7 +1789,24 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
     return repairMutableConfigPermsCore(
       target,
       getShieldsPostureWithoutHostLock(sandboxName, true).mode,
-      () => unlockAgentConfig(sandboxName, target),
+      () => {
+        // This is a mutable-default repair, not a shields-down transition.
+        // OpenClaw's doctor tightens only the top state directory and config
+        // files, while live runtime namespaces (notably devices/) keep being
+        // rewritten with OpenClaw's native 0755/0600 posture. Running the full
+        // recursive shields unlock here races those writers and then asks the
+        // top-config guard to unlock a directory that was never shields-locked.
+        // Repair exactly the paths inspectMutableConfigPerms validates; real
+        // shields-down continues through unlockAgentConfig and the strict
+        // recursive state-dir guard.
+        unlockConfigPathsNoSymlinkFollow(
+          sandboxName,
+          target,
+          MUTABLE_OPENCLAW_FILE_MODE,
+          MUTABLE_OPENCLAW_DIR_MODE,
+          [target.configPath, ...(target.sensitiveFiles || [])],
+        );
+      },
     );
   });
 }

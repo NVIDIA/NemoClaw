@@ -192,10 +192,12 @@ export function inspectMutableConfigPerms(
 /**
  * Restore the OpenClaw mutable config permission contract. No-op for non-
  * OpenClaw agents and for shields-up/corrupt sandboxes (where weakening the
- * lock would be a regression). `applyMutableContract` performs the privileged
- * chown/chmod (in ./index.ts this delegates to unlockAgentConfig so the applied
- * modes/ownership match the shields-down path) and throws if it cannot verify
- * the result.
+ * lock would be a regression). `applyMutableContract` performs and verifies the
+ * privileged chown/chmod. The sandbox-bound OpenClaw wrapper uses a
+ * descriptor-safe top-config transition, but repairs only these inspected
+ * paths. Recursive state-directory transitions remain exclusive to shields
+ * up/down because live OpenClaw runtime writers may concurrently own and replace
+ * nested state.
  */
 export function repairMutableConfigPerms(
   target: MutableConfigTarget,

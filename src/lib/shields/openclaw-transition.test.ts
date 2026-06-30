@@ -165,4 +165,49 @@ describe("OpenClaw shields top-config transaction", () => {
     );
     expect(events).toEqual(["top:preflight", "state:unlock", "top:lock", "state:restore:locked"]);
   });
+
+  it("repairs mutable top-config permissions without starting a recursive shields unlock", () => {
+    const result = shields.repairMutableConfigPerms("openclaw");
+
+    expect(result).toEqual({ applied: true, verified: true, errors: [] });
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+    expect(restoreStateSpy).not.toHaveBeenCalled();
+
+    const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
+    const repair = commands.find(
+      (cmd) => cmd[0] === "python3" && cmd[1] === "-I" && cmd[2] === "-c",
+    );
+    expect(repair).toBeDefined();
+    expect(repair?.[4]).toBe("660");
+    expect(repair?.[5]).toBe("2770");
+    expect(repair?.[6]).toBe("sandbox:sandbox");
+    expect(repair?.[7]).toBe("/sandbox/.openclaw");
+    expect(repair).toContain("/sandbox/.openclaw/openclaw.json");
+    expect(repair).toContain("/sandbox/.openclaw/.config-hash");
+    expect(repair).not.toContain("/sandbox/.openclaw/devices");
+  });
+
+  it("reports a failed mutable top-config transition without falling back to recursive unlock", () => {
+    dockerExecSpy.mockImplementation((cmd) => {
+      const argv = cmd as string[];
+      if (argv[0] === "python3" && argv[1] === "-I" && argv[2] === "-c") {
+        throw new Error("top-config permission repair failed");
+      }
+      return "";
+    });
+
+    const result = shields.repairMutableConfigPerms("openclaw");
+
+    expect(result.applied).toBe(true);
+    if (result.applied) {
+      expect(result.verified).toBe(false);
+      expect(result.errors).toEqual([
+        expect.stringContaining("top-config permission repair failed"),
+      ]);
+    }
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+    expect(restoreStateSpy).not.toHaveBeenCalled();
+  });
 });
