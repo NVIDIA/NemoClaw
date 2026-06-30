@@ -249,6 +249,89 @@ describe("execSandbox multi-line guard (#5980)", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("rejects a multi-line command before probing --workdir (guard runs first)", async () => {
+    // Ordering guarantee: when both a multi-line argv and --workdir are present,
+    // the multi-line guard must exit 2 *before* the workdir probe runs, so the
+    // probe is never reached and nothing is dispatched.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      execSandbox(
+        "alpha",
+        ["bash", "-lc", "printf 'a\nb'"],
+        { workdir: "/workspace" },
+        { run, resolveBinary: () => "openshell", probeWorkdir },
+      ),
+    ).rejects.toThrow("exit:2");
+
+    expect(probeWorkdir).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(2);
+    expect(errSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
+      "contains a newline or carriage return",
+    );
+  });
+
+  it("forwards the stdin-pipe workaround to dispatch (script travels over stdin, not argv)", async () => {
+    // `printf 'cmd1\ncmd2\n' | nemoclaw <sb> exec -- bash` puts the multi-line
+    // script on stdin; the forwarded argv is just `bash` (no newline), so it
+    // passes the guard and dispatches. stdin is forwarded via stdio: "inherit".
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      execSandbox("bug5980test", ["bash"], {}, { run, resolveBinary: () => "openshell" }),
+    ).rejects.toThrow("exit:0");
+
+    expect(run).toHaveBeenCalledWith("openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "bug5980test",
+      "--",
+      "bash",
+    ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("forwards the script-file workaround to dispatch (bash <script-path>)", async () => {
+    // `nemoclaw <sb> exec -- bash <script-path>` runs a script already written
+    // into the sandbox; the argv carries no newline and dispatches unchanged.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      execSandbox(
+        "bug5980test",
+        ["bash", "/sandbox/run.sh"],
+        {},
+        { run, resolveBinary: () => "openshell" },
+      ),
+    ).rejects.toThrow("exit:0");
+
+    expect(run).toHaveBeenCalledWith("openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "bug5980test",
+      "--",
+      "bash",
+      "/sandbox/run.sh",
+    ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
   it("builds the forwarded argv unchanged for the single-line semicolon workaround", () => {
     const command = ["bash", "-lc", "echo line1; echo line2"];
     expect(findMultilineExecArg(command)).toBe(-1);
