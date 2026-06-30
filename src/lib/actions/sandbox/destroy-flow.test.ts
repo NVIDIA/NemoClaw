@@ -26,6 +26,7 @@ type DestroyHarness = {
   restoreMcpBridgesAfterDestroyAbortSpy: MockInstance;
   runOpenshellSpy: MockInstance;
   selectGatewaySpy: MockInstance;
+  shieldsDownSpy: MockInstance;
   stopNimByNameSpy: MockInstance;
   unloadOllamaModelsSpy: MockInstance;
 };
@@ -35,13 +36,18 @@ type DestroyHarnessOptions = {
   deleteStatus?: number;
   deleteOutput?: string;
   finalizeMcpError?: string;
+  agent?: "openclaw" | "hermes";
+  mcpAddState?: "prepared";
   mcpServers?: string[];
+  restoreMcpError?: string;
   sandboxPresent?: boolean;
+  shieldsDown?: boolean;
   shieldsUpError?: Error;
 };
 
 const sandboxEntry = {
   name: "alpha",
+  agent: "openclaw",
   provider: "ollama-local",
   model: "nvidia/nemotron",
   imageTag: null,
@@ -93,10 +99,16 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({
     ...sandboxEntry,
+    agent: options.agent ?? sandboxEntry.agent,
     ...(options.mcpServers?.length
       ? {
           mcp: {
-            bridges: Object.fromEntries(options.mcpServers.map((server) => [server, { server }])),
+            bridges: Object.fromEntries(
+              options.mcpServers.map((server) => [
+                server,
+                { server, ...(options.mcpAddState ? { addState: options.mcpAddState } : {}) },
+              ]),
+            ),
           },
         }
       : {}),
@@ -175,16 +187,21 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     events.push("harden");
     if (options.shieldsUpError) throw options.shieldsUpError;
   });
+  vi.spyOn(shields, "isShieldsDown").mockReturnValue(options.shieldsDown ?? true);
+  const shieldsDownSpy = vi.spyOn(shields, "shieldsDown").mockImplementation(() => {
+    events.push("unlock");
+  });
   const killTimerSpy = vi.spyOn(timerControl, "killTimer").mockImplementation(() => {
     events.push("timer-cleanup");
     return { warnings: [] };
   });
+  const preparedServers = options.mcpAddState === "prepared" ? [] : (options.mcpServers ?? []);
   const mcpPreparation = {
-    entries: (options.mcpServers ?? []).map((server) => ({ server })),
-    detachedProviderEntries: (options.mcpServers ?? []).map((server) => ({
+    entries: preparedServers.map((server) => ({ server })),
+    detachedProviderEntries: preparedServers.map((server) => ({
       server,
     })),
-    scrubbedAdapterEntries: (options.mcpServers ?? []).map((server) => ({
+    scrubbedAdapterEntries: preparedServers.map((server) => ({
       server,
     })),
     destroyAlreadyPrepared: false,
@@ -205,7 +222,10 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     });
   const restoreMcpBridgesAfterDestroyAbortSpy = vi
     .spyOn(mcpBridge, "restoreMcpBridgesAfterDestroyAbort")
-    .mockResolvedValue(undefined);
+    .mockImplementation(async () => {
+      events.push("mcp-restore");
+      if (options.restoreMcpError) throw new Error(options.restoreMcpError);
+    });
   const finalizeMcpBridgesAfterSandboxDeleteSpy = vi
     .spyOn(mcpBridge, "finalizeMcpBridgesAfterSandboxDelete")
     .mockImplementation(() =>
@@ -232,6 +252,7 @@ function createDestroyHarness(options: DestroyHarnessOptions = {}): DestroyHarne
     restoreMcpBridgesAfterDestroyAbortSpy,
     runOpenshellSpy,
     selectGatewaySpy,
+    shieldsDownSpy,
     stopNimByNameSpy,
     unloadOllamaModelsSpy,
   };
@@ -350,6 +371,55 @@ describe("destroySandbox flow", () => {
     expect(exitSpy).toHaveBeenCalledWith(7);
   });
 
+  it("refuses shields-up Hermes MCP destroy before stopping services or preparing MCP state", async () => {
+    const harness = createDestroyHarness({
+      agent: "hermes",
+      mcpServers: ["github"],
+      shieldsDown: false,
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow(
+      "has shields up or an unreadable shields posture",
+    );
+
+    expect(harness.stopNimByNameSpy).not.toHaveBeenCalled();
+    expect(harness.killStaleProxySpy).not.toHaveBeenCalled();
+    expect(harness.selectGatewaySpy).toHaveBeenCalledWith(
+      "alpha",
+      "nemoclaw-19080",
+      harness.runOpenshellSpy,
+    );
+    expect(harness.prepareMcpBridgesForDestroySpy).not.toHaveBeenCalled();
+    expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+      ["sandbox", "list", "-o", "json"],
+      expect.objectContaining({ ignoreError: true }),
+    );
+  });
+
+  it("does not require mutable Hermes config for a prepared-only add", async () => {
+    const harness = createDestroyHarness({
+      agent: "hermes",
+      mcpAddState: "prepared",
+      mcpServers: ["github"],
+      shieldsDown: false,
+    });
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    expect(harness.prepareMcpBridgesForDestroySpy).toHaveBeenCalledWith("alpha");
+  });
+
+  it("does not require mutable Hermes config for absent-sandbox cleanup", async () => {
+    const harness = createDestroyHarness({
+      agent: "hermes",
+      mcpServers: ["github"],
+      sandboxPresent: false,
+      shieldsDown: false,
+    });
+    await expect(harness.destroySandbox("alpha", { yes: true })).resolves.toBeUndefined();
+    expect(harness.prepareMcpBridgesForAbsentSandboxDestroySpy).toHaveBeenCalledWith("alpha", {
+      force: false,
+    });
+  });
+
   it("wipes while mutable, hardens an active timer window, then deletes and clears it", async () => {
     const harness = createDestroyHarness({ activeTimer: true });
 
@@ -408,6 +478,7 @@ describe("destroySandbox flow", () => {
 
   it("restores MCP runtime state when sandbox delete fails", async () => {
     const harness = createDestroyHarness({
+      activeTimer: true,
       deleteStatus: 7,
       deleteOutput: "delete failed",
       mcpServers: ["github"],
@@ -420,6 +491,40 @@ describe("destroySandbox flow", () => {
       expect.objectContaining({ entries: [{ server: "github" }] }),
     );
     expect(harness.finalizeMcpBridgesAfterSandboxDeleteSpy).not.toHaveBeenCalled();
+    expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
+    expect(harness.events.indexOf("delete")).toBeLessThan(harness.events.indexOf("unlock"));
+    expect(harness.events.indexOf("unlock")).toBeLessThan(harness.events.indexOf("mcp-restore"));
+    expect(harness.events.indexOf("mcp-restore")).toBeLessThan(
+      harness.events.lastIndexOf("harden"),
+    );
+    expect(harness.shieldsDownSpy).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        timeout: "15m",
+        deferAutoRestoreWhileOwnerAlive: true,
+        processToken: "a".repeat(32),
+        throwOnError: true,
+      }),
+    );
+    expect(harness.shieldsDownSpy.mock.calls[0]?.[1]).not.toHaveProperty("skipTimer");
+  });
+
+  it("relocks shields and preserves destroy failure when MCP rollback fails", async () => {
+    const harness = createDestroyHarness({
+      activeTimer: true,
+      deleteStatus: 7,
+      deleteOutput: "delete failed",
+      mcpServers: ["github"],
+      restoreMcpError: "injected MCP restore failure",
+    });
+
+    await expect(harness.destroySandbox("alpha", { yes: true })).rejects.toThrow("process.exit(7)");
+
+    expect(harness.events.filter((event) => event === "harden")).toHaveLength(2);
+    expect(harness.events.indexOf("mcp-restore")).toBeLessThan(
+      harness.events.lastIndexOf("harden"),
+    );
     expect(harness.removeSandboxSpy).not.toHaveBeenCalled();
   });
 

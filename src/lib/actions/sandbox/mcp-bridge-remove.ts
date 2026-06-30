@@ -5,7 +5,8 @@ import type { AgentMcpAdapter } from "../../agent/defs";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { McpBridgeEntry } from "../../state/registry";
 import {
-  assertAgentMcpMutationRuntimeCapability,
+  assertAgentMcpConfigMutationAllowed,
+  assertAgentMcpTeardownRuntimeCapability,
   unregisterAgentAdapter,
 } from "./mcp-bridge-adapters";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
@@ -127,6 +128,11 @@ async function removeMcpBridgeUnlocked(
   const detachBeforeAdapterCleanup = entry.providerName
     ? requiresProviderDetachBeforeAdapterCleanup(entry)
     : false;
+  // Teardown must remain available for a backward-compatible Deep Agents MCP
+  // entry on an image that predates the managed launcher marker. Hermes still
+  // performs its host-side shields preflight here, before any provider, policy,
+  // attachment, or adapter side effect.
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   await ensureSandboxGatewaySelected(sandboxName);
   assertGeneratedPolicyMutationSafe(sandboxName, entry);
   const failures: string[] = [];
@@ -216,7 +222,12 @@ async function removeMcpBridgeUnlocked(
   let adapterCleanupProved = !detachBeforeAdapterCleanup || providerDetachedBeforeAdapterCleanup;
   if (adapterCleanupProved) {
     try {
-      assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+      // For a legacy unsafe credential, the exact provider reference was
+      // necessarily detached above before this first sandbox child. Otherwise
+      // this probe precedes every provider/policy/adapter side effect. Hermes
+      // retains its helper/lifecycle validation; Deep Agents intentionally
+      // skips only the marker that an older image cannot expose.
+      assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
       unregisterAgentAdapter(
         sandboxName,
         (entry.adapter as AgentMcpAdapter | undefined) ?? adapter,

@@ -5,7 +5,8 @@ import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
-  assertMcpAdapterMutationRuntimeCapabilities,
+  assertMcpAdapterConfigMutationsAllowed,
+  assertMcpAdapterTeardownRuntimeCapabilities,
   restoreExistingMcpBridgeRuntime,
 } from "./mcp-bridge-add-restart";
 import {
@@ -211,7 +212,20 @@ export async function prepareMcpBridgesForDestroy(
   sandboxName: string,
 ): Promise<McpDestroyPreparation> {
   validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, getSandboxOrThrow(sandboxName));
+  const currentSandbox = getSandboxOrThrow(sandboxName);
+  const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
+    (entry) => entry.addState !== "prepared",
+  );
+  // Run the host-visible config preflight before
+  // discardSafeIncompleteMcpAdds, which may remove an owned policy for a
+  // providerless preflighted add. That cleanup has no adapter/provider to
+  // probe; complete entries get the teardown runtime probe after retry markers.
+  assertMcpAdapterConfigMutationsAllowed(
+    sandboxName,
+    currentSandbox,
+    entriesRequiringExternalCleanup,
+  );
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const destroyAlreadyPrepared = !!sandbox.mcp?.destroyPreparedAt;
   const destroyAlreadyPending = !!sandbox.mcp?.destroyPendingAt;
@@ -262,7 +276,7 @@ export async function prepareMcpBridgesForDestroy(
   }
 
   await ensureSandboxGatewaySelected(sandboxName);
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
   try {
@@ -378,7 +392,8 @@ export async function restoreMcpBridgesAfterDestroyAbort(
   if (preparation.entries.length === 0 || preparation.destroyAlreadyPending) {
     return;
   }
-  assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  const preparedSandbox = assertMcpDestroySnapshotCurrent(sandboxName, preparation.entries);
+  const destroyPreparedAt = preparedSandbox.mcp?.destroyPreparedAt ?? nowIso();
   const cleared = registry.updateSandbox(sandboxName, {
     mcp: {
       bridges: Object.fromEntries(
@@ -391,11 +406,37 @@ export async function restoreMcpBridgesAfterDestroyAbort(
       `Could not clear prepared MCP destroy state for sandbox '${sandboxName}' before runtime restoration.`,
     );
   }
-  // Reattach only the exact existing providers. This restoration path never
-  // reads host secret values and therefore cannot rotate preserved credentials.
-  for (const entry of preparation.entries)
-    inspectExactMcpDestroyProvider(entry, { allowMissing: false });
-  await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries);
+  try {
+    // Reattach only the exact existing providers. This restoration path never
+    // reads host secret values and therefore cannot rotate preserved credentials.
+    for (const entry of preparation.entries)
+      inspectExactMcpDestroyProvider(entry, { allowMissing: false });
+    await restoreExistingMcpBridgeRuntime(sandboxName, preparation.entries, {
+      lifecyclePhase: "teardown-rollback",
+    });
+  } catch (error) {
+    let markerRestoreFailure = "";
+    try {
+      const restored = registry.updateSandbox(sandboxName, {
+        mcp: {
+          bridges: Object.fromEntries(
+            preparation.entries.map((entry) => [entry.server, cloneMcpBridgeEntry(entry)]),
+          ),
+          destroyPreparedAt,
+        },
+      });
+      if (!restored) markerRestoreFailure = "sandbox registry entry disappeared";
+    } catch (restoreError) {
+      markerRestoreFailure =
+        restoreError instanceof Error ? restoreError.message : String(restoreError);
+    }
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new McpBridgeError(
+      markerRestoreFailure
+        ? `${detail}; could not restore the MCP destroy retry marker: ${markerRestoreFailure}`
+        : detail,
+    );
+  }
 }
 
 /**

@@ -418,6 +418,49 @@ const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
     expect(payload.sandbox.mcp.destroyPendingAt).toBeUndefined();
   });
 
+  it("restores the durable destroy marker when abort rollback fails", () => {
+    const result = runDestroyLifecycleScenario(`
+registry.registerSandbox({
+  name: "alpha",
+  agent: "openclaw",
+  mcp: { bridges: { github: bridgeEntries.github } },
+});
+registry.addCustomPolicy("alpha", ownedPolicy("github"));
+const bridge = require("./src/lib/actions/sandbox/mcp-bridge.js");
+(async () => {
+  const preparation = await bridge.prepareMcpBridgesForDestroy("alpha");
+  policies.applyPresetContent = () => false;
+  let error = "";
+  try {
+    await bridge.restoreMcpBridgesAfterDestroyAbort("alpha", preparation);
+  } catch (caught) {
+    error = caught instanceof Error ? caught.message : String(caught);
+  }
+  process.stdout.write(JSON.stringify({
+    error,
+    sandbox: registry.getSandbox("alpha"),
+    attached: [...attachedProviders],
+    adapterRegistered,
+  }));
+})().catch((error) => { console.error(error); process.exit(1); });
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const payload = JSON.parse(result.stdout) as {
+      error: string;
+      sandbox: {
+        mcp: { bridges: Record<string, unknown>; destroyPreparedAt?: string };
+      };
+      attached: string[];
+      adapterRegistered: boolean;
+    };
+    expect(payload.error).toMatch(/failed to activate generated MCP policy/i);
+    expect(payload.sandbox.mcp.bridges).toHaveProperty("github");
+    expect(payload.sandbox.mcp.destroyPreparedAt).toBeTruthy();
+    expect(payload.attached).not.toContain("alpha-mcp-github");
+    expect(payload.adapterRegistered).toBe(false);
+  });
+
   it("preserves credentials and bridge state until sandbox deletion is confirmed", () => {
     const result = runDestroyLifecycleScenario(`
 registry.registerSandbox({

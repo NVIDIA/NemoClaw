@@ -4,7 +4,8 @@
 import type { McpBridgeEntry } from "../../state/registry";
 import { registerAgentAdapter, unregisterAgentAdapter } from "./mcp-bridge-adapters";
 import {
-  assertMcpAdapterMutationRuntimeCapabilities,
+  assertMcpAdapterConfigMutationsAllowed,
+  assertMcpAdapterTeardownRuntimeCapabilities,
   restoreExistingMcpBridgeRuntime,
 } from "./mcp-bridge-add-restart";
 import { isAgentMcpAdapter, McpBridgeError } from "./mcp-bridge-contracts";
@@ -46,11 +47,22 @@ async function getCompleteMcpRebuildEntries(
   options: { sandboxAbsent?: boolean } = {},
 ): Promise<McpBridgeEntry[]> {
   validateSandboxName(sandboxName);
-  const sandbox = await discardSafeIncompleteMcpAdds(
-    sandboxName,
-    getSandboxOrThrow(sandboxName),
-    options,
-  );
+  const currentSandbox = getSandboxOrThrow(sandboxName);
+  if (!options.sandboxAbsent) {
+    const entriesRequiringExternalCleanup = Object.values(bridgeState(currentSandbox)).filter(
+      (entry) => entry.addState !== "prepared",
+    );
+    // This host-visible config preflight must precede
+    // discardSafeIncompleteMcpAdds, which can remove an owned policy for a
+    // providerless preflighted add. That cleanup has no adapter/provider to
+    // probe; complete entries get the teardown runtime probe below.
+    assertMcpAdapterConfigMutationsAllowed(
+      sandboxName,
+      currentSandbox,
+      entriesRequiringExternalCleanup,
+    );
+  }
+  const sandbox = await discardSafeIncompleteMcpAdds(sandboxName, currentSandbox, options);
   const entries = Object.values(bridgeState(sandbox)).map(cloneMcpBridgeEntry);
   const incompleteAdd = entries.find((entry) => entry.addState);
   if (incompleteAdd) {
@@ -106,7 +118,7 @@ export async function prepareMcpBridgesForRebuild(
   await preflightMcpEntryTargets(entries);
   await ensureSandboxGatewaySelected(sandboxName);
   for (const entry of entries) assertGeneratedPolicyMutationSafe(sandboxName, entry);
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
   for (const entry of entries) assertMcpProviderRecoverable(entry);
   const detached: McpBridgeEntry[] = [];
   const scrubbedAdapters: McpBridgeEntry[] = [];
@@ -194,7 +206,7 @@ export async function reattachMcpProvidersAfterRebuildAbort(
   if (entries.length === 0 && scrubbedAdapterEntries.length === 0) return;
   await ensureSandboxGatewaySelected(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, [
+  assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, [
     ...entries,
     ...scrubbedAdapterEntries,
   ]);

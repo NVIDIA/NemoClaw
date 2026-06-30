@@ -5,6 +5,7 @@ import { runOpenshellProviderCommand } from "../../actions/global";
 import type { AgentMcpAdapter } from "../../agent/defs";
 import { waitUntil } from "../../core/wait";
 import { shellQuote } from "../../runner";
+import { isShieldsDown } from "../../shields";
 import type { McpBridgeEntry } from "../../state/registry";
 import { McpBridgeError } from "./mcp-bridge-contracts";
 import { commandOutput, redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
@@ -520,6 +521,27 @@ function parseLastJsonObject(output: string): Record<string, unknown> | null {
 }
 
 /**
+ * Refuse an in-sandbox adapter config mutation while Hermes config is locked.
+ * This host-side check intentionally runs before provider, policy, attachment,
+ * or adapter work; the transaction helper repeats the file-level check to
+ * close posture drift between this preflight and the actual config write.
+ *
+ * Deep Agents and OpenClaw do not use the Hermes shields contract. In
+ * particular, teardown of a legacy Deep Agents entry must remain possible on
+ * an image that predates the managed launcher capability marker.
+ */
+export function assertAgentMcpConfigMutationAllowed(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+): void {
+  if (adapter !== "hermes-config") return;
+  if (isShieldsDown(sandboxName, false)) return;
+  throw new McpBridgeError(
+    `Hermes sandbox '${sandboxName}' has shields up or an unreadable shields posture. Run \`nemohermes ${sandboxName} shields down --timeout 15m --reason "MCP maintenance"\` before changing MCP configuration.`,
+  );
+}
+
+/**
  * Prove the running Hermes sandbox contains the packaged transaction helper
  * and can invoke it through OpenShell current main's ordinary exec path before
  * changing a global provider, policy, attachment, or adapter.
@@ -538,6 +560,7 @@ export function assertAgentMcpMutationRuntimeCapability(
     return;
   }
   if (adapter !== "hermes-config") return;
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   let lastDetail = "";
   const ready = waitUntil(
     () => {
@@ -581,6 +604,23 @@ export function assertAgentMcpMutationRuntimeCapability(
     throw new McpBridgeError(
       `Hermes sandbox '${sandboxName}' cannot invoke the managed MCP transaction helper after waiting for startup. Run \`nemoclaw ${sandboxName} recover\` and retry, or rebuild the sandbox before changing authenticated MCP state${lastDetail ? `: ${lastDetail}` : "."}`,
     );
+  }
+}
+
+/**
+ * Validate the runtime needed to scrub an existing adapter definition.
+ * Hermes teardown still uses its managed transaction helper and therefore
+ * requires the full helper/lifecycle probe. Deep Agents teardown executes the
+ * ownership-checked config scrub directly and must remain available to images
+ * that predate the new launcher marker.
+ */
+export function assertAgentMcpTeardownRuntimeCapability(
+  sandboxName: string,
+  adapter: AgentMcpAdapter,
+): void {
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+  if (adapter === "hermes-config") {
+    assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
   }
 }
 

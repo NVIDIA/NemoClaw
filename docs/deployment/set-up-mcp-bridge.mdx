@@ -53,7 +53,9 @@ The accepted design record is tracked in [NVIDIA/NemoClaw#566](https://github.co
 Use the same workflow for OpenClaw, Hermes, and LangChain Deep Agents Code sandboxes.
 NemoClaw selects the agent-specific adapter from the sandbox registry.
 Rebuild sandboxes created before this release onto a current image before the first managed MCP change.
-Hermes and Deep Agents probe their managed MCP runtime before provider or policy side effects; OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
+Hermes and Deep Agents probe their managed MCP runtime before an active add or restart changes a live provider or policy; OpenClaw verifies the pinned `mcporter` during adapter registration and rolls back an incomplete add.
+When recovery finds that a provider was already deleted, NemoClaw may first remove only that dangling sandbox-spec reference because OpenShell cannot start the capability-probe child while a missing provider name remains attached.
+That prerequisite does not delete or replace a live provider, credential, or policy, and the durable bridge manifest remains retryable if the later capability probe fails.
 
 ```bash
 export GITHUB_MCP_TOKEN=ghp_...
@@ -147,7 +149,10 @@ mcp_servers:
 ```
 
 Hermes config changes and gateway reloads stay inside the sandbox.
-When Hermes shields are up, run `nemohermes <sandbox> shields down --timeout 5m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, or `mcp remove`, then run `nemohermes <sandbox> shields up` after the change.
+When Hermes shields are up, run `nemohermes <sandbox> shields down --timeout 15m --reason "MCP maintenance"` before `mcp add`, `mcp restart`, `mcp remove`, or destroy, then run `nemohermes <sandbox> shields up` after the change if the sandbox still exists.
+Choose a window long enough for the command to finish, allowing at least 15 minutes per configured server for an all-server restart or destroy; rebuild opens and owns its separate 30-minute crash-recoverable window automatically.
+NemoClaw checks the host shields posture before MCP provider, policy, attachment, or adapter mutation, and the in-sandbox helper checks the config file again at commit time.
+If shields are raised concurrently between those checks, the command fails instead of writing locked config, but an earlier policy or provider stage may already have completed; lower shields again and retry the durable MCP transaction to converge it.
 `mcp list` and `mcp status` are read-only and do not require lowering shields.
 NemoClaw invokes the validated transaction helper as a one-shot ordinary `openshell sandbox exec --no-tty` command with a fixed executable path and argument shape.
 The helper runs as the normal sandbox identity, rejects the legacy root-separated runtime topology, validates the gateway PID and launcher before signaling it, updates the managed compatibility hash, verifies loopback health after reload, and rolls back the config and hashes if reload fails.
@@ -215,10 +220,14 @@ Export only the variables whose credentials you intend to replace.
 `rebuild` preserves each provider that matches the recorded ID, type, and credential-key metadata at inspection time.
 It removes the agent adapter entry and detaches the provider before replacing the sandbox.
 It then reattaches the provider, waits for credential readiness, reapplies the generated policy, and restores the adapter.
+Removing the old adapter entry does not require the current Deep Agents launcher marker, so an MCP entry created by a compatible older image cannot block its own removal or upgrade.
+The replacement image must expose the exact managed launcher marker before NemoClaw reattaches any provider or reapplies policy and reports rebuild restoration as successful.
 If sandbox replacement fails, NemoClaw attempts to restore the previous attachment and adapter state.
+A rollback targets the same old image and restores its previously compatible entry without imposing the new-image marker.
 A later `mcp restart` can retry an incomplete post-rebuild restore.
 
 `destroy` removes the adapter entry and detaches providers that match the recorded metadata before asking OpenShell to delete the sandbox.
+Like remove and rebuild teardown, this scrub does not require the new Deep Agents launcher marker from an older image.
 If deletion is refused, NemoClaw attempts to restore the previous MCP state, reports any rollback failure, and preserves recovery state.
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
@@ -241,7 +250,8 @@ Re-export the value if the provider still needs to be created.
 To abandon the transaction, run `mcp remove <server> --force`.
 NemoClaw cleans only resources whose ownership it can prove and keeps the registry entry when residual cleanup remains.
 
-If an MCP mutation reports that `mcporter`, the Hermes transaction helper, or the managed Deep Agents MCP-aware launcher is unavailable, rebuild the sandbox onto a current image before retrying.
+If MCP add or restart reports that `mcporter`, the Hermes transaction helper, or the managed Deep Agents MCP-aware launcher is unavailable, rebuild the sandbox onto a current image before retrying.
+An existing Deep Agents MCP entry remains removable, destroyable, and eligible for rebuild teardown on an older image; the rebuilt image must pass the launcher probe before its MCP runtime is restored.
 
 If the generated policy or provider has drifted, `restart` fails closed instead of overwriting same-name state.
 Resolve the reported OpenShell ownership or content mismatch, then retry.

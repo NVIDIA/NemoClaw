@@ -1055,6 +1055,15 @@ If you want to upgrade the sandbox while preserving state, use `$$nemoclaw <name
 
 If another terminal has an active SSH session to the sandbox, `destroy` prints an active-session warning and requires a second confirmation before it proceeds.
 Pass `--yes`, `-y`, or `--force` to skip the prompt in scripted workflows.
+
+<AgentOnly variant="hermes">
+
+If the Hermes sandbox has managed MCP entries, shields must be down before destroy can scrub their adapter configuration.
+Use `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"`, allowing at least 15 minutes per configured server.
+If sandbox deletion is refused after destroy has restored lockdown, NemoClaw opens an owner-bound timed rollback window, restores the preserved MCP state, and re-locks shields; the timer retains auto-restore authority if the host process exits.
+
+</AgentOnly>
+
 If a shields auto-restore timer is active, `destroy` holds the same per-sandbox transition through state wipe and deletion.
 It restores and verifies lockdown and revokes the active timer before deletion.
 It clears the remaining local shields state only after deletion succeeds.
@@ -1389,7 +1398,9 @@ For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-
 <AgentOnly variant="hermes">
 
 Hermes MCP add, restart, and remove mutate managed config and are refused while shields are up.
-Run `$$nemoclaw <name> shields down --timeout 5m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only.
+Run `$$nemoclaw <name> shields down --timeout 15m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only.
+Allow at least 15 minutes per configured server for an all-server restart or destroy; rebuild opens its own crash-recoverable maintenance window.
+Keep shields down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
 
@@ -1420,10 +1431,14 @@ Restart reapplies the generated policy, reattaches the OpenShell provider when n
 If the recorded host variable is exported, restart replaces the provider credential and waits for its new opaque revision.
 Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
+When that provider is already absent but its name still blocks sandbox exec,
+restart first detaches only the dangling sandbox-spec reference, then runs the
+agent capability probe before changing a live provider or policy.
 
 <AgentOnly variant="hermes">
 
 Hermes shields must be down for this config mutation.
+Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
 
@@ -1438,10 +1453,13 @@ Remove an MCP server from a sandbox.
 <AgentOnly variant="hermes">
 
 Hermes shields must be down for this config mutation.
+Keep them down until the command returns; a concurrent relock refuses the config commit and can leave an earlier policy/provider stage for the next retry to converge.
 
 </AgentOnly>
 
 NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
+Deep Agents teardown does not require the managed launcher marker from the old image, so an existing compatible MCP entry cannot block `mcp remove`, sandbox rebuild, or destroy merely because the image predates that probe.
+A replacement image must pass the marker probe before post-rebuild MCP providers or policy are restored.
 The command fails closed on observed drift. `--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content. Residuals preserve registry state. OpenShell v0.0.72 mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
 ```bash

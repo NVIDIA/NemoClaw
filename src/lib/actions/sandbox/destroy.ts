@@ -50,6 +50,7 @@ import {
   prepareMcpBridgesForDestroy,
   restoreMcpBridgesAfterDestroyAbort,
 } from "./mcp-bridge";
+import { assertMcpAdapterConfigMutationsAllowed } from "./mcp-bridge-add-restart";
 import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
@@ -399,31 +400,7 @@ async function destroySandboxUnlocked(
     }
   }
 
-  const nim = require("../../inference/nim") as {
-    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
-    stopNimContainerByName: (name: string) => void;
-  };
   const sb = registry.getSandbox(sandboxName);
-  if (sb && sb.nimContainer) {
-    console.log(`  Stopping NIM for '${sandboxName}'...`);
-    nim.stopNimContainerByName(sb.nimContainer);
-  } else {
-    // Best-effort cleanup of convention-named NIM containers that may not
-    // be recorded in the registry (e.g. older sandboxes).  Suppress output
-    // so the user doesn't see "No such container" noise when no NIM exists.
-    nim.stopNimContainer(sandboxName, { silent: true });
-  }
-
-  // The Ollama auth proxy is per-sandbox and only spawned when the provider
-  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
-  // handled separately by `cleanupSandboxServices` above (which routes
-  // through `stopAll()` or directly into `unloadOllamaModels()` based on
-  // whether host services are being torn down).
-  if (sb?.provider?.includes("ollama")) {
-    const { killStaleProxy } = require("../../inference/ollama/proxy");
-    killStaleProxy();
-  }
-
   console.log(`  Deleting sandbox '${sandboxName}'...`);
   const { runOpenshell } = require("../../adapters/openshell/runtime") as {
     runOpenshell: DestroyRunOpenshell;
@@ -447,6 +424,44 @@ async function destroySandboxUnlocked(
     }),
   );
   const sandboxConfirmedAbsent = sandboxPresence === "absent";
+  const mcpEntriesRequiringConfigMutation = Object.values(sb?.mcp?.bridges ?? {}).filter(
+    (entry) => entry.addState !== "prepared",
+  );
+  if (
+    !sandboxConfirmedAbsent &&
+    sb &&
+    !sb.mcp?.destroyPreparedAt &&
+    !sb.mcp?.destroyPendingAt &&
+    mcpEntriesRequiringConfigMutation.length > 0
+  ) {
+    // Gateway selection/listing above is required to distinguish a live
+    // sandbox from absent-sandbox cleanup. Once live presence is known,
+    // refuse locked Hermes config before stopping local agent services or
+    // mutating MCP adapter/provider/policy state.
+    assertMcpAdapterConfigMutationsAllowed(sandboxName, sb, mcpEntriesRequiringConfigMutation);
+  }
+
+  const nim = require("../../inference/nim") as {
+    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
+    stopNimContainerByName: (name: string) => void;
+  };
+  if (sb && sb.nimContainer) {
+    console.log(`  Stopping NIM for '${sandboxName}'...`);
+    nim.stopNimContainerByName(sb.nimContainer);
+  } else {
+    // Best-effort cleanup of convention-named NIM containers that may not be
+    // recorded in the registry (e.g. older sandboxes). Suppress output so the
+    // user does not see "No such container" noise when no NIM exists.
+    nim.stopNimContainer(sandboxName, { silent: true });
+  }
+
+  // The Ollama auth proxy is per-sandbox and only spawned when the provider
+  // is Ollama, so this guard scopes only `killStaleProxy()`. GPU unload is
+  // handled separately by `cleanupSandboxServices` below.
+  if (sb?.provider?.includes("ollama")) {
+    const { killStaleProxy } = require("../../inference/ollama/proxy");
+    killStaleProxy();
+  }
 
   const emptyMcpPreparation: McpDestroyPreparation = {
     entries: [],
@@ -480,19 +495,27 @@ async function destroySandboxUnlocked(
       // Keep the same timer-bound lock across MCP detachment, wipe, provider
       // cleanup, delete, and final MCP cleanup so an auto-restore timer cannot
       // mutate this sandbox or a same-name replacement between phases.
+      let hardenedForDelete = false;
+      let destroyTimerMarker: ReturnType<typeof readTimerMarker> = null;
+      let destroyTimerProcessToken: string | undefined;
       if (!sandboxConfirmedAbsent) {
         wipeSandboxState(sandboxName);
 
         // The wipe needs the timed mutable posture so the sandbox user can
         // remove manifest state. Convert it back to a verified locked posture
         // immediately afterward and before delete.
-        if (readTimerMarker(sandboxName)) {
+        destroyTimerMarker = readTimerMarker(sandboxName);
+        if (destroyTimerMarker) {
+          if (/^[0-9a-f]{32}$/.test(destroyTimerMarker.processToken ?? "")) {
+            destroyTimerProcessToken = destroyTimerMarker.processToken;
+          }
           const { shieldsUp: hardenShields } =
             require("../../shields") as typeof import("../../shields");
           hardenShields(sandboxName, {
             throwOnError: true,
             allowLegacyHermesProtocol: true,
           });
+          hardenedForDelete = true;
         }
       }
 
@@ -511,10 +534,45 @@ async function destroySandboxUnlocked(
       if (deleteResult.status !== 0 && !alreadyGone) {
         let mcpRecoveryFailure: string | undefined;
         if (!sandboxConfirmedAbsent) {
+          let openedMcpRollbackWindow = false;
           try {
+            if (hardenedForDelete && mcpPreparation.entries.length > 0) {
+              if (!destroyTimerProcessToken) {
+                throw new Error(
+                  "Cannot open a bounded MCP rollback window because the active shields timer had no valid process token.",
+                );
+              }
+              const { shieldsDown: openRollbackWindow } =
+                require("../../shields") as typeof import("../../shields");
+              openRollbackWindow(sandboxName, {
+                reason: "restore MCP after refused sandbox delete",
+                timeout: "15m",
+                throwOnError: true,
+                allowLegacyHermesProtocol: true,
+                deferAutoRestoreWhileOwnerAlive: true,
+                processToken: destroyTimerProcessToken,
+              });
+              openedMcpRollbackWindow = true;
+            }
             await restoreMcpBridgesAfterDestroyAbort(sandboxName, mcpPreparation);
           } catch (error) {
             mcpRecoveryFailure = error instanceof Error ? error.message : String(error);
+          } finally {
+            if (openedMcpRollbackWindow) {
+              try {
+                const { shieldsUp: closeRollbackWindow } =
+                  require("../../shields") as typeof import("../../shields");
+                closeRollbackWindow(sandboxName, {
+                  throwOnError: true,
+                  allowLegacyHermesProtocol: true,
+                });
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                mcpRecoveryFailure = mcpRecoveryFailure
+                  ? `${mcpRecoveryFailure}; shields re-lock failed: ${detail}`
+                  : `shields re-lock failed: ${detail}`;
+              }
+            }
           }
         }
         return {

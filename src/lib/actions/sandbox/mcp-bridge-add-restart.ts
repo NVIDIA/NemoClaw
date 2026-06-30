@@ -9,7 +9,9 @@ import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
 import type { McpBridgeEntry, SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
+  assertAgentMcpConfigMutationAllowed,
   assertAgentMcpMutationRuntimeCapability,
+  assertAgentMcpTeardownRuntimeCapability,
   inspectAgentAdapterRegistration,
   registerAgentAdapter,
   unregisterAgentAdapter,
@@ -106,6 +108,42 @@ export function assertMcpAdapterMutationRuntimeCapabilities(
   );
   for (const adapter of adapters) {
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+  }
+}
+
+/**
+ * Prove host-visible config mutability without requiring a capability marker
+ * from the image being torn down. Deep Agents entries created by an older
+ * NemoClaw release remain safe to scrub because their exact persisted adapter
+ * definition is still ownership-checked by unregisterAgentAdapter.
+ */
+export function assertMcpAdapterConfigMutationsAllowed(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  entries: readonly McpBridgeEntry[],
+): void {
+  const adapters = new Set(
+    entries.map((entry) =>
+      isAgentMcpAdapter(entry.adapter) ? entry.adapter : getBridgeAdapter(getSandboxAgent(sandbox)),
+    ),
+  );
+  for (const adapter of adapters) {
+    assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
+  }
+}
+
+export function assertMcpAdapterTeardownRuntimeCapabilities(
+  sandboxName: string,
+  sandbox: SandboxEntry,
+  entries: readonly McpBridgeEntry[],
+): void {
+  const adapters = new Set(
+    entries.map((entry) =>
+      isAgentMcpAdapter(entry.adapter) ? entry.adapter : getBridgeAdapter(getSandboxAgent(sandbox)),
+    ),
+  );
+  for (const adapter of adapters) {
+    assertAgentMcpTeardownRuntimeCapability(sandboxName, adapter);
   }
 }
 
@@ -245,6 +283,10 @@ async function addMcpBridgeUnlocked(
       1,
     );
   }
+  // Hermes config posture is host-visible, so reject before even the durable
+  // prepared manifest is written. The in-sandbox helper repeats the check at
+  // the actual config write so a concurrent posture change still fails closed.
+  assertAgentMcpConfigMutationAllowed(sandboxName, adapter);
   // This is the durable ownership manifest for every resource created below.
   // It intentionally precedes gateway selection and all OpenShell mutations,
   // so process death can never leave an unowned provider/policy/adapter entry.
@@ -257,6 +299,7 @@ async function addMcpBridgeUnlocked(
   let credentialRevisionSnapshotPath: string | undefined;
   try {
     await ensureSandboxGatewaySelected(sandboxName);
+    let detachedMissingProviderReference = false;
     if (resumingPreflightedAdd) {
       const providerInspection = inspectMcpProvider(entry.providerName);
       if (providerInspection.exists === null) {
@@ -267,25 +310,30 @@ async function addMcpBridgeUnlocked(
       }
       if (providerInspection.exists === false) {
         // A provider can disappear while its sandbox-spec attachment remains.
-        // Remove that dangling name before any fresh exec or adapter probe, then
-        // prove the old credential placeholder is absent before recreate/reuse.
+        // OpenShell cannot start any sandbox child while that dangling name is
+        // present, so detaching the already-missing provider reference is the
+        // one recovery side effect that must precede the image capability
+        // probe. It neither reads nor replaces credential material, and the
+        // durable add manifest retains ownership if the later probe fails.
         detachMissingProviderReference(sandboxName, entry);
-        waitForDetachedMcpCredential(sandboxName, entry);
-      }
-      if (!Object.hasOwn(adapterEnvValues, entry.env[0])) {
-        try {
-          // A retry may reuse an exact provider without re-exporting its secret,
-          // but recreating a missing provider cannot. Check before agent and
-          // adapter exec so deterministic recovery failure cannot preserve an
-          // exact owned policy or be masked by a blocked sandbox spec.
-          assertMcpProviderRecoverable(entry);
-        } catch (error) {
-          removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
-          throw error;
-        }
+        detachedMissingProviderReference = true;
       }
     }
     assertAgentMcpMutationRuntimeCapability(sandboxName, adapter);
+    if (detachedMissingProviderReference) {
+      waitForDetachedMcpCredential(sandboxName, entry);
+    }
+    if (resumingPreflightedAdd && !Object.hasOwn(adapterEnvValues, entry.env[0])) {
+      try {
+        // A retry may reuse an exact provider without re-exporting its secret,
+        // but recreating a missing provider cannot. This check and any owned
+        // policy cleanup happen only after the running-image capability probe.
+        assertMcpProviderRecoverable(entry);
+      } catch (error) {
+        removeGeneratedPolicy(sandboxName, entry, { bestEffort: true });
+        throw error;
+      }
+    }
 
     if (entry.addState === "prepared") {
       assertPreparedMcpAddResourcesAbsent(sandboxName, adapter, entry, resolvedAddresses);
@@ -442,6 +490,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   const targetEntries = targets
     .map(([, entry]) => entry)
     .filter((entry): entry is McpBridgeEntry => !!entry);
+  // Hermes shields posture is host-visible. Refuse before DNS, gateway
+  // recovery/selection, provider inspection, or any lifecycle mutation.
+  assertMcpAdapterConfigMutationsAllowed(sandboxName, sandbox, targetEntries);
   const resolvedByServer = await preflightMcpEntryTargets(targetEntries);
   await ensureSandboxGatewaySelected(sandboxName);
   // Prove every policy key is absent or still matches its recorded ownership
@@ -457,7 +508,9 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
   );
   // Detach every dangling name before asking the supervisor for a fresh exec.
   // Provider environment resolution can remain blocked while any missing name
-  // is still present in the sandbox spec.
+  // is still present in the sandbox spec. These references name providers
+  // already proven absent; no live credential is removed before the runtime
+  // capability probe, and the durable bridge manifest is retained on failure.
   for (const entry of missingProviderEntries) {
     detachMissingProviderReference(sandboxName, entry);
   }
@@ -530,6 +583,7 @@ async function restartMcpBridgeUnlocked(sandboxName: string, server?: string): P
 export async function restoreExistingMcpBridgeRuntime(
   sandboxName: string,
   entries: readonly McpBridgeEntry[],
+  options: { lifecyclePhase?: "active-mutation" | "teardown-rollback" } = {},
 ): Promise<void> {
   if (entries.length === 0) return;
   for (const entry of entries) assertAuthenticatedBridgeEntry(entry);
@@ -537,7 +591,15 @@ export async function restoreExistingMcpBridgeRuntime(
   await ensureSandboxGatewaySelected(sandboxName);
   const sandbox = getSandboxOrThrow(sandboxName);
   assertMcpDestroyNotPending(sandbox);
-  assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+  if (options.lifecyclePhase === "teardown-rollback") {
+    // A failed delete/rebuild must be able to restore a backward-compatible
+    // Deep Agents entry on the same old image it just scrubbed. New/rebuilt
+    // images use the default path and must prove the current marker before any
+    // policy, provider, attachment, or adapter mutation.
+    assertMcpAdapterTeardownRuntimeCapabilities(sandboxName, sandbox, entries);
+  } else {
+    assertMcpAdapterMutationRuntimeCapabilities(sandboxName, sandbox, entries);
+  }
   for (const entry of entries) {
     assertGeneratedPolicyMutationSafe(sandboxName, entry);
     const provider = assertMcpProviderRecoverable(entry);

@@ -7,14 +7,16 @@ import { describe, expect, it } from "vitest";
 
 type ProbeResult = { status: number; stdout: string; stderr: string };
 
-function runHermesProbe(results: ProbeResult[]) {
+function runHermesProbe(results: ProbeResult[], shieldsDown = true) {
   const script = String.raw`
 const globalActions = require("./src/lib/actions/global.js");
 const wait = require("./src/lib/core/wait.js");
+const shields = require("./src/lib/shields/index.js");
 const results = ${JSON.stringify(results)};
 let calls = 0;
 globalActions.runOpenshellProviderCommand = () => results[calls++];
 wait.waitUntil = (condition) => [0, 1, 2].some(() => condition());
+shields.isShieldsDown = () => ${JSON.stringify(shieldsDown)};
 const adapters = require("./src/lib/actions/sandbox/mcp-bridge-adapters.js");
 let message = "";
 try {
@@ -46,6 +48,14 @@ const ready: ProbeResult = {
 };
 
 describe("Hermes managed MCP startup probe", () => {
+  it("refuses shields-up config before invoking the sandbox helper", () => {
+    const result = runHermesProbe([ready], false);
+
+    expect(result.calls).toBe(0);
+    expect(result.message).toContain("has shields up or an unreadable shields posture");
+    expect(result.message).toContain("nemohermes hermes-box shields down");
+  });
+
   it("retries only the exact transient gateway-starting result", () => {
     expect(runHermesProbe([starting, ready])).toEqual({ calls: 2, message: "" });
   });
