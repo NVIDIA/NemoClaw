@@ -67,6 +67,8 @@ const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inferen
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
+const { reapHostGatewayBeforeLaunch } =
+  require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
 const {
   findReadableNvidiaCdiSpecFiles,
   parseDockerCdiSpecDirs,
@@ -2263,20 +2265,16 @@ async function startDockerDriverGateway({
     throw new Error("OpenShell gateway binary not found");
   }
 
-  const existingPid = getDockerDriverGatewayPid() ?? portListenerPid;
-  if (existingPid !== null && isPidAlive(existingPid)) {
-    if (!isDockerDriverGatewayProcess(existingPid, identityGatewayBin)) {
-      clearDockerDriverGatewayRuntimeFiles();
-    } else {
-      console.log(`  Restarting unhealthy Docker-driver gateway process (PID ${existingPid})...`);
-      try {
-        process.kill(existingPid, "SIGTERM");
-        sleepSeconds(1);
-      } catch {
-        /* best effort; the new process will surface any remaining port conflict */
-      }
-    }
-  }
+  // Reap any existing host openshell-gateway bound to this port (TERM→KILL +
+  // wait-for-exit, cmdline-gated, scoped to this port's candidates) before
+  // spawning a fresh one, so onboard never leaves two host-process gateways for
+  // the same port (#5968 "got host-process=2"). Confirmed gone before respawn.
+  reapHostGatewayBeforeLaunch({
+    pidFile: path.join(stateDir, "openshell-gateway.pid"),
+    stateDir,
+    gatewayBin: identityGatewayBin,
+    extraPids: [getDockerDriverGatewayPid(), portListenerPid],
+  });
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
