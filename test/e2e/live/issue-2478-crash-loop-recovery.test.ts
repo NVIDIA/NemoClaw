@@ -403,8 +403,7 @@ async function waitForRecoveryWarning(
 ): Promise<void> {
   const warning = /\[gateway-recovery\] WARNING: .*restoring library guards from packaged preloads/;
   const unguarded = /gateway launching without library guards/;
-  let lastDiagnostics = "";
-  let lastExitCode: number | null = null;
+  let lastError: unknown;
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const diagnostics = await sandbox.exec(
@@ -423,18 +422,19 @@ async function waitForRecoveryWarning(
         timeoutMs: 30_000,
       },
     );
-    lastExitCode = diagnostics.exitCode;
-    lastDiagnostics = `${diagnostics.stdout}\n${diagnostics.stderr}`;
-    if (diagnostics.exitCode === 0 && warning.test(lastDiagnostics)) {
-      expect(lastDiagnostics).not.toMatch(unguarded);
+    const combined = `${diagnostics.stdout}\n${diagnostics.stderr}`;
+    try {
+      expect(diagnostics.exitCode, combined).toBe(0);
+      expect(combined).toMatch(warning);
+      expect(combined).not.toMatch(unguarded);
       return;
+    } catch (error) {
+      lastError = error;
+      await sleep(3_000);
     }
-    await sleep(3_000);
   }
 
-  throw new Error(
-    `gateway recovery diagnostics (exit ${lastExitCode ?? "null"}) did not contain ${warning.source}:\n${lastDiagnostics}`,
-  );
+  throw lastError;
 }
 
 async function sampleGatewayStability(
