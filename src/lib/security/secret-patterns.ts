@@ -49,8 +49,17 @@ export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
+/** Multi-line or JSON-escaped secret blocks that do not have a token prefix. */
+export const SECRET_BLOCK_PATTERNS: RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g,
+];
+
 /** All secret patterns combined. */
-export const SECRET_PATTERNS: RegExp[] = [...TOKEN_PREFIX_PATTERNS, ...CONTEXT_PATTERNS];
+export const SECRET_PATTERNS: RegExp[] = [
+  ...TOKEN_PREFIX_PATTERNS,
+  ...CONTEXT_PATTERNS,
+  ...SECRET_BLOCK_PATTERNS,
+];
 
 /**
  * Token prefixes covered by the debug.sh sed fallback.

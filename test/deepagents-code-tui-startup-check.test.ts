@@ -409,8 +409,14 @@ describe("Deep Agents Code TUI startup check helpers", () => {
         fingerprint(TOKEN_PREFIX_PATTERNS[7]),
         { name: "xoxb", sample: secretFixture("xox", "b", "-", "1234567890") },
       ],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" }],
-      [fingerprint(TOKEN_PREFIX_PATTERNS[8]), { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" }],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+        { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
+      ],
+      [
+        fingerprint(TOKEN_PREFIX_PATTERNS[8]),
+        { name: "asia", sample: secretFixture("AS", "IA", "ABCDEFGHIJKLMNOP") },
+      ],
       [fingerprint(TOKEN_PREFIX_PATTERNS[9]), { name: "hf", sample: "hf_abcdefghijklmnopq" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[10]), { name: "glpat", sample: "glpat-abcdefghijklmn" }],
       [fingerprint(TOKEN_PREFIX_PATTERNS[11]), { name: "gsk", sample: "gsk_abcdefghijklmnop" }],
@@ -448,7 +454,7 @@ describe("Deep Agents Code TUI startup check helpers", () => {
       ],
     ]);
     const extraSamples = [
-      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "akia", sample: secretFixture("AK", "IA", "ABCDEFGHIJKLMNOP") },
       { name: "xoxp", sample: secretFixture("xox", "p", "-", "1234567890") },
       { name: "xoxa", sample: secretFixture("xox", "a", "-", "1234567890") },
       { name: "xoxs", sample: secretFixture("xox", "s", "-", "1234567890") },
