@@ -168,7 +168,13 @@ esac
 }
 
 function runFixture(
-  mode: "brev-mismatch" | "complete" | "failure" | "partial",
+  mode:
+    | "brev-mismatch"
+    | "complete"
+    | "duplicate-ollama-pin"
+    | "failure"
+    | "missing-ollama-pin"
+    | "partial",
   openshellVersion?: string,
   trustedChecker = false,
 ) {
@@ -182,6 +188,12 @@ function runFixture(
     fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), checker);
   }
   const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
+  const ollamaInstaller = path.join(fixtureRoot, "scripts", "install.sh");
+  if (mode === "missing-ollama-pin") {
+    fs.writeFileSync(ollamaInstaller, "# missing required Ollama pin\n");
+  } else if (mode === "duplicate-ollama-pin") {
+    fs.appendFileSync(ollamaInstaller, fs.readFileSync(ollamaInstaller, "utf8"));
+  }
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   fs.writeFileSync(
     brevInstaller,
@@ -224,6 +236,17 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it.each([
+    "missing-ollama-pin",
+    "duplicate-ollama-pin",
+  ] as const)("fails closed when the pull-request tree has a %s", (mode) => {
+    const result = runFixture(mode, undefined, true);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("expected exactly one OLLAMA_INSTALL_SHA256 pin");
+    expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
   it("fails closed when the OpenShell checksum release assets are unreachable", () => {

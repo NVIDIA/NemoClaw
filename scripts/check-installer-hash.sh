@@ -67,7 +67,7 @@ fetch_hash() {
 
 extract_pinned() {
   local file="$1" var_name="$2"
-  sed -n "s/.*${var_name}=\"\\([a-f0-9]\\{64\\}\\)\".*/\\1/p" "$file" | head -1
+  sed -n "s/.*${var_name}=\"\\([a-f0-9]\\{64\\}\\)\".*/\\1/p" "$file"
 }
 
 update_pinned() {
@@ -220,12 +220,15 @@ for i in "${!LABELS[@]}"; do
   var="${VARS[$i]}"
   url="${URLS[$i]}"
 
-  pinned=$(extract_pinned "$file" "$var")
+  pinned_values=$(extract_pinned "$file" "$var")
+  pinned_count=$(printf '%s\n' "$pinned_values" | awk 'NF { count++ } END { print count + 0 }')
 
-  if [[ -z "$pinned" ]]; then
-    echo "  SKIP: ${var} not found in ${file} (not yet merged?)"
+  if [[ "$pinned_count" -ne 1 ]]; then
+    echo "  STALE: expected exactly one ${var} pin in ${file}, found ${pinned_count}."
+    failures=$((failures + 1))
     continue
   fi
+  pinned="$pinned_values"
 
   echo "Checking ${label} (${var})..."
   echo "  Fetching ${url}..."
