@@ -184,13 +184,12 @@ export function computeSetupPresetSuggestions(
     for (const preset of allHermesToolGatewayPolicyPresets()) add(preset);
   }
   if (Array.isArray(enabledChannels)) {
-    for (const channel of enabledChannels) add(channel);
     // Suggest every enabled channel's egress preset, matching the set
-    // finalization merges via `mergeEnabledMessagingChannelPolicyPresets`. The
-    // `add(channel)` loop above only covers channels whose preset name equals the
-    // channel name; resolving through the channel→preset registry keeps the
-    // suggestion path correct for any channel (and any future preset rename)
-    // rather than relying on that coincidence or on `requiredAtCreate` (#5967).
+    // finalization merges via `mergeEnabledMessagingChannelPolicyPresets`.
+    // Resolving through the channel→preset registry keeps the suggestion path
+    // correct for any channel (and any future preset rename) without relying on
+    // the channel name coinciding with its preset name or on `requiredAtCreate`
+    // (#5967).
     for (const preset of allMessagingChannelPolicyPresets(enabledChannels)) add(preset);
   }
   if (Array.isArray(options.hermesToolGateways)) {
