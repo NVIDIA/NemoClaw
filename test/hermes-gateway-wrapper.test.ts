@@ -16,6 +16,8 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
+
 const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.sh");
 const VALIDATOR = path.join(
   import.meta.dirname,
@@ -59,6 +61,7 @@ function runWrapper(
   env: Record<string, string>,
   opts: {
     shadowPython?: boolean;
+    shadowHelpers?: Record<string, string>;
     stub?: StubBehaviour;
     validatorScript?: string;
   } = {},
@@ -88,16 +91,21 @@ function runWrapper(
     ].join("\n");
     fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
 
-    // Optionally plant a malicious `python3` earlier on PATH that would no-op
-    // the guard (exit 0). The wrapper must ignore it and use a trusted absolute
-    // interpreter, so the guard still fires.
+    // Optionally plant malicious helpers earlier on PATH that would subvert the
+    // wrapper. The wrapper must ignore them and resolve each helper from a
+    // trusted absolute path. `shadowPython` covers the python3 interpreter;
+    // `shadowHelpers` lets a test plant arbitrary scripts (e.g. mktemp / rm).
+    const planted: Record<string, string> = {
+      ...(opts.shadowHelpers ?? {}),
+      ...(opts.shadowPython ? { python3: "#!/usr/bin/env bash\nexit 0\n" } : {}),
+    };
     let pathPrefix = "";
-    if (opts.shadowPython) {
+    if (Object.keys(planted).length > 0) {
       const evilBin = path.join(dir, "evil-bin");
       fs.mkdirSync(evilBin);
-      fs.writeFileSync(path.join(evilBin, "python3"), "#!/usr/bin/env bash\nexit 0\n", {
-        mode: 0o755,
-      });
+      for (const [name, script] of Object.entries(planted)) {
+        fs.writeFileSync(path.join(evilBin, name), script, { mode: 0o755 });
+      }
       pathPrefix = `${evilBin}${path.delimiter}`;
     }
 
@@ -488,5 +496,84 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("# example: api_key: leave-this-alone-in-comment");
     expect(run.stdout).toContain("api_key: sk-****");
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+  });
+
+  it("ignores PATH-shadowed mktemp/rm so the stderr buffer cannot be redirected to an attacker path", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-pathshadow-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const stubScript = [
+        "#!/usr/bin/env bash",
+        "printf 'ok: 1\\n'",
+        "printf 'api_key: sk-PATH-SHADOW-STDERR-LEAK-12345\\n' >&2",
+        "exit 0",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+      const evilBin = path.join(dir, "evil-bin");
+      fs.mkdirSync(evilBin);
+      const evilMktempPath = path.join(evilBin, "mktemp");
+      const evilRmPath = path.join(evilBin, "rm");
+      const evilMktempLeak = path.join(dir, "evil-mktemp-leak.txt");
+      const evilRmMarker = path.join(dir, "evil-rm-called.txt");
+      fs.writeFileSync(
+        evilMktempPath,
+        [
+          "#!/usr/bin/env bash",
+          `out=${JSON.stringify(evilMktempLeak)}`,
+          ': > "$out"',
+          'echo "$out"',
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        evilRmPath,
+        [
+          "#!/usr/bin/env bash",
+          `printf 'evil-rm called with %s\\n' "$*" > ${JSON.stringify(evilRmMarker)}`,
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = spawnSync("bash", [path.join(dir, "hermes"), "config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: `${evilBin}${path.delimiter}${process.env.PATH ?? ""}`, HOME: dir },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).not.toContain("sk-PATH-SHADOW-STDERR-LEAK-12345");
+      expect(result.stderr).toContain("api_key: sk-****");
+      expect(fs.existsSync(evilMktempLeak)).toBe(false);
+      expect(fs.existsSync(evilRmMarker)).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("masks every api_key emitted by buildHermesConfig so the generated config cannot leak through `config show`", () => {
+    const settings = {
+      model: "meta/llama-3.1-8b-instruct",
+      baseUrl: "https://inference.local/v1",
+      providerKey: "custom",
+      upstreamProvider: "nemoclaw-inference",
+      inferenceApi: "",
+      messagingCredentialPlaceholders: [],
+      managedToolGateways: { brokerEnabled: false, presets: [] },
+    };
+    const generated = buildHermesConfig(settings);
+    const fixture = JSON.stringify(generated, null, 2);
+    expect(fixture).toContain("sk-OPENSHELL-PROXY-REWRITE");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    expect(run.stdout).toContain('"api_key": "sk-****"');
+    expect(run.stdout).toContain('"default": "meta/llama-3.1-8b-instruct"');
+    expect(run.stdout).toContain('"base_url": "https://inference.local/v1"');
   });
 });

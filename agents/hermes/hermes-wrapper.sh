@@ -6,17 +6,19 @@
 # environment secret boundary for `hermes gateway` (NVIDIA/NemoClaw#4975) and
 # masks credential-shaped values in `hermes config show` output.
 #
-# Source-of-truth note for the `config show` masking layer: the upstream Hermes
-# CLI emits the resolved configuration (including `api_key`) verbatim because
-# the seed pipeline (`agents/hermes/seed-dashboard-config.py:_route_api_key`)
-# and the runtime config guard (`agents/hermes/runtime-config-guard.py:
-# ensure_api_key`) require an `sk-`-prefixed value before LiteLLM issues a
-# request — the placeholder `sk-OPENSHELL-PROXY-REWRITE` is substituted at the
-# OpenShell egress boundary, not in-process. A source-level fix would require
-# Hermes CLI native env-var reference support (an upstream change). Until that
-# lands, this wrapper post-filters `config show` stdout through the Python
-# masker. Remove the `config show` branch and this comment once Hermes CLI
-# redacts credential-shaped fields natively.
+# Source-of-truth note for the `config show` masking layer: the inline provider
+# `api_key` placeholder `sk-OPENSHELL-PROXY-REWRITE` is emitted directly by the
+# build-time config generator (`agents/hermes/config/hermes-config.ts:
+# buildHermesConfig`) into `model`, `providers`, and `custom_providers`, and
+# routed at sandbox startup by the seed pipeline
+# (`agents/hermes/seed-dashboard-config.py:_route_api_key`) so the upstream
+# Hermes CLI must render an `sk-`-prefixed value — the placeholder is later
+# substituted at the OpenShell egress boundary, not in-process. A source-level
+# fix would require Hermes CLI native env-var reference support (an upstream
+# change). Until that lands, this wrapper post-filters `config show` stdout
+# through the Python masker. Remove the `config show` branch and this comment
+# once Hermes CLI redacts credential-shaped fields natively or `buildHermesConfig`
+# stops emitting an inline `api_key` value.
 #
 # Dashboard parity: the Hermes dashboard is a static web UI seeded by
 # `agents/hermes/seed-dashboard-config.py` — there is no `/api/config` REST
@@ -53,8 +55,8 @@ REAL_HERMES="/usr/local/bin/hermes.real"
 GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 [ -f "$GUARD" ] || GUARD="${_self_dir}/validate-env-secret-boundary.py"
 
-_resolve_trusted_python3() {
-  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+_resolve_trusted_path() {
+  for _candidate in "$@"; do
     if [ -x "$_candidate" ]; then
       printf '%s' "$_candidate"
       return 0
@@ -63,10 +65,26 @@ _resolve_trusted_python3() {
   return 1
 }
 
+_resolve_trusted_python3() {
+  _resolve_trusted_path /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3
+}
+
 if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   set -o pipefail
   PYTHON3="$(_resolve_trusted_python3)" || {
     echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
+    exit 127
+  }
+  # mktemp and rm are resolved from trusted absolute paths so a PATH-shadowed
+  # mktemp cannot redirect the raw stderr buffer to an attacker-chosen path and
+  # a PATH-shadowed rm cannot retain the buffer past the EXIT trap. Same threat
+  # model as the python3 resolver above.
+  MKTEMP="$(_resolve_trusted_path /usr/bin/mktemp /bin/mktemp)" || {
+    echo "[SECURITY] Refusing hermes config show: no mktemp at a trusted absolute path" >&2
+    exit 127
+  }
+  RM="$(_resolve_trusted_path /bin/rm /usr/bin/rm)" || {
+    echo "[SECURITY] Refusing hermes config show: no rm at a trusted absolute path" >&2
     exit 127
   }
   # Buffer Hermes stderr to a temp file so its masker's exit status is
@@ -79,12 +97,12 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   # us mask after Hermes exits and fail closed on either stream. The masker
   # itself buffers in memory and writes only on success, so neither stream
   # produces a partial secret. The temp file is removed via EXIT trap.
-  _stderr_buf="$(mktemp)" || {
+  _stderr_buf="$("$MKTEMP")" || {
     echo "[SECURITY] Refusing hermes config show: cannot create stderr buffer" >&2
     exit 1
   }
   # shellcheck disable=SC2064
-  trap "rm -f \"$_stderr_buf\"" EXIT
+  trap "\"$RM\" -f \"$_stderr_buf\"" EXIT
   "$REAL_HERMES" "$@" 2>"$_stderr_buf" | "$PYTHON3" "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
