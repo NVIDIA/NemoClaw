@@ -388,6 +388,110 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).toContain("authToken: sk-****");
   });
 
+  it("masks plural secret-field variants (api_keys, secrets, tokens) in config show output", () => {
+    const fixture = [
+      "{'api_keys': 'leaked-plural-keys-12345', 'secrets': 'leaked-plural-secrets-12345'}",
+      '{"tokens": "leaked-plural-tokens-12345"}',
+      "passwords: leaked-plural-passwords-12345",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-plural-keys-12345");
+    expect(run.stdout).not.toContain("leaked-plural-secrets-12345");
+    expect(run.stdout).not.toContain("leaked-plural-tokens-12345");
+    expect(run.stdout).not.toContain("leaked-plural-passwords-12345");
+    expect(run.stdout).toContain("'api_keys': 'sk-****'");
+    expect(run.stdout).toContain("'secrets': 'sk-****'");
+    expect(run.stdout).toContain('"tokens": "sk-****"');
+    expect(run.stdout).toContain("passwords: sk-****");
+  });
+
+  it("masks multi-digit and reversed-order YAML block-scalar headers (|2-, |-2, >5+)", () => {
+    const fixture = [
+      "api_key: |2-",
+      "    leaked-yaml-indent-trail-12345",
+      "access_token: |-2",
+      "    leaked-yaml-trail-indent-12345",
+      "client_secret: >5+",
+      "     leaked-yaml-folded-12345",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-yaml-indent-trail-12345");
+    expect(run.stdout).not.toContain("leaked-yaml-trail-indent-12345");
+    expect(run.stdout).not.toContain("leaked-yaml-folded-12345");
+    expect(run.stdout).toContain("sk-****");
+  });
+
+  it("fails closed with a stable error when config show stdout exceeds the 4 MiB masker cap", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-oversize-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-hermes-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "validate-hermes-env-secret-boundary.py"), 0o755);
+      const stubScript = [
+        "#!/usr/bin/env python3",
+        "import sys",
+        "for _ in range(70):",
+        '    sys.stdout.write("x" * 65536 + "\\n")',
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+      const result = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
+        encoding: "utf-8",
+        timeout: 30_000,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("masker input exceeded");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when masker stdin is not valid UTF-8 instead of leaking a Python traceback", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-utf8-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-hermes-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "validate-hermes-env-secret-boundary.py"), 0o755);
+      const stubScript = [
+        "#!/usr/bin/env python3",
+        "import sys",
+        'sys.stdout.buffer.write(b"api_key: \\xff\\xfeleaked-invalid-utf8-12345\\n")',
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+      const result = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("leaked-invalid-utf8-12345");
+      expect(result.stderr).toContain("not valid UTF-8");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("completes a 100 KB unquoted value line in well under a second (ReDoS guard)", () => {
+    const huge = `key: ${"a".repeat(100 * 1024)}`;
+    const start = Date.now();
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: huge, exitCode: 0 } });
+    const elapsed = Date.now() - start;
+
+    expect(run.status).toBe(0);
+    expect(elapsed).toBeLessThan(2000);
+  });
+
   it("masks api_secret and auth_token fields beyond the explicit api_key/access_token shapes", () => {
     const fixture = [
       "{'api_secret': 'leaked-api-secret-12345', 'auth_token': 'leaked-auth-token-12345'}",

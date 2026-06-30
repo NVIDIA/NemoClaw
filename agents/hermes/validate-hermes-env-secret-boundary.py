@@ -23,7 +23,7 @@ import os
 import re
 import stat
 import sys
-from typing import Iterable
+from typing import Iterable, TextIO
 
 SECRET_KEY_RE = re.compile(r"(^|_)(TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|API)(_|$)")
 PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-[A-Z0-9_]+$")
@@ -197,9 +197,9 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
 # emits secrets via labelled fields; broader prose redaction is the upstream
 # Hermes CLI's responsibility.
 _SECRET_FIELD_RE = re.compile(
-    r"(?i)\b(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|"
-    r"client[_-]?secret|secret[_-]?key|"
-    r"authorization|bearer|credential|password|secret|token)\b"
+    r"(?i)\b(?:api[_-]?keys?|api[_-]?secrets?|access[_-]?tokens?|auth[_-]?tokens?|"
+    r"client[_-]?secrets?|secret[_-]?keys?|"
+    r"authorization|bearer|credentials?|passwords?|secrets?|tokens?)\b"
 )
 _MASK_PY = "sk-****"
 # Quoted variants accept escaped delimiters via `(?:[^'\\]|\\.)*`.
@@ -210,13 +210,27 @@ _PY_DICT_RE = re.compile(
 _JSON_RE = re.compile(
     r"(?P<lead>\"(?P<key>[A-Za-z_][A-Za-z0-9_-]*)\"[ \t]*:[ \t]*)\"(?:[^\"\\]|\\.)*\""
 )
+# ReDoS analysis: every quantifier carries an explicit upper bound so the
+# engine cannot do quadratic work on a hostile line. The key class is capped
+# at 128 chars (real config keys are short identifiers; an oversized identifier
+# is not a key we'd mask anyway). The value alternation bounds the unquoted
+# tail at 128 KiB, well below the masker's 4 MiB input cap. Quoted alternates
+# use the textbook `[^"\\]|\\.` / `[^'\\]|\\.` shape that is non-catastrophic.
+# These bounds turn the failing-no-delimiter case from O(n^2) to O(n).
 _UNQUOTED_RE = re.compile(
-    r"(?P<lead>(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*[:=][ \t]*)"
-    r"(?P<value>\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|[^ \t\r\n#][^\r\n#]*?)(?P<trail>[ \t]*(?:#.*)?)$"
+    r"(?P<lead>(?P<key>[A-Za-z_][A-Za-z0-9_-]{0,127})[ \t]*[:=][ \t]*)"
+    r"(?P<value>\"(?:[^\"\\]|\\.){0,131071}\"|'(?:[^'\\]|\\.){0,131071}'|[^ \t\r\n#][^\r\n#]{0,131071}?)"
+    r"(?P<trail>[ \t]*(?:#.*)?)$"
 )
-# YAML block scalar header: `key: |` / `key: >` with optional chomping (`|-`, `|+`) and indent indicator.
+# YAML block scalar header: `key: |` / `key: >` with optional chomping (`|-`, `|+`)
+# and an indent indicator (1-9 per YAML 1.2). Both orders of chomping vs indent
+# are accepted (e.g. `|2-` and `|-2`), and multi-digit shapes are tolerated even
+# though the spec forbids them, on the principle that a permissive matcher here
+# fails closed — an unmatched header means the body would otherwise be scanned
+# line-by-line and could leak a non-`sk-` secret.
 _MULTILINE_HEADER_RE = re.compile(
-    r"(?P<indent>[ \t]*)(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*[|>][-+]?\d?[ \t]*$"
+    r"(?P<indent>[ \t]*)(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*"
+    r"[|>](?:[-+]?\d+|\d+[-+]?|[-+])?[ \t]*$"
 )
 # Free-form catch-all: any `sk-` prefix followed by 8+ identifier-safe chars.
 # The 8-char floor prevents collisions with short legitimate identifiers while
@@ -245,7 +259,14 @@ def _mask_unquoted(match: "re.Match[str]") -> str:
 _MAX_INPUT_BYTES = 4 * 1024 * 1024
 
 
-def mask_config_output(stream_in: "object", stream_out: "object") -> int:
+def mask_config_output(stream_in: TextIO, stream_out: TextIO) -> int:
+    # Force strict UTF-8 decoding so attacker-controlled bytes that survive a
+    # surrogateescape-tolerant default cannot reach the regex layer as undecoded
+    # surrogates. Without this, `for line in sys.stdin` accepts arbitrary bytes
+    # when the inherited locale is POSIX and we lose the fail-closed property
+    # the wrapper relies on.
+    if hasattr(stream_in, "reconfigure"):
+        stream_in.reconfigure(errors="strict")
     # Tracks indentation of an in-flight YAML block scalar that begins with a
     # secret-shaped key (key: | or key: >). Every continuation line — indented
     # past the header or blank — is replaced with the placeholder so multi-line
@@ -271,8 +292,18 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
     masked_chunks: list[str] = []
     block_indent: int | None = None
     total_bytes = 0
-    for line in stream_in:
-        total_bytes += len(line.encode("utf-8"))
+    while True:
+        try:
+            line = stream_in.readline()
+        except UnicodeDecodeError:
+            print(
+                "[SECURITY] Refusing hermes config show: masker input is not valid UTF-8",
+                file=sys.stderr,
+            )
+            return 1
+        if not line:
+            break
+        total_bytes += len(line.encode("utf-8", errors="replace"))
         if total_bytes > _MAX_INPUT_BYTES:
             print(
                 "[SECURITY] Refusing hermes config show: masker input exceeded "
@@ -296,10 +327,14 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
             block_indent = len(header.group("indent"))
             masked_chunks.append(line)
             continue
-        masked = _PY_DICT_RE.sub(_mask_pyjson, line)
-        masked = _JSON_RE.sub(_mask_pyjson, masked)
-        masked = _UNQUOTED_RE.sub(_mask_unquoted, masked)
-        masked = _FREEFORM_SK_RE.sub(_MASK_PY, masked)
+        masked = line
+        if ":" in line:
+            masked = _PY_DICT_RE.sub(_mask_pyjson, masked)
+            masked = _JSON_RE.sub(_mask_pyjson, masked)
+        if ":" in masked or "=" in masked:
+            masked = _UNQUOTED_RE.sub(_mask_unquoted, masked)
+        if "sk-" in masked:
+            masked = _FREEFORM_SK_RE.sub(_MASK_PY, masked)
         masked_chunks.append(masked)
     stream_out.write("".join(masked_chunks))
     return 0
