@@ -111,17 +111,14 @@
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import {
-  readRecentShieldsAutoRestore,
-  type ShieldsAutoRestoreEvent,
-  type ShieldsAutoRestoreReadResult,
-} from "../../../shields/audit";
+import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
 import { hasAgentPassthroughHelpToken, printAgentPassthroughHelp } from "./passthrough-help";
 import { type AgentJsonPassthroughProcess, runAgentJsonPassthrough } from "./passthrough-json";
+import { maybeEmitShieldsRelockWarning } from "./passthrough-shields-warning";
 
 export {
   hasAgentPassthroughHelpToken,
@@ -144,11 +141,6 @@ const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
 ]);
 
 const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
-
-// A relock remains useful context briefly after it happens. This is a
-// relevance window measured from the restore event, independent of the
-// original shields-down timeout; a longer window risks stale-session warnings.
-const SHIELDS_RELOCK_WARNING_WINDOW_MS = 10 * 60 * 1000;
 
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
@@ -378,37 +370,6 @@ function hasTargetSelector(args: readonly string[]): boolean {
   return false;
 }
 
-function emitShieldsRelockWarning(
-  proc: NonNullable<AgentPassthroughDeps["process"]>,
-  relock: ShieldsAutoRestoreEvent,
-  sandboxName: string,
-): void {
-  // Defend the user-facing command suggestion even when tests or future
-  // callers inject an event without going through the audit reader.
-  const timeoutSeconds =
-    relock.timeoutSeconds !== null &&
-    Number.isInteger(relock.timeoutSeconds) &&
-    relock.timeoutSeconds >= 1 &&
-    relock.timeoutSeconds <= 1800
-      ? relock.timeoutSeconds
-      : null;
-  const afterPart = timeoutSeconds !== null ? ` after ${String(timeoutSeconds)}s` : "";
-  const timeoutSuggestion =
-    timeoutSeconds !== null ? `--timeout ${String(timeoutSeconds)}s` : "--timeout 60s";
-  proc.stderr.write(
-    `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${sandboxName} shields down ${timeoutSuggestion}\` to extend.\n`,
-  );
-}
-
-function emitShieldsAuditUnreadableWarning(
-  proc: NonNullable<AgentPassthroughDeps["process"]>,
-  sandboxName: string,
-): void {
-  proc.stderr.write(
-    `  ⚠ Could not read shields audit history; continuing without relock context. Run \`${CLI_NAME} ${sandboxName} shields status\` to verify current state.\n`,
-  );
-}
-
 function rejectNoTargetSelector(proc: NonNullable<AgentPassthroughDeps["process"]>): never {
   proc.stderr.write(
     "  No target session selected. Use --agent <id>, --session-key <key>, --session-id <id>, or --to <E.164>.\n",
@@ -479,15 +440,7 @@ export async function runAgentPassthrough(
     rejectNoTargetSelector(proc);
   }
   if (isOpenClawPassthroughCommand(command)) {
-    const checkShields =
-      deps.getRecentShieldsAutoRestore ??
-      ((name: string) => readRecentShieldsAutoRestore(name, SHIELDS_RELOCK_WARNING_WINDOW_MS));
-    const relock = checkShields(sandboxName);
-    if (relock.kind === "event") {
-      emitShieldsRelockWarning(proc, relock.event, sandboxName);
-    } else if (relock.kind === "unreadable") {
-      emitShieldsAuditUnreadableWarning(proc, sandboxName);
-    }
+    maybeEmitShieldsRelockWarning(proc, sandboxName, deps.getRecentShieldsAutoRestore);
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;

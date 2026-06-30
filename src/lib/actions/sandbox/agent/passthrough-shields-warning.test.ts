@@ -55,11 +55,14 @@ describe("runAgentPassthrough shields-relock warning", () => {
     vi.clearAllMocks();
   });
 
-  async function runWarning(result: ShieldsAutoRestoreReadResult): Promise<string> {
+  async function runWarning(
+    result: ShieldsAutoRestoreReadResult,
+    sandboxName = "alpha",
+  ): Promise<string> {
     getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
     const { writes, proc } = makeProcMock();
     await runAgentPassthrough(
-      "alpha",
+      sandboxName,
       { extraArgs: ["--agent", "main", "-m", "hi"] },
       { process: proc, getRecentShieldsAutoRestore: () => result },
     );
@@ -93,6 +96,18 @@ describe("runAgentPassthrough shields-relock warning", () => {
     });
     expect(output).not.toContain("9999s");
     expect(output).toMatch(/shields down --timeout 60s/);
+  });
+
+  it("shell-quotes sandbox names in recovery command suggestions (#5922)", async () => {
+    const output = await runWarning(
+      {
+        kind: "event",
+        event: { timestamp: new Date().toISOString(), timeoutSeconds: 20 },
+      },
+      "alpha; touch /tmp/pwn",
+    );
+    expect(output).toContain("nemoclaw 'alpha; touch /tmp/pwn' shields down --timeout 20s");
+    expect(output).not.toContain("nemoclaw alpha; touch /tmp/pwn");
   });
 
   it("emits no relock warning when the audit has no recent event (#5922)", async () => {
