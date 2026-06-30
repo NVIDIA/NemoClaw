@@ -28,9 +28,14 @@ describe("channel status config value helpers", () => {
   it("normalizes boolean-like config values before comparing", () => {
     expect(booleanConfigValue("1")).toBe(true);
     expect(booleanConfigValue("false")).toBe(false);
+    expect(booleanConfigValue(1)).toBe(true);
+    expect(booleanConfigValue(0)).toBe(false);
+    expect(booleanConfigValue(2)).toBeNull();
     expect(booleanConfigValue("enabled")).toBeNull();
     expect(configValuesEqual("1", true)).toBe(true);
     expect(configValuesEqual("0", false)).toBe(true);
+    expect(configValuesEqual(1, true)).toBe(true);
+    expect(configValuesEqual(0, false)).toBe(true);
     expect(configValuesEqual("true", false)).toBe(false);
   });
 });

@@ -81,24 +81,50 @@ describe("showSandboxChannelStatus config comparison", () => {
     expect(dump).not.toMatch(/TELEGRAM_BOT_TOKEN/);
   });
 
-  it("compares Hermes Telegram group policy from rendered env config", async () => {
+  it("does not compare Hermes Telegram group policy when the manifest does not render it", async () => {
     const { deps } = makeDeps({
       exec: (_sandbox, command) =>
         command.includes("/sandbox/.hermes/.env")
           ? {
               status: 0,
-              stdout: ["TELEGRAM_ALLOWED_USERS=7895072570", "TELEGRAM_GROUP_POLICY=allowlist"].join(
-                "\n",
-              ),
+              stdout: "TELEGRAM_ALLOWED_USERS=7895072570",
               stderr: "",
             }
-          : { status: 1, stdout: "", stderr: "" },
+          : command.includes("/sandbox/.hermes/config.yaml")
+            ? {
+                status: 0,
+                stdout: "telegram:\n  require_mention: true\n",
+                stderr: "",
+              }
+            : {
+                status: 1,
+                stdout: "",
+                stderr: "",
+              },
       agentName: "hermes",
       sandbox: entry(
         ["telegram"],
         [],
         {
           telegram: [
+            {
+              channelId: "telegram",
+              inputId: "allowedIds",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_ALLOWED_IDS",
+              statePath: "allowedIds.telegram",
+              value: "7895072570",
+            },
+            {
+              channelId: "telegram",
+              inputId: "requireMention",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_REQUIRE_MENTION",
+              statePath: "telegramConfig.requireMention",
+              value: "1",
+            },
             {
               channelId: "telegram",
               inputId: "groupPolicy",
@@ -121,10 +147,66 @@ describe("showSandboxChannelStatus config comparison", () => {
 
     const signals = result && "signals" in result ? result.signals : [];
     expect(
-      signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
+      signals.find(
+        (signal) => signal.label === "Telegram User ID (for DM access) (TELEGRAM_ALLOWED_IDS)",
+      ),
     ).toMatchObject({
       severity: "ok",
-      detail: "allowlist",
+      detail: "7895072570",
+    });
+    expect(
+      signals.find(
+        (signal) => signal.label === "Telegram group mention mode (TELEGRAM_REQUIRE_MENTION)",
+      ),
+    ).toMatchObject({
+      severity: "ok",
+      detail: "1",
+    });
+    expect(
+      signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
+    ).toBeUndefined();
+  });
+
+  it("warns when rendered config source is oversized", async () => {
+    const { deps } = makeDeps({
+      exec: () => ({
+        status: 0,
+        stdout: "x".repeat(64 * 1024 + 1),
+        stderr: "",
+      }),
+      sandbox: entry(["teams"], [], {
+        teams: [
+          {
+            channelId: "teams",
+            inputId: "appId",
+            kind: "config",
+            required: true,
+            sourceEnv: "MSTEAMS_APP_ID",
+            statePath: "teamsConfig.appId",
+            value: "2542103c-7a1e-408a-b2f3-667e09e86783",
+          },
+        ],
+      }),
+      appliedPresets: ["teams"],
+    });
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "teams",
+    });
+
+    const signals = result && "signals" in result ? result.signals : [];
+    expect(signals.filter((signal) => signal.label === "Rendered config source")).toEqual([
+      expect.objectContaining({
+        severity: "warn",
+        detail:
+          "rendered config source too large: /sandbox/.openclaw/openclaw.json; config comparisons not checked",
+      }),
+    ]);
+    expect(
+      signals.find((signal) => signal.label === "Microsoft Teams Client ID (MSTEAMS_APP_ID)"),
+    ).toMatchObject({
+      severity: "info",
+      detail: "2542103c-7a1e-408a-b2f3-667e09e86783 (not checked)",
     });
   });
 

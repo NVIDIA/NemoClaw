@@ -48,6 +48,11 @@ export function listConfigValues(value: MessagingSerializableValue): string[] {
 
 export function booleanConfigValue(value: MessagingSerializableValue): boolean | null {
   if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return null;
+  }
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
   if (normalized === "1" || normalized === "true") return true;

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { entry, makeDeps, showSandboxChannelStatus } from "./channel-status.test-helpers";
 
 describe("showSandboxChannelStatus summary", () => {
@@ -70,6 +70,36 @@ describe("showSandboxChannelStatus summary", () => {
     const dump = out_lines.join("\n");
     expect(dump).toMatch(/Configured channels: none/);
     expect(dump).toMatch(/channels add <channel>/);
+  });
+
+  it("rejects an explicit unknown channel without falling back to summary probing", async () => {
+    const commands: string[] = [];
+    const { deps, out_lines } = makeDeps({
+      exec: (_sandbox, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      sandbox: entry(["telegram", "whatsapp"]),
+      appliedPresets: ["telegram", "whatsapp"],
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    let threw: Error | undefined;
+    try {
+      await showSandboxChannelStatus("alpha", { deps, channel: "bogus" });
+    } catch (error) {
+      threw = error as Error;
+    } finally {
+      exitSpy.mockRestore();
+    }
+
+    expect(threw?.message).toBe("process.exit(1)");
+    expect(commands).toEqual([]);
+    const dump = out_lines.join("\n");
+    expect(dump).toMatch(/Unknown channel 'bogus'/);
+    expect(dump).not.toMatch(/NemoClaw channels status:/);
   });
 
   it("emits a basic per-channel report for non-whatsapp channels", async () => {

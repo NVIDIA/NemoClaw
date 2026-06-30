@@ -76,7 +76,10 @@ describe("showSandboxChannelStatus channel config parsers", () => {
       signals.find(
         (signal) => signal.label === "Discord User ID (optional guild allowlist) (DISCORD_USER_ID)",
       ),
-    ).toBeUndefined();
+    ).toMatchObject({
+      severity: "info",
+      detail: "not set",
+    });
     const dump = out_lines.join("\n");
     expect(dump).toMatch(
       /Discord Server ID \(for guild workspace access\) \(DISCORD_SERVER_ID\):\s+1504155275899437177/,
@@ -217,7 +220,10 @@ describe("showSandboxChannelStatus channel config parsers", () => {
         (signal) =>
           signal.label === "Slack Channel IDs (comma-separated allowlist) (SLACK_ALLOWED_CHANNELS)",
       ),
-    ).toBeUndefined();
+    ).toMatchObject({
+      severity: "info",
+      detail: "not set",
+    });
   });
 
   it("compares OpenClaw WeChat account render values", async () => {
@@ -371,7 +377,7 @@ describe("showSandboxChannelStatus channel config parsers", () => {
       channel: "wechat",
     });
 
-    expect(commands).toEqual(["cat '/sandbox/.openclaw/openclaw.json'"]);
+    expect(commands).toEqual(["head -c 65537 '/sandbox/.openclaw/openclaw.json'"]);
   });
 
   it("compares Hermes WeChat values through rendered WEIXIN env keys", async () => {

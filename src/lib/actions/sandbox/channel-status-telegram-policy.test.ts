@@ -43,7 +43,7 @@ describe("showSandboxChannelStatus Telegram group policy", () => {
       ),
     ).toBeUndefined();
     const dump = out_lines.join("\n");
-    expect(dump).not.toMatch(/Telegram User ID \(for DM access\)/);
+    expect(dump).toMatch(/Telegram User ID \(for DM access\) \(TELEGRAM_ALLOWED_IDS\):\s+not set/);
     expect(dump).toMatch(/Telegram group policy \(TELEGRAM_GROUP_POLICY\):\s+open \(default\)/);
   });
 

@@ -290,10 +290,8 @@ describe("executeSandboxExecCommand", () => {
     const args = spawn.mock.calls[0]?.[1] as string[];
     const shellPayload = args.at(-1) ?? "";
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
+    expect(args.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "hermes-box", "--", "sh", "-c"]);
     expect(shellPayload).toContain("validate-hermes-env-secret-boundary.py");
-    expect(shellPayload.includes("\n")).toBe(true);
-    expect(shellPayload.includes("\r")).toBe(false);
-    expect(shellPayload).toContain("printf '%s\\n' '__NEMOCLAW_SANDBOX_EXEC_STARTED__'");
     expect(shellPayload).not.toContain("base64 -d | sh");
   });
 

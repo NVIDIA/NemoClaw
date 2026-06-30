@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { Buffer } from "node:buffer";
 import YAML from "yaml";
 import type { AgentDefinition } from "../../agent/defs";
 import { CLI_NAME } from "../../cli/branding";
@@ -26,6 +27,7 @@ import * as registry from "../../state/registry";
 import { configInputDetail, configValuesEqual } from "./channel-status-config-values";
 
 const CONFIG_STATUS_TIMEOUT_MS = 5_000;
+const CONFIG_STATUS_MAX_SOURCE_BYTES = 64 * 1024;
 const channelManifestRegistry = createBuiltInChannelManifestRegistry();
 
 type ExecRunner = (
@@ -109,12 +111,11 @@ function configInputSignal(
   );
   const checkedComparisons = comparisons.filter((comparison) => comparison.checked);
   const hasMismatch = checkedComparisons.some((comparison) => !comparison.matches);
-  if (!expected.hasValue && !hasMismatch) return null;
   const allSourcesChecked =
     checkedComparisons.length === comparisons.length && checkedComparisons.length > 0;
   return {
     label,
-    severity: hasMismatch ? "warn" : allSourcesChecked ? "ok" : "info",
+    severity: hasMismatch ? "warn" : expected.hasValue && allSourcesChecked ? "ok" : "info",
     detail: Array.from(new Set(comparisons.map((comparison) => comparison.detail))).join("; "),
   };
 }
@@ -280,16 +281,22 @@ function readConfigSourceValues(
 ): ConfigSourceReads {
   const targetReads = new Map<string, ConfigTargetRead>();
   for (const target of new Set(sources.map((source) => source.resolvedTarget))) {
+    // Targets are resolved only from built-in channel manifests via resolveConfigTarget.
+    // Keep this command path closed to user-provided targets before broadening shellQuote use.
     const result = deps.execSandbox(
       sandboxName,
-      `cat ${shellQuote(target)}`,
+      `head -c ${CONFIG_STATUS_MAX_SOURCE_BYTES + 1} ${shellQuote(target)}`,
       CONFIG_STATUS_TIMEOUT_MS,
     );
     targetReads.set(
       target,
-      result && result.status === 0
+      result &&
+        result.status === 0 &&
+        Buffer.byteLength(result.stdout, "utf8") <= CONFIG_STATUS_MAX_SOURCE_BYTES
         ? { ok: true, contents: result.stdout }
-        : { ok: false, error: `could not read ${target}` },
+        : result && result.status === 0
+          ? { ok: false, error: `rendered config source too large: ${target}` }
+          : { ok: false, error: `could not read ${target}` },
     );
   }
 
