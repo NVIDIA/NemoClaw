@@ -23,7 +23,7 @@ NemoClaw v0.0.70 hardens OpenShell gateway auth and Hermes recovery behavior:
 - OpenShell `0.0.71` Docker-driver gateway setup now generates and validates the local mTLS/JWT auth bundle more defensively, keeps the older-glibc compatibility container behind an explicit opt-in, and limits the live gateway auth contract job to explicit workflow dispatches pinned to OpenShell `0.0.71`.
   For more information, refer to [OpenShell 0.0.71 Gateway Auth Review](../security/openshell-0.0.71-gateway-auth-review) and [Security Best Practices](../security/best-practices).
 - Hermes recovery now fails closed when an older sandbox image is missing the secret-boundary validator needed to re-check `/sandbox/.hermes/.env`.
-  The command refuses recovery, stops Hermes gateway/dashboard processes, prints a re-image instruction, and requires rebuilding the sandbox with a current Hermes image before retrying recovery.
+  The command refuses recovery, leaves an otherwise healthy gateway untouched, prints a re-image instruction, and requires rebuilding the sandbox with a current Hermes image before retrying recovery.
   For more information, refer to [Troubleshooting](../reference/troubleshooting) and [NemoClaw CLI Commands Reference](../reference/commands).
 
 ## v0.0.69

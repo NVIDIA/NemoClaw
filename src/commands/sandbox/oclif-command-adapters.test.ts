@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
     listSandboxChannels: vi.fn(),
     listSandboxPolicies: vi.fn(),
     rebuildSandbox: vi.fn().mockResolvedValue(undefined),
+    restartSandboxGateway: vi.fn().mockReturnValue({ ok: true }),
     runSandboxDoctor: vi.fn().mockResolvedValue(undefined),
     shieldsDown: vi.fn(),
     shieldsStatus: vi.fn(),
@@ -46,6 +47,10 @@ vi.mock("../../lib/actions/sandbox/destroy", () => ({
 
 vi.mock("../../lib/actions/sandbox/rebuild", () => ({
   rebuildSandbox: mocks.rebuildSandbox,
+}));
+
+vi.mock("../../lib/actions/sandbox/process-recovery", () => ({
+  restartSandboxGateway: mocks.restartSandboxGateway,
 }));
 
 vi.mock("../../lib/actions/sandbox/status", () => ({
@@ -82,21 +87,23 @@ vi.mock("../../lib/shields", () => ({
   shieldsUp: mocks.shieldsUp,
 }));
 
-import ConnectCliCommand from "./connect";
+import SandboxChannelsListCommand from "./channels/list";
 import SandboxConfigGetCommand from "./config/get";
+import ConnectCliCommand from "./connect";
 import DestroyCliCommand from "./destroy";
 import SandboxDoctorCliCommand from "./doctor";
-import SandboxChannelsListCommand from "./channels/list";
+import GatewayRestartCliCommand from "./gateway/restart";
 import HostsAddCommand from "./hosts/add";
 import HostsListCommand from "./hosts/list";
 import HostsRemoveCommand from "./hosts/remove";
 import SandboxLogsCommand from "./logs";
 import SandboxPolicyListCommand from "./policy/list";
 import RebuildCliCommand from "./rebuild";
-import SandboxStatusCommand from "./status";
+import RecoverCliCommand from "./recover";
 import ShieldsDownCommand from "./shields/down";
 import ShieldsStatusCommand from "./shields/status";
 import ShieldsUpCommand from "./shields/up";
+import SandboxStatusCommand from "./status";
 
 const rootDir = process.cwd();
 
@@ -112,6 +119,7 @@ describe("sandbox oclif command adapters", () => {
       await ConnectCliCommand.run(["alpha", "--probe-only"], rootDir);
       await DestroyCliCommand.run(["alpha", "--yes"], rootDir);
       await RebuildCliCommand.run(["alpha", "--force", "--verbose"], rootDir);
+      await GatewayRestartCliCommand.run(["alpha", "--quiet"], rootDir);
 
       expect(mocks.connectSandbox).toHaveBeenCalledWith("alpha", { probeOnly: true });
       expect(mocks.destroySandbox).toHaveBeenCalledWith("alpha", { force: false, yes: true });
@@ -120,6 +128,7 @@ describe("sandbox oclif command adapters", () => {
         verbose: true,
         yes: false,
       });
+      expect(mocks.restartSandboxGateway).toHaveBeenCalledWith("alpha", { quiet: true });
     } finally {
       if (originalCleanupGatewayEnv === undefined) {
         delete process.env.NEMOCLAW_CLEANUP_GATEWAY;
@@ -187,12 +196,19 @@ describe("sandbox oclif command adapters", () => {
     expect(usage(SandboxLogsCommand)).toContain("[--tail <lines>|-n <lines>]");
     expect(DestroyCliCommand.id).toBe("sandbox:destroy");
     expect(usage(DestroyCliCommand)).toContain("[--yes|-y|--force]");
+    expect(RecoverCliCommand.id).toBe("sandbox:recover");
+    expect(RecoverCliCommand.summary).toMatch(/Repair a stopped sandbox gateway/);
+    expect(RecoverCliCommand.description).toContain("A healthy gateway is not restarted");
+    expect(RecoverCliCommand.description).toContain("gateway restart");
+    expect(RecoverCliCommand.summary).not.toMatch(/^Restart\b/);
     expect(RebuildCliCommand.id).toBe("sandbox:rebuild");
     expect(usage(RebuildCliCommand)).toContain("[--yes|-y|--force]");
     expect(SandboxPolicyListCommand.id).toBe("sandbox:policy:list");
     expect(SandboxChannelsListCommand.id).toBe("sandbox:channels:list");
     expect(SandboxConfigGetCommand.id).toBe("sandbox:config:get");
     expect(usage(SandboxConfigGetCommand)).toContain("[--format json|yaml]");
+    expect(GatewayRestartCliCommand.id).toBe("sandbox:gateway:restart");
+    expect(usage(GatewayRestartCliCommand)).toContain("<name> [--quiet|-q]");
     expect(HostsAddCommand.id).toBe("sandbox:hosts:add");
     expect(usage(HostsAddCommand)).toContain("<name> <hostname> <ip> [--dry-run]");
     expect(HostsListCommand.id).toBe("sandbox:hosts:list");

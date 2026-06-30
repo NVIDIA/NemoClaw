@@ -33,7 +33,6 @@ const SANDBOX_NAME =
     .filter(Boolean)
     .join("-");
 const TEST_TIMEOUT_MS = Number(process.env.NEMOCLAW_E2E_TIMEOUT_SECONDS ?? 1_200) * 1_000;
-const CONNECT_PROBE_TIMEOUT_MS = 30_000;
 const STATUS_TIMEOUT_MS = 60_000;
 const ONBOARD_TIMEOUT_MS = TEST_TIMEOUT_MS;
 const REBUILD_TIMEOUT_MS = TEST_TIMEOUT_MS;
@@ -181,28 +180,14 @@ test.skipIf(!shouldRunLiveE2E())(
       agentVersion: readRegistrySandboxEntry(SANDBOX_NAME).agentVersion,
     });
 
-    const connect = await host.command(
-      "bash",
-      [
-        "-lc",
-        'timeout 10 "$1" "$2" connect <<<"exit"',
-        "connect-stale",
-        host.commandPath,
-        SANDBOX_NAME,
-      ],
-      {
-        artifactName: "phase-4-connect-stale-warning",
-        env: sandboxRebuildEnv(apiKey),
-        redactionValues: [apiKey],
-        timeoutMs: CONNECT_PROBE_TIMEOUT_MS,
-      },
-    );
-    if (!/rebuild/i.test(resultText(connect))) {
-      await artifacts.writeText(
-        "phase-4-connect-stale-warning-note.txt",
-        "No rebuild warning was observed; former bash treated this as acceptable when the sandbox is not live.\n",
-      );
-    }
+    const staleStatus = await host.nemoclaw([SANDBOX_NAME, "status"], {
+      artifactName: "phase-4-status-stale-warning",
+      env: sandboxRebuildEnv(apiKey),
+      redactionValues: [apiKey],
+      timeoutMs: STATUS_TIMEOUT_MS,
+    });
+    expect(staleStatus.exitCode, resultText(staleStatus)).toBe(0);
+    expect(resultText(staleStatus)).toMatch(/rebuild/i);
 
     await lifecycle.rebuildSandbox(instance, {
       artifactName: "phase-5-nemoclaw-rebuild",
