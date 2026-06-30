@@ -25,6 +25,26 @@
  * here; that branch is covered by the unit tests in
  * `src/lib/share-command.test.ts` and `test/share-command-remote-path.test.ts`.
  * This matrix locks the nonexistent-sandbox share/upload surfaces instead.
+ *
+ * Issue instances 3 (onboard dashboard-port exhaustion) and 5 (Model Router
+ * Python preflight) are likewise out of this hermetic spawn matrix: reaching
+ * them through the real `onboard` flow requires standing in for a chain of host
+ * gates (`openshell --version` >= 0.0.44, the request-body-credential-rewrite
+ * capability probe, and more) that a bash shim cannot emulate reliably. Both
+ * already exit non-zero today and — unlike the surfaces this PR fixes — neither
+ * ever rode the `oclif.exit === 0` catch-all this PR hardens, so the runner
+ * change neither breaks nor is required by them:
+ *   - Instance 3 exits via an explicit `exitFn(1)` (i.e. `process.exit(1)`),
+ *     locked by `src/lib/onboard/dashboard-port.test.ts`, which asserts exit
+ *     code 1 plus the canonical "All dashboard ports in range 18789-18799 are
+ *     occupied" message.
+ *   - Instance 5 throws a plain Error that propagates through `onboard`'s
+ *     try/finally with no swallowing catch, locked by
+ *     `src/lib/onboard/model-router-python.test.ts` (the "above supported
+ *     ceiling" reason and the thrown "No usable host Python interpreter found"
+ *     message).
+ * The thrown-error → non-zero process exit composition that ties instance 5 to
+ * a failing `$?` is in turn locked by `src/lib/cli/oclif-runner.test.ts`.
  */
 
 import { spawnSync } from "node:child_process";
