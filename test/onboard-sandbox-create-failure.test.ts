@@ -7,7 +7,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { collectSandboxCreateFailureDiagnostics } from "../dist/lib/onboard/sandbox-create-failure.js";
+import { collectSandboxCreateFailureDiagnostics } from "../src/lib/onboard/sandbox-create-failure.js";
 
 describe("sandbox create failure diagnostics", () => {
   it("preserves gateway failure lines and VM console output before cleanup", () => {

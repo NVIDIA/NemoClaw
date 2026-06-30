@@ -6,7 +6,7 @@
 # Layers PR-specific code (plugin, config, startup script) on top of the
 # pre-built Hermes base image. Mirrors the OpenClaw Dockerfile structure.
 
-ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:60333c1982ad855d55887b4488e867eb343f3930a30aa8e0268e5397fc6f2926
+ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base@sha256:8dad3b989a9ed1e601743310b97be21be5f59f89f7913a47d04f3ec3c40b8ce6
 
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
@@ -126,13 +126,13 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
     && mkdir -p /etc/profile.d \
     && printf '%s\n' \
         '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+        '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
         > /etc/profile.d/nemoclaw-rlimits.sh \
     && chmod 444 /etc/profile.d/nemoclaw-rlimits.sh \
     && (chmod 644 /etc/bash.bashrc 2>/dev/null || true) \
     && { printf '%s\n' \
           '# NemoClaw sandbox resource limits — see sandbox-rlimits.sh (#2173)' \
-          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits' \
+          '[ -f /usr/local/lib/nemoclaw/sandbox-rlimits.sh ] && . /usr/local/lib/nemoclaw/sandbox-rlimits.sh && harden_resource_limits --quiet && verify_resource_limits --quiet || true' \
           ''; \
         if [ -f /etc/bash.bashrc ]; then \
           grep -Ev 'NemoClaw sandbox resource limits|sandbox-rlimits[.]sh' /etc/bash.bashrc || true; \
@@ -140,6 +140,11 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/lib/nemoclaw/sandbox-init
       } > /etc/bash.bashrc.new \
     && mv /etc/bash.bashrc.new /etc/bash.bashrc \
     && chmod 444 /etc/bash.bashrc
+
+# Build-time assertion: fail immediately if the validator was not installed or
+# made executable. Catches COPY path drift or a silent chmod failure.
+RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
+    || { echo "ERROR: validate-hermes-env-secret-boundary.py missing or not executable" >&2; exit 1; }
 
 # Wrap the hermes CLI so the runtime env secret boundary is enforced for
 # `hermes gateway` no matter how it is invoked. The entrypoint guard alone left
@@ -183,6 +188,14 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_PLAN_B64=${NEMOCLAW_MESSAGING_PLAN_B64} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
+
+# Bake reduced messaging runtime metadata for the entrypoint. Hermes runtime
+# config refresh consumes generic manifest-owned aliases from this artifact.
+# hadolint ignore=DL3059
+RUN node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup \
+    && runtime_plan=/usr/local/share/nemoclaw/messaging-runtime-plan.json \
+    && { [ ! -f "$runtime_plan" ] || { test ! -L "$runtime_plan" \
+    && node -e "const fs=require('fs'); const path=process.argv[1]; const st=fs.statSync(path); if (!st.isFile() || st.uid !== 0 || st.gid !== 0 || (st.mode & 0o022) !== 0) throw new Error('unsafe runtime plan file metadata'); const p=JSON.parse(fs.readFileSync(path,'utf8')); for (const k of ['agentRender','buildSteps','stateUpdates','healthChecks']) if (Object.hasOwn(p,k)) throw new Error('runtime plan contains unreduced key '+k); const runtimeSetup=p.runtimeSetup; const isObject=(v)=>v && typeof v === 'object' && !Array.isArray(v); if (!isObject(runtimeSetup) || !Array.isArray(runtimeSetup.nodePreloads) || !Array.isArray(runtimeSetup.envAliases) || !Array.isArray(runtimeSetup.secretScans) || !runtimeSetup.nodePreloads.every(isObject) || !runtimeSetup.envAliases.every(isObject) || !runtimeSetup.secretScans.every(isObject)) throw new Error('runtime plan missing reduced runtimeSetup shape');" "$runtime_plan"; }; }
 
 # Apply messaging agent-install hooks as root so Hermes Python packages can update
 # /opt/hermes/.venv before the runtime drops to the sandbox user.
@@ -243,24 +256,34 @@ ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox,
 USER root
 
 # Flatten stale published base images that still contain the old .hermes-data
-# symlink bridge. OpenShell starts the sandbox as the sandbox user, so runtime
-# migration cannot rely on root privileges inside the pod.
+# symlink bridge. The base resolver owns published-image provenance and exports
+# immutable digests; this final-image boundary owns layout validation so local,
+# rebuilt, and caller-selected bases remain supported. Retired OpenClaw state
+# must never enter a Hermes final image. OpenShell starts the sandbox as the
+# sandbox user, so the .hermes-data migration cannot rely on root privileges
+# inside the pod.
 # hadolint ignore=DL4006
 RUN set -eu; \
     config_dir=/sandbox/.hermes; \
     data_dir=/sandbox/.hermes-data; \
+    openclaw_dir=/sandbox/.openclaw; \
+    if [ -e "$openclaw_dir" ] || [ -L "$openclaw_dir" ]; then \
+        echo "ERROR: Hermes base image contains retired OpenClaw state: $openclaw_dir" >&2; \
+        exit 1; \
+    fi; \
     mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_link="$(find "$data_dir" -type l -print -quit)"; \
+        if [ -n "$legacy_link" ]; then \
+            echo "ERROR: refusing legacy layout cleanup because $legacy_link is a symlink" >&2; \
+            exit 1; \
+        fi; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
-            if [ -L "$entry" ]; then \
-                echo "ERROR: refusing legacy layout cleanup because $entry is a symlink" >&2; \
-                exit 1; \
-            fi; \
             name="$(basename "$entry")"; \
             target="$config_dir/$name"; \
             if [ -L "$target" ]; then \

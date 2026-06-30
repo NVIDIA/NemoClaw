@@ -11,6 +11,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   hermesAuthMethod: THermesAuthMethod | null;
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
+  compatibleEndpointReasoning?: string | null;
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
@@ -115,6 +116,8 @@ type RemoteModelValidatorDeps = {
   shouldRequireResponsesToolCalling: (provider: string) => boolean;
   shouldSkipResponsesProbe: (provider: string) => boolean;
   getProbeAuthMode: (provider: string) => ProbeAuthMode;
+  configureCompatibleEndpointReasoning?: () => Promise<"true" | "false">;
+  log?: (message: string) => void;
 };
 
 type ValidateSelectedRemoteModelArgs = {
@@ -150,6 +153,16 @@ export function createRemoteModelValidator(deps: RemoteModelValidatorDeps): {
         `Missing model for ${remoteConfig.label}`,
       );
       if (selected.key === "custom") {
+        // Reasoning mode is OpenAI-compatible only; Anthropic/native providers use other formats.
+        const reasoning = await deps.configureCompatibleEndpointReasoning?.();
+        if (reasoning) {
+          state.compatibleEndpointReasoning = reasoning;
+        }
+        if (reasoning === "true") {
+          (deps.log ?? console.log)(
+            "  ⚠ Reasoning mode validates Chat Completions only; tools and streaming are unverified.",
+          );
+        }
         const validation = await deps.validateCustomOpenAiLikeSelection(
           remoteConfig.label,
           state.endpointUrl || deps.OPENAI_ENDPOINT_URL,

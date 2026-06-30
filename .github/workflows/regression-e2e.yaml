@@ -5,10 +5,10 @@ name: E2E / Regression Runner
 
 # Regression E2E holding pen.
 #
-# Jobs here are intentionally NOT part of scheduled nightly-e2e. They are
+# Jobs here are intentionally NOT part of the scheduled E2E workflow. They are
 # failing-test-first coverage guards or high-signal regressions that should be
 # easy to dispatch while the owning fix is in flight. Periodically review this
-# workflow and promote stable/high-value jobs into nightly-e2e.
+# workflow and promote stable/high-value jobs into .github/workflows/e2e.yaml.
 
 on:
   workflow_dispatch:
@@ -162,7 +162,8 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-gateway-health-honest.sh
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: npx vitest run --project e2e-live test/e2e/live/gateway-health-honest.test.ts --silent=false --reporter=default
 
       - name: Upload gateway health-honesty logs on failure
         if: failure()
@@ -191,7 +192,9 @@ jobs:
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       - name: Run OpenShell version-pin E2E test
-        run: bash test/e2e/test-openshell-version-pin.sh
+        env:
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: npx vitest run --project e2e-live test/e2e/live/openshell-version-pin.test.ts --silent=false --reporter=default
 
       - name: Upload OpenShell version-pin logs on failure
         if: failure()
@@ -229,7 +232,7 @@ jobs:
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-gateway-drift-preflight.sh
+        run: npx vitest run --project cli test/gateway-drift-preflight.test.ts --silent=false --reporter=default
 
   # ── Model Router provider-routed inference E2E ─────────────────
   # Coverage guard for #3255. Model Router onboard must generate a routed
@@ -248,10 +251,11 @@ jobs:
 
       - name: Run Model Router provider-routed inference E2E test
         env:
-          NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-model-router-provider-routed-inference.sh
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: npx vitest run --project e2e-live test/e2e/live/model-router-provider-routed-inference.test.ts --silent=false --reporter=default
 
       - name: Upload Model Router provider-routed inference logs on failure
         if: failure()
@@ -298,12 +302,12 @@ jobs:
 
       - name: Run OpenClaw plugin runtime-deps EXDEV Vitest test
         env:
-          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openclaw-plugin-runtime-exdev
-          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-plugin-runtime-exdev
+          NEMOCLAW_RUN_LIVE_E2E: "1"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-scenarios-live \
-            test/e2e-scenario/live/openclaw-plugin-runtime-exdev.test.ts \
+          npx vitest run --project e2e-live \
+            test/e2e/live/openclaw-plugin-runtime-exdev.test.ts \
             --silent=false --reporter=default
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV artifacts
@@ -311,7 +315,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-plugin-runtime-exdev-artifacts
-          path: e2e-artifacts/vitest/openclaw-plugin-runtime-exdev/
+          path: e2e-artifacts/live/openclaw-plugin-runtime-exdev/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -346,8 +350,8 @@ jobs:
 
       - name: Run WhatsApp compact-QR reporter-workflow Vitest test
         env:
-          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+          NEMOCLAW_RUN_LIVE_E2E: "1"
         run: |
-          npx vitest run --project e2e-scenarios-live \
-            test/e2e-scenario/live/whatsapp-qr-compact.test.ts \
+          npx vitest run --project e2e-live \
+            test/e2e/live/whatsapp-qr-compact.test.ts \
             --silent=false --reporter=default

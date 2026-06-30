@@ -11,7 +11,7 @@ content:
 ---
 import { AgentOnly } from "../_components/AgentGuide";
 
-You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
+Run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
 <AgentOnly variant="openclaw">
 Complete these steps before following the [Quickstart](../quickstart).
 </AgentOnly>
@@ -40,7 +40,7 @@ Verify the following before you begin:
 
 </AgentOnly>
 
-## Option: Use the Bootstrap Script
+## Use the Bootstrap Script
 
 Open Windows PowerShell on the Windows host and run the bootstrap script:
 
@@ -70,9 +70,13 @@ When Windows preparation is complete, it opens Ubuntu and prints the standard in
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-If the bootstrap script reports that Ubuntu cannot reach Docker, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for Ubuntu (**Settings** > **Resources** > **WSL integration**), make sure Docker Desktop is running, then rerun the script.
+If the bootstrap script reports that Ubuntu cannot reach Docker, open Docker Desktop Settings and confirm that Docker Desktop enables WSL integration for Ubuntu (**Settings** > **Resources** > **WSL integration**).
+Make sure Docker Desktop is running, then rerun the script.
 
-If the bootstrap script reports that `winget.exe` is not available (common on Windows Server or stripped Windows installs), install **App Installer** from the Microsoft Store (which provides `winget`), or download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
+If the bootstrap script reports that `winget.exe` is not available, install **App Installer** from the Microsoft Store.
+This is common on Windows Server or stripped Windows installs.
+**App Installer** provides `winget`.
+You can also download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
 After you install Docker Desktop, rerun the bootstrap script.
 The script skips the install step after it detects Docker Desktop.
 
@@ -80,25 +84,27 @@ The manual steps below describe the same Windows preparation pieces and are usef
 
 ## Enable WSL 2
 
-Open an elevated PowerShell (Run as Administrator):
+Open an elevated PowerShell as Administrator.
 
 ```powershell
 wsl --install --no-distribution
 ```
 
 This enables both the Windows Subsystem for Linux and Virtual Machine Platform features.
+If the command returns `Forbidden (403)` or the online WSL installer is blocked, use the [Windows Subsystem for Linux troubleshooting section](../../reference/troubleshooting#windows-subsystem-for-linux) for manual WSL installation links.
 
 Reboot if prompted.
 
 ## Install and Register Ubuntu
 
-After reboot, open an elevated PowerShell again:
+After reboot, open an elevated PowerShell again.
 
 ```powershell
 wsl --install -d Ubuntu-24.04
 ```
 
-Let the distribution launch and complete first-run setup (pick a Unix username and password), then type `exit` to return to PowerShell.
+Let the distribution launch and complete first-run setup.
+Pick a Unix username and password, then type `exit` to return to PowerShell.
 
 <Warning>
 Do not use the `--no-launch` flag.
@@ -143,7 +149,7 @@ If you see "Cannot connect to the Docker daemon", confirm that Docker Desktop is
 ## Set Up Local Inference with Ollama (Optional)
 
 If you plan to select Ollama as your inference provider during onboarding, use one Ollama instance that WSL can reach.
-You can install Ollama inside WSL yourself:
+Run this command to install Ollama inside WSL.
 
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
@@ -164,10 +170,14 @@ Use one instance, or move one of them to a different port before running `$$nemo
 Your Windows environment is ready.
 If you used the bootstrap script, follow the installer command it printed inside Ubuntu.
 <AgentOnly variant="openclaw">
-If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the [Quickstart](../quickstart) to install NemoClaw and launch your first sandbox.
+If you prepared Windows manually, open a WSL terminal.
+Type `wsl` in PowerShell, or open Ubuntu from Windows Terminal.
+Then continue with the [Quickstart](../quickstart) to install NemoClaw and launch your first sandbox.
 </AgentOnly>
 <AgentOnly variant="hermes">
-If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with [Quickstart with Hermes](../quickstart) to install NemoClaw and launch your first Hermes sandbox.
+If you prepared Windows manually, open a WSL terminal.
+Type `wsl` in PowerShell, or open Ubuntu from Windows Terminal.
+Then continue with [Quickstart with Hermes](../quickstart) to install NemoClaw and launch your first Hermes sandbox.
 </AgentOnly>
 
 All NemoClaw commands run inside WSL, not in PowerShell.

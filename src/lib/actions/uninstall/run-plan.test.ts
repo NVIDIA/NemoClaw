@@ -848,7 +848,7 @@ describe("uninstall run plan", () => {
     expect(logs).not.toContain("Swap file removed");
   });
 
-  it("#3456 sub-bug #4: gateway destroy no-op uses the 'already removed' wording, not 'Destroyed ... skipped'", () => {
+  it("uses the 'already removed' wording instead of 'Destroyed ... skipped' for gateway destroy no-ops, sub-bug 4 (#3456)", () => {
     // When `openshell gateway destroy -g nemoclaw` returns non-zero (gateway
     // already gone), the previous code printed `Destroyed gateway 'nemoclaw'
     // skipped` — self-contradictory. The fix routes this branch to an onSkip

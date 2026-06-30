@@ -58,9 +58,17 @@ describe("Regression E2E workflow contract", () => {
     const job = workflow.jobs?.["whatsapp-qr-compact-e2e"];
     const runText = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
 
-    expect(runText).toContain("test/e2e-scenario/live/whatsapp-qr-compact.test.ts");
-    expect(runText).toContain("npx vitest run --project e2e-scenarios-live");
-    expect(runText).not.toContain("test/e2e/test-whatsapp-qr-compact-e2e.sh");
+    expect(runText).toContain("test/e2e/live/whatsapp-qr-compact.test.ts");
+    expect(runText).toContain("npx vitest run --project e2e-live");
+  });
+
+  it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {
+    const job = workflow.jobs?.["model-router-provider-routed-inference-e2e"];
+    const runStep = job?.steps?.find(
+      (step) => step.name === "Run Model Router provider-routed inference E2E test",
+    );
+    expect(runStep?.env?.NVIDIA_API_KEY).toBe("${{ secrets.NVIDIA_API_KEY }}");
+    expect(runStep?.env?.NVIDIA_INFERENCE_API_KEY).toBeUndefined();
   });
 
   it("runs OpenClaw plugin runtime-deps EXDEV through a secret-free Vitest lane", () => {
@@ -79,7 +87,7 @@ describe("Regression E2E workflow contract", () => {
     expect(checkoutStep?.uses).toMatch(FULL_SHA_ACTION);
     expect(checkoutStep?.with?.["persist-credentials"]).toBe(false);
     expect(setupNodeStep?.uses).toMatch(FULL_SHA_ACTION);
-    expect(runVitestStep?.env?.NEMOCLAW_RUN_E2E_SCENARIOS).toBe("1");
+    expect(runVitestStep?.env?.NEMOCLAW_RUN_LIVE_E2E).toBe("1");
     for (const step of steps) {
       expect(
         step.env?.NVIDIA_INFERENCE_API_KEY,
@@ -87,10 +95,9 @@ describe("Regression E2E workflow contract", () => {
       ).toBeUndefined();
     }
 
-    expect(runText).toContain("test/e2e-scenario/live/openclaw-plugin-runtime-exdev.test.ts");
-    expect(runText).toContain("npx vitest run --project e2e-scenarios-live");
+    expect(runText).toContain("test/e2e/live/openclaw-plugin-runtime-exdev.test.ts");
+    expect(runText).toContain("npx vitest run --project e2e-live");
     expect(runText).toContain("npm ci --ignore-scripts");
     expect(runText).toContain("npm run build:cli");
-    expect(runText).not.toContain("test/e2e/test-openclaw-plugin-runtime-exdev.sh");
   });
 });

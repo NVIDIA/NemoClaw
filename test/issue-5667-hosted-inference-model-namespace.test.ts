@@ -18,11 +18,11 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
-const providers = require("../dist/lib/onboard/providers.js") as {
+const providers = require("../src/lib/onboard/providers.js") as {
   HOSTED_INFERENCE_MODEL: string;
   stageHostedInferenceSourceSecretEnv: () => boolean;
 };
-const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.js") as {
+const { patchStagedDockerfile } = require("../src/lib/onboard/dockerfile-patch.js") as {
   patchStagedDockerfile: (
     dockerfilePath: string,
     model: string,
@@ -31,7 +31,7 @@ const { patchStagedDockerfile } = require("../dist/lib/onboard/dockerfile-patch.
   ) => void;
 };
 const { collectSandboxStatusSnapshot } =
-  require("../dist/lib/actions/sandbox/status-snapshot.js") as {
+  require("../src/lib/actions/sandbox/status-snapshot.js") as {
     collectSandboxStatusSnapshot: (
       sandboxName: string,
       opts: {
@@ -121,7 +121,7 @@ function writeFakeDeepAgentsCodeModule(tmpDir: string): string {
   return pythonPath;
 }
 
-describe("issue #5667: hosted inference default model namespace", () => {
+describe("hosted inference default model namespace (#5667)", () => {
   // Snapshot the whole environment and restore it wholesale so the teardown
   // stays linear (no per-key conditional): clear every key, then repopulate
   // from the snapshot. Keys added during a test are dropped; original values
@@ -182,8 +182,8 @@ describe("issue #5667: hosted inference default model namespace", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const home = path.join(tmpDir, "home");
     const scriptPath = path.join(tmpDir, "setup-nim.cjs");
-    const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.mkdirSync(home, { recursive: true });

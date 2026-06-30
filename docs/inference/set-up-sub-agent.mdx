@@ -14,7 +14,7 @@ skill:
 OpenClaw documents the sub-agent behavior, `sessions_spawn` tool, `agents.list` configuration, tool policy, nesting, and auth model in [Sub-Agents](https://docs.openclaw.ai/tools/subagents).
 Use that page as the source of truth for how OpenClaw sub-agents work.
 
-This NemoClaw page covers the sandbox-specific pieces: where the OpenClaw config lives, where to put per-agent credentials, which writable workspace path agents should use, and how the Omni VLM demo maps onto those paths.
+This page covers the sandbox-specific pieces: where the OpenClaw config lives, where to put per-agent credentials, which writable workspace path agents should use, and how the Omni VLM demo maps onto those paths.
 
 ## NemoClaw Sandbox Paths
 
@@ -57,7 +57,7 @@ These commands run on the host that owns the sandbox containers and discover the
 If you have not created a sandbox yet, onboard one first, such as `my-assistant`.
 </Note>
 
-Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it back.
+Fetch the current OpenClaw config from the sandbox, patch it with your auxiliary provider and `agents.list` changes, then upload it.
 On Docker-driver sandboxes, run these commands from the host that owns the sandbox containers.
 The container name includes a runtime suffix, so discover it from the OpenShell sandbox label:
 
@@ -158,7 +158,7 @@ Check the following:
 
 1. `OPENCLAW_GATEWAY_URL` in the gateway process environment targets the sandbox interface address, not `127.0.0.1`.
 2. The active policy allows that address and port. Custom `NEMOCLAW_DASHBOARD_PORT` or proxy subnet values need a matching `openshell policy update`.
-3. Do not point the dial-back at `127.0.0.1` — the proxy denies loopback regardless of policy.
+3. Do not point the dial-back at `127.0.0.1`; the proxy denies loopback regardless of policy.
 
 ## Add Delegation Instructions
 
@@ -174,7 +174,7 @@ Adapt that file for other task-specific models.
 
 ## Demo Assets
 
-Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) repository for runnable Omni example assets:
+Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-demo) repository for runnable Omni assets:
 
 - `vlm-subagent-guide.md` for a command-by-command walkthrough.
 - `vlm-subagent/openclaw-patch.py` for patching `openclaw.json`.
@@ -183,7 +183,7 @@ Use the [`vlm-demo`](https://github.com/brevdev/nemoclaw-demos/tree/main/vlm-dem
 
 ## Next Steps
 
-Use the following resources for more information:
+Continue with these resources:
 
 - Refer to [OpenClaw Sub-Agents](https://docs.openclaw.ai/tools/subagents) for `sessions_spawn`, `agents.list`, nesting, tool policy, and auth behavior.
 - Refer to [Switch Inference Providers](switch-inference-providers) to change the primary orchestration model instead of adding a sub-agent model.

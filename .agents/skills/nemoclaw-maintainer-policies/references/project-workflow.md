@@ -68,7 +68,7 @@ Daily `v0.0.x` labels have different meanings by item kind:
 - On PRs, the label activates the PR for daily release work. Merged PRs carrying the daily label are candidates for the daily release cutoff.
 - On issues, the label is an attention, regression-tracking, or "needs PR for this daily release" signal. It does not include the issue in the release by itself.
 
-Open labeled PRs carry forward until the label is removed. Open issues may keep or lose daily labels according to maintainer judgment and the current daily slate.
+Open labeled PRs and issues that miss a tagged release are automatically moved to the next patch label during post-tag housekeeping. Remove a version label without replacement only when the item is deferred, superseded, closed, or no longer part of the daily release cycle.
 
 ## Issue Templates
 

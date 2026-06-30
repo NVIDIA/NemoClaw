@@ -6,14 +6,14 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
-import { DEFAULT_GATEWAY_PORT } from "../../../dist/lib/core/ports";
-import { buildDockerDriverGatewayLaunch } from "../../../dist/lib/onboard/docker-driver-gateway-launch";
+import { DEFAULT_GATEWAY_PORT } from "../core/ports";
+import { buildDockerDriverGatewayLaunch } from "./docker-driver-gateway-launch";
 import {
   getDockerDriverGatewayRuntimeMarkerDriftForStateDir,
   getDockerDriverGatewayRuntimeMarkerPath,
   readDockerDriverGatewayRuntimeMarker,
   writeDockerDriverGatewayRuntimeMarkerForStateDir,
-} from "../../../dist/lib/onboard/docker-driver-gateway-runtime-marker";
+} from "./docker-driver-gateway-runtime-marker";
 import {
   BASE_GATEWAY_COMPAT_CONTAINER_NAME,
   BASE_GATEWAY_NAME,
@@ -23,7 +23,7 @@ import {
   resolveGatewayPortFromName,
   resolveGatewayStateDirName,
   resolveSandboxGatewayName,
-} from "../../../dist/lib/onboard/gateway-binding";
+} from "./gateway-binding";
 
 describe("gateway-binding resolver (#4422)", () => {
   it("keeps the bare nemoclaw names for the default gateway port", () => {
@@ -240,7 +240,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
     return {
       pid,
       desiredEnv: { OPENSHELL_GATEWAY_PORT: String(port) },
-      endpoint: `http://127.0.0.1:${port}`,
+      endpoint: `https://127.0.0.1:${port}`,
       gatewayBin: "/usr/bin/openshell-gateway",
       openshellVersion: "0.0.44",
       dockerHost: null,
@@ -270,7 +270,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const firstMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(firstDir),
       );
-      expect(firstMarker?.endpoint).toBe("http://127.0.0.1:8080");
+      expect(firstMarker?.endpoint).toBe("https://127.0.0.1:8080");
       expect(firstMarker?.pid).toBe(1111);
 
       // And it still validates against what the first sandbox expects — no drift,
@@ -283,7 +283,7 @@ describe("per-port gateway runtime markers stay isolated (#4422)", () => {
       const secondMarker = readDockerDriverGatewayRuntimeMarker(
         getDockerDriverGatewayRuntimeMarkerPath(secondDir),
       );
-      expect(secondMarker?.endpoint).toBe("http://127.0.0.1:8081");
+      expect(secondMarker?.endpoint).toBe("https://127.0.0.1:8081");
       expect(secondMarker?.pid).toBe(2222);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

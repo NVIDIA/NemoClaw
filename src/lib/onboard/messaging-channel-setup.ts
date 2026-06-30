@@ -58,6 +58,27 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
   return normalizeCredentialValue(process.env[input.envKey]) || null;
 };
 
+/**
+ * Detect which built-in messaging channels currently have complete required
+ * inputs in the process environment, using the same manifest input rules as
+ * {@link setupMessagingChannels}. Pure and side-effect free: it only reads env
+ * via the manifest input resolvers so callers can compare current env inputs
+ * against a reused/stale sandbox messaging plan before treating that plan as
+ * authoritative. NEMOCLAW_POLICY_PRESETS is intentionally ignored — policy
+ * presets are not messaging channel selection.
+ */
+export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = null): string[] {
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
+  const availableChannels = manifestRegistry.listAvailable(availabilityContext);
+  return availableChannels
+    .filter((manifest) => hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue))
+    .map((manifest) => manifest.id);
+}
+
 export async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
@@ -67,9 +88,11 @@ export async function setupMessagingChannels(
 
   const invalidConfigEnvValues = detectInvalidMessagingChannelConfigEnvValues();
   for (const { key, rawValue, validValues } of invalidConfigEnvValues) {
-    console.error(
-      `  Invalid ${key} value '${rawValue}' (expected one of: ${validValues.join(", ")})`,
-    );
+    let expectedValues = "";
+    for (const value of validValues) {
+      expectedValues = expectedValues ? `${expectedValues}, ${value}` : value;
+    }
+    console.error(`  Invalid ${key} value '${rawValue}' (expected one of: ${expectedValues})`);
   }
   if (invalidConfigEnvValues.length > 0) process.exit(1);
 

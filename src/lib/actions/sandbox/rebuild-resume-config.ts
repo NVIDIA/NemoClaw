@@ -11,6 +11,7 @@
 
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
+import { normalizeInferenceSelection } from "../../inference/selection";
 import * as onboardSession from "../../state/onboard-session";
 import {
   type AmbientRecreateEnvAssessment,
@@ -36,18 +37,61 @@ export function isLocalInferenceProvider(provider: string | null | undefined): p
   return Boolean(provider && LOCAL_INFERENCE_PROVIDERS.includes(provider));
 }
 
+function canonicalRemoteProviderConfig(provider: string | null | undefined): {
+  providerName: string;
+  credentialEnv: string | null;
+  endpointUrl?: string | null;
+} | null {
+  if (!provider) return null;
+  return (
+    (provider === "nvidia-nim"
+      ? REMOTE_PROVIDER_CONFIG.build
+      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider)) ||
+    null
+  );
+}
+
+function validCredentialEnvName(value: string | null | undefined): string | null {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  return /^[A-Z_][A-Z0-9_]*$/.test(normalized) ? normalized : null;
+}
+
+function providerNameFromEnvHint(value: string | null | undefined): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  const hint = raw.toLowerCase();
+  const config = Object.entries(REMOTE_PROVIDER_CONFIG).find(
+    ([key, config]) => key.toLowerCase() === hint || config.providerName.toLowerCase() === hint,
+  )?.[1];
+  return config?.providerName ?? null;
+}
+
+function providerRecordedCredentialEnv(
+  provider: string | null | undefined,
+  recordedCredentialEnv?: string | null,
+): string | null {
+  const envName = validCredentialEnvName(recordedCredentialEnv);
+  switch (provider) {
+    case "compatible-endpoint":
+      return envName === "COMPATIBLE_API_KEY" ? envName : null;
+    case "compatible-anthropic-endpoint":
+      return envName === "COMPATIBLE_ANTHROPIC_API_KEY" ? envName : null;
+    case "nvidia-router":
+      return envName;
+    default:
+      return null;
+  }
+}
+
 /** Resolve the credential environment variable required to recreate a sandbox. */
 export function getRebuildCredentialEnvFromRegistry(
   provider: string | null | undefined,
+  recordedCredentialEnv?: string | null,
 ): string | null {
-  if (!provider || isLocalInferenceProvider(provider)) {
-    return null;
-  }
-  const remoteConfig =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
-  return remoteConfig?.credentialEnv || null;
+  if (!provider || isLocalInferenceProvider(provider)) return null;
+  const remoteConfig = canonicalRemoteProviderConfig(provider);
+  if (remoteConfig?.credentialEnv) return remoteConfig.credentialEnv;
+  return providerRecordedCredentialEnv(provider, recordedCredentialEnv);
 }
 
 // Providers whose inference base URL is supplied by the operator at onboard time
@@ -71,27 +115,63 @@ const SESSION_ONLY_ENDPOINT_PROVIDER_NAMES = new Set(
  * recreate endpoint can be re-derived without the target's own onboard session —
  * a known remote provider with a canonical URL (e.g. nvidia-prod → NVIDIA
  * Endpoints), a local or routed (blueprint-derived) provider (no static URL to
- * pin), or any other provider that does not record a custom base URL. Returns
- * `{ known: false }` only for custom OpenAI/Anthropic-compatible providers whose
- * base URL lives solely in their own session — the caller must then refuse to
- * destroy the sandbox from an unrelated session rather than guess the endpoint.
+ * pin), or a custom OpenAI/Anthropic-compatible provider with durable registry
+ * metadata. Returns `{ known: false }` only for custom providers whose base URL
+ * is absent from both the selected sandbox registry entry and its own session —
+ * the caller must then refuse to destroy the sandbox from an unrelated session
+ * rather than guess the endpoint.
  */
+function canonicalCustomEndpointUrl(value: string | null | undefined): string | null {
+  const raw = typeof value === "string" ? value.trim() : "";
+  try {
+    const url = new URL(raw);
+    const supportedProtocol = url.protocol === "http:" || url.protocol === "https:";
+    const hasUserInfo = Boolean(url.username || url.password);
+    if (!supportedProtocol || hasUserInfo) return null;
+    url.search = "";
+    url.hash = "";
+    const pathname = url.pathname.replace(/\/+$/, "");
+    url.pathname = pathname || "/";
+    return url.pathname === "/" ? url.origin : `${url.origin}${url.pathname}`;
+  } catch {
+    return null;
+  }
+}
+
 export function getRebuildEndpointFromRegistry(
   provider: string | null | undefined,
+  recordedEndpointUrl?: string | null,
 ): { known: true; endpointUrl: string | null } | { known: false } {
   if (!provider) return { known: true, endpointUrl: null };
   if (isLocalInferenceProvider(provider)) return { known: true, endpointUrl: null };
   // Custom OpenAI/Anthropic-compatible providers carry their base URL only in
-  // the session; without a matching session it cannot be recovered.
-  if (SESSION_ONLY_ENDPOINT_PROVIDER_NAMES.has(provider)) return { known: false };
-  const remoteConfig =
-    provider === "nvidia-nim"
-      ? REMOTE_PROVIDER_CONFIG.build
-      : Object.values(REMOTE_PROVIDER_CONFIG).find((entry) => entry.providerName === provider);
+  // the selected sandbox's durable metadata or its own onboard session; never
+  // borrow the base URL from an unrelated session. Durable metadata is trusted
+  // only after strict URL parsing, HTTP(S) scheme validation, and canonical
+  // query/hash stripping at this pre-delete rebuild boundary.
+  if (SESSION_ONLY_ENDPOINT_PROVIDER_NAMES.has(provider)) {
+    const endpointUrl = canonicalCustomEndpointUrl(recordedEndpointUrl);
+    return endpointUrl ? { known: true, endpointUrl } : { known: false };
+  }
+  const remoteConfig = canonicalRemoteProviderConfig(provider);
   // Known remote provider with a canonical endpoint → pin it. Otherwise (routed
   // inference, NIM, or any provider without a custom session-only URL) there is
   // no static URL to pin; the resume path derives it, so leave it unpinned.
   return { known: true, endpointUrl: remoteConfig?.endpointUrl || null };
+}
+
+function getExplicitTargetEndpointFromEnv(
+  sandboxName: string,
+  provider: string | null,
+  model: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (!provider || !SESSION_ONLY_ENDPOINT_PROVIDER_NAMES.has(provider)) return null;
+  if ((env.NEMOCLAW_SANDBOX_NAME || "").trim() !== sandboxName) return null;
+  if (providerNameFromEnvHint(env.NEMOCLAW_PROVIDER) !== provider) return null;
+  const envModel = typeof env.NEMOCLAW_MODEL === "string" ? env.NEMOCLAW_MODEL.trim() : "";
+  if (model && envModel !== model) return null;
+  return canonicalCustomEndpointUrl(env.NEMOCLAW_ENDPOINT_URL);
 }
 
 /**
@@ -106,7 +186,13 @@ export interface RebuildResumeConfig {
   readonly model: string | null;
   readonly nimContainer: string | null;
   readonly credentialEnv: string | null;
-  /** Overwrite the session endpoint with `endpointUrl`; false keeps a matching session's own custom URL. */
+  readonly preferredInferenceApi: string | null;
+  /**
+   * Whether this endpoint was derived without trusting the matching onboard
+   * session. Kept for preflight/tests; rebuild writes `endpointUrl`
+   * unconditionally after validation so stale retry sessions cannot leak old
+   * provider URLs into recreate (#4497/#5869).
+   */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
   readonly ambient: AmbientRecreateEnvAssessment;
@@ -156,26 +242,44 @@ export function prepareRebuildResumeConfig(
 
   const session = onboardSession.loadSession();
   const sessionMatchesSandbox = session?.sandboxName === sandboxName;
-  const rebuildEndpoint = getRebuildEndpointFromRegistry(sb.provider);
+  const registrySelection = normalizeInferenceSelection(sb);
+  const rebuildEndpoint = getRebuildEndpointFromRegistry(
+    registrySelection.provider,
+    registrySelection.endpointUrl,
+  );
+  const explicitTargetEndpoint =
+    !sessionMatchesSandbox && !rebuildEndpoint.known
+      ? getExplicitTargetEndpointFromEnv(
+          sandboxName,
+          registrySelection.provider,
+          registrySelection.model,
+        )
+      : null;
 
   // When the loaded session belongs to a *different* sandbox (e.g. an
   // installer's just-completed onboard before `upgrade-sandboxes --auto`), the
   // target's inference endpoint can only be re-derived for providers with a
-  // canonical endpoint (NVIDIA Endpoints, Anthropic, etc.), local inference, or
-  // routed inference. For a custom OpenAI-compatible provider the base URL lives
-  // only in the target's own session — which we don't have — so recreating would
-  // either fail or silently reconfigure against the unrelated session's
-  // endpoint. Fail closed before any destructive work so the sandbox stays live.
+  // canonical endpoint (NVIDIA Endpoints, Anthropic, etc.), local inference,
+  // routed inference, durable custom endpoint metadata recorded on the target
+  // registry entry, or an explicit command-scoped custom endpoint whose
+  // NEMOCLAW_SANDBOX_NAME/provider/model match this rebuild target. The latter
+  // supports legacy registry rows that predate durable endpoint persistence
+  // without borrowing from an unrelated onboard session; the value is validated
+  // here and then written into the resume session before ambient env isolation.
+  // Otherwise, recreating would either fail or silently reconfigure against the
+  // unrelated session's endpoint. Fail closed before any destructive work so the
+  // sandbox stays live.
   if (
     !sessionMatchesSandbox &&
-    sb.provider &&
-    !isLocalInferenceProvider(sb.provider) &&
-    sb.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
-    !rebuildEndpoint.known
+    registrySelection.provider &&
+    !isLocalInferenceProvider(registrySelection.provider) &&
+    registrySelection.provider !== hermesProviderAuth.HERMES_PROVIDER_NAME &&
+    !rebuildEndpoint.known &&
+    !explicitTargetEndpoint
   ) {
     console.error("");
     console.error(
-      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${sb.provider}'.`,
+      `  ${_RD}Rebuild preflight failed:${R} cannot determine the inference endpoint for provider '${registrySelection.provider}'.`,
     );
     console.error(
       `  The custom endpoint for '${sandboxName}' is recorded only in its own onboard session,`,
@@ -186,19 +290,48 @@ export function prepareRebuildResumeConfig(
     console.error("");
     console.error("  Sandbox is untouched — no data was lost.");
     bail(
-      `Cannot determine recreate endpoint for provider '${sb.provider}' without a matching session`,
+      `Cannot determine recreate endpoint for provider '${registrySelection.provider}' without a matching session`,
     );
     return null;
   }
 
+  // Endpoint precedence at the destructive rebuild boundary:
+  // 1. Durable/canonical registry metadata, when known.
+  // 2. Explicit target-scoped env only for legacy rows whose loaded session is
+  //    not this sandbox, after exact sandbox/provider/model checks and URL
+  //    canonicalization.
+  // 3. The target sandbox's own matching session endpoint, validated below.
+  let endpointUrl = rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : explicitTargetEndpoint;
+  if (!endpointUrl && !rebuildEndpoint.known && sessionMatchesSandbox) {
+    endpointUrl = canonicalCustomEndpointUrl(session?.endpointUrl);
+    if (!endpointUrl) {
+      console.error("");
+      console.error(
+        `  ${_RD}Rebuild preflight failed:${R} cannot validate the inference endpoint for provider '${registrySelection.provider}'.`,
+      );
+      console.error(
+        `  The custom endpoint for '${sandboxName}' is missing or invalid in its onboard session.`,
+      );
+      console.error("  Sandbox is untouched — no data was lost.");
+      bail(
+        `Cannot validate recreate endpoint for provider '${registrySelection.provider}' from matching session`,
+      );
+      return null;
+    }
+  }
+
   return {
     agent: rebuildAgent,
-    provider: sb.provider ?? null,
-    model: sb.model ?? null,
-    nimContainer: sb.nimContainer ?? null,
-    credentialEnv: getRebuildCredentialEnvFromRegistry(sb.provider),
-    pinEndpoint: !sessionMatchesSandbox && rebuildEndpoint.known,
-    endpointUrl: rebuildEndpoint.known ? rebuildEndpoint.endpointUrl : null,
+    provider: registrySelection.provider,
+    model: registrySelection.model,
+    nimContainer: registrySelection.nimContainer,
+    credentialEnv: getRebuildCredentialEnvFromRegistry(
+      registrySelection.provider,
+      registrySelection.credentialEnv,
+    ),
+    preferredInferenceApi: registrySelection.preferredInferenceApi,
+    pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
+    endpointUrl,
     ambient,
   };
 }

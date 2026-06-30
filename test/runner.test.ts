@@ -2,18 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
-
-import { spawnSync } from "node:child_process";
-import childProcess from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import { redact, runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../src/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
+const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliDarwinArm64: "1ef9a2b447a35391a6a0f417f4383d99f3e928e443cf86ed190002ec937a8871",
+  cliLinuxArm64: "b86b33d9e7c960cd04bc99a9539964f1cb84ae4a9886dd437c0566b64e093390",
+  cliLinuxX64: "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716",
+  gatewayDarwinArm64: "26fa5b4dcb6d2631f7212639d087f37d8b0fc50c6f6cec856e019c22847e5bc9",
+  gatewayLinuxArm64: "e9b258b3fb38fd68ffc37675efe8a027750087f630cf19ad248e94eff5464091",
+  gatewayLinuxX64: "85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d",
+  sandboxLinuxArm64: "e60dc50524c56460faa8c37617725280a6e1205e73e5cc888b4fd0d148ccb71c",
+  sandboxLinuxX64: "dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d",
+};
 
 type SpawnCallOptions = {
   stdio?: StdioOptions;
@@ -231,7 +239,7 @@ describe("runner env merging", () => {
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
-  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
     // Regression for the macOS Privoxy scenario: validateOllamaModel calls
     // runCaptureEx with a curl probe against http://localhost:11434. Before
     // the fix, runCaptureEx merged raw process.env (including the user's
@@ -677,22 +685,20 @@ describe("regression guards", () => {
             case "$(basename "$out")" in
             openshell-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
-                'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
-                'ignored  openshell-x86_64-apple-darwin.tar.gz' \
-                'ignored  openshell-aarch64-apple-darwin.tar.gz' \
-                'ignored  openshell-driver-vm-aarch64-apple-darwin.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-gateway-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
               ;;
             *)
               : > "$out"
@@ -737,7 +743,42 @@ describe("regression guards", () => {
         openshell() { echo "openshell 0.0.1"; }
         export -f openshell
         export PATH="${tmpBin}:/usr/bin:/bin"
-        curl() { echo "CURL_FALLBACK $*"; return 0; }
+        curl() {
+          echo "CURL_FALLBACK $*"
+          local out=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-o" ]; then
+              shift
+              out="$1"
+            fi
+            shift || true
+          done
+          if [ -n "$out" ]; then
+            case "$(basename "$out")" in
+            openshell-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-gateway-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-sandbox-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+              ;;
+            *)
+              : > "$out"
+              ;;
+            esac
+          fi
+          return 0
+        }
         export -f curl
         sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
         export -f sha256sum
@@ -908,13 +949,13 @@ describe("regression guards", () => {
 
     it("the e2e sandbox suite exercises the tmux-session flow", () => {
       const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
         "utf-8",
       );
-      expect(src).toContain("test_sbx_09_tmux_session_flow");
+      expect(src).toContain("assertTmuxPtyFlow");
       expect(src).toContain("command -v tmux");
       // The smoke must be wired into the run, not just defined.
-      expect(src).toMatch(/^\s*test_sbx_09_tmux_session_flow\s*$/m);
+      expect(src).toContain("await assertTmuxPtyFlow(sandbox, SANDBOX_A)");
     });
 
     // The reopened #4513: installing tmux was not enough — the bundled
@@ -944,15 +985,15 @@ describe("regression guards", () => {
 
     it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
       const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
         "utf-8",
       );
       // The PTY root cause is pinned with an explicit openpty() probe.
       expect(src).toContain("os.openpty()");
       // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
       // failure now means the devpts grant regressed and must fail loudly.
-      const tc09 = src.slice(src.indexOf("test_sbx_09_tmux_session_flow"));
-      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n"));
+      const tc09 = src.slice(src.indexOf("async function assertTmuxPtyFlow"));
+      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n") + 3);
       expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
     });
   });

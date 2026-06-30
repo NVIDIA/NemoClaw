@@ -5,11 +5,15 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type RebuildSandbox =
-  typeof import("../../../../dist/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const rebuildModulePath = "../../../../dist/lib/actions/sandbox/rebuild.js";
+const rebuildModulePath = "./rebuild.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(rebuildModulePath);
+delete require.cache[requireDist.resolve(rebuildModulePath)];
 
 type RebuildFlowStep = {
   status: string;
@@ -48,6 +52,7 @@ type RebuildFlowOverrides = {
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
   sessionSandboxName?: string;
+  backupPolicyPresets?: string[];
 };
 
 type RebuildFlowHarness = {
@@ -157,28 +162,26 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const gatewayDrift = requireDist("../../../../dist/lib/adapters/openshell/gateway-drift.js");
-  const openshellRuntime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-  const sandboxList = requireDist("../../../../dist/lib/openshell-sandbox-list.js");
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const agentDefs = requireDist("../../../../dist/lib/agent/defs.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const onboardMod = requireDist("../../../../dist/lib/onboard.js");
-  const onboardSession = requireDist("../../../../dist/lib/state/onboard-session.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxState = requireDist("../../../../dist/lib/state/sandbox.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const destroy = requireDist("../../../../dist/lib/actions/sandbox/destroy.js");
-  const rebuildShields = requireDist("../../../../dist/lib/actions/sandbox/rebuild-shields.js");
-  const nim = requireDist("../../../../dist/lib/inference/nim.js");
-  const policies = requireDist("../../../../dist/lib/policy/index.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
-  const messagingHostForwardLifecycle = requireDist(
-    "../../../../dist/lib/actions/sandbox/messaging-host-forward-lifecycle.js",
-  );
-  const messaging = requireDist("../../../../dist/lib/messaging/index.js");
-  const shields = requireDist("../../../../dist/lib/shields/index.js");
+  const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+  const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const sandboxList = requireDist("../../openshell-sandbox-list.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentDefs = requireDist("../../agent/defs.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const onboardMod = requireDist("../../onboard.js");
+  const onboardSession = requireDist("../../state/onboard-session.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxState = requireDist("../../state/sandbox.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const destroy = requireDist("./destroy.js");
+  const rebuildShields = requireDist("./rebuild-shields.js");
+  const nim = requireDist("../../inference/nim.js");
+  const policies = requireDist("../../policy/index.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
+  const messaging = requireDist("../../messaging/index.js");
+  const shields = requireDist("../../shields/index.js");
 
   const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
   const rebuildShieldsWindow = { relocked: false, wasLocked: false };
@@ -245,7 +248,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     manifest: {
       backupPath: "/tmp/nemoclaw-rebuild-backup",
       timestamp: "2026-06-01T00:00:00.000Z",
-      policyPresets: ["npm", "bad", "throw"],
+      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
     },
   });
   const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
@@ -428,13 +431,94 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "bad");
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
-    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", { agentVersion: "0.2.0" });
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm", "bad", "throw"],
+    });
     expect(harness.executeSandboxCommandSpy).toHaveBeenCalledWith("alpha", "openclaw doctor --fix");
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
     expect(harness.logSpy.mock.calls.map((call) => String(call[0])).join("\n")).toContain(
       "rebuilt successfully",
     );
+  });
+
+  it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
+    const disabledSlackPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [
+        { channelId: "telegram", disabled: false },
+        { channelId: "discord", disabled: false },
+        { channelId: "whatsapp", disabled: false },
+        { channelId: "wechat", disabled: false },
+        { channelId: "slack", disabled: true },
+      ],
+      disabledChannels: ["slack"],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],
+      buildMessagingRebuildPlan: () => disabledSlackPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.applyPresetSpy.mock.calls.map((call) => call[1])).toEqual([
+      "npm",
+      "pypi",
+      "telegram",
+      "discord",
+      "whatsapp",
+      "wechat",
+    ]);
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm", "pypi", "telegram", "discord", "whatsapp", "wechat"],
+    });
+  });
+
+  it("prunes the disabled Teams preset from the final registry policies after rebuild", async () => {
+    const disabledTeamsPlan = {
+      schemaVersion: 1,
+      sandboxName: "alpha",
+      agent: "openclaw",
+      workflow: "rebuild",
+      channels: [],
+      disabledChannels: ["teams"],
+      credentialBindings: [],
+      networkPolicy: { presets: [], entries: [] },
+      agentRender: [],
+      buildSteps: [],
+      stateUpdates: [],
+      healthChecks: [],
+    };
+    const harness = createRebuildFlowHarness({
+      applyPreset: () => true,
+      backupPolicyPresets: ["teams", "npm"],
+      buildMessagingRebuildPlan: () => disabledTeamsPlan,
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).resolves.toBeUndefined();
+
+    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
+    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "teams");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm"],
+    });
   });
 
   it("aborts before backup/delete when messaging manifest staging fails", async () => {
@@ -506,6 +590,11 @@ describe("rebuildSandbox flow", () => {
     expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "throw");
     expect(harness.errorSpy).toHaveBeenCalledWith(expect.stringContaining("bad, throw"));
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), true, "nemoclaw");
+    expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
+      agentVersion: "0.2.0",
+      policies: ["npm"],
+    });
+    expect(output).toContain("Policy presets failed to reapply: bad, throw");
   });
 
   it("isolates ambient onboard-selection env during recreate, then restores it (#5735)", async () => {
@@ -552,11 +641,11 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
-  it("recreates a matching-session custom-endpoint sandbox from session, ignoring hostile ambient endpoint/provider/model (#5735 PRA-4)", async () => {
+  it("recreates a matching-session custom-endpoint sandbox from a validated session endpoint while ignoring hostile ambient values for PRA-4 (#5735)", async () => {
     // Matching session (sandboxName === target) with a custom endpoint recorded
     // in that session. Hostile ambient NEMOCLAW_ENDPOINT_URL/PROVIDER/MODEL must
-    // be absent during recreate (so onboard --resume uses the session) and the
-    // session's own recorded endpoint must be preserved (not overwritten).
+    // be absent during recreate so onboard --resume uses the validated session
+    // endpoint selected by prepareRebuildResumeConfig.
     const restoreEnv = snapshotEnv([
       "NEMOCLAW_ENDPOINT_URL",
       "NEMOCLAW_PROVIDER",
@@ -581,8 +670,9 @@ describe("rebuildSandbox flow", () => {
           };
         },
       });
-      // The custom endpoint lives only in this sandbox's own (matching) session.
-      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1";
+      // The custom endpoint lives only in this sandbox's own matching session;
+      // it is canonicalized at the pre-delete rebuild boundary before rewrite.
+      harness.session.endpointUrl = "https://my-custom-endpoint.example/v1?x=1#frag";
 
       await expect(
         harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
@@ -594,7 +684,6 @@ describe("rebuildSandbox flow", () => {
         provider: undefined,
         model: undefined,
       });
-      // The matching session's own recorded endpoint is preserved (not pinned/overwritten).
       expect(harness.session.endpointUrl).toBe("https://my-custom-endpoint.example/v1");
       // Provider/model come from the registry entry, not the ambient values.
       expect(harness.session.provider).toBe("compatible-endpoint");

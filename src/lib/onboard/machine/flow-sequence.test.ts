@@ -38,6 +38,7 @@ function context(patch: Partial<Context> = {}): Context {
     hermesAuthMethod: null,
     hermesToolGateways: [],
     preferredInferenceApi: null,
+    compatibleEndpointReasoning: null,
     nimContainer: null,
     webSearchConfig: null,
     webSearchSupported: false,
@@ -229,7 +230,13 @@ describe("onboard flow phase sequence", () => {
     });
 
     const run = await runOnboardSequenceWithRunner({
-      context: context(),
+      context: context({
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        fromDockerfile: "Dockerfile",
+        hermesToolGateways: ["local"],
+        sandboxGpuConfig: { mode: "sentinel" },
+        selectedMessagingChannels: ["slack"],
+      }),
       runtime: createRuntime(initialSession),
       phases,
     });
@@ -243,6 +250,13 @@ describe("onboard flow phase sequence", () => {
       provider: "nvidia",
       model: "model",
       sandboxName: "my-assistant",
+      credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      fromDockerfile: "Dockerfile",
+      gpu: { type: "nvidia" },
+      sandboxGpuConfig: { mode: "sentinel" },
+      gpuPassthrough: true,
+      hermesToolGateways: ["local"],
+      selectedMessagingChannels: ["slack"],
     });
   });
 });

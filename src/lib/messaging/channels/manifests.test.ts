@@ -727,6 +727,7 @@ describe("built-in channel manifests", () => {
     expect(renderJson(teamsManifest)).toContain('"path":"platforms.teams"');
     expect(renderJson(teamsManifest)).toContain("credential.teamsClientSecret.placeholder");
     expect(renderJson(teamsManifest)).toContain("teamsConfig.webhookPort");
+    expect(renderJson(teamsManifest)).toContain('"streaming":{"mode":"off"}');
     expect(renderJson(teamsManifest)).toContain('"groupPolicy":"open"');
     expect(renderJson(teamsManifest)).not.toContain("groupAllowFrom");
     expectTokenPasteEnrollHook(teamsManifest, ["clientSecret"]);
@@ -759,6 +760,7 @@ describe("built-in channel manifests", () => {
       ],
     });
     expectOpenClawRuntimeVisibility(teamsManifest, ["msteams"], ["msteams", "teams"], "msteams");
+    expectOpenClawNodePreload(teamsManifest, "msteams-message-hints");
     expect(teamsManifest.agentPackages).toContainEqual({
       id: "openclawPluginPackage",
       agent: "openclaw",

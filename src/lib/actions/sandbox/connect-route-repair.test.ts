@@ -298,7 +298,7 @@ function makeResetDeps(
       calls.probeOptions.push(options);
       return queue.shift() ?? broken("missing mocked reset probe");
     }),
-    printUnrecoverableInferenceRoute: vi.fn((sandboxName, _sb, detail) => {
+    printUnrecoverableInferenceRoute: vi.fn((sandboxName, _route, detail) => {
       calls.unrecoverable.push({ sandboxName, detail });
     }),
     log: (message) => calls.logs.push(message),

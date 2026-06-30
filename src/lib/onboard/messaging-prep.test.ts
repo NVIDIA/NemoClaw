@@ -3,12 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import { BRAVE_API_KEY_ENV } from "../../../dist/lib/inference/web-search";
+import { BRAVE_API_KEY_ENV } from "../inference/web-search";
+import { listChannels } from "../sandbox/channels";
 import {
   type CreateSandboxMessagingPrepInput,
   prepareCreateSandboxMessaging,
-} from "../../../dist/lib/onboard/messaging-prep";
-import { listChannels } from "../../../dist/lib/sandbox/channels";
+} from "./messaging-prep";
 
 function normalizeCredentialValue(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";

@@ -8,13 +8,13 @@
 // runtime-hermes-secret-boundary-behavioural.test.ts.
 
 import { describe, expect, it } from "vitest";
-import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "../../../dist/lib/agent/hermes-recovery-boundary";
+import { HERMES_SECRET_BOUNDARY_VALIDATOR_PATH } from "./hermes-recovery-boundary";
+import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
 import {
   buildHermesDashboardProcessRecoveryScript,
   buildManualRecoveryCommand,
   buildRecoveryScript,
-} from "../../../dist/lib/agent/runtime";
-import { hermesAgent, minimalAgent } from "./hermes-recovery-boundary-fixtures";
+} from "./runtime";
 
 const VALIDATOR_PATH = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
 
@@ -63,12 +63,13 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     expect(script).toContain("pkill -KILL -f");
   });
 
-  it("warns and continues recovery on older sandbox images that lack the validator", () => {
+  it("refuses recovery on older sandbox images that lack the validator", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
-    expect(script).not.toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
-    expect(script).toContain("[gateway-recovery] WARNING");
+    expect(script).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
+    expect(script).toContain("[gateway-recovery] REFUSING");
     expect(script).toContain("secret-boundary validator");
     expect(script).toContain("missing on this sandbox image");
+    expect(script).toContain("exit 1");
   });
 
   it("does not gate non-Hermes recovery on the Hermes-specific validator", () => {

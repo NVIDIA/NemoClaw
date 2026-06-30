@@ -37,7 +37,7 @@ const canonicalDirectTransitions = [
 ] as const;
 
 describe("onboard machine vocabulary", () => {
-  it("defines the initial coarse state vocabulary from issue #3802", () => {
+  it("defines the initial coarse state vocabulary (#3802)", () => {
     expect(ONBOARD_MACHINE_STATES).toEqual([
       "init",
       "preflight",
@@ -55,7 +55,7 @@ describe("onboard machine vocabulary", () => {
     ]);
   });
 
-  it("defines the initial observe-only event vocabulary from issue #3802", () => {
+  it("defines the initial observe-only event vocabulary (#3802)", () => {
     expect(ONBOARD_MACHINE_EVENT_TYPES).toEqual([
       "onboard.started",
       "onboard.resumed",

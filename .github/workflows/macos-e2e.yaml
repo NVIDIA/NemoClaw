@@ -91,7 +91,8 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-macos"
-        run: bash test/e2e/test-full-e2e.sh
+        run: |
+          NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live test/e2e/live/full-e2e.test.ts --silent=false --reporter=default
 
       - name: Explain skipped full E2E
         if: steps.docker.outputs.docker_ok != 'true'

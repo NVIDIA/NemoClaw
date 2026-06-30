@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { selectBedrockRuntimeCustomAnthropic } from "../../../dist/lib/onboard/bedrock-runtime";
-import { BACK_TO_SELECTION } from "../../../dist/lib/onboard/credential-navigation";
+import { selectBedrockRuntimeCustomAnthropic } from "./bedrock-runtime";
+import { BACK_TO_SELECTION } from "./credential-navigation";
 
 const BEDROCK_URL = "https://bedrock-runtime.us-east-1.amazonaws.com";
 

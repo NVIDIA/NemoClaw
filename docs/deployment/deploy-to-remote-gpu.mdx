@@ -12,7 +12,7 @@ skill:
   priority: 10
 ---
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
-The preferred path is to provision the VM, run the standard NemoClaw installer on that host, and then run `nemoclaw onboard`.
+Prefer provisioning the VM first, running the standard NemoClaw installer on that host, and then running `nemoclaw onboard`.
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ When `CHAT_UI_URL` points at one, NemoClaw disables OpenClaw device pairing in t
 Avoid exposing the dashboard on internet-reachable or shared-network deployments unless you intend that access.
 </Warning>
 
-You can list instances from your local machine:
+List instances from your local machine:
 
 ```bash
 brev ls --json
@@ -70,7 +70,7 @@ Use the origin from the Brev tunnel URL.
 For example, if the copied URL is `https://example.host/path`, set `CHAT_UI_URL=https://example.host`.
 If NemoClaw is already installed on the VM, run `nemoclaw onboard` instead of the installer after exporting the variables.
 
-After successful onboarding, you should see output that reports a ready sandbox and the next command to connect:
+After successful onboarding, NemoClaw prints output that reports a ready sandbox and the next command to connect:
 
 ```text
 ✓ Sandbox '<name>' is ready
@@ -84,7 +84,7 @@ The `nemoclaw deploy` command is deprecated.
 Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 </Warning>
 
-Use the legacy compatibility wrapper only when you need the older Brev-specific bootstrap flow:
+Use the legacy compatibility wrapper only when you need the older Brev-specific bootstrap flow.
 
 ```bash
 nemoclaw deploy <instance-name>
@@ -118,7 +118,7 @@ To reconnect through that legacy flow, run `nemoclaw deploy <instance-name>` aga
 
 ## Monitor the Remote Sandbox
 
-SSH to the instance and run the OpenShell TUI on the remote VM to monitor activity and approve network requests:
+Connect to the instance with SSH and run the OpenShell TUI on the remote VM to monitor activity and approve network requests:
 
 ```bash
 ssh <instance-name> 'openshell term'
@@ -157,7 +157,8 @@ Any device that can reach the configured dashboard origin can connect without pa
 
 ## First-Run Readiness Budget
 
-On a remote GPU host, the first `nemoclaw onboard` typically does the slowest work of the lifecycle: the host builds the sandbox image locally and uploads it into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait even starts.
+On a remote GPU host, the first `nemoclaw onboard` usually performs the slowest lifecycle work.
+The host builds the sandbox image locally and uploads it into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait starts.
 The post-create readiness wait defaults to 180 seconds (`NEMOCLAW_SANDBOX_READY_TIMEOUT`), which fits warm-cache, workstation-class onboarding but can be too short for:
 
 - DGX Station first runs with large quantized models (70B+ parameter footprints, NVFP4 weights).
