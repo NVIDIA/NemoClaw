@@ -124,6 +124,14 @@ describe("findMultilineExecArg", () => {
     expect(findMultilineExecArg(["printf", "a\rb"])).toBe(1);
   });
 
+  it("treats Unicode line separators (U+2028/U+2029) as single-line because OpenShell rejects only CR/LF", () => {
+    // The guard deliberately mirrors OpenShell's CR/LF-only rejection, so these
+    // code points are valid argv that dispatch unchanged. Broadening the guard
+    // to match them would reject commands OpenShell would otherwise run.
+    expect(findMultilineExecArg(["printf", "a\u2028b"])).toBe(-1);
+    expect(findMultilineExecArg(["printf", "a\u2029b"])).toBe(-1);
+  });
+
   it("reports the earliest offending argument when several are multi-line", () => {
     expect(findMultilineExecArg(["a", "b\nc", "d\ne"])).toBe(1);
   });

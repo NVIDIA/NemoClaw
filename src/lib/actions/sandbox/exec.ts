@@ -88,6 +88,11 @@ export function findMultilineExecArg(command: readonly string[]): number {
 // The 1-based position plus a neutral size description is enough for the user
 // to find the argument they typed.
 function describeMultilineArg(arg: string): string {
+  // Split on all three newline conventions (CRLF, bare CR, bare LF) so the
+  // count matches what a user sees regardless of platform. The alternation is
+  // ordered CRLF-first so a Windows "\r\n" counts as one break, not two. A
+  // single trailing break still yields a count of 2 (the empty final segment),
+  // which is correct: a lone "\r" argument spans two lines.
   const lineCount = arg.split(/\r\n|\r|\n/).length;
   const charLabel = arg.length === 1 ? "character" : "characters";
   const lineLabel = lineCount === 1 ? "line" : "lines";
