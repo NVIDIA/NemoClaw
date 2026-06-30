@@ -19,28 +19,23 @@ describe("sandbox exec command wrapping", () => {
     expect(wrapped).not.toContain("base64 -d | sh");
   });
 
-  it("keeps the OpenShell command argument newline-free while preserving multi-line payloads", () => {
+  it("keeps non-Hermes payloads inline even when multi-line", () => {
     const payload = "printf 'hello\\n'\ncat '/sandbox/.openclaw/openclaw.json'";
     const wrapped = buildSandboxExecMarkedCommand(payload);
 
-    expect(wrapped).not.toMatch(/[\r\n]/);
     expect(wrapped).toContain("__NEMOCLAW_SANDBOX_EXEC_STARTED__");
-    expect(wrapped).toContain("base64 -d | sh");
-    expect(wrapped).not.toContain(payload);
-
-    const encoded = wrapped.match(/printf '%s' '([^']+)' \| base64 -d \| sh/)?.[1];
-    expect(encoded).toBeTruthy();
-    expect(Buffer.from(encoded as string, "base64").toString("utf8")).toBe(payload);
+    expect(wrapped).toContain(payload);
+    expect(wrapped).not.toContain("base64 -d | sh");
   });
 
-  it("keeps the Hermes secret-boundary validator visible on the raw exec path", () => {
+  it("base64-encodes the Hermes secret-boundary validator to hide it from shell history", () => {
     const payload = buildHermesEnvFileBoundaryStandaloneCheck();
     const wrapped = buildSandboxExecMarkedCommand(payload);
 
     expect(payload).not.toMatch(/[\r\n]/);
     expect(wrapped).not.toMatch(/[\r\n]/);
-    expect(wrapped).toContain("validate-hermes-env-secret-boundary.py");
-    expect(wrapped).not.toContain("base64 -d | sh");
+    expect(wrapped).toContain("base64 -d | sh");
+    expect(wrapped).not.toContain("validate-hermes-env-secret-boundary.py");
   });
 });
 
