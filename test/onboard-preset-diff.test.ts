@@ -180,23 +180,7 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // expects the final sandbox to have ONLY npm. Previously-applied presets
   // must be removed.
   it("non-interactive narrow selection removes previously-applied presets", () => {
-    const script =
-      buildPreamble({ policyMode: "custom", policyPresets: "npm" }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {});
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    const payload = runPolicyScenario({ policyMode: "custom", policyPresets: "npm" });
 
     // User asked for only npm.
     assert.deepEqual(payload.chosen, ["npm"]);
@@ -224,28 +208,13 @@ console.log = () => {};
   // user-added preset such as `local-inference` is not in `suggestions` on a
   // cloud-provider sandbox — without the additive guard it would be removed.
   it("non-interactive suggested re-onboard preserves user-added presets", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        // Balanced defaults plus a manually-added preset.
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "local-inference"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", { provider: "openai" });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      // Balanced defaults plus a manually-added preset.
+      alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "local-inference"],
+      selectionOptions: { provider: "openai" },
+    });
 
     // The user-added preset must still be in the chosen list.
     assert.ok(
@@ -279,27 +248,12 @@ console.log = () => {};
   // non-interactive re-onboard the same way named built-ins do — even though
   // they do not appear in `policies.listPresets()`.
   it("non-interactive suggested re-onboard preserves custom presets", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", { provider: "openai" });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+      selectionOptions: { provider: "openai" },
+    });
 
     assert.ok(
       payload.chosen.includes("my-internal-api"),
@@ -313,30 +267,12 @@ console.log = () => {};
   });
 
   it("non-interactive suggested re-onboard removes unsupported Brave preset", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      provider: "openai",
-      webSearchSupported: false,
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+      selectionOptions: { provider: "openai", webSearchSupported: false },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.ok(
       !payload.chosen.includes("brave"),
@@ -359,30 +295,12 @@ console.log = () => {};
   });
 
   it("resume selection removes unsupported Brave preset", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        alreadyApplied: ["npm", "brave"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      selectedPresets: ["npm", "brave"],
-      webSearchSupported: false,
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: ["npm", "brave"],
+      selectionOptions: { selectedPresets: ["npm", "brave"], webSearchSupported: false },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen, ["npm"]);
     assert.deepEqual(payload.removedCalls, ["brave"]);
@@ -390,30 +308,12 @@ console.log = () => {};
   });
 
   it("resume selection preserves the Slack policy required by a recorded Slack channel", () => {
-    const script =
-      buildPreamble({
-        policyMode: "suggested",
-        policyPresets: "",
-        alreadyApplied: ["slack"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      selectedPresets: ["npm", "pypi"],
-      enabledChannels: ["slack"],
+    const payload = runPolicyScenario({
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: ["slack"],
+      selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: ["slack"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
     assert.deepEqual(
@@ -425,29 +325,12 @@ console.log = () => {};
   });
 
   it("custom non-interactive selection preserves the Slack policy required by Slack messaging", () => {
-    const script =
-      buildPreamble({
-        policyMode: "custom",
-        policyPresets: "npm,pypi",
-        alreadyApplied: ["slack"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      enabledChannels: ["slack"],
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,pypi",
+      alreadyApplied: ["slack"],
+      selectionOptions: { enabledChannels: ["slack"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
     assert.deepEqual(
@@ -549,29 +432,12 @@ console.log = () => {};
   });
 
   it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
-    const script =
-      buildPreamble({
-        policyMode: "custom",
-        policyPresets: "npm",
-        alreadyApplied: ["npm", "pypi", "slack"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      disabledChannels: ["slack"],
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm",
+      alreadyApplied: ["npm", "pypi", "slack"],
+      selectionOptions: { disabledChannels: ["slack"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.deepEqual(payload.chosen, ["npm"]);
     assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", "slack"]);
@@ -579,30 +445,13 @@ console.log = () => {};
   });
 
   it("suggested non-interactive selection removes disabled Slack from tier defaults", () => {
-    const script =
-      buildPreamble({
-        tierEnv: "open",
-        policyMode: "suggested",
-        policyPresets: "",
-        alreadyApplied: ["slack"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {
-      disabledChannels: ["slack"],
+    const payload = runPolicyScenario({
+      tierEnv: "open",
+      policyMode: "suggested",
+      policyPresets: "",
+      alreadyApplied: ["slack"],
+      selectionOptions: { disabledChannels: ["slack"] },
     });
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
 
     assert.ok(
       !payload.chosen.includes("slack"),
@@ -618,27 +467,11 @@ console.log = () => {};
   // Widening the selection (user re-enables a preset they'd previously dropped)
   // must apply the new one and not re-apply things that are already applied.
   it("non-interactive widen selection applies only new presets", () => {
-    const script =
-      buildPreamble({
-        policyMode: "custom",
-        policyPresets: "npm,pypi",
-        alreadyApplied: ["npm"],
-      }) +
-      String.raw`
-console.log = () => {};
-(async () => {
-  try {
-    const chosen = await setupPoliciesWithSelection("test-sb", {});
-    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
-  } catch (err) {
-    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
-  }
-})();
-`;
-    const result = runScript(script);
-    assert.equal(result.status, 0, result.stderr);
-    const payload = JSON.parse(result.stdout.trim());
-    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    const payload = runPolicyScenario({
+      policyMode: "custom",
+      policyPresets: "npm,pypi",
+      alreadyApplied: ["npm"],
+    });
 
     assert.deepEqual(payload.chosen.sort(), ["npm", "pypi"]);
     // Only pypi should be newly applied (npm was already there).
