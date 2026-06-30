@@ -58,7 +58,9 @@ type MSTeamsModuleLike = {
   function gatewayProcessFlavor(): string {
     if (basename(process.argv0) === "openclaw-gateway") return "openclaw-gateway";
     if (basename(process.title) === "openclaw-gateway") return "openclaw-gateway";
-    if (process.argv[2] === "gateway") return "launcher";
+    if (basename(process.argv[1]) === "openclaw.mjs" && process.argv[2] === "gateway") {
+      return "launcher";
+    }
     if (basename(process.argv[1]) === "openclaw-gateway") return "openclaw-gateway";
     if (basename(process.argv[0]) === "openclaw-gateway") return "openclaw-gateway";
     return "";
@@ -84,21 +86,24 @@ type MSTeamsModuleLike = {
     return String(value || "").replace(/\\/g, "/");
   }
 
-  function isOpenClawMSTeamsSpecifier(value: string): boolean {
-    return value === "@openclaw/msteams" || value.indexOf("@openclaw/msteams/") === 0;
-  }
-
   function isOpenClawMSTeamsPackagePath(value: string): boolean {
     var needle = "/node_modules/@openclaw/msteams/";
     return value.indexOf(needle) !== -1 || value.endsWith("/node_modules/@openclaw/msteams");
   }
 
-  function isOpenClawMSTeamsLoad(request: string, parent?: MSTeamsModuleLoadParent): boolean {
+  function isOpenClawMSTeamsPluginEntryLoad(
+    request: string,
+    parent?: MSTeamsModuleLoadParent,
+  ): boolean {
     var normalizedRequest = normalizePathLike(request);
-    if (isOpenClawMSTeamsSpecifier(normalizedRequest)) return true;
-    if (isOpenClawMSTeamsPackagePath(normalizedRequest)) return true;
+    if (normalizedRequest === "@openclaw/msteams/dist/channel-plugin-api.js") return true;
+    if (normalizedRequest.endsWith("/node_modules/@openclaw/msteams/dist/channel-plugin-api.js")) {
+      return true;
+    }
     var parentFile = normalizePathLike(parent && parent.filename);
-    return isOpenClawMSTeamsPackagePath(parentFile);
+    return (
+      normalizedRequest === "./channel-plugin-api.js" && isOpenClawMSTeamsPackagePath(parentFile)
+    );
   }
 
   function hasMentionHint(hints: readonly unknown[]): boolean {
@@ -151,7 +156,7 @@ type MSTeamsModuleLike = {
     } catch (_e) {
       // If the plugin object is unexpectedly immutable, fail open so Teams can
       // still start; the hint patch is compatibility guidance, not auth logic.
-      return true;
+      return false;
     }
   }
 
@@ -168,6 +173,18 @@ type MSTeamsModuleLike = {
 
   var Module = require("module") as MSTeamsModuleLike;
   var originalLoad = Module._load;
+  var warningEmitted = false;
+  function warnPatchSkipped(): void {
+    if (warningEmitted) return;
+    warningEmitted = true;
+    var message =
+      "NemoClaw could not install the Microsoft Teams mention hint; Teams will continue without the additional prompt guidance.";
+    try {
+      process.emitWarning(message, { code: "NEMOCLAW_MSTEAMS_HINT_PATCH_SKIPPED" });
+    } catch (_e) {
+      console.warn(message);
+    }
+  }
   function restoreLoadHook(): void {
     if (Module._load === nemoclawMSTeamsLoad) {
       Module._load = originalLoad;
@@ -179,11 +196,20 @@ type MSTeamsModuleLike = {
     parent?: MSTeamsModuleLoadParent,
     isMain?: boolean,
   ): unknown {
-    var loaded = originalLoad.call(this, request, parent, isMain);
-    if (isOpenClawMSTeamsLoad(request, parent)) {
-      if (patchLoadedModule(loaded)) restoreLoadHook();
+    if (!isOpenClawMSTeamsPluginEntryLoad(request, parent)) {
+      return originalLoad.call(this, request, parent, isMain);
     }
-    return loaded;
+    try {
+      var loaded = originalLoad.call(this, request, parent, isMain);
+      try {
+        if (!patchLoadedModule(loaded)) warnPatchSkipped();
+      } catch (_e) {
+        warnPatchSkipped();
+      }
+      return loaded;
+    } finally {
+      restoreLoadHook();
+    }
   }
   Module._load = nemoclawMSTeamsLoad;
 })();

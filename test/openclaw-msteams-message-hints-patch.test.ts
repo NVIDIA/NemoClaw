@@ -28,21 +28,11 @@ const ADAPTIVE_CARD_HINT =
 const TARGETING_HINT =
   "- MSTeams targeting: omit `target` to reply to the current conversation (auto-inferred). Explicit targets: `user:ID` or `user:Display Name` (requires Graph API) for DMs, `conversation:19:...@thread.tacv2` for groups/channels. Prefer IDs over display names for speed.";
 
-const SAN_DANG_AAD_OBJECT_ID = "205f29da-231e-4a0e-a0b2-b398e6302087";
-
-type TeamsMentionActivity = {
-  text: string;
-  entities: Array<{
-    type: "mention";
-    text: string;
-    mentioned: {
-      id: string;
-      name: string;
-    };
-  }>;
-};
-
-function pluginFixtureSource(moduleType: "commonjs" | "esm", includeMentionHint = false): string {
+function pluginFixtureSource(
+  moduleType: "commonjs" | "esm",
+  includeMentionHint = false,
+  freezePlugin = false,
+): string {
   const hints = includeMentionHint
     ? [ADAPTIVE_CARD_HINT, MSTEAMS_MENTION_HINT, TARGETING_HINT]
     : [ADAPTIVE_CARD_HINT, TARGETING_HINT];
@@ -54,6 +44,7 @@ function pluginFixtureSource(moduleType: "commonjs" | "esm", includeMentionHint 
     "    ],",
     "  },",
     "};",
+    ...(freezePlugin ? ["Object.freeze(msteamsPlugin);"] : []),
   ];
   return [
     ...pluginSource,
@@ -64,7 +55,11 @@ function pluginFixtureSource(moduleType: "commonjs" | "esm", includeMentionHint 
 
 function writeMSTeamsPackage(
   root: string,
-  options: { moduleType?: "commonjs" | "esm"; includeMentionHint?: boolean } = {},
+  options: {
+    moduleType?: "commonjs" | "esm";
+    includeMentionHint?: boolean;
+    freezePlugin?: boolean;
+  } = {},
 ): string {
   const moduleType = options.moduleType ?? "commonjs";
   const pkgDir = path.join(root, "node_modules", "@openclaw", "msteams");
@@ -78,12 +73,40 @@ function writeMSTeamsPackage(
       ...(moduleType === "esm" ? { type: "module" } : {}),
     }),
   );
-  const channelFile = path.join(distDir, "channel-fixture.js");
+  const channelFile = path.join(distDir, "channel-plugin-api.js");
   fs.writeFileSync(
     channelFile,
-    pluginFixtureSource(moduleType, options.includeMentionHint ?? false),
+    pluginFixtureSource(
+      moduleType,
+      options.includeMentionHint ?? false,
+      options.freezePlugin ?? false,
+    ),
   );
   return channelFile;
+}
+
+function writeMSTeamsEntryFlow(root: string): { channelFile: string; indexFile: string } {
+  const channelFile = writeMSTeamsPackage(root);
+  const indexFile = path.join(path.dirname(channelFile), "index.js");
+  fs.writeFileSync(indexFile, 'module.exports = require("./channel-plugin-api.js");\n');
+  return { channelFile, indexFile };
+}
+
+function writeMSTeamsPackageWithPluginShapedChild(root: string): {
+  channelFile: string;
+  childFile: string;
+} {
+  const channelFile = writeMSTeamsPackage(root);
+  const childFile = path.join(path.dirname(channelFile), "plugin-shaped-child.js");
+  fs.writeFileSync(childFile, pluginFixtureSource("commonjs"));
+  fs.writeFileSync(
+    channelFile,
+    pluginFixtureSource("commonjs").replace(
+      "module.exports = { msteamsPlugin };",
+      'module.exports = { msteamsPlugin, childPlugin: require("./plugin-shaped-child.js").msteamsPlugin };',
+    ),
+  );
+  return { channelFile, childFile };
 }
 
 function writeUnrelatedMSTeamsLikeModule(root: string): string {
@@ -96,11 +119,22 @@ function writeUnrelatedMSTeamsLikeModule(root: string): string {
 
 function runHintsProbe(
   fixtureFile: string,
-  options: { gatewayProcess?: boolean; requirePreloadTwice?: boolean } = {},
+  options: {
+    processFlavor?: "gateway-title" | "none" | "openclaw-launcher" | "unrelated-launcher";
+    requirePreloadTwice?: boolean;
+  } = {},
 ) {
+  const processSetup = {
+    "gateway-title": "process.title = 'openclaw-gateway';",
+    none: "",
+    "openclaw-launcher":
+      "process.title = 'node'; process.argv[1] = '/usr/local/lib/node_modules/openclaw/openclaw.mjs'; process.argv[2] = 'gateway';",
+    "unrelated-launcher":
+      "process.title = 'node'; process.argv[1] = '/tmp/not-openclaw.js'; process.argv[2] = 'gateway';",
+  }[options.processFlavor ?? "gateway-title"];
   const script = `
 const preload = ${JSON.stringify(MSTEAMS_HINT_PRELOAD)};
-${options.gatewayProcess === false ? "" : "process.title = 'openclaw-gateway';"}
+${processSetup}
 require(preload);
 ${options.requirePreloadTwice ? "require(preload);" : ""}
 const plugin = require(process.env.MSTEAMS_FILE).msteamsPlugin;
@@ -119,25 +153,6 @@ console.log(JSON.stringify(plugin.agentPrompt.messageToolHints({ cfg: {} })));
     hints:
       result.status === 0 && result.stdout.trim() ? (JSON.parse(result.stdout) as string[]) : [],
   };
-}
-
-function buildRealOpenClawMSTeamsSendFormatterContract(message: string): TeamsMentionActivity {
-  const entities: TeamsMentionActivity["entities"] = [];
-  const text = message.replace(/@\[([^\]]+)\]\(([^)]+)\)/g, (_match, name, id) => {
-    const displayName = String(name).trim();
-    const userId = String(id).trim();
-    const mentionText = `<at>${displayName}</at>`;
-    entities.push({
-      type: "mention",
-      text: mentionText,
-      mentioned: {
-        id: userId,
-        name: displayName,
-      },
-    });
-    return mentionText;
-  });
-  return { text, entities };
 }
 
 describe("OpenClaw Microsoft Teams message hint patch", () => {
@@ -167,6 +182,18 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     }
   });
 
+  it("patches the exact dist/index.js to channel-plugin-api.js load flow", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-entry-flow-"));
+    const { indexFile } = writeMSTeamsEntryFlow(tmp);
+    try {
+      const { result, hints } = runHintsProbe(indexFile);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(hints).toEqual([ADAPTIVE_CARD_HINT, MSTEAMS_MENTION_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("leaves upstream mention hints idempotent when OpenClaw already includes them", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-present-"));
     const fixtureFile = writeMSTeamsPackage(tmp, { includeMentionHint: true });
@@ -191,13 +218,75 @@ describe("OpenClaw Microsoft Teams message hint patch", () => {
     }
   });
 
+  it("does not patch a plugin-shaped child dependency before the exact entry returns", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-child-"));
+    const { channelFile } = writeMSTeamsPackageWithPluginShapedChild(tmp);
+    try {
+      const script = `
+process.title = 'openclaw-gateway';
+const Module = require("module");
+const originalLoad = Module._load;
+require(${JSON.stringify(MSTEAMS_HINT_PRELOAD)});
+const loaded = require(${JSON.stringify(channelFile)});
+console.log(JSON.stringify({
+  restored: Module._load === originalLoad,
+  targetHints: loaded.msteamsPlugin.agentPrompt.messageToolHints({ cfg: {} }),
+  childHints: loaded.childPlugin.agentPrompt.messageToolHints({ cfg: {} }),
+}));
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+      const parsed = JSON.parse(result.stdout) as {
+        restored: boolean;
+        targetHints: string[];
+        childHints: string[];
+      };
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(parsed.restored).toBe(true);
+      expect(parsed.targetHints).toContain(MSTEAMS_MENTION_HINT);
+      expect(parsed.childHints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("stays inert in non-gateway Node children that inherit NODE_OPTIONS", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-nongateway-"));
     const fixtureFile = writeMSTeamsPackage(tmp);
     try {
-      const { result, hints } = runHintsProbe(fixtureFile, { gatewayProcess: false });
+      const { result, hints } = runHintsProbe(fixtureFile, { processFlavor: "none" });
       expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
       expect(hints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores an unrelated launcher whose third argument is gateway", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-false-launcher-"));
+    const fixtureFile = writeMSTeamsPackage(tmp);
+    try {
+      const { result, hints } = runHintsProbe(fixtureFile, {
+        processFlavor: "unrelated-launcher",
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(hints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the pinned openclaw.mjs gateway launcher shape", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-launcher-"));
+    const fixtureFile = writeMSTeamsPackage(tmp);
+    try {
+      const { result, hints } = runHintsProbe(fixtureFile, {
+        processFlavor: "openclaw-launcher",
+      });
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(hints).toContain(MSTEAMS_MENTION_HINT);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -241,23 +330,46 @@ console.log(JSON.stringify({
     }
   });
 
-  it("matches the real @openclaw/msteams send formatter contract for native mention entities", () => {
-    const activity = buildRealOpenClawMSTeamsSendFormatterContract(
-      `Please review this, @[San Dang](${SAN_DANG_AAD_OBJECT_ID}).`,
-    );
-
-    expect(activity.text).toBe("Please review this, <at>San Dang</at>.");
-    expect(activity.text).not.toContain(SAN_DANG_AAD_OBJECT_ID);
-    expect(activity.entities).toEqual([
-      {
-        type: "mention",
-        text: "<at>San Dang</at>",
-        mentioned: {
-          id: SAN_DANG_AAD_OBJECT_ID,
-          name: "San Dang",
+  it("warns, fails open, and restores the hook when the plugin is immutable", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-hints-frozen-"));
+    const fixtureFile = writeMSTeamsPackage(tmp, { freezePlugin: true });
+    try {
+      const script = `
+process.title = 'openclaw-gateway';
+const Module = require("module");
+const originalLoad = Module._load;
+const warnings = [];
+process.emitWarning = (warning, options) => warnings.push({ message: String(warning), code: options && options.code });
+require(${JSON.stringify(MSTEAMS_HINT_PRELOAD)});
+const plugin = require(${JSON.stringify(fixtureFile)}).msteamsPlugin;
+console.log(JSON.stringify({
+  restored: Module._load === originalLoad,
+  hints: plugin.agentPrompt.messageToolHints({ cfg: {} }),
+  warnings,
+}));
+`;
+      const result = spawnSync(process.execPath, ["-e", script], {
+        encoding: "utf-8",
+        timeout: 10_000,
+      });
+      const parsed = JSON.parse(result.stdout) as {
+        restored: boolean;
+        hints: string[];
+        warnings: Array<{ code?: string; message: string }>;
+      };
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(parsed.restored).toBe(true);
+      expect(parsed.hints).toEqual([ADAPTIVE_CARD_HINT, TARGETING_HINT]);
+      expect(parsed.warnings).toEqual([
+        {
+          code: "NEMOCLAW_MSTEAMS_HINT_PATCH_SKIPPED",
+          message:
+            "NemoClaw could not install the Microsoft Teams mention hint; Teams will continue without the additional prompt guidance.",
         },
-      },
-    ]);
+      ]);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("does not install an ESM load hook that breaks relative module linking", () => {
