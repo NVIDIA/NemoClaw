@@ -19,6 +19,12 @@
  *
  * These tests execute the actual emitted stanza shell rather than asserting on
  * source text, mirroring test/repro-4538-raw-doctor-perms.test.ts.
+ *
+ * Accepted contract (#6018, maintainer-agreed): the supported behavior is this
+ * proactive connect-shell reminder, NOT a denial-time rewrite of the tool error
+ * — the OpenShell proxy owns the 403 and cannot be changed here. See the
+ * "proactive-only contract" test below, which asserts the stanza never wraps
+ * curl/git/wget.
  */
 
 import { spawnSync } from "node:child_process";
@@ -116,6 +122,17 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     });
     expect(status).toBe(0);
     expect(stdout).toContain("nemoclaw qa-5978 logs --tail 50");
+  });
+
+  // Accepted contract (#6018, maintainer-agreed): the supported behavior for
+  // #5978 is a PROACTIVE connect-shell reminder, NOT modification of the
+  // denial-time curl/git/wget error (that 403 is emitted by the OpenShell L7
+  // proxy and is intentionally left byte-for-byte unchanged). The stanza must
+  // therefore never wrap or alias those tools — doing so would pipe their
+  // stderr and regress TTY progress/colour. Lock the contract in tests.
+  it("does not wrap or alias curl/git/wget (proactive-only contract, #6018)", () => {
+    expect(stanza).not.toMatch(/(^|\n)\s*(curl|git|wget)\s*\(\s*\)\s*\{/);
+    expect(stanza).not.toMatch(/(^|\n)\s*alias\s+(curl|git|wget)=/);
   });
 
   // All breadcrumb scenarios drive the public gate `_nemoclaw_maybe_policy_denial_hint`

@@ -3057,6 +3057,11 @@ PYAPPROVEAFTER
 # condition: drop this stanza once the OpenShell proxy returns a structured,
 # actionable denial (naming the rule / a logs pointer) at the tunnel-failure
 # site, at which point the breadcrumb is redundant.
+#
+# Accepted contract (#5978, maintainer-agreed on PR #6018): the supported
+# behavior is this proactive connect-shell reminder. It does NOT make the
+# denial-time curl/git/wget error itself denial-adjacent — that is intentional,
+# given the source boundary above — so the tool error stays unchanged.
 _nemoclaw_policy_denial_hint_label() {
   # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
   # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
