@@ -136,6 +136,7 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
+  const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
   const prekConfig = readYaml<PrekConfig>(".pre-commit-config.yaml");
   const sharedActions = {
     staticChecks: readYaml<CompositeAction>(".github/actions/ci-static-checks/action.yaml"),
@@ -154,6 +155,27 @@ describe("pull request and main workflow contracts", () => {
   const resolveHermesBaseAction = readYaml<CompositeAction>(
     ".github/actions/resolve-hermes-base-image/action.yaml",
   );
+
+  it("keeps pull-request installer hash verification credential-free", () => {
+    const job = installerHashWorkflow.jobs["check-hash"];
+    const checkout = requiredWorkflowStep(job, "Checkout");
+    const pullRequestCheck = requiredWorkflowStep(
+      job,
+      "Verify installer hashes are current (pull request)",
+    );
+    const trustedCheck = requiredWorkflowStep(
+      job,
+      "Verify installer hashes are current (trusted events)",
+    );
+
+    expect(checkout.with?.["persist-credentials"]).toBe(false);
+    expect(pullRequestCheck.if).toBe("github.event_name == 'pull_request'");
+    expect(pullRequestCheck.env).toBeUndefined();
+    expect(pullRequestCheck.run).toBe("bash scripts/check-installer-hash.sh");
+    expect(trustedCheck.if).toBe("github.event_name != 'pull_request'");
+    expect(trustedCheck.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+    expect(trustedCheck.run).toBe("bash scripts/check-installer-hash.sh");
+  });
 
   it("routes only code-changing PRs through the code-check path", () => {
     const filterStep = prWorkflow.jobs.changes.steps?.find((step) => step.id === "filter");

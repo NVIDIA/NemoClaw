@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Verifies pinned installer SHA-256 hashes still match upstream scripts.
-# Checked: Ollama installer.
+# Checked: Ollama installer and OpenShell v0.0.72 release assets.
 # Runs on every PR and push to main, plus a weekly scheduled check.
 
 name: Security / Installer Hash Check
@@ -28,8 +28,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
 
-      - name: Verify installer hashes are current
+      - name: Verify installer hashes are current (pull request)
+        if: github.event_name == 'pull_request'
+        run: bash scripts/check-installer-hash.sh
+
+      - name: Verify installer hashes are current (trusted events)
+        if: github.event_name != 'pull_request'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: bash scripts/check-installer-hash.sh
