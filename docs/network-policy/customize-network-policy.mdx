@@ -142,7 +142,8 @@ This path preserves existing policy entries and is the only NemoClaw-supported f
 $$nemoclaw my-assistant policy-add
 ```
 
-NemoClaw reads the round-trippable base policy with `openshell policy get --base`, structurally merges your preset's `network_policies` into it, and writes the merged result back. Provider-composed `_provider_*` entries are excluded because OpenShell reserves that namespace and rejects it in `policy set`.
+NemoClaw reads the round-trippable base policy with `openshell policy get --base`, structurally merges your preset's `network_policies` into it, and writes the merged result back.
+Provider-composed `_provider_*` entries are excluded because OpenShell reserves that namespace and rejects it in `policy set`.
 Existing presets and the baseline remain in place.
 The preset file under `presets/` also persists across sandbox recreations.
 
