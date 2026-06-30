@@ -29,7 +29,7 @@ Load the `nemoclaw-skills-guide` skill for a full catalog and quick decision gui
 | `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, target registry, and live runner (see `test/e2e/README.md`) |
 | `docs/` | MDX/Markdown | User-facing Fern docs and Markdown routes for AI documentation clients |
 | `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
@@ -49,7 +49,7 @@ Package-specific guides:
 | Run fast source tests | `npm run test:fast` |
 | Run integration tests | `npm run test:integration` |
 | Run package contracts | `npm run test:package` |
-| Run live E2E scenarios | `npm run test:live-e2e` |
+| Run live E2E targets | `npm run test:live-e2e` |
 | Run plugin tests | `cd nemoclaw && npm test` |
 | Run all linters | `make check` |
 | Run all hooks manually | `npx prek run --all-files` |
@@ -78,8 +78,8 @@ Tests are organized into disjoint Vitest projects defined in `vitest.config.ts`:
 3. **`installer-integration`** — installer tests that spawn real `install.sh` processes
 4. **`package-contract`** — `test/package-contract/**/*.test.ts` — the only non-live lane that imports compiled CLI/plugin artifacts
 5. **`plugin`** — `nemoclaw/src/**/*.test.ts` — plugin unit tests co-located with source
-6. **`e2e-vitest-support`** — fast tests for the E2E fixture/support layer
-7. **`e2e-scenarios-live`** — opt-in live scenarios that mutate real external state
+6. **`e2e-support`** — fast tests for the E2E fixture/support layer
+7. **`e2e-live`** — opt-in live targets that mutate real external state
 8. **`e2e-branch-validation`** — opt-in validation on an ephemeral Brev instance
 
 When writing tests:

@@ -179,6 +179,19 @@ function expectConcreteStatusHook(
   });
 }
 
+function expectOpenClawRuntimeVisibility(
+  manifest: ChannelManifest,
+  configKeys: readonly string[],
+  logPatterns: readonly string[],
+  channelName = configKeys[0],
+): void {
+  expect(manifest.runtime?.openclaw?.channelName).toBe(channelName);
+  expect(manifest.runtime?.openclaw?.visibility).toEqual({
+    configKeys,
+    logPatterns,
+  });
+}
+
 function expectOpenClawNodePreload(manifest: ChannelManifest, module: string): void {
   expect(manifest.runtime?.openclaw?.nodePreloads ?? []).toEqual(
     expect.arrayContaining([expect.objectContaining({ module })]),
@@ -668,6 +681,7 @@ describe("built-in channel manifests", () => {
     expect(renderJson(teamsManifest)).toContain('"path":"platforms.teams"');
     expect(renderJson(teamsManifest)).toContain("credential.teamsClientSecret.placeholder");
     expect(renderJson(teamsManifest)).toContain("teamsConfig.webhookPort");
+    expect(renderJson(teamsManifest)).toContain('"streaming":{"mode":"off"}');
     expect(renderJson(teamsManifest)).toContain('"groupPolicy":"open"');
     expect(renderJson(teamsManifest)).not.toContain("groupAllowFrom");
     expectTokenPasteEnrollHook(teamsManifest, ["clientSecret"]);
@@ -699,6 +713,8 @@ describe("built-in channel manifests", () => {
         },
       ],
     });
+    expectOpenClawRuntimeVisibility(teamsManifest, ["msteams"], ["msteams", "teams"], "msteams");
+    expectOpenClawNodePreload(teamsManifest, "msteams-message-hints");
     expect(teamsManifest.agentPackages).toContainEqual({
       id: "openclawPluginPackage",
       agent: "openclaw",

@@ -83,6 +83,10 @@ function suggestGlobalCommand(token: string): string | null {
   return suggestCommand(token, GLOBAL_COMMANDS);
 }
 
+function suggestSandboxName(token: string, registeredNames: readonly string[]): string | null {
+  return suggestCommand(token, registeredNames);
+}
+
 function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
@@ -224,6 +228,10 @@ async function recoverRequestedSandboxIfNeeded(
     .listSandboxes()
     .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
+    const nameSuggestion = suggestSandboxName(sandboxName, allNames);
+    if (nameSuggestion) {
+      console.error(`  Did you mean: ${CLI_NAME} ${nameSuggestion} ${action}?`);
+    }
     console.error("");
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Run '${CLI_NAME} list' to see all sandboxes.`);
@@ -379,6 +387,11 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     .listSandboxes()
     .sandboxes.map((s: { name: string }) => s.name);
   if (allNames.length > 0) {
+    const nameSuggestion = suggestSandboxName(cmd, allNames);
+    if (nameSuggestion) {
+      console.error(`  Did you mean: ${CLI_NAME} ${nameSuggestion} connect?`);
+      console.error("");
+    }
     console.error(`  Registered sandboxes: ${allNames.join(", ")}`);
     console.error(`  Try: ${CLI_NAME} <sandbox-name> connect`);
     console.error("");
