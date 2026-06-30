@@ -236,6 +236,7 @@ describe("rebuild resume session normalization", () => {
         compatibleEndpointReasoning: null,
         pinEndpoint: true,
         endpointUrl: "https://new-provider.example/v1",
+        registryInferenceRoute: null,
         ambient: { presentVars: [], agentMismatch: null },
       },
     });

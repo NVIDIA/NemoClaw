@@ -20,6 +20,10 @@ const SUPPORTED_INFERENCE_APIS_BY_SELECTION: Readonly<Record<string, ReadonlySet
 };
 const SAFE_PROVIDER_NAME = /^[A-Za-z0-9._:-]+$/;
 
+export function isRecoveredProviderCredentialReuseSelectionKey(value: string): boolean {
+  return Object.prototype.hasOwnProperty.call(SUPPORTED_INFERENCE_APIS_BY_SELECTION, value);
+}
+
 export type RecoveredProviderReuseDecision =
   | { kind: "validate-host-credential" }
   | { kind: "reuse-gateway-credential"; preferredInferenceApi: string }
@@ -49,6 +53,7 @@ type RecoveredProviderSelection = {
   recoveredFromSandbox: boolean;
   selectedModel: string | null;
   sandboxName: string | null;
+  recoveredRegistryRoute?: RecordedInferenceRoute | null;
 };
 
 type RecoveredProviderSelectionDeps = {
@@ -210,7 +215,9 @@ export function resolveRecoveredProviderCredentialReuse(
   if (deps.resolveProviderCredential(selectedCredentialEnv)) return false;
 
   const recoveredRoute = recoveredFromSandbox
-    ? deps.readRecordedInferenceRoute(options.sandboxName)
+    ? options.recoveredRegistryRoute?.source === "registry"
+      ? options.recoveredRegistryRoute
+      : deps.readRecordedInferenceRoute(options.sandboxName)
     : null;
   const customFlavor =
     selected.key === "custom"

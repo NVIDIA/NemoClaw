@@ -12,6 +12,8 @@
 import { CLI_NAME } from "../../cli/branding";
 import { RD as _RD, D, R } from "../../cli/terminal-style";
 import { normalizeInferenceSelection } from "../../inference/selection";
+import type { RegistryInferenceRoute } from "../../onboard/rebuild-route-handoff";
+import { isRecoveredProviderCredentialReuseSelectionKey } from "../../onboard/recovered-provider-reuse";
 import * as onboardSession from "../../state/onboard-session";
 import {
   type AmbientRecreateEnvAssessment,
@@ -196,6 +198,13 @@ export interface RebuildResumeConfig {
    */
   readonly pinEndpoint: boolean;
   readonly endpointUrl: string | null;
+  /**
+   * Complete route captured directly from durable registry metadata before
+   * destructive deletion. Passed in memory to recreate provider selection so
+   * custom keyless recovery never has to treat the rewritten session as the
+   * route's source of truth.
+   */
+  readonly registryInferenceRoute: RegistryInferenceRoute | null;
   readonly ambient: AmbientRecreateEnvAssessment;
 }
 
@@ -326,6 +335,30 @@ export function prepareRebuildResumeConfig(
     }
   }
 
+  const recoveredProviderSelectionKey = Object.entries(REMOTE_PROVIDER_CONFIG).find(
+    ([key, config]) =>
+      isRecoveredProviderCredentialReuseSelectionKey(key) &&
+      config.providerName === registrySelection.provider,
+  )?.[0];
+  const registryEndpointRequired = SESSION_ONLY_ENDPOINT_PROVIDER_NAMES.has(
+    registrySelection.provider ?? "",
+  );
+  const registryInferenceRoute =
+    recoveredProviderSelectionKey &&
+    registrySelection.provider &&
+    registrySelection.model &&
+    registrySelection.preferredInferenceApi &&
+    rebuildEndpoint.known &&
+    (!registryEndpointRequired || rebuildEndpoint.endpointUrl)
+      ? {
+          provider: registrySelection.provider,
+          model: registrySelection.model,
+          endpointUrl: rebuildEndpoint.endpointUrl,
+          preferredInferenceApi: registrySelection.preferredInferenceApi,
+          source: "registry" as const,
+        }
+      : null;
+
   return {
     agent: rebuildAgent,
     provider: registrySelection.provider,
@@ -345,6 +378,7 @@ export function prepareRebuildResumeConfig(
         : null,
     pinEndpoint: rebuildEndpoint.known || explicitTargetEndpoint !== null,
     endpointUrl,
+    registryInferenceRoute,
     ambient,
   };
 }

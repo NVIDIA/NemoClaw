@@ -229,6 +229,49 @@ describe("registry", () => {
     expect(registry.removeSandbox("nope")).toBe(false);
   });
 
+  it("atomically returns the exact registry row it removes", () => {
+    registry.registerSandbox({ name: "receipt", model: "captured", imageTag: "old-image" });
+    const receipt = registry.removeSandboxWithReceipt("receipt");
+    expect(receipt?.entry).toMatchObject({
+      name: "receipt",
+      model: "captured",
+      imageTag: "old-image",
+    });
+    expect(registry.getSandbox("receipt")).toBeNull();
+    expect(registry.removeSandboxWithReceipt("receipt")).toBeNull();
+  });
+
+  it("restores a rebuild entry only while its name is unclaimed", () => {
+    registry.registerSandbox({ name: "alpha", model: "old", imageTag: "old-image" });
+    registry.registerSandbox({ name: "beta" });
+    registry.registerSandbox({ name: "gamma" });
+    registry.setDefault("alpha");
+    const original = registry.getSandbox("alpha");
+
+    registry.removeSandbox("alpha");
+    expect(registry.getDefault()).toBe("beta");
+    expect(registry.restoreSandboxEntryIfMissing({ ...original, imageTag: null })).toBe(true);
+    expect(registry.getDefault()).toBe("beta");
+    expect(registry.getSandbox("alpha").imageTag).toBe(null);
+
+    registry.updateSandbox("alpha", {
+      model: "replacement",
+      imageTag: "replacement-image",
+    });
+    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(false);
+    expect(registry.getSandbox("alpha").model).toBe("replacement");
+    expect(registry.getSandbox("alpha").imageTag).toBe("replacement-image");
+
+    registry.removeSandbox("alpha");
+    registry.setDefault("gamma");
+    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(true);
+    expect(registry.getDefault()).toBe("gamma");
+
+    registry.clearAll();
+    expect(registry.restoreSandboxEntryIfMissing(original)).toBe(true);
+    expect(registry.getDefault()).toBe("alpha");
+  });
+
   it("getSandbox returns null for nonexistent", () => {
     expect(registry.getSandbox("nope")).toBe(null);
   });

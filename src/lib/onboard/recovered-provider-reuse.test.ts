@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import { parseGatewayProviderMetadata } from "./gateway-provider-metadata";
 import {
   assessRecoveredProviderCredentialReuse,
   resolveRecoveredProviderCredentialReuse,
@@ -116,6 +117,20 @@ describe("assessRecoveredProviderCredentialReuse", () => {
       assessRecoveredProviderCredentialReuse({ ...completeRecovery, ...override }),
     ).toMatchObject({
       kind: "reject",
+    });
+  });
+
+  it("rejects syntactically valid but spoofed gateway binding keys", () => {
+    const gatewayProvider = parseGatewayProviderMetadata(
+      "Name: compatible-endpoint\nType: openai\nCredential keys: ATTACKER_KEY\nConfig keys: ATTACKER_BASE_URL",
+    );
+
+    expect(gatewayProvider).not.toBeNull();
+    expect(
+      assessRecoveredProviderCredentialReuse({ ...completeRecovery, gatewayProvider }),
+    ).toEqual({
+      kind: "reject",
+      reason: "provider 'compatible-endpoint' has no compatible non-secret identity in OpenShell",
     });
   });
 
@@ -237,13 +252,16 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("authorizes reuse separately from smoke suppression only after exact recovery checks", () => {
+  it("uses the pre-delete registry route after destructive removal", () => {
     const state = {
       provider: "compatible-endpoint",
       endpointUrl: "https://inference.example/v1",
       preferredInferenceApi: null,
     };
     const note = vi.fn();
+    const readRecordedInferenceRoute = vi.fn(() => {
+      throw new Error("the deleted registry row must not be re-read");
+    });
 
     expect(
       resolveRecoveredProviderCredentialReuse(
@@ -255,16 +273,17 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
           recoveredFromSandbox: true,
           selectedModel: "model",
           sandboxName: "alpha",
-        },
-        {
-          resolveProviderCredential: () => null,
-          readRecordedInferenceRoute: () => ({
+          recoveredRegistryRoute: {
             provider: "compatible-endpoint",
             model: "model",
             endpointUrl: "https://inference.example/v1",
             preferredInferenceApi: "openai-completions",
             source: "registry",
-          }),
+          },
+        },
+        {
+          resolveProviderCredential: () => null,
+          readRecordedInferenceRoute,
           readRecordedProviderEndpoints: () => [],
           readGatewayProviderMetadata: () => ({
             name: "compatible-endpoint",
@@ -284,6 +303,7 @@ describe("resolveRecoveredProviderCredentialReuse", () => {
       reuseGatewayCredentialWithoutLocalKey: true,
     });
     expect(note).toHaveBeenCalledOnce();
+    expect(readRecordedInferenceRoute).not.toHaveBeenCalled();
   });
 
   it("rejects an effective model override that differs from the atomic recovered route", () => {

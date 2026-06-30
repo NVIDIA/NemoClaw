@@ -66,7 +66,7 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import { removeSandboxImage } from "./destroy";
+import { removeSandboxRegistryEntryWithReceipt } from "./destroy";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -79,6 +79,7 @@ import {
 } from "./rebuild-flow-helpers";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 import {
+  checkRebuildGatewayCredentialReuseOrBail,
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
 } from "./rebuild-provider-preflight";
@@ -639,6 +640,20 @@ export async function rebuildSandbox(
   // Fails closed (sandbox untouched) when a precondition cannot be satisfied.
   const resumeConfig = prepareRebuildResumeConfig(sandboxName, sb, rebuildAgent, log, bail);
   if (!resumeConfig) return;
+  const hostCredentialAvailable = Boolean(
+    resumeConfig.credentialEnv && hydrateCredentialEnv(resumeConfig.credentialEnv),
+  );
+  if (
+    !checkRebuildGatewayCredentialReuseOrBail(
+      sandboxName,
+      resumeConfig,
+      hostCredentialAvailable,
+      log,
+      bail,
+    )
+  ) {
+    return;
+  }
 
   const rebuildMessagingPlan = await stageRebuildMessagingPlanOrBail(
     sandboxName,
@@ -651,7 +666,7 @@ export async function rebuildSandbox(
   // Step 1: Ensure sandbox is live for backup, or identify stale-sandbox recovery.
   const liveState = await resolveRebuildLiveState(sandboxName, sb, log, bail);
   if (!liveState) return;
-  const { staleRecovery, staleRegistrySnapshot } = liveState;
+  const { staleRecovery } = liveState;
 
   // Build agent base layers before backup/delete so Dockerfile.base errors leave
   // the existing sandbox intact. This is what applies local Hermes version edits.
@@ -670,6 +685,27 @@ export async function rebuildSandbox(
     relockRebuildShieldsWindow(sandboxName, rebuildShieldsWindow, sandboxStillExists, CLI_NAME);
 
   let sandboxStillExists = true;
+  let removedRegistryEntry: registry.SandboxEntry | null = null;
+  let registryEntryRemoved = false;
+  let registryRollbackAttempted = false;
+  const restoreRemovedRegistryEntryForRetry = (): void => {
+    if (registryRollbackAttempted || !registryEntryRemoved || !removedRegistryEntry) return;
+    registryRollbackAttempted = true;
+    try {
+      const restored = registry.restoreSandboxEntryIfMissing({
+        ...removedRegistryEntry,
+        imageTag: null,
+      });
+      const recreateLabel = staleRecovery ? "Stale-recovery recreate" : "Recreate";
+      log(
+        restored
+          ? `${recreateLabel} failed: restored registry metadata for retry`
+          : "Recreate failed: kept the replacement registry metadata already present",
+      );
+    } catch (err) {
+      log(`Failed to restore registry metadata after recreate failure: ${String(err)}`);
+    }
+  };
 
   try {
     // Step 2: Backup (skipped on stale-sandbox recovery -- no live state exists)
@@ -716,14 +752,12 @@ export async function rebuildSandbox(
       return;
     }
     sandboxStillExists = false;
-    // Keep the authoritative registry route until onboard's provider-selection
-    // phase has reused the gateway-held credential. The live sandbox is already
-    // gone, so createSandbox() will prune this stale row immediately after
-    // provider setup and before registering the replacement. Removing it here
-    // would force custom-provider recovery to trust the rewritten session
-    // instead of the registry and fail closed after destructive deletion.
-    removeSandboxImage(sandboxName);
-    log(`Retaining registry route for '${sandboxName}' through recreate provider recovery`);
+    const removalReceipt = removeSandboxRegistryEntryWithReceipt(sandboxName);
+    removedRegistryEntry = removalReceipt?.entry ?? null;
+    registryEntryRemoved = removalReceipt !== null;
+    log(
+      `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
+    );
     console.log(`  ${G}\u2713${R} Old sandbox deleted`);
 
     // Step 4: Recreate via onboard --resume
@@ -841,7 +875,12 @@ export async function rebuildSandbox(
     // and the caller's process env are left untouched.
     const restoreAmbientRecreateEnv = isolateAmbientRecreateEnv();
     try {
-      await onboard(recreateOpts);
+      await onboard({
+        ...recreateOpts,
+        rebuildRegistryInferenceRoute: resumeConfig.registryInferenceRoute
+          ? { sandboxName, route: resumeConfig.registryInferenceRoute }
+          : null,
+      });
       log("onboard() returned successfully");
     } catch (err) {
       onboardFailed = true;
@@ -876,29 +915,13 @@ export async function rebuildSandbox(
         /* best effort */
       }
 
-      // Stale-sandbox recovery had no backup to fall back on and already removed
-      // the registry entry before the recreate. If the recreate failed, restore
-      // the captured entry so the recommended `rebuild --yes` (and `connect`)
-      // remain retryable instead of failing at dispatch with "not found in
-      // registry" (#4497). Restore unconditionally — overwriting any partial entry
-      // a failed `onboard` may have registered — so the original metadata
-      // (defaultSandbox, customPolicies, every field) wins, not a half-written
-      // recreate entry. The restore targets only this sandbox under the registry
-      // lock, leaving other sandboxes' concurrent changes intact.
-      const snapshotEntry = staleRegistrySnapshot?.sandboxes?.[sandboxName];
-      if (staleRecovery && snapshotEntry) {
-        try {
-          registry.restoreSandboxEntry(snapshotEntry, {
-            reclaimDefault:
-              staleRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
-          });
-          log("Stale-recovery recreate failed: restored preserved registry entry for retry");
-        } catch (err) {
-          log(
-            `Failed to restore registry entry after stale-recovery recreate failure: ${String(err)}`,
-          );
-        }
-      }
+      // Put the pre-delete retry metadata back only when this rebuild actually
+      // removed it and onboarding did not already register a replacement. This
+      // handles both live and stale recovery without overwriting newer state.
+      // The old image tag stays cleared because deletion already attempted to
+      // remove that image; retaining it would make `gc` treat a leftover image
+      // as live. The atomic helper also preserves any valid current default.
+      restoreRemovedRegistryEntryForRetry();
 
       console.error("");
       if (staleRecovery) {
@@ -1220,6 +1243,9 @@ export async function rebuildSandbox(
         `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
       );
     }
+  } catch (err) {
+    if (!sandboxStillExists) restoreRemovedRegistryEntryForRetry();
+    throw err;
   } finally {
     if (!rebuildShieldsWindow.relocked) {
       relockShieldsIfNeeded(sandboxStillExists);

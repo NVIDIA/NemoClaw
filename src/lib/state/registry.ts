@@ -4,8 +4,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { isErrnoException } from "../core/errno";
-import { inferenceSelectionRegistryFields } from "../inference/selection";
 import type { InferenceSelection } from "../inference/selection";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
 
@@ -469,18 +469,28 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
-export function removeSandbox(name: string): boolean {
+export type SandboxRemovalReceipt = {
+  entry: SandboxEntry;
+};
+
+/** Atomically capture and remove one registry row for a reversible lifecycle operation. */
+export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
     const data = load();
-    if (!data.sandboxes[name]) return false;
+    const entry = data.sandboxes[name];
+    if (!entry) return null;
     delete data.sandboxes[name];
     if (data.defaultSandbox === name) {
       const remaining = Object.keys(data.sandboxes);
       data.defaultSandbox = remaining.length > 0 ? remaining[0] || null : null;
     }
     save(data);
-    return true;
+    return { entry };
   });
+}
+
+export function removeSandbox(name: string): boolean {
+  return removeSandboxWithReceipt(name) !== null;
 }
 
 /**
@@ -510,6 +520,29 @@ export function restoreSandboxEntry(
       data.defaultSandbox = options.reclaimDefault;
     }
     save(data);
+  });
+}
+
+/**
+ * Restore a removed entry only while its name is still unclaimed. This is the
+ * rebuild-failure rollback: a partially or concurrently registered
+ * replacement must win over the pre-rebuild entry.
+ *
+ * A valid current default is always preserved: without a registry revision
+ * token, the fallback selected by removal cannot be distinguished from a later
+ * deliberate `setDefault()`. The restored entry becomes default only when the
+ * current pointer is absent or stale.
+ */
+export function restoreSandboxEntryIfMissing(entry: SandboxEntry): boolean {
+  return withLock(() => {
+    const data = load();
+    if (data.sandboxes[entry.name]) return false;
+    data.sandboxes[entry.name] = entry;
+    if (!data.defaultSandbox || !data.sandboxes[data.defaultSandbox]) {
+      data.defaultSandbox = entry.name;
+    }
+    save(data);
+    return true;
   });
 }
 

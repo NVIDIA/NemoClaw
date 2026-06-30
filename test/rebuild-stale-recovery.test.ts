@@ -81,6 +81,7 @@ function createStaleFixture(
           gpuEnabled: false,
           policies: [],
           agent: null,
+          imageTag: "openshell/sandbox-from:stale-image",
           ...(gatewayName ? { gatewayName } : {}),
         },
       },
@@ -300,10 +301,11 @@ describe("stale sandbox rebuild recovery (#4497)", () => {
     // Proof we took the stale-recovery path and the recreate did not succeed.
     expect(output).toContain("No live workspace state to back up");
     expect(output).toContain("Recovery recreate failed");
-    // The preserved entry must survive the failed recreate, and the full
-    // registry snapshot (including defaultSandbox) must be restored verbatim.
+    // The preserved entry must survive the failed recreate. Its obsolete image
+    // tag is intentionally cleared so a leftover image remains eligible for GC.
     expect(registryHasSandbox(f)).toBe(true);
     const reg = JSON.parse(fs.readFileSync(path.join(f.nemoclawDir, "sandboxes.json"), "utf-8"));
     expect(reg.defaultSandbox).toBe(f.sandboxName);
+    expect(reg.sandboxes[f.sandboxName].imageTag).toBe(null);
   });
 });

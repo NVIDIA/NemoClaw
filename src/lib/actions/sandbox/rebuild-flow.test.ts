@@ -53,6 +53,7 @@ type RebuildFlowOverrides = {
   sandboxEntry?: Record<string, unknown>;
   sessionSandboxName?: string;
   backupPolicyPresets?: string[];
+  updateSession?: () => void;
 };
 
 type RebuildFlowHarness = {
@@ -65,9 +66,8 @@ type RebuildFlowHarness = {
   logSpy: MockInstance;
   markStepFailedSpy: MockInstance;
   onboardSpy: MockInstance;
-  registryRemoveSpy: MockInstance;
   registryUpdateSpy: MockInstance;
-  removeSandboxImageSpy: MockInstance;
+  restoreRegistryEntryIfMissingSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
@@ -203,6 +203,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
   vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
   vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
+    overrides.updateSession?.();
     if (typeof mutator !== "function") {
       throw new TypeError("updateSession expected a mutator function");
     }
@@ -224,8 +225,10 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     ...(overrides.sandboxEntry ?? {}),
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
-  const registryRemoveSpy = vi.spyOn(registry, "removeSandbox").mockReturnValue(true);
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const restoreRegistryEntryIfMissingSpy = vi
+    .spyOn(registry, "restoreSandboxEntryIfMissing")
+    .mockReturnValue(true);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
     sessions: [],
@@ -264,12 +267,20 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
         failedFiles: [],
       })),
   );
-  const runOpenshellSpy = vi
-    .spyOn(openshellRuntime, "runOpenshell")
-    .mockReturnValue({ status: 0, output: "" });
-  const removeSandboxImageSpy = vi
-    .spyOn(destroy, "removeSandboxImage")
-    .mockImplementation(() => undefined);
+  const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+    const argv = args as string[];
+    return argv[0] === "provider" && argv[1] === "get"
+      ? {
+          status: 0,
+          stdout:
+            "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+          stderr: "",
+        }
+      : { status: 0, output: "" };
+  });
+  vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
+    entry: { name: "alpha", imageTag: "old-image" },
+  });
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -312,11 +323,10 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     logSpy,
     markStepFailedSpy,
     onboardSpy,
-    registryRemoveSpy,
     registryUpdateSpy,
+    restoreRegistryEntryIfMissingSpy,
     releaseOnboardLockSpy,
     relockSpy,
-    removeSandboxImageSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
@@ -412,6 +422,13 @@ describe("rebuildSandbox flow", () => {
   it("backs up, recreates, restores, reapplies policy, and relocks on a successful OpenClaw rebuild", async () => {
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
+      sandboxEntry: {
+        provider: "compatible-endpoint",
+        model: "custom-model",
+        endpointUrl: "https://inference.example.test/v1?ignored=1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      },
     });
 
     await expect(
@@ -423,14 +440,22 @@ describe("rebuildSandbox flow", () => {
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
-    expect(harness.removeSandboxImageSpy).toHaveBeenCalledWith("alpha");
-    expect(harness.registryRemoveSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         resume: true,
         nonInteractive: true,
         recreateSandbox: true,
         autoYes: true,
+        rebuildRegistryInferenceRoute: {
+          sandboxName: "alpha",
+          route: {
+            provider: "compatible-endpoint",
+            model: "custom-model",
+            endpointUrl: "https://inference.example.test/v1",
+            preferredInferenceApi: "openai-completions",
+            source: "registry",
+          },
+        },
       }),
     );
     expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
@@ -715,6 +740,39 @@ describe("rebuildSandbox flow", () => {
     }
   });
 
+  it("leaves a keyless custom sandbox live when only its session has an endpoint", async () => {
+    const restoreEnv = snapshotEnv(["COMPATIBLE_API_KEY"]);
+    delete process.env.COMPATIBLE_API_KEY;
+    try {
+      const harness = createRebuildFlowHarness({
+        sandboxEntry: {
+          provider: "compatible-endpoint",
+          model: "session-model",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          preferredInferenceApi: "openai-completions",
+        },
+      });
+      harness.session.provider = "compatible-endpoint";
+      harness.session.model = "session-model";
+      harness.session.endpointUrl = "https://session-only.example.test/v1";
+      harness.session.credentialEnv = "COMPATIBLE_API_KEY";
+      harness.session.preferredInferenceApi = "openai-completions";
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+      ).rejects.toThrow("Unsafe gateway credential reuse");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    } finally {
+      restoreEnv();
+    }
+  });
+
   it("aborts before backup/delete when a custom-endpoint target has no matching session (#5735)", async () => {
     // Installer flow: the loaded onboard session belongs to a different
     // (just-created) sandbox, and the target uses a custom OpenAI-compatible
@@ -824,6 +882,9 @@ describe("rebuildSandbox flow", () => {
       steps: { sandbox: { status: "failed", error: "Rebuild recreate failed" } },
     });
     expect(harness.relockSpy).toHaveBeenCalledWith("alpha", expect.any(Object), false, "nemoclaw");
+    expect(harness.restoreRegistryEntryIfMissingSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "alpha", imageTag: null }),
+    );
     expect(process.env.NEMOCLAW_SANDBOX_NAME).toBe("alpha");
 
     // #5735 (PRA-T2): preconditions (credential/endpoint) passed, so the
@@ -835,5 +896,23 @@ describe("rebuildSandbox flow", () => {
     expect(errors).toContain("Recreate failed after sandbox was destroyed");
     expect(errors).toContain("Backup is preserved at: /tmp/nemoclaw-rebuild-backup");
     expect(errors).toContain("onboard --resume");
+  });
+
+  it("restores retry metadata when session rewind throws after registry removal", async () => {
+    const harness = createRebuildFlowHarness({
+      updateSession: () => {
+        throw new Error("session rewind boom");
+      },
+    });
+
+    await expect(
+      harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
+    ).rejects.toThrow("session rewind boom");
+
+    expect(harness.restoreRegistryEntryIfMissingSpy).toHaveBeenCalledWith({
+      name: "alpha",
+      imageTag: null,
+    });
+    expect(harness.onboardSpy).not.toHaveBeenCalled();
   });
 });

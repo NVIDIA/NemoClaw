@@ -140,7 +140,7 @@ describe("rebuild resume snapshot repair", () => {
         },
       } as never),
       vi.spyOn(openshellRuntime, "runOpenshell").mockReturnValue({ status: 0, output: "" }),
-      vi.spyOn(destroy, "removeSandboxImage").mockImplementation(() => undefined),
+      vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue(null),
       vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined),
       vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined),
       vi.spyOn(onboardMod, "onboard").mockImplementation(async (options: unknown) => {

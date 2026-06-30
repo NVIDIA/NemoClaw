@@ -40,7 +40,7 @@ import {
   selectGatewayForSandboxDestroy,
 } from "./destroy-gateway";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
+import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -52,6 +52,11 @@ type RemoveSandboxImageDeps = {
 type RemoveSandboxRegistryEntryDeps = {
   removeImage?: (sandboxName: string) => void;
   removeSandbox?: typeof registry.removeSandbox;
+};
+
+type RemoveSandboxRegistryEntryWithReceiptDeps = {
+  removeImage?: (sandboxName: string) => void;
+  removeSandboxWithReceipt?: typeof registry.removeSandboxWithReceipt;
 };
 
 type RunOpenshell = (args: string[], opts?: Record<string, unknown>) => { status: number | null };
@@ -269,6 +274,17 @@ export function removeSandboxRegistryEntry(
   return removeSandbox(sandboxName);
 }
 
+export function removeSandboxRegistryEntryWithReceipt(
+  sandboxName: string,
+  deps: RemoveSandboxRegistryEntryWithReceiptDeps = {},
+): registry.SandboxRemovalReceipt | null {
+  const removeImage = deps.removeImage ?? removeSandboxImage;
+  const removeSandboxWithReceipt =
+    deps.removeSandboxWithReceipt ?? registry.removeSandboxWithReceipt;
+  removeImage(sandboxName);
+  return removeSandboxWithReceipt(sandboxName);
+}
+
 function defaultDestroyWarn(message: string): void {
   console.warn(`  ${YW}⚠${R} ${message}`);
 }
@@ -292,10 +308,10 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
+export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
 export { wipeSandboxState };
-export type { WipeSandboxStateDeps };
 
 export async function destroySandbox(
   sandboxName: string,

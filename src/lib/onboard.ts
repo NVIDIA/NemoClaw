@@ -663,6 +663,7 @@ type OnboardOptions = {
   gpu?: boolean;
   noGpu?: boolean;
   autoYes?: boolean;
+  rebuildRegistryInferenceRoute?: RebuildRouteHandoff | null;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -3264,6 +3265,7 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
+type RebuildRouteHandoff = import("./onboard/rebuild-route-handoff").RebuildRouteHandoff;
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
 const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
@@ -3370,13 +3372,8 @@ type SetupNimSelectionState =
 
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
-type RemoteProviderSelectionArgs = {
-  selected: ProviderChoice;
-  requestedModel: string | null;
-  recoveredFromSandbox: boolean;
-  recoveredModel: string | null;
-  sandboxName: string | null;
-};
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+type RemoteProviderSelectionArgs = { selected: ProviderChoice; requestedModel: string | null; recoveredFromSandbox: boolean; recoveredModel: string | null; sandboxName: string | null };
 
 async function handleVllmSelection(
   state: SetupNimSelectionState,
@@ -3637,10 +3634,8 @@ async function handleNimLocalSelection(
   return "selected";
 }
 
-async function handleRemoteProviderSelection(
-  args: RemoteProviderSelectionArgs,
-  state: SetupNimSelectionState,
-): Promise<SetupNimSelectionResult> {
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, state: SetupNimSelectionState, recoveredRegistryRoute: RebuildRouteHandoff["route"] | null): Promise<SetupNimSelectionResult> {
   const { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName } = args;
   const remoteConfig = REMOTE_PROVIDER_CONFIG[selected.key];
   state.provider = remoteConfig.providerName;
@@ -3653,7 +3648,9 @@ async function handleRemoteProviderSelection(
     const endpointInput = await resolveCompatibleEndpointInput({
       kind,
       envUrl: process.env.NEMOCLAW_ENDPOINT_URL,
-      recoveredEndpointUrl: recoveredFromSandbox ? readRecordedEndpointUrl(sandboxName) : null,
+      recoveredEndpointUrl: recoveredFromSandbox
+        ? (recoveredRegistryRoute?.endpointUrl ?? readRecordedEndpointUrl(sandboxName))
+        : null,
       nonInteractive: isNonInteractive(),
       prompt,
     });
@@ -3824,7 +3821,7 @@ async function handleRemoteProviderSelection(
     if (isNonInteractive()) {
       // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
       recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
-        { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName },
+        { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName, recoveredRegistryRoute },
         { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell), note },
       );
     } else {
@@ -3919,12 +3916,8 @@ async function handleRemoteProviderSelection(
   return "selected";
 }
 
-async function setupNim(
-  gpu: ReturnType<typeof nim.detectGpu>,
-  sandboxName: string | null = null,
-  agent: AgentDefinition | null = null,
-  recoverProvider = true,
-): Promise<ProviderSelectionResult> {
+// biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: string | null = null, agent: AgentDefinition | null = null, recoverProvider = true, rebuildRegistryInferenceRoute: OnboardOptions["rebuildRegistryInferenceRoute"] = null): Promise<ProviderSelectionResult> {
   step(3, 8, "Configuring inference provider");
 
   let model: string | typeof BACK_TO_SELECTION | null = null;
@@ -4072,9 +4065,13 @@ async function setupNim(
           nimContainer,
           allowToolsIncompatible,
         };
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+        const recoveredRegistryRoute = rebuildRegistryInferenceRoute?.sandboxName === sandboxName && rebuildRegistryInferenceRoute.route.source === "registry" ? rebuildRegistryInferenceRoute.route : null;
+        // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         const result = await handleRemoteProviderSelection(
           { selected, requestedModel, recoveredFromSandbox, recoveredModel, sandboxName },
           state,
+          recoveredRegistryRoute,
         );
         ({
           model,
@@ -5013,7 +5010,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
         providerDeps: {
           normalizeHermesAuthMethod,
-          setupNim,
+          setupNim: (gpu, sandboxName, agent, recoverProvider) =>
+            setupNim(gpu, sandboxName, agent, recoverProvider, opts.rebuildRegistryInferenceRoute),
           setupInference,
           startRecordedStep,
           recordStepComplete,

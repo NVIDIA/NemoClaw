@@ -81,18 +81,26 @@ delete process.env.COMPATIBLE_API_KEY;
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 
 const registry = require(${registryPath});
-registry.registerSandbox({
-  name: "recovered-custom",
+const registryRoute = {
   provider: "compatible-endpoint",
   model: "nvidia/nemotron-3-ultra",
   endpointUrl: "https://inference-api.nvidia.com/v1",
-  credentialEnv: "COMPATIBLE_API_KEY",
   preferredInferenceApi: "openai-completions",
+  source: "registry",
+};
+registry.registerSandbox({
+  name: "recovered-custom",
+  ...registryRoute,
+  credentialEnv: "COMPATIBLE_API_KEY",
 });
+registry.removeSandbox("recovered-custom");
 const { setupNim, setupInference } = require(${onboardPath});
 
 (async () => {
-  const selected = await setupNim(null, "recovered-custom", null);
+  const selected = await setupNim(null, "recovered-custom", null, true, {
+    sandboxName: "recovered-custom",
+    route: registryRoute,
+  });
   if (!selected.model) throw new Error("setupNim did not recover a model");
   await setupInference(
     "recovered-custom",
