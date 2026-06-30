@@ -164,12 +164,14 @@ Snapshot symlink validation permits only these extension link shapes:
 - Extension-local npm `.bin` links whose relative targets remain inside the same `node_modules` tree.
 
 Before cleanup, NemoClaw rejects any managed extension path that is not a real directory, including a dangling symlink.
-The policy lives in `src/lib/state/openclaw-managed-extensions.ts`; `src/lib/state/sandbox.ts` only orchestrates the policy during validation and restore.
+The snapshot policy lives in `src/lib/state/openclaw-managed-extensions.ts`.
+The descriptor-safe shields transition in `scripts/state-dir-guard.py` mirrors only the exact OpenClaw peer-link source shape and target above, reads the link itself without following the external target, and otherwise retains the generic fail-closed symlink policy.
+`src/lib/state/sandbox.ts` only orchestrates these policies during validation and restore.
 
-Invalid state: archived executable plugin copies overwrite freshly rebuilt reviewed extensions, cleanup deletes a managed extension, or a broader symlink allowance permits a snapshot link outside the reviewed package-local boundaries.
-Source boundary: NemoClaw snapshot validation/restore plus the reviewed OpenClaw image extension layout.
-Source-fix constraint: upstream OpenClaw does not own NemoClaw snapshot archives, so the restore boundary must enforce image ownership locally.
-Regression tests: `src/lib/state/openclaw-managed-extensions.test.ts` pins the complete managed set, restore exclusions, exact link predicate, target validation, and cleanup preservation; `test/snapshot.test.ts` and `test/security-sandbox-tar-traversal.test.ts` retain integration and traversal coverage.
+Invalid state: archived executable plugin copies overwrite freshly rebuilt reviewed extensions, cleanup deletes a managed extension, a shields transition rejects or removes the reviewed peer link and leaves rollback incomplete, or a broader symlink allowance permits a link outside the exact reviewed boundaries.
+Source boundary: `src/lib/state/openclaw-managed-extensions.ts`, `scripts/state-dir-guard.py`, NemoClaw snapshot validation/restore, and the reviewed OpenClaw image extension layout.
+Source-fix constraint: upstream OpenClaw does not own NemoClaw snapshot archives or shields transitions, so the local boundary must enforce image ownership without following an external symlink target.
+Regression tests: `src/lib/state/openclaw-managed-extensions.test.ts` pins the complete managed set, restore exclusions, exact link predicate, target validation, and cleanup preservation; `test/state-dir-guard.test.ts` proves preflight, lock, and unlock preserve only the exact peer link while rejecting wrong targets, source shapes, extension IDs, and non-OpenClaw roots; `test/snapshot.test.ts` and `test/security-sandbox-tar-traversal.test.ts` retain integration and traversal coverage; and the `messaging-providers` live rebuild now requires explicit complete post-restore success without a critical rollback warning.
 Removal condition: retire the helper only when snapshot metadata records extension ownership structurally and the generic restore engine can exclude image-owned paths without an OpenClaw-specific policy.
 
 ### Slack Inbound `app_mention`
