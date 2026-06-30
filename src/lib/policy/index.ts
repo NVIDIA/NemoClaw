@@ -1068,6 +1068,12 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     console.error(`  Preset missing network_policies section: ${filePath}`);
     return null;
   }
+  if (Object.keys(parsed.network_policies).some((name) => name.startsWith("_provider_"))) {
+    console.error(
+      `  Preset network_policies keys cannot start with '_provider_' (reserved by OpenShell): ${filePath}`,
+    );
+    return null;
+  }
   const builtin = listPresets().map((p) => p.name);
   if (builtin.includes(presetName)) {
     console.error(

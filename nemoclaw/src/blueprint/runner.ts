@@ -352,15 +352,23 @@ function parseCurrentPolicy(raw: string): UnknownRecord {
   return parsed;
 }
 
+// Package boundary: nemoclaw is published from this package-local ESM root and
+// cannot import the root CLI's CommonJS src/lib/policy/merge.ts without TS6059
+// or omitting that helper from the package. Keep this predicate in behavioral
+// parity with test/policy-openshell-072-roundtrip.test.ts.
+function withoutProviderComposedPolicies(policies: UnknownRecord): UnknownRecord {
+  return Object.fromEntries(
+    Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
+  );
+}
+
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   const current = parseCurrentPolicy(currentPolicyRaw);
   if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
   const existingNetworkPolicies = isObjectLike(current.network_policies)
-    ? Object.fromEntries(
-        Object.entries(current.network_policies).filter(([key]) => !key.startsWith("_provider_")),
-      )
+    ? withoutProviderComposedPolicies(current.network_policies)
     : {};
   const output: UnknownRecord = {};
 

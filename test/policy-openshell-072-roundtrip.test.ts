@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -117,6 +119,24 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     );
 
     expect(merged.network_policies).toEqual(EXISTING_POLICY.network_policies);
+  });
+
+  it("rejects custom preset files that author reserved provider-composed entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-preset-"));
+    const presetPath = path.join(tempDir, "reserved.yaml");
+    try {
+      fs.writeFileSync(
+        presetPath,
+        YAML.stringify({
+          preset: { name: "reserved-entry" },
+          network_policies: { _provider_injected: { name: "must-not-load" } },
+        }),
+      );
+
+      expect(policies.loadPresetFromFile(presetPath)).toBeNull();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("replaces a legacy network_policies array without serializing array entries as keys", () => {
