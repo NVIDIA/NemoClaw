@@ -118,6 +118,8 @@ function isValidPort(value: number | undefined): value is number {
  * signals matched PIDs), so it fails closed — returns `null` to skip the
  * destructive path — in every case where the selected sandbox's gateway port
  * cannot be trusted:
+ *   - an explicit `port` override is present but out of range (a caller error,
+ *     not a request to clean the default gateway port);
  *   - the registry lookup itself throws (e.g. a corrupt registry);
  *   - the sandbox *has* a persisted binding that fails validation (mirroring
  *     `resolveSandboxGatewayName`'s fail-closed contract: a corrupt or tampered
@@ -138,7 +140,12 @@ export function resolveStopGatewayPort(
   options: ReleaseGatewayPortOptions,
   getSandbox: (name: string) => SandboxGatewayBinding | null,
 ): number | null {
-  if (isValidPort(options.port)) return options.port;
+  // An explicit port override that is present but invalid fails closed (null)
+  // rather than silently falling through to sandbox/default resolution: an
+  // out-of-range override is a caller error, not a request to clean the
+  // default gateway port. An absent override (undefined) continues to the
+  // registry binding below.
+  if (options.port !== undefined) return isValidPort(options.port) ? options.port : null;
   if (options.sandboxName) {
     let entry: SandboxGatewayBinding | null;
     try {

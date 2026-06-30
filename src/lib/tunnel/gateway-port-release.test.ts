@@ -101,6 +101,13 @@ describe("resolveStopGatewayPort (#5968)", () => {
     expect(resolveStopGatewayPort({ port: 9090 }, () => null)).toBe(9090);
   });
 
+  it("fails closed (null) for an explicit but invalid port override", () => {
+    // An out-of-range override must not silently fall through to the sandbox
+    // binding or the default port — it is a caller error, so skip.
+    expect(resolveStopGatewayPort({ port: 70000 }, () => ({ gatewayPort: 8090 }))).toBe(null);
+    expect(resolveStopGatewayPort({ port: 0, sandboxName: "alpha" }, () => null)).toBe(null);
+  });
+
   it("derives the port from the sandbox's persisted gateway binding", () => {
     const port = resolveStopGatewayPort({ sandboxName: "alpha" }, () => ({ gatewayPort: 8090 }));
     expect(port).toBe(8090);
