@@ -3,10 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
-import type { AgentConfigTarget } from "../sandbox/config";
 import type { ConfigObject } from "../security/credential-filter";
-import type { Session } from "../state/onboard-session";
-import type { SandboxEntry } from "../state/registry";
 
 vi.mock("../adapters/openshell/runtime", () => ({
   captureOpenshell: vi.fn(),
@@ -36,160 +33,18 @@ vi.mock("../shields/audit", () => ({
   appendAuditEntry: vi.fn(),
 }));
 
-import type { ValidationResult } from "../inference/local";
 import {
-  type InferenceSetDeps,
   InferenceSetError,
   patchHermesInferenceConfig,
   patchOpenClawInferenceConfig,
   runInferenceSet,
 } from "./inference-set";
-
-const OPENCLAW_TARGET: AgentConfigTarget = {
-  agentName: "openclaw",
-  configPath: "/sandbox/.openclaw/openclaw.json",
-  configDir: "/sandbox/.openclaw",
-  format: "json",
-  configFile: "openclaw.json",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-};
-
-const HERMES_TARGET: AgentConfigTarget = {
-  agentName: "hermes",
-  configPath: "/sandbox/.hermes/config.yaml",
-  configDir: "/sandbox/.hermes",
-  format: "yaml",
-  configFile: "config.yaml",
-  sensitiveFiles: ["/sandbox/.hermes/.config-hash", "/sandbox/.hermes/.env"],
-};
-
-function baseSession(overrides: Partial<Session> = {}): Session {
-  return {
-    version: 1,
-    sessionId: "session-1",
-    resumable: true,
-    status: "complete",
-    mode: "onboard",
-    startedAt: "2026-05-11T00:00:00.000Z",
-    updatedAt: "2026-05-11T00:00:00.000Z",
-    lastStepStarted: null,
-    lastCompletedStep: null,
-    failure: null,
-    agent: "openclaw",
-    sandboxName: "alpha",
-    provider: "nvidia-prod",
-    model: "moonshotai/kimi-k2.6",
-    endpointUrl: "https://inference.local/v1",
-    credentialEnv: "OPENAI_API_KEY",
-    hermesAuthMethod: null,
-    preferredInferenceApi: null,
-    nimContainer: null,
-    routerPid: null,
-    routerCredentialHash: null,
-    webSearchConfig: null,
-    policyPresets: null,
-    messagingPlan: null,
-    migratedLegacyValueHashes: null,
-    hermesToolGateways: null,
-    gpuPassthrough: false,
-    telegramConfig: null,
-    wechatConfig: null,
-    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
-    machine: {
-      version: 1,
-      state: "complete",
-      stateEnteredAt: "2026-05-11T00:00:00.000Z",
-      revision: 0,
-    },
-    steps: {},
-    ...overrides,
-  } as Session;
-}
-
-function createDeps(options: {
-  config: ConfigObject;
-  entry?: SandboxEntry | null;
-  entries?: SandboxEntry[];
-  defaultSandbox?: string | null;
-  requestedAgent?: string | null;
-  target?: AgentConfigTarget;
-  session?: Session | null;
-  openshellStatus?: number;
-  localValidation?: ValidationResult;
-  localReachable?: boolean;
-  contextWindow?: number | null;
-}): InferenceSetDeps & {
-  calls: {
-    captureOpenshell: ReturnType<typeof vi.fn>;
-    writeSandboxConfig: ReturnType<typeof vi.fn>;
-    recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
-    updateSandbox: ReturnType<typeof vi.fn>;
-    readSandboxConfig: ReturnType<typeof vi.fn>;
-    updateSession: ReturnType<typeof vi.fn>;
-    appendAuditEntry: ReturnType<typeof vi.fn>;
-    log: ReturnType<typeof vi.fn>;
-    validateLocalProvider: ReturnType<typeof vi.fn>;
-    ensureLocalProviderReachable: ReturnType<typeof vi.fn>;
-    resolveContextWindowForModel: ReturnType<typeof vi.fn>;
-  };
-  getSession: () => Session | null;
-} {
-  let session = options.session ?? null;
-  const entries = options.entries ?? [options.entry ?? { name: "alpha", agent: null }];
-  const sandboxes = entries.reduce<Record<string, SandboxEntry>>((acc, entry) => {
-    acc[entry.name] = entry;
-    return acc;
-  }, {});
-  const defaultSandbox =
-    options.defaultSandbox === undefined ? (entries[0]?.name ?? null) : options.defaultSandbox;
-  const calls = {
-    captureOpenshell: vi.fn(() => ({
-      status: options.openshellStatus ?? 0,
-      output: "",
-      stdout: "",
-      stderr: "",
-    })),
-    writeSandboxConfig: vi.fn(),
-    recomputeSandboxConfigHash: vi.fn(),
-    updateSandbox: vi.fn(() => true),
-    readSandboxConfig: vi.fn(() => options.config),
-    updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
-      const current = session ?? baseSession();
-      session = mutator(current) ?? current;
-      return session;
-    }),
-    appendAuditEntry: vi.fn(),
-    log: vi.fn(),
-    validateLocalProvider: vi.fn((): ValidationResult => options.localValidation ?? { ok: true }),
-    ensureLocalProviderReachable: vi.fn(() => options.localReachable ?? true),
-    resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
-      options.contextWindow === undefined ? null : options.contextWindow,
-    ),
-  };
-  return {
-    getDefaultSandbox: () => defaultSandbox,
-    getSandbox: (name: string) => sandboxes[name] ?? null,
-    listSandboxes: () => ({ sandboxes: entries, defaultSandbox }),
-    updateSandbox: calls.updateSandbox,
-    getRequestedAgent: () => options.requestedAgent,
-    loadSession: () => session,
-    updateSession: calls.updateSession,
-    resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
-    readSandboxConfig: calls.readSandboxConfig,
-    writeSandboxConfig: calls.writeSandboxConfig,
-    recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
-    captureOpenshell: calls.captureOpenshell,
-    appendAuditEntry: calls.appendAuditEntry,
-    log: calls.log,
-    isLocalInferenceProvider: (provider) =>
-      provider === "ollama-local" || provider === "vllm-local",
-    validateLocalProvider: calls.validateLocalProvider,
-    ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
-    resolveContextWindowForModel: calls.resolveContextWindowForModel,
-    calls,
-    getSession: () => session,
-  };
-}
+import {
+  baseSession,
+  createDeps,
+  HERMES_TARGET,
+  OPENCLAW_TARGET,
+} from "./inference-set.test-support";
 
 describe("patchOpenClawInferenceConfig", () => {
   it("writes provider-qualified model refs while preserving model metadata", () => {
@@ -1125,14 +980,21 @@ describe("runInferenceSet", () => {
         { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
       ],
     });
-    deps.calls.captureOpenshell.mockReturnValue({
-      status: null,
-      output: "",
-      stdout: "",
-      stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(1_000)}`,
-      error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
-      signal: "SIGTERM",
-    });
+    deps.calls.captureOpenshell
+      .mockReturnValueOnce({
+        status: null,
+        output: "",
+        stdout: "",
+        stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(1_000)}`,
+        error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
+        signal: "SIGTERM",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        output: "nvidia-prod",
+        stdout: "nvidia-prod\n",
+        stderr: "",
+      });
 
     const err = await runInferenceSet(
       { provider: "openai-api", model: "openai/gpt-5.4-mini" },
@@ -1148,7 +1010,7 @@ describe("runInferenceSet", () => {
     expect(message).not.toContain(querySecret);
     expect(message).toContain("Registered providers: nvidia-prod");
     expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
-    expect(deps.calls.captureOpenshell).toHaveBeenCalledWith(expect.any(Array), {
+    expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(1, expect.any(Array), {
       ignoreError: true,
       includeStreams: true,
       maxBuffer: 64 * 1024,
@@ -1157,20 +1019,27 @@ describe("runInferenceSet", () => {
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
   });
 
-  it("includes registered providers and onboard tip when openshell reports provider not found (#5924)", async () => {
+  it("uses gateway providers instead of stale sandbox providers for the diagnostic (#5924)", async () => {
     const deps = createDeps({
       config: {},
       entries: [
-        { name: "alpha", agent: "openclaw", provider: "nvidia-prod", model: "nvidia/model-a" },
-        { name: "beta", agent: "openclaw", provider: "anthropic-prod", model: "claude-sonnet-4-6" },
+        { name: "alpha", agent: "openclaw", provider: "stale-local", model: "stale-model" },
       ],
       openshellStatus: 1,
     });
-    deps.calls.captureOpenshell.mockReturnValue({
-      status: 1,
-      stdout: "",
-      stderr: "error: provider 'openai-api' not found in gateway",
-    });
+    deps.calls.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "error: provider 'openai-api' not found in gateway",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        output: "alpha-telegram-bridge\nnvidia-prod",
+        stdout: "alpha-telegram-bridge\nnvidia-prod\n",
+        stderr: "",
+      });
 
     const err = await runInferenceSet(
       { provider: "openai-api", model: "openai/gpt-5.4-mini" },
@@ -1180,8 +1049,14 @@ describe("runInferenceSet", () => {
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
     expect(message).toMatch(/provider 'openai-api' not found/);
-    expect(message).toMatch(/Registered providers: nvidia-prod, anthropic-prod/);
+    expect(message).toMatch(/Registered providers: nvidia-prod/);
+    expect(message).not.toMatch(/stale-local|telegram-bridge/);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
+      2,
+      ["provider", "list", "--names"],
+      { ignoreError: true, maxBuffer: 64 * 1024, timeout: 30_000 },
+    );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
@@ -1206,19 +1081,28 @@ describe("runInferenceSet", () => {
     expect(message).not.toContain("nvapi-secret-value");
     expect(message).not.toMatch(/Registered providers/);
     expect(message).not.toMatch(/onboard/);
+    expect(deps.calls.captureOpenshell).toHaveBeenCalledTimes(1);
   });
 
-  it("shows 'No providers registered' when no sandbox has a provider on provider-not-found (#5924)", async () => {
+  it("shows 'No providers registered' when the gateway has no credential providers (#5924)", async () => {
     const deps = createDeps({
       config: {},
-      entries: [{ name: "alpha", agent: "openclaw", provider: null, model: null }],
+      entries: [{ name: "alpha", agent: "openclaw", provider: "stale-local", model: "stale" }],
       openshellStatus: 1,
     });
-    deps.calls.captureOpenshell.mockReturnValue({
-      status: 1,
-      stdout: "error: provider 'openai-api' not found in gateway",
-      stderr: "",
-    });
+    deps.calls.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "error: provider 'openai-api' not found in gateway",
+        stdout: "error: provider 'openai-api' not found in gateway",
+        stderr: "",
+      })
+      .mockReturnValueOnce({
+        status: 0,
+        output: "alpha-telegram-bridge",
+        stdout: "alpha-telegram-bridge\n",
+        stderr: "",
+      });
 
     const err = await runInferenceSet(
       { provider: "openai-api", model: "openai/gpt-5.4-mini" },
@@ -1231,16 +1115,22 @@ describe("runInferenceSet", () => {
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
 
-  it("omits provider list and still shows onboard tip when listSandboxes throws (#5924)", async () => {
+  it("omits provider names and emits only a static warning when the gateway query fails (#5924)", async () => {
+    const querySecret = "provider-query-secret";
     const deps = createDeps({ config: {}, openshellStatus: 1 });
-    deps.calls.captureOpenshell.mockReturnValue({
-      status: 1,
-      stdout: "",
-      stderr: "error: provider 'openai-api' not found in gateway",
-    });
-    deps.listSandboxes = () => {
-      throw new Error("registry corrupted");
-    };
+    deps.calls.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "error: provider 'openai-api' not found in gateway",
+      })
+      .mockReturnValueOnce({
+        status: 17,
+        output: "",
+        stdout: "",
+        stderr: `gateway provider query failed token=${querySecret}`,
+      });
 
     const err = await runInferenceSet(
       { provider: "openai-api", model: "openai/gpt-5.4-mini" },
@@ -1251,11 +1141,44 @@ describe("runInferenceSet", () => {
     const message = (err as Error).message;
     expect(message).not.toMatch(/Registered providers/);
     expect(message).not.toMatch(/No providers registered/);
+    expect(message).not.toContain(querySecret);
     expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
     expect(deps.calls.log).toHaveBeenCalledWith(
-      "  ⚠ Could not read registered providers while formatting the OpenShell failure.",
+      "  ⚠ Could not query registered OpenShell providers while formatting the failure.",
     );
-    expect(deps.calls.log).not.toHaveBeenCalledWith(expect.stringContaining("registry corrupted"));
+    expect(deps.calls.log).not.toHaveBeenCalledWith(expect.stringContaining(querySecret));
+  });
+
+  it("uses the same static fallback when the gateway provider query overflows (#5924)", async () => {
+    const deps = createDeps({ config: {}, openshellStatus: 1 });
+    deps.calls.captureOpenshell
+      .mockReturnValueOnce({
+        status: 1,
+        output: "",
+        stdout: "",
+        stderr: "error: provider 'openai-api' not found in gateway",
+      })
+      .mockReturnValueOnce({
+        status: null,
+        output: "partial-provider-name",
+        stdout: "partial-provider-name",
+        stderr: "overflow detail",
+        error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
+        signal: "SIGTERM",
+      });
+
+    const err = await runInferenceSet(
+      { provider: "openai-api", model: "openai/gpt-5.4-mini" },
+      deps,
+    ).catch((error: Error) => error);
+
+    const message = (err as Error).message;
+    expect(message).not.toMatch(/Registered providers|No providers registered/);
+    expect(message).not.toContain("partial-provider-name");
+    expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
+    expect(deps.calls.log).toHaveBeenCalledWith(
+      "  ⚠ Could not query registered OpenShell providers while formatting the failure.",
+    );
   });
 
   it("keeps gateway and registry consistent when the sandbox config read fails", async () => {

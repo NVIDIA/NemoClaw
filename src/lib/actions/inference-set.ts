@@ -3,7 +3,9 @@
 
 import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapters/openshell/client";
 import { captureOpenshell } from "../adapters/openshell/runtime";
+import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import { CLI_NAME } from "../cli/branding";
+import { parseGatewayProviderNames } from "../credentials/provider-list";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import {
   getProviderSelectionConfig,
@@ -77,7 +79,10 @@ export interface InferenceSetDeps {
   recomputeSandboxConfigHash: (sandboxName: string, target: AgentConfigTarget) => void;
   captureOpenshell: (
     args: string[],
-    opts?: Pick<CaptureOpenshellOptions, "ignoreError" | "includeStreams" | "maxBuffer">,
+    opts?: Pick<
+      CaptureOpenshellOptions,
+      "ignoreError" | "includeStreams" | "maxBuffer" | "timeout"
+    >,
   ) => CaptureOpenshellResult;
   appendAuditEntry: typeof appendAuditEntry;
   log: (message: string) => void;
@@ -133,6 +138,26 @@ function defaultDeps(): InferenceSetDeps {
     ensureLocalProviderReachable,
     resolveContextWindowForModel,
   };
+}
+
+function queryRegisteredGatewayProviders(
+  deps: Pick<InferenceSetDeps, "captureOpenshell" | "log">,
+): string[] | undefined {
+  try {
+    const result = deps.captureOpenshell(["provider", "list", "--names"], {
+      ignoreError: true,
+      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
+      timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
+    });
+    if (result.status === 0) {
+      return parseGatewayProviderNames(result.output).credentialNames;
+    }
+  } catch {
+    // Fall through to the static warning so provider-query errors never mask
+    // or leak through the original inference route failure.
+  }
+  deps.log("  ⚠ Could not query registered OpenShell providers while formatting the failure.");
+  return undefined;
 }
 
 function trimRequired(value: string | null | undefined, label: string): string {
@@ -625,21 +650,9 @@ export async function runInferenceSet(
     const combined = `${stderr}\n${stdout}`;
     const exitCode = setResult.status ?? 1;
     const providerNotFound = openshellReportsProviderNotFound(combined, provider);
-    let registeredProviders: string[] | undefined;
-    if (providerNotFound) {
-      try {
-        registeredProviders = [
-          ...new Set(
-            deps
-              .listSandboxes()
-              .sandboxes.map((s) => s.provider)
-              .filter((p): p is string => typeof p === "string" && p.length > 0),
-          ),
-        ];
-      } catch {
-        deps.log("  ⚠ Could not read registered providers while formatting the OpenShell failure.");
-      }
-    }
+    const registeredProviders = providerNotFound
+      ? queryRegisteredGatewayProviders(deps)
+      : undefined;
     throw new InferenceSetError(
       buildOpenshellInferenceSetFailureMessage({
         exitCode,
