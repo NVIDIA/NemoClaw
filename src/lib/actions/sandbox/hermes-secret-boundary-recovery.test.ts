@@ -94,6 +94,16 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
       reason: "raw-secret",
       stderr: "[SECURITY] raw key\n",
     });
+    expect(exec).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.stringContaining("pkill -TERM -f '[h]ermes[[:space:]]+gateway"),
+      30000,
+    );
+    expect(exec).toHaveBeenCalledWith(
+      SANDBOX,
+      expect.stringContaining("pkill -KILL -f '[h]ermes[[:space:]]+dashboard"),
+      30000,
+    );
     expect(consoleErrorSpy).toHaveBeenCalledWith("  [SECURITY] raw key");
   });
 
