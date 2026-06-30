@@ -886,9 +886,8 @@ req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
       "M-S17d: denied Slack mention emits exactly one bounded sender feedback action",
     );
     check(
-      installedSlackProof.proof === "openclaw-pipeline-runtime" ||
-        installedSlackProof.proof === "openclaw-private-helper",
-      `M-S17c: installed Slack proof used a supported package export (${installedSlackProof.proof})`,
+      installedSlackProof.proof === "openclaw-pipeline-runtime",
+      `M-S17c: OpenClaw 2026.6.9 Slack proof used the reviewed pipeline/runtime exports (${installedSlackProof.proof})`,
     );
     const slackRuntimeCapture = lastJsonLine(
       fakeSlack.captureFile,

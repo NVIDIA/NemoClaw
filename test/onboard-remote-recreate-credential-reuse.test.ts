@@ -144,11 +144,17 @@ const { setupNim, setupInference } = require(${onboardPath});
         assert.match(output, /"skipHostInferenceSmoke":true/);
         assert.match(output, /"reuseGatewayCredentialWithoutLocalKey":true/);
         const curlLog = fs.existsSync(curlLogPath) ? fs.readFileSync(curlLogPath, "utf8") : "";
-        assert.ok(
-          !curlLog.includes("inference-api.nvidia.com") &&
-            !curlLog.includes("/chat/completions") &&
-            !curlLog.includes("/responses"),
-          `direct remote validation must not run without a local credential: ${curlLog}`,
+        const curlUrls = curlLog
+          .split(/\s+/u)
+          .filter((value) => value.startsWith("http://") || value.startsWith("https://"))
+          .map((value) => {
+            const parsed = new URL(value);
+            return `${parsed.protocol}//${parsed.hostname}:${parsed.port}${parsed.pathname}${parsed.search}`;
+          });
+        assert.deepEqual(
+          curlUrls,
+          ["http://127.0.0.1:11434/api/tags", "http://127.0.0.1:8000/v1/models"],
+          `only exact loopback discovery probes may run without a local credential: ${curlLog}`,
         );
         const openshellLog = fs.readFileSync(openshellLogPath, "utf8");
         assert.match(openshellLog, /provider get compatible-endpoint/);

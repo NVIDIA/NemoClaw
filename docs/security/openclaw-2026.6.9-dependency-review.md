@@ -70,13 +70,21 @@ The main `openclaw@2026.6.9` package excludes `dist/extensions/slack/**`; its ch
 - `dist/pipeline.runtime-*.js`, which exports `prepareSlackMessage`; and
 - the denied channel-user gate containing `Blocked unauthorized slack sender ${senderId} (not in channel users)`, which NemoClaw's `slack-channel-guard` preload patches to emit one bounded sender-facing denial notice for explicit `app_mention` events.
 
-The migrated Vitest lane in `test/e2e/live/messaging-providers.test.ts` calls `runInstalledSlackRuntimeProof` from `test/e2e/live/messaging-providers-slack-runtime-proof.ts`. That helper discovers the installed external `@openclaw/slack@2026.6.9` runtime, prefers `prepareSlackMessage` from `dist/pipeline.runtime-*.js` plus `sendMessageSlack` from `dist/runtime-api.js`, and falls back to the older private helper only when the installed package actually exposes that surface instead. The proof verifies an allowed channel `app_mention`, verifies a denied channel user receives exactly one bounded sender-facing feedback action, and sends against the hermetic fake Slack API with capture assertions that reject unresolved credential placeholders.
+The migrated Vitest lane in `test/e2e/live/messaging-providers.test.ts` calls `runInstalledSlackRuntimeProof` from `test/e2e/live/messaging-providers-slack-runtime-proof.ts`. That helper discovers the installed external `@openclaw/slack@2026.6.9` runtime and uses `prepareSlackMessage` from `dist/pipeline.runtime-*.js` plus `sendMessageSlack` from `dist/runtime-api.js`. The default 2026.6.9 live lane requires the resulting `openclaw-pipeline-runtime` proof and fails if only the older private helper is available; the private-helper branch remains fixture-only compatibility support pending retirement in #5896. The proof verifies an allowed channel `app_mention`, verifies a denied channel user receives exactly one bounded sender-facing feedback action, and sends against the hermetic fake Slack API with capture assertions that reject unresolved credential placeholders.
 
 ## Telegram Source Review
 
 The main `openclaw@2026.6.9` package no longer includes `dist/extensions/telegram/test-api.js`. Its bundled Telegram channel still exposes `dist/extensions/telegram/runtime-api.js`, which exports `sendMessageTelegram` and accepts NemoClaw's hermetic fake Telegram API override for send proof.
 
 The migrated Vitest lane calls `runInstalledTelegramRuntimeProof` from `test/e2e/live/messaging-providers-telegram-runtime-proof.ts`. That helper resolves the installed `openclaw/dist/extensions/telegram/runtime-api.js` file, fails closed unless `sendMessageTelegram` is exported, and sends through that runtime API against the host-side fake Telegram Bot API. `test/e2e/live/messaging-providers.test.ts` retains the OpenShell REST policy, token rewrite assertion, chat/text capture, and unresolved-placeholder checks around that installed-runtime call.
+
+## Microsoft Teams Package-Load Review
+
+The published `@openclaw/msteams@2026.6.9` artifact was re-reviewed after integrating the OpenShell 0.0.71 prerequisite. Its npm SRI is the committed `sha512-Ye1nf2fZYGM3lqQJ/zGlhToThyz1lLZE7HqR2F31iWcD5pV89+eEyRFNNH2FrwYeDVjw+EyWpQh2RkN1r867qg==`; `package.json` declares `./dist/index.js` as its runtime extension; that entry has SHA-256 `2a83ee979d5ee9f12c7ac507ebd87024be3315de3f2cc87c81effc9ca85246d1`; and `dist/channel-plugin-api.js` has SHA-256 `2d451b31ba4fbcc0e22ea4654fdc55dc05ae680765b7d636bfbf89177eb1be4b`. `test/package-contract/msteams-message-hints-preload.test.ts` binds the preload compatibility fixture to that reviewed version, SRI, runtime entry, plugin specifier, and entry hashes. This is package/load-boundary evidence only; it does not claim live Bot Framework delivery.
+
+## Bundled Weather Skill Egress Review
+
+The SRI-verified `openclaw@2026.6.9` artifact's `package/skills/weather/SKILL.md` has SHA-256 `62ab4821aa873949d1c1091836be1659a42b32caadce4bd145f5505a1ceaeec1`. The reviewed skill prefers `web_fetch` to HTTPS `wttr.in` paths and lists HTTPS `wttr.in` curl fallbacks using read-only requests; it mentions `wttr.is` only as an optional retry when the primary service is unreliable. NemoClaw's weather preset therefore continues to allow only GET/HEAD to `wttr.in` at that boundary and intentionally leaves `wttr.is` denied unless a future pinned runtime makes the fallback required. `test/weather-policy.test.ts` binds that host/method contract to the reviewed OpenClaw version.
 
 ## PR Review Follow-ups
 

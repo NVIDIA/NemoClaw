@@ -17,6 +17,10 @@ import { SLACK_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-provider
 import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
 const FAKE_TELEGRAM_API = path.resolve(import.meta.dirname, "../lib/fake-telegram-api.cjs");
+const LIVE_MESSAGING_PROVIDERS_SOURCE = fs.readFileSync(
+  path.resolve(import.meta.dirname, "../live/messaging-providers.test.ts"),
+  "utf8",
+);
 
 function expectValidModuleSource(source: string): void {
   const result = spawnSync(process.execPath, ["--input-type=module", "--check"], {
@@ -94,6 +98,15 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("senderFeedbackCalls.length === 1");
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("openclaw-pipeline-runtime");
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
+  });
+
+  it("requires the reviewed Slack pipeline/runtime proof in the default 2026.6.9 live lane", () => {
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).toContain(
+      'installedSlackProof.proof === "openclaw-pipeline-runtime"',
+    );
+    expect(LIVE_MESSAGING_PROVIDERS_SOURCE).not.toContain(
+      'installedSlackProof.proof === "openclaw-private-helper"',
+    );
   });
 
   it("keeps Telegram on runtime-api.js with a fake send boundary", () => {
