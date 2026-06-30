@@ -13,11 +13,11 @@ import {
   mergeRequiredHermesToolGatewayPolicyPresets,
 } from "./hermes-managed-tools";
 import {
+  allMessagingChannelPolicyPresets,
   hasDisabledMessagingPolicyPreset,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
   mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
-  requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
 import {
   isOpenclawAgent,
@@ -185,7 +185,13 @@ export function computeSetupPresetSuggestions(
   }
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
-    for (const preset of requiredMessagingChannelPolicyPresets(enabledChannels)) add(preset);
+    // Suggest every enabled channel's egress preset, matching the set
+    // finalization merges via `mergeEnabledMessagingChannelPolicyPresets`. The
+    // `add(channel)` loop above only covers channels whose preset name equals the
+    // channel name; resolving through the channel→preset registry keeps the
+    // suggestion path correct for any channel (and any future preset rename)
+    // rather than relying on that coincidence or on `requiredAtCreate` (#5967).
+    for (const preset of allMessagingChannelPolicyPresets(enabledChannels)) add(preset);
   }
   if (Array.isArray(options.hermesToolGateways)) {
     for (const preset of options.hermesToolGateways) {
