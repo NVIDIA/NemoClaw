@@ -193,13 +193,13 @@ function dockerRunCommandBetween(startMarker: string, endMarker: string): string
   return command;
 }
 
-function runOpenClawUpgradeBlock(currentVersion: string, mcporterVersion?: string) {
+function runOpenClawUpgradeBlock(currentVersion: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-upgrade-"));
   const blueprint = path.join(tmp, "blueprint.yaml");
   const log = path.join(tmp, "calls.log");
   const openclawInstall = path.join(tmp, "openclaw-global");
   const openclawShim = path.join(tmp, "openclaw-bin");
-  const mcporterInstall = path.join(tmp, "mcporter-global");
+  const mcporterInstall = path.join(tmp, "mcporter-runtime");
   const mcporterShim = path.join(tmp, "mcporter-bin");
   const openclawVersion = readDockerfileOpenClawVersion();
   const expectedMcporterVersion = readDockerfileMcporterVersion();
@@ -218,6 +218,7 @@ function runOpenClawUpgradeBlock(currentVersion: string, mcporterVersion?: strin
     .replaceAll("/usr/local/lib/node_modules/openclaw", openclawInstall)
     .replaceAll("/usr/local/bin/openclaw", openclawShim)
     .replaceAll("/usr/local/lib/node_modules/mcporter", mcporterInstall)
+    .replaceAll("/usr/local/lib/nemoclaw/mcporter-runtime", mcporterInstall)
     .replaceAll("/usr/local/bin/mcporter", mcporterShim);
   const script = [
     "#!/usr/bin/env bash",
@@ -228,7 +229,7 @@ function runOpenClawUpgradeBlock(currentVersion: string, mcporterVersion?: strin
     `OPENCLAW_2026_5_27_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `MCPORTER_0_7_3_INTEGRITY=${JSON.stringify(mcporterIntegrity)}`,
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${currentVersion}\\n'; else return 127; fi; }`,
-    `mcporter() { if [ "\${1:-}" = "--version" ]; then printf 'mcporter ${mcporterVersion ?? expectedMcporterVersion}\\n'; else return 127; fi; }`,
+    `mcporter() { if [ "\${1:-}" = "--version" ]; then printf '${expectedMcporterVersion}\\n'; else return 127; fi; }`,
     "npm() {",
     '  printf "npm %s\\n" "$*" >> "$call_log";',
     '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
@@ -452,22 +453,21 @@ describe("fetch-guard patch regression guard", () => {
     );
   });
 
-  it("repairs stale mcporter installs for the MCP bridge runtime", () => {
-    const stale = runOpenClawUpgradeBlock(
-      CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
-      "0.1.0",
-    );
+  it("reinstalls mcporter from the committed graph when the inherited version matches", () => {
+    const invocation = runOpenClawUpgradeBlock(CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION);
     const expectedMcporterVersion = readDockerfileMcporterVersion();
 
-    expect(stale.result.status).toBe(0);
-    expect(stale.result.stdout).toContain(`Installing mcporter ${expectedMcporterVersion}`);
-    expect(stale.calls).toContain(
-      `npm install -g --ignore-scripts --no-audit --no-fund --no-progress mcporter@${expectedMcporterVersion}`,
+    expect(invocation.result.status).toBe(0);
+    expect(invocation.result.stdout).toContain(
+      `Installing locked mcporter ${expectedMcporterVersion} dependency graph`,
+    );
+    expect(invocation.calls).toMatch(
+      /npm --prefix \S+ ci --ignore-scripts --omit=dev --no-audit --no-fund --no-progress/,
     );
     readRequiredMatch(
       DOCKERFILE_BASE,
-      /(npm install -g --ignore-scripts --no-audit --no-fund --no-progress "mcporter@\$\{MCPORTER_VERSION\}")/,
-      "mcporter base install with lifecycle scripts disabled",
+      /(npm --prefix \/usr\/local\/lib\/nemoclaw\/mcporter-runtime ci\s*\\\s*--ignore-scripts --omit=dev --no-audit --no-fund --no-progress)/,
+      "mcporter base lockfile install with lifecycle scripts disabled",
     );
     expect(
       dockerRunCommandBetween(
