@@ -21,6 +21,7 @@ import {
   sandboxSh,
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
+import { parsePolicyPresetState } from "./policy-list-state.ts";
 
 const AGENT = (process.env.NEMOCLAW_CHANNELS_STOP_START_AGENT ??
   process.env.NEMOCLAW_AGENT ??
@@ -357,14 +358,12 @@ async function rebuildSandbox(
   });
 }
 
-type PolicyPresetState = "active" | "inactive" | "drift" | "unverified" | "missing";
-
 async function policyPresetState(
   host: import("../fixtures/clients/host.ts").HostCliClient,
   env: NodeJS.ProcessEnv,
   redactions: string[],
   channel: string,
-): Promise<PolicyPresetState> {
+): Promise<ReturnType<typeof parsePolicyPresetState>> {
   const result = await host.command(
     "node",
     [process.env.NEMOCLAW_CLI_BIN ?? "bin/nemoclaw.js", SANDBOX_NAME, "policy-list"],
@@ -376,23 +375,7 @@ async function policyPresetState(
     },
   );
   expectExitZero(result, `policy-list ${channel}`);
-  const output = resultText(result);
-  if (
-    output.includes("Could not query gateway") ||
-    output.includes("cannot be verified or started")
-  ) {
-    return "unverified";
-  }
-  const line = output.split(/\r?\n/).find((candidate) => candidate.includes(` ${channel} —`));
-  if (!line) return "missing";
-  if (
-    line.includes("active on gateway, missing from local state") ||
-    line.includes("recorded locally, not active on gateway")
-  ) {
-    return "drift";
-  }
-  if (line.includes(`● ${channel} —`)) return "active";
-  return line.includes(`○ ${channel} —`) ? "inactive" : "missing";
+  return parsePolicyPresetState(resultText(result), channel);
 }
 
 async function runChannelCommand(
