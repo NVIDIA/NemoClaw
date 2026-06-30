@@ -51,6 +51,44 @@ export function assertDiscordGatewayCapture(captureFile: string, expectedToken: 
   expect(identify?.tokenLooksPlaceholder, "Discord placeholder leaked").toBe(false);
 }
 
+export function assertSlackRestCapture(captureFile: string, apiPath: string): void {
+  const rows = fs
+    .readFileSync(captureFile, "utf8")
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const request = rows.filter((row) => row.event === "request" && row.path === apiPath).at(-1);
+  expect(request, `fake Slack did not capture ${apiPath}`).toBeTruthy();
+  expect(request?.authorization, "raw Slack authorization should not be captured").toBeUndefined();
+  expect(request?.body, "raw Slack body should not be captured").toBeUndefined();
+  expect(request?.tokenMatchesExpected, "Slack REST auth rewrite").toBe(true);
+  expect(request?.bodyMatchesExpected, "Slack REST body rewrite").toBe(true);
+  expect(request?.tokenLooksPlaceholder, "Slack REST placeholder leaked").toBe(false);
+}
+
+export function assertSlackSocketModeCapture(captureFile: string, expectedAppToken: string): void {
+  const captureText = fs.readFileSync(captureFile, "utf8");
+  const rows = captureText
+    .trim()
+    .split(/\n+/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  const ws = rows
+    .filter(
+      (row) => row.event === "websocket-message" && row.messageType === "socket_mode_client_hello",
+    )
+    .at(-1);
+  expect(ws, "fake Slack did not capture Socket Mode hello").toBeTruthy();
+  expect(ws).not.toHaveProperty("token");
+  expect(captureText, "fake Slack capture persisted raw app token").not.toContain(expectedAppToken);
+  expect(captureText, "fake Slack capture persisted unresolved placeholder").not.toContain(
+    "OPENSHELL-RESOLVE-ENV-",
+  );
+  expect(ws?.tokenMatchesExpected, "Slack xapp websocket token rewrite").toBe(true);
+  expect(ws?.tokenLooksPlaceholder, "Slack xapp placeholder leaked").toBe(false);
+}
+
 export function pairingEnv(options: {
   sandboxName: string;
   apiKey: string;
@@ -228,6 +266,234 @@ export async function applyFakePolicy(options: {
     timeoutMs: 120_000,
   });
   expectExitZero(result, options.artifactName);
+}
+
+export async function runSlackRestProof(options: {
+  sandbox: SandboxClient;
+  sandboxName: string;
+  port: string;
+  apiPath: string;
+  authorization: string;
+  redactions: string[];
+}): Promise<ShellProbeResult> {
+  return sandboxNode(
+    options.sandbox,
+    options.sandboxName,
+    `
+import http from "node:http";
+
+const authorization = process.env.FAKE_SLACK_AUTH ?? "";
+const token = authorization.replace(/^Bearer\\s+/, "");
+const data = new URLSearchParams({ token }).toString();
+const req = http.request({
+  hostname: "host.openshell.internal",
+  port: Number(process.env.FAKE_SLACK_PORT),
+  path: process.env.FAKE_SLACK_PATH,
+  method: "POST",
+  headers: {
+    Authorization: authorization,
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Content-Length": Buffer.byteLength(data),
+  },
+}, (res) => {
+  let body = "";
+  res.on("data", (chunk) => { body += chunk; });
+  res.on("end", () => {
+    console.log(String(res.statusCode) + " " + body.slice(0, 300));
+  });
+});
+req.on("error", (error) => console.log("ERROR: " + error.message));
+req.setTimeout(30000, () => {
+  req.destroy();
+  console.log("TIMEOUT");
+});
+req.write(data);
+req.end();
+`,
+    {
+      FAKE_SLACK_PORT: options.port,
+      FAKE_SLACK_PATH: options.apiPath,
+      FAKE_SLACK_AUTH: options.authorization,
+    },
+    {
+      artifactName: `slack-rest-proof-${options.apiPath.replace(/[^a-z0-9]+/gi, "-")}`,
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
+}
+
+export const SLACK_SOCKET_MODE_PROOF_SOURCE = String.raw`
+import crypto from "node:crypto";
+import net from "node:net";
+
+const host = "host.openshell.internal";
+const port = Number(process.env.FAKE_SLACK_API_PORT);
+const socketToken = "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN";
+const results = [];
+let finished = false;
+
+function finish(message) {
+  if (finished) return;
+  finished = true;
+  if (message) results.push(message);
+  console.log(results.join("\n"));
+  process.exit(0);
+}
+
+function encodeClientText(payload) {
+  const body = Buffer.from(payload, "utf8");
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.alloc(body.length);
+  for (let i = 0; i < body.length; i += 1) masked[i] = body[i] ^ mask[i % 4];
+  if (body.length < 126) {
+    return Buffer.concat([Buffer.from([0x81, 0x80 | body.length]), mask, masked]);
+  }
+  if (body.length <= 0xffff) {
+    const header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(body.length, 2);
+    return Buffer.concat([header, mask, masked]);
+  }
+  const header = Buffer.alloc(10);
+  header[0] = 0x81;
+  header[1] = 0x80 | 127;
+  header.writeBigUInt64BE(BigInt(body.length), 2);
+  return Buffer.concat([header, mask, masked]);
+}
+
+function decodeFrame(buffer) {
+  if (buffer.length < 2) return null;
+  const opcode = buffer[0] & 0x0f;
+  let payloadLength = buffer[1] & 0x7f;
+  let offset = 2;
+  if (payloadLength === 126) {
+    if (buffer.length < 4) return null;
+    payloadLength = buffer.readUInt16BE(2);
+    offset = 4;
+  } else if (payloadLength === 127) {
+    if (buffer.length < 10) return null;
+    payloadLength = Number(buffer.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (buffer.length < offset + payloadLength) return null;
+  return {
+    opcode,
+    payload: buffer.slice(offset, offset + payloadLength),
+    totalLength: offset + payloadLength,
+  };
+}
+
+function parseProxyTarget() {
+  const raw = process.env.HTTP_PROXY || process.env.http_proxy || "";
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error("HTTP proxy for Slack Socket Mode proof is malformed");
+  }
+  if (parsed.protocol !== "http:") throw new Error("Slack Socket Mode proof only supports HTTP proxies");
+  const proxyPort = Number(parsed.port || "80");
+  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) throw new Error("HTTP proxy port for Slack Socket Mode proof is invalid");
+  if (parsed.hostname !== "10.200.0.1" || proxyPort !== 3128) throw new Error("unexpected HTTP proxy for Slack Socket Mode proof");
+  return { host: parsed.hostname, port: proxyPort };
+}
+
+const proxy = parseProxyTarget();
+const socket = proxy
+  ? net.createConnection({ host: proxy.host, port: proxy.port })
+  : net.createConnection({ host, port });
+const timer = setTimeout(() => {
+  try { socket.destroy(); } catch {}
+  finish("TIMEOUT");
+}, 20000);
+let handshake = Buffer.alloc(0);
+let framed = Buffer.alloc(0);
+let upgraded = false;
+
+socket.on("connect", () => {
+  const key = crypto.randomBytes(16).toString("base64");
+  const requestTarget = proxy ? "http://" + host + ":" + port + "/socket-mode" : "/socket-mode";
+  socket.write([
+    "GET " + requestTarget + " HTTP/1.1",
+    "Host: " + host + ":" + port,
+    "Upgrade: websocket",
+    "Connection: Upgrade",
+    "Sec-WebSocket-Key: " + key,
+    "Sec-WebSocket-Version: 13",
+    "\r\n",
+  ].join("\r\n"));
+});
+
+socket.on("data", (chunk) => {
+  if (!upgraded) {
+    handshake = Buffer.concat([handshake, chunk]);
+    const end = handshake.indexOf("\r\n\r\n");
+    if (end === -1) return;
+    const statusLine = handshake.slice(0, end).toString("latin1").split("\r\n")[0] || "";
+    if (!statusLine.includes("101")) {
+      clearTimeout(timer);
+      finish("HTTP_" + statusLine);
+      return;
+    }
+    upgraded = true;
+    results.push("UPGRADE");
+    socket.write(encodeClientText(JSON.stringify({
+      type: "socket_mode_client_hello",
+      token: socketToken,
+    })));
+    results.push("HELLO_SENT_PLACEHOLDER");
+    framed = Buffer.concat([framed, handshake.slice(end + 4)]);
+  } else {
+    framed = Buffer.concat([framed, chunk]);
+  }
+
+  while (framed.length > 0) {
+    const frame = decodeFrame(framed);
+    if (!frame) break;
+    framed = framed.slice(frame.totalLength);
+    if (frame.opcode !== 1) continue;
+    const message = JSON.parse(frame.payload.toString("utf8"));
+    if (message.type === "events_api" && typeof message.envelope_id === "string") {
+      results.push("EVENT_RECEIVED");
+      socket.write(encodeClientText(JSON.stringify({ envelope_id: message.envelope_id })));
+      results.push("EVENT_ACK");
+      clearTimeout(timer);
+      socket.end();
+      finish();
+    }
+  }
+});
+
+socket.on("error", (error) => {
+  clearTimeout(timer);
+  finish("ERROR " + error.message);
+});
+socket.on("close", () => {
+  clearTimeout(timer);
+  if (!finished) finish("CLOSED");
+});
+`;
+
+export async function runSlackSocketModeProof(options: {
+  sandbox: SandboxClient;
+  sandboxName: string;
+  port: string;
+  redactions: string[];
+}): Promise<ShellProbeResult> {
+  return sandboxNode(
+    options.sandbox,
+    options.sandboxName,
+    SLACK_SOCKET_MODE_PROOF_SOURCE,
+    { FAKE_SLACK_API_PORT: options.port },
+    {
+      artifactName: "slack-socket-mode-proof",
+      redactionValues: options.redactions,
+      timeoutMs: 60_000,
+    },
+  );
 }
 
 export async function assertOpenClawStateRoot(

@@ -7,6 +7,17 @@ import path from "node:path";
 
 import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import {
+  applyFakePolicy,
+  assertDiscordGatewayCapture,
+  assertSlackRestCapture,
+  assertSlackSocketModeCapture,
+  runDiscordGatewayProof,
+  runSlackRestProof,
+  runSlackSocketModeProof,
+  startFakeDiscordGateway,
+  startFakeSlackApi,
+} from "./openclaw-pairing-helpers.ts";
+import {
   type AgentKind,
   bestEffort,
   CLI,
@@ -589,6 +600,113 @@ async function runChannelCommand(
   }
 }
 
+async function expectHermesProtocolCredentialRewrite(options: {
+  cleanup: ChannelLifecycleFixtures["cleanup"];
+  host: ChannelLifecycleFixtures["host"];
+  sandbox: ChannelLifecycleFixtures["sandbox"];
+  sandboxName: string;
+  env: NodeJS.ProcessEnv;
+  tokens: Phase6Tokens;
+  redactions: string[];
+}): Promise<void> {
+  const fakeSlack = await startFakeSlackApi(
+    options.host,
+    options.cleanup,
+    options.env,
+    options.tokens.slackBot,
+    options.tokens.slackApp,
+    options.redactions,
+  );
+  await applyFakePolicy({
+    host: options.host,
+    sandboxName: options.sandboxName,
+    api: fakeSlack,
+    protocol: "rest",
+    rewrite: "request-body-credential-rewrite",
+    env: options.env,
+    redactions: options.redactions,
+    artifactName: "apply-hermes-slack-rest-policy",
+  });
+  await applyFakePolicy({
+    host: options.host,
+    sandboxName: options.sandboxName,
+    api: fakeSlack,
+    protocol: "websocket",
+    rewrite: "websocket-credential-rewrite",
+    env: options.env,
+    redactions: options.redactions,
+    artifactName: "apply-hermes-slack-websocket-policy",
+  });
+
+  const slackAuth = await runSlackRestProof({
+    sandbox: options.sandbox,
+    sandboxName: options.sandboxName,
+    port: fakeSlack.port,
+    apiPath: "/api/auth.test",
+    authorization: "Bearer xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    redactions: options.redactions,
+  });
+  expectExitZero(slackAuth, "Hermes Slack auth.test rewrite proof");
+  expect(resultText(slackAuth)).toMatch(/^200\b/);
+  assertSlackRestCapture(fakeSlack.captureFile, "/api/auth.test");
+
+  const slackApp = await runSlackRestProof({
+    sandbox: options.sandbox,
+    sandboxName: options.sandboxName,
+    port: fakeSlack.port,
+    apiPath: "/api/apps.connections.open",
+    authorization: "Bearer xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+    redactions: options.redactions,
+  });
+  expectExitZero(slackApp, "Hermes Slack apps.connections.open rewrite proof");
+  expect(resultText(slackApp)).toMatch(/^200\b/);
+  assertSlackRestCapture(fakeSlack.captureFile, "/api/apps.connections.open");
+
+  const slackSocket = await runSlackSocketModeProof({
+    sandbox: options.sandbox,
+    sandboxName: options.sandboxName,
+    port: fakeSlack.port,
+    redactions: options.redactions,
+  });
+  expectExitZero(slackSocket, "Hermes Slack Socket Mode rewrite proof");
+  expect(resultText(slackSocket)).toContain("UPGRADE");
+  expect(resultText(slackSocket)).toContain("HELLO_SENT_PLACEHOLDER");
+  expect(resultText(slackSocket)).toContain("EVENT_RECEIVED");
+  expect(resultText(slackSocket)).toContain("EVENT_ACK");
+  assertSlackSocketModeCapture(fakeSlack.captureFile, options.tokens.slackApp);
+
+  const fakeGateway = await startFakeDiscordGateway(
+    options.host,
+    options.cleanup,
+    options.env,
+    options.tokens.discord,
+    options.redactions,
+  );
+  await applyFakePolicy({
+    host: options.host,
+    sandboxName: options.sandboxName,
+    api: fakeGateway,
+    protocol: "websocket",
+    rewrite: "websocket-credential-rewrite",
+    env: options.env,
+    redactions: options.redactions,
+    artifactName: "apply-hermes-discord-gateway-policy",
+  });
+  const gatewayProof = await runDiscordGatewayProof({
+    sandbox: options.sandbox,
+    sandboxName: options.sandboxName,
+    port: fakeGateway.port,
+    redactions: options.redactions,
+  });
+  expectExitZero(gatewayProof, "Hermes Discord Gateway rewrite proof");
+  expect(resultText(gatewayProof)).toContain("UPGRADE");
+  expect(resultText(gatewayProof)).toContain("HELLO");
+  expect(resultText(gatewayProof)).toContain("IDENTIFY_SENT_PLACEHOLDER");
+  expect(resultText(gatewayProof)).toContain("READY");
+  expect(resultText(gatewayProof)).toContain("HEARTBEAT_ACK");
+  assertDiscordGatewayCapture(fakeGateway.captureFile, options.tokens.discord);
+}
+
 function lifecycleEnv(options: {
   agent: AgentKind;
   sandboxName: string;
@@ -746,6 +864,18 @@ export async function runChannelsAddRemoveTarget(
     "after-add",
   );
   await expectPolicyPresets(host, sandboxName, authenticatedChannelEnv, redactions, "active");
+
+  if (agent === "hermes") {
+    await expectHermesProtocolCredentialRewrite({
+      cleanup,
+      host,
+      sandbox,
+      sandboxName,
+      env: authenticatedChannelEnv,
+      tokens,
+      redactions,
+    });
+  }
 
   for (const channel of CHANNELS) {
     await runChannelCommand(

@@ -11,27 +11,159 @@ import { testTimeoutOptions } from "../../helpers/timeouts";
 import { resultText } from "../fixtures/clients/index.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
+import { CHANNELS, type MessagingChannel } from "./channels-lifecycle-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.resolve(
   process.env.NEMOCLAW_CLI_BIN ?? path.join(REPO_ROOT, "bin", "nemoclaw.js"),
 );
 const CONFLICT_TIMEOUT_MS = 30_000;
-const TELEGRAM_TOKEN = "123456:openclaw-channels-conflict-guard-fake-token";
-const TELEGRAM_HASH =
-  hashCredential(TELEGRAM_TOKEN) ??
-  (() => {
-    throw new Error("test fixture credential must hash");
-  })();
-
 const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
 
-function telegramChannelPlan(active = true): SandboxMessagingPlan["channels"][number] {
-  return {
-    channelId: "telegram",
+type SecretFixture = {
+  credentialId: string;
+  sourceInput: string;
+  providerEnvKey: string;
+  providerName: (sandboxName: string) => string;
+  placeholder: string;
+  token: string;
+};
+
+type ChannelFixture = {
+  displayName: string;
+  authMode: SandboxMessagingPlan["channels"][number]["authMode"];
+  secrets: readonly SecretFixture[];
+  env: NodeJS.ProcessEnv;
+};
+
+const CHANNEL_FIXTURES: Record<MessagingChannel, ChannelFixture> = {
+  telegram: {
     displayName: "Telegram",
     authMode: "token-paste",
-    active,
+    secrets: [
+      {
+        credentialId: "telegramBotToken",
+        sourceInput: "botToken",
+        providerEnvKey: "TELEGRAM_BOT_TOKEN",
+        providerName: (sandboxName) => `${sandboxName}-telegram-bridge`,
+        placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+        token: "123456:openclaw-channels-conflict-guard-fake-token",
+      },
+    ],
+    env: {
+      TELEGRAM_ALLOWED_IDS: "123456789",
+      NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
+    },
+  },
+  discord: {
+    displayName: "Discord",
+    authMode: "token-paste",
+    secrets: [
+      {
+        credentialId: "discordBotToken",
+        sourceInput: "botToken",
+        providerEnvKey: "DISCORD_BOT_TOKEN",
+        providerName: (sandboxName) => `${sandboxName}-discord-bridge`,
+        placeholder: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+        token: "test-fake-discord-conflict-guard-token",
+      },
+    ],
+    env: {
+      DISCORD_SERVER_ID: "1491590992753590594",
+      DISCORD_USER_ID: "1005536447329222676",
+      DISCORD_REQUIRE_MENTION: "0",
+    },
+  },
+  wechat: {
+    displayName: "WeChat",
+    authMode: "host-qr",
+    secrets: [
+      {
+        credentialId: "wechatBotToken",
+        sourceInput: "botToken",
+        providerEnvKey: "WECHAT_BOT_TOKEN",
+        providerName: (sandboxName) => `${sandboxName}-wechat-bridge`,
+        placeholder: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+        token: "test-fake-wechat-conflict-guard-token",
+      },
+    ],
+    env: {
+      WECHAT_ACCOUNT_ID: "e2e-conflict-guard-wechat-account",
+      WECHAT_BASE_URL: "https://ilinkai.wechat.com",
+      WECHAT_USER_ID: "wxid_conflict_guard",
+      WECHAT_ALLOWED_IDS: "wxid_conflict_guard",
+    },
+  },
+  slack: {
+    displayName: "Slack",
+    authMode: "token-paste",
+    secrets: [
+      {
+        credentialId: "slackBotToken",
+        sourceInput: "botToken",
+        providerEnvKey: "SLACK_BOT_TOKEN",
+        providerName: (sandboxName) => `${sandboxName}-slack-bridge`,
+        placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        token: "xoxb-openclaw-channels-conflict-guard",
+      },
+      {
+        credentialId: "slackAppToken",
+        sourceInput: "appToken",
+        providerEnvKey: "SLACK_APP_TOKEN",
+        providerName: (sandboxName) => `${sandboxName}-slack-app`,
+        placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        token: "xapp-openclaw-channels-conflict-guard",
+      },
+    ],
+    env: {
+      SLACK_ALLOWED_USERS: "U0123456789",
+      NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
+    },
+  },
+  whatsapp: {
+    displayName: "WhatsApp",
+    authMode: "in-sandbox-qr",
+    secrets: [],
+    env: {
+      WHATSAPP_ALLOWED_IDS: "15551234567",
+    },
+  },
+  teams: {
+    displayName: "Microsoft Teams",
+    authMode: "token-paste",
+    secrets: [
+      {
+        credentialId: "teamsClientSecret",
+        sourceInput: "clientSecret",
+        providerEnvKey: "MSTEAMS_APP_PASSWORD",
+        providerName: (sandboxName) => `${sandboxName}-teams-bridge`,
+        placeholder: "openshell:resolve:env:MSTEAMS_APP_PASSWORD",
+        token: "test-fake-teams-conflict-guard-secret",
+      },
+    ],
+    env: {
+      MSTEAMS_APP_ID: "test-teams-app-id-openclaw-channels-conflict-guard",
+      MSTEAMS_TENANT_ID: "test-teams-tenant-id-openclaw-channels-conflict-guard",
+      TEAMS_ALLOWED_USERS: "00000000-0000-0000-0000-000000000001",
+      MSTEAMS_PORT: "3978",
+      TEAMS_REQUIRE_MENTION: "0",
+    },
+  },
+};
+
+function mustHash(value: string): string {
+  const hash = hashCredential(value);
+  if (!hash) throw new Error("test fixture credential must hash");
+  return hash;
+}
+
+function channelPlan(channel: MessagingChannel): SandboxMessagingPlan["channels"][number] {
+  const fixture = CHANNEL_FIXTURES[channel];
+  return {
+    channelId: channel,
+    displayName: fixture.displayName,
+    authMode: fixture.authMode,
+    active: true,
     selected: true,
     configured: true,
     disabled: false,
@@ -40,38 +172,41 @@ function telegramChannelPlan(active = true): SandboxMessagingPlan["channels"][nu
   };
 }
 
-function telegramBinding(
+function credentialBindings(
   sandboxName: string,
-  credentialHash: string,
-): SandboxMessagingPlan["credentialBindings"][number] {
-  return {
-    channelId: "telegram",
-    credentialId: "telegramBotToken",
-    sourceInput: "botToken",
-    providerName: `${sandboxName}-telegram-bridge`,
-    providerEnvKey: "TELEGRAM_BOT_TOKEN",
-    placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+  channel: MessagingChannel,
+): SandboxMessagingPlan["credentialBindings"] {
+  return CHANNEL_FIXTURES[channel].secrets.map((secret) => ({
+    channelId: channel,
+    credentialId: secret.credentialId,
+    sourceInput: secret.sourceInput,
+    providerName: secret.providerName(sandboxName),
+    providerEnvKey: secret.providerEnvKey,
+    placeholder: secret.placeholder,
     credentialAvailable: true,
-    credentialHash,
-  };
+    credentialHash: mustHash(secret.token),
+  }));
 }
 
-function telegramPlan(sandboxName: string, credentialHash: string): SandboxMessagingPlan {
+function channelPlanWithCredential(
+  sandboxName: string,
+  channel: MessagingChannel,
+): SandboxMessagingPlan {
   return {
     schemaVersion: 1,
     sandboxName,
     agent: "openclaw",
     workflow: "onboard",
-    channels: [telegramChannelPlan()],
+    channels: [channelPlan(channel)],
     disabledChannels: [],
-    credentialBindings: [telegramBinding(sandboxName, credentialHash)],
+    credentialBindings: credentialBindings(sandboxName, channel),
     networkPolicy: {
-      presets: ["telegram"],
+      presets: [channel],
       entries: [
         {
-          channelId: "telegram",
-          presetName: "telegram",
-          policyKeys: ["telegram_bot"],
+          channelId: channel,
+          presetName: channel,
+          policyKeys: [channel],
           source: "manifest",
         },
       ],
@@ -83,7 +218,7 @@ function telegramPlan(sandboxName: string, credentialHash: string): SandboxMessa
   };
 }
 
-function writeConflictRegistry(homeDir: string): string {
+function writeConflictRegistry(homeDir: string, channel: MessagingChannel): string {
   const registryDir = path.join(homeDir, ".nemoclaw");
   const registryFile = path.join(registryDir, "sandboxes.json");
   fs.mkdirSync(registryDir, { recursive: true });
@@ -105,12 +240,12 @@ function writeConflictRegistry(homeDir: string): string {
             name: "bob",
             createdAt: "2026-01-01T00:00:01.000Z",
             gpuEnabled: false,
-            policies: ["telegram"],
+            policies: [channel],
             agent: "openclaw",
             gatewayName: "nemoclaw",
             messaging: {
               schemaVersion: 1,
-              plan: telegramPlan("bob", TELEGRAM_HASH),
+              plan: channelPlanWithCredential("bob", channel),
             },
           },
         },
@@ -123,7 +258,7 @@ function writeConflictRegistry(homeDir: string): string {
   return registryFile;
 }
 
-function commandEnv(homeDir: string): NodeJS.ProcessEnv {
+function commandEnv(homeDir: string, channel: MessagingChannel): NodeJS.ProcessEnv {
   const inherited = Object.fromEntries(
     ["PATH", "Path", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT", "SystemRoot"].flatMap((key) => {
       const value = process.env[key];
@@ -138,15 +273,32 @@ function commandEnv(homeDir: string): NodeJS.ProcessEnv {
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
     NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
     OPENSHELL_GATEWAY: "nemoclaw",
-    TELEGRAM_BOT_TOKEN: TELEGRAM_TOKEN,
+    ...CHANNEL_FIXTURES[channel].env,
+    ...Object.fromEntries(
+      CHANNEL_FIXTURES[channel].secrets.map((secret) => [secret.providerEnvKey, secret.token]),
+    ),
   };
 }
 
-runLiveTest(
-  "openclaw channels conflict guard aborts duplicate Telegram credentials without leaking secrets",
-  testTimeoutOptions(CONFLICT_TIMEOUT_MS),
-  async ({ artifacts, host }) => {
-    artifacts.addRedactionValues([TELEGRAM_TOKEN, TELEGRAM_HASH]);
+for (const channel of CHANNELS) {
+  const title =
+    channel === "whatsapp"
+      ? "openclaw channels conflict guard documents WhatsApp QR-only credential boundary"
+      : `openclaw channels conflict guard handles duplicate ${channel} credentials without leaking secrets`;
+  runLiveTest(title, testTimeoutOptions(CONFLICT_TIMEOUT_MS), async ({ artifacts, host }) => {
+    const tokens = CHANNEL_FIXTURES[channel].secrets.map((secret) => secret.token);
+    const hashes = tokens.map(mustHash);
+    artifacts.addRedactionValues([...tokens, ...hashes]);
+    if (channel === "whatsapp") {
+      await artifacts.writeJson("openclaw-channels-conflict-guard-whatsapp.json", {
+        channel,
+        assertion:
+          "WhatsApp is covered by CHANNELS but has no host-side credential in the manifest, so duplicate credential conflict detection intentionally has no token/hash to compare.",
+      });
+      expect(CHANNEL_FIXTURES[channel].secrets).toHaveLength(0);
+      return;
+    }
+
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
       `NemoClaw CLI entrypoint missing: ${CLI_ENTRYPOINT}`,
@@ -154,24 +306,24 @@ runLiveTest(
 
     const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-conflict-guard-"));
     try {
-      const registryFile = writeConflictRegistry(homeDir);
+      const registryFile = writeConflictRegistry(homeDir, channel);
       const before = fs.readFileSync(registryFile, "utf8");
-      await artifacts.writeJson("openclaw-channels-conflict-guard-seed.json", {
+      await artifacts.writeJson(`openclaw-channels-conflict-guard-${channel}-seed.json`, {
         registryFile,
         currentSandbox: "alpha",
         conflictingSandbox: "bob",
-        channel: "telegram",
-        credentialHashChars: TELEGRAM_HASH.length,
+        channel,
+        credentialHashChars: hashes.map((hash) => hash.length),
       });
 
       const add = await host.command(
         process.execPath,
-        [CLI_ENTRYPOINT, "alpha", "channels", "add", "telegram"],
+        [CLI_ENTRYPOINT, "alpha", "channels", "add", channel],
         {
-          artifactName: "channels-add-telegram-conflict-guard",
+          artifactName: `channels-add-${channel}-conflict-guard`,
           cwd: REPO_ROOT,
-          env: commandEnv(homeDir),
-          redactionValues: [TELEGRAM_TOKEN, TELEGRAM_HASH],
+          env: commandEnv(homeDir, channel),
+          redactionValues: [...tokens, ...hashes],
           timeoutMs: CONFLICT_TIMEOUT_MS,
         },
       );
@@ -180,12 +332,13 @@ runLiveTest(
       expect(add.timedOut).toBe(false);
       expect(add.signal).toBeNull();
       expect(add.exitCode).toBe(1);
-      expect(output).toContain("Sandbox 'bob' uses the same telegram credential");
+      expect(output).toContain(`Sandbox 'bob' uses the same ${channel} credential`);
       expect(output).toContain("Aborting");
       expect(output).toContain("--force");
-      expect(output).toContain("channels remove telegram");
-      expect(output).not.toContain(TELEGRAM_TOKEN);
-      expect(output).not.toContain(TELEGRAM_HASH);
+      expect(output).toContain(`channels remove ${channel}`);
+      for (const value of [...tokens, ...hashes]) {
+        expect(output).not.toContain(value);
+      }
       expect(output).not.toContain("[REDACTED]");
 
       const after = fs.readFileSync(registryFile, "utf8");
@@ -201,5 +354,5 @@ runLiveTest(
     } finally {
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
-  },
-);
+  });
+}

@@ -27,6 +27,18 @@ const SANDBOX_NAME =
   process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-channels-telegram-injection-safety";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
+/*
+ * Legacy telegram-injection suite parity:
+ * 1-10. Five shell payload families are exercised through both transport
+ * paths below: command substitution, backticks, single-quote breakout,
+ * double-quote breakout, and nested command substitution.
+ * 11-12. Parameter expansion is checked through exec and ssh-config stdin.
+ * 13-14. Host and sandbox process tables must not expose the API key.
+ * 15-17. validateName rejects shell separators, substitution/backtick forms,
+ * and flag/path/space/case/environment-expansion invalid names.
+ * 18. Normal text and benign special characters still pass through.
+ */
+
 function openshellStdinCommand(payload: string, remoteShell: string): string {
   return [
     "set -euo pipefail",
@@ -211,7 +223,8 @@ test.skipIf(!shouldRunLiveE2E())(
         "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",
       sandboxName: SANDBOX_NAME,
       contracts: [
-        "command substitution payloads are literal input through exec and ssh-config paths and do not create files",
+        "shell metacharacter payloads are literal input through exec and ssh-config paths and do not create files",
+        "double-quote breakout and nested substitution payloads are exercised through both stdin paths",
         "parameter expansion does not leak NVIDIA_INFERENCE_API_KEY",
         "host and sandbox process tables do not expose the API key after setup",
         "invalid sandbox names with shell metacharacters are rejected by validateName",
@@ -267,6 +280,16 @@ test.skipIf(!shouldRunLiveE2E())(
         "single-quote-breakout",
         "/tmp/injection-proof-t3",
         "'; touch /tmp/injection-proof-t3; echo '",
+      ],
+      [
+        "double-quote-breakout",
+        "/tmp/injection-proof-t4",
+        '"; touch /tmp/injection-proof-t4; echo "',
+      ],
+      [
+        "nested-command-substitution",
+        "/tmp/injection-proof-t5",
+        "$(echo $(touch /tmp/injection-proof-t5 && id))",
       ],
     ] as const) {
       await sandboxSh(sandbox, SANDBOX_NAME, `rm -f ${shellQuote(marker)}`, {
@@ -329,6 +352,7 @@ test.skipIf(!shouldRunLiveE2E())(
       "--help",
       "$(whoami)",
       "`id`",
+      "$HOME",
       "foo bar",
       "../etc/passwd",
       "UPPERCASE",
