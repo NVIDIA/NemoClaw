@@ -254,7 +254,11 @@ $$nemoclaw onboard
 ```
 
 When the wizard asks you to choose an inference provider, select **Other OpenAI-compatible endpoint**.
-Enter the base URL of your local server, for example `http://localhost:8000/v1`.
+Enter the base URL of your local server, for example `http://localhost:8000/v1` on the default Docker-driver topology.
+If you are on the legacy containerized OpenShell gateway path and the gateway cannot reach host `localhost`, use the host-gateway URL for your setup, commonly `http://host.openshell.internal:8000/v1`.
+
+For GGUF models, start a compatible server such as `llama-server` yourself and enter the model id that server reports from `/v1/models`.
+The Ollama local path selects Ollama model tags; it does not accept a raw `.gguf` file path directly.
 
 The wizard prompts for an API key.
 If your server does not require authentication, enter any non-empty string (for example, `dummy`).

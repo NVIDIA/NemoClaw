@@ -212,6 +212,38 @@ Use **Other OpenAI-compatible endpoint** for vLLM, TensorRT-LLM, llama.cpp, Loca
 For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default because some local backends accept `/v1/responses` but drop system prompts or tool definitions.
 Set `NEMOCLAW_PREFERRED_API=openai-responses` only after you have verified that the backend streams the events OpenClaw requires.
 
+Use this path when you already have a local server for a raw model file, such as a GGUF model served by `llama-server`.
+The Ollama picker accepts Ollama model tags, not a filesystem path to a `.gguf` file.
+To use a downloaded GGUF file directly, start an OpenAI-compatible server first, then point NemoClaw at that server.
+
+For example, start llama.cpp on the host:
+
+```bash
+llama-server \
+  -m /models/NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  --host 0.0.0.0 \
+  --port 8000 \
+  -c 16384 \
+  -ngl 999 \
+  --parallel 1 \
+  --chat-template chatml
+```
+
+Then select **Other OpenAI-compatible endpoint** during onboarding and enter the server base URL, for example `http://localhost:8000/v1` on the default Docker-driver topology.
+For non-interactive setup:
+
+```bash
+NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf \
+  COMPATIBLE_API_KEY=dummy \
+  $$nemoclaw onboard --non-interactive
+```
+
+Use the model id reported by the server's `/v1/models` response.
+If your setup uses the legacy containerized OpenShell gateway path instead of the default host-process gateway, the reachable host-service URL can differ; `http://host.openshell.internal:8000/v1` is the usual legacy host-gateway route and port `8000` is included in NemoClaw's `local-inference` policy preset.
+After onboarding, run `$$nemoclaw <name> status` and check the `Inference` row before starting long agent work.
+
 For the full compatible-endpoint prompt flow, non-interactive variables, API-path controls, managed vLLM profiles, NIM setup, and timeout settings, refer to [Inference Options](inference-options#setup-details-for-local-and-compatible-providers).
 
 ## Managed vLLM and NIM
