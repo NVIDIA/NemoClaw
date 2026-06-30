@@ -77,15 +77,10 @@ function encodeSanitizedDockerJsonArg(value: unknown): string {
   return sanitizeDockerArg(encodeDockerJsonArg(value));
 }
 
-function dockerfileConsumesBuildId(dockerfile: string): boolean {
-  return dockerfile.split("\n").some((line) => {
-    const trimmed = line.trimStart();
-    return (
-      !trimmed.startsWith("#") &&
-      !/^ARG\s+NEMOCLAW_BUILD_ID(?:=.*)?$/.test(trimmed) &&
-      /\bNEMOCLAW_BUILD_ID\b/.test(trimmed)
-    );
-  });
+export type DockerfileBuildIdPolicy = "preserve" | "rewrite";
+
+export interface PatchStagedDockerfileOptions {
+  buildIdPolicy?: DockerfileBuildIdPolicy;
 }
 
 export function isValidProxyHost(value: string): boolean {
@@ -110,6 +105,7 @@ export function patchStagedDockerfile(
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
   hermesToolGateways: string[] = [],
+  options: PatchStagedDockerfileOptions = {},
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -182,7 +178,10 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_INFERENCE_COMPAT_B64=.*$/m,
     `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeSanitizedDockerJsonArg(inferenceCompat)}`,
   );
-  if (dockerfileConsumesBuildId(dockerfile)) {
+  // Rewriting is the compatibility-safe default for custom and legacy
+  // Dockerfiles. Only callers with explicit knowledge of a managed stock
+  // Dockerfile may preserve the declaration to keep warm builds cacheable.
+  if (options.buildIdPolicy !== "preserve") {
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_BUILD_ID=.*$/m,
       `ARG NEMOCLAW_BUILD_ID=${sanitizeDockerArg(buildId)}`,

@@ -58,10 +58,63 @@ For each agent:
 | OpenClaw | `20.9s` | `0.1s` | Stable Dockerfile/build context reuses build-time config, plugin install, proxy, OTEL, permission, and hash layers. |
 | Hermes | `21.5s` | `0.4s` | Stable Dockerfile/build context reuses runtime setup, config generation, agent-install, permission, and config-hash layers. |
 
+## Representative BuildKit Trace
+
+The timing table above came from the onboard measurement. The following
+independent local control was captured with Docker 29.2.1 and Buildx 0.31.1
+against the checked-in OpenClaw and Hermes Dockerfiles. A first build with
+`NEMOCLAW_BUILD_ID=evidence-pre-a` primed every other input. Changing only that
+argument to `evidence-pre-b` reproduced the old per-run rewrite and rebuilt all
+downstream `RUN` layers. Repeating `evidence-pre-b` represented the managed
+stable-ID path and reused those same layers.
+
+The largest avoidable OpenClaw misses were the plugin installation and legacy
+layout/permission normalization:
+
+```text
+#49 [stage-2 35/45] RUN openclaw plugins install /opt/nemoclaw ...
+#49 DONE 3.7s
+#52 [stage-2 38/45] RUN set -eu; config_dir=/sandbox/.openclaw; ...
+#52 DONE 10.9s
+```
+
+On the stable-ID rerun, BuildKit reported the identical instruction numbers as
+cache hits:
+
+```text
+#57 [stage-2 35/45] RUN openclaw plugins install /opt/nemoclaw ...
+#57 CACHED
+#16 [stage-2 38/45] RUN set -eu; config_dir=/sandbox/.openclaw; ...
+#16 CACHED
+```
+
+For Hermes, the top misses were doctor/config generation and legacy layout
+normalization:
+
+```text
+#33 [29/36] RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix ...
+#33 DONE 9.0s
+#37 [33/36] RUN set -eu; config_dir=/sandbox/.hermes; ...
+#37 DONE 4.8s
+```
+
+The stable-ID rerun reused both layers:
+
+```text
+#6 [29/36] RUN HERMES_HOME=/sandbox/.hermes /usr/local/bin/hermes doctor --fix ...
+#6 CACHED
+#21 [33/36] RUN set -eu; config_dir=/sandbox/.hermes; ...
+#21 CACHED
+```
+
+These traces identify the concrete avoidable misses behind the aggregate
+timings. The step numbers before the slash are Dockerfile instruction numbers;
+the leading BuildKit job numbers vary between runs.
+
 Warm builds showed the derived-image Docker steps completing at `0.0s` or
 `0.1s`. `ARG NEMOCLAW_BUILD_ID=default` remained stable in stock staged
-Dockerfiles; custom Dockerfiles that reference `NEMOCLAW_BUILD_ID` still receive
-the supplied build ID.
+Dockerfiles; custom `--from` Dockerfiles retain the historical unconditional,
+sanitized per-run build-ID rewrite, including indirect consumers.
 
 A separate BuildKit control probe confirmed that changing an in-scope `ARG`
 invalidates a following `RUN` layer even when that instruction does not mention
