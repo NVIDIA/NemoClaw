@@ -619,6 +619,20 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("next: not-a-secret-value");
   });
 
+  it("documents the narrower contract: unlabelled free-form credential diagnostics pass through unmasked (out of scope)", () => {
+    const fixture = [
+      "Warning: using sk-freeform-leak-12345 for connection",
+      "Traceback at line 42 with token bearer-freeform-67890 in stack",
+      "Plain prose with no field structure 'sk-prose-only-leak' here",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).toContain("sk-freeform-leak-12345");
+    expect(run.stdout).toContain("bearer-freeform-67890");
+    expect(run.stdout).toContain("sk-prose-only-leak");
+  });
+
   it("uses the installed-layout paths (/usr/local/bin/hermes.real, /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py) before the dev fallback", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-installed-"));
     try {
