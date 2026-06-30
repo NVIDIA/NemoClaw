@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { expect } from "../fixtures/e2e-test.ts";
+import { type E2ETargetFixtures, expect } from "../fixtures/e2e-test.ts";
 import {
   type AgentKind,
   bestEffort,
@@ -27,6 +27,12 @@ export const CHANNELS = ["telegram", "discord", "wechat", "slack", "whatsapp", "
 export type MessagingChannel = (typeof CHANNELS)[number];
 export type ChannelState = "active" | "disabled" | "removed";
 export type ChannelLifecycleKind = "add-remove" | "stop-start";
+type ChannelLifecycleFixtures = Pick<
+  E2ETargetFixtures,
+  "artifacts" | "cleanup" | "host" | "sandbox" | "secrets"
+> & {
+  skip: (note?: string) => never;
+};
 
 type JsonRecord = Record<string, unknown>;
 type Phase6Tokens = {
@@ -631,16 +637,7 @@ export const CHANNELS_STOP_START_TIMEOUT_MS = 80 * 60_000;
 
 export async function runChannelsAddRemoveTarget(
   agent: AgentKind,
-  {
-    artifacts,
-    cleanup,
-    host,
-    sandbox,
-    secrets,
-    skip,
-  }: import("../fixtures/e2e-test.ts").E2ETargetFixtures & {
-    skip: (note?: string) => never;
-  },
+  { artifacts, cleanup, host, sandbox, secrets, skip }: ChannelLifecycleFixtures,
 ): Promise<void> {
   const sandboxName = channelLifecycleSandboxName(agent, "add-remove");
   assertChannelLifecycleSandboxName(sandboxName, agent, "add-remove");
@@ -777,16 +774,7 @@ export async function runChannelsAddRemoveTarget(
 
 export async function runChannelsStopStartTarget(
   agent: AgentKind,
-  {
-    artifacts,
-    cleanup,
-    host,
-    sandbox,
-    secrets,
-    skip,
-  }: import("../fixtures/e2e-test.ts").E2ETargetFixtures & {
-    skip: (note?: string) => never;
-  },
+  { artifacts, cleanup, host, sandbox, secrets, skip }: ChannelLifecycleFixtures,
 ): Promise<void> {
   const sandboxName = channelLifecycleSandboxName(agent, "stop-start");
   assertChannelLifecycleSandboxName(sandboxName, agent, "stop-start");

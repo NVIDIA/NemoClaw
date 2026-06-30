@@ -12,5 +12,6 @@ import {
 test.skipIf(!shouldRunLiveE2E())(
   "hermes channels add/remove covers every supported channel",
   testTimeoutOptions(CHANNELS_ADD_REMOVE_TIMEOUT_MS),
-  (fixtures) => runChannelsAddRemoveTarget("hermes", fixtures),
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) =>
+    runChannelsAddRemoveTarget("hermes", { artifacts, cleanup, host, sandbox, secrets, skip }),
 );

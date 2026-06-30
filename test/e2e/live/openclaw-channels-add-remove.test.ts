@@ -12,5 +12,6 @@ import {
 test.skipIf(!shouldRunLiveE2E())(
   "openclaw channels add/remove covers every supported channel",
   testTimeoutOptions(CHANNELS_ADD_REMOVE_TIMEOUT_MS),
-  (fixtures) => runChannelsAddRemoveTarget("openclaw", fixtures),
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) =>
+    runChannelsAddRemoveTarget("openclaw", { artifacts, cleanup, host, sandbox, secrets, skip }),
 );

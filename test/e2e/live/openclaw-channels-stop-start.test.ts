@@ -11,5 +11,6 @@ import {
 test.skipIf(!shouldRunLiveE2E())(
   "openclaw channels stop/start preserves credentials and toggles runtime config",
   { timeout: CHANNELS_STOP_START_TIMEOUT_MS },
-  (fixtures) => runChannelsStopStartTarget("openclaw", fixtures),
+  async ({ artifacts, cleanup, host, sandbox, secrets, skip }) =>
+    runChannelsStopStartTarget("openclaw", { artifacts, cleanup, host, sandbox, secrets, skip }),
 );

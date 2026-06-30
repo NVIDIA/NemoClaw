@@ -18,14 +18,11 @@ const CLI_ENTRYPOINT = path.resolve(
 );
 const CONFLICT_TIMEOUT_MS = 30_000;
 const TELEGRAM_TOKEN = "123456:openclaw-channels-conflict-guard-fake-token";
-
-function requiredCredentialHash(value: string): string {
-  const hash = hashCredential(value);
-  if (!hash) throw new Error("test fixture credential must hash");
-  return hash;
-}
-
-const TELEGRAM_HASH = requiredCredentialHash(TELEGRAM_TOKEN);
+const TELEGRAM_HASH =
+  hashCredential(TELEGRAM_TOKEN) ??
+  (() => {
+    throw new Error("test fixture credential must hash");
+  })();
 
 const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
 
