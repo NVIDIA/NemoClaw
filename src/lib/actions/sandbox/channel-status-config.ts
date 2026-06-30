@@ -113,9 +113,15 @@ function configInputSignal(
   const hasMismatch = checkedComparisons.some((comparison) => !comparison.matches);
   const allSourcesChecked =
     checkedComparisons.length === comparisons.length && checkedComparisons.length > 0;
+  const hasUncheckedExpectedValue = expected.hasValue && !allSourcesChecked;
   return {
     label,
-    severity: hasMismatch ? "warn" : expected.hasValue && allSourcesChecked ? "ok" : "info",
+    severity:
+      hasMismatch || hasUncheckedExpectedValue
+        ? "warn"
+        : expected.hasValue && allSourcesChecked
+          ? "ok"
+          : "info",
     detail: Array.from(new Set(comparisons.map((comparison) => comparison.detail))).join("; "),
   };
 }

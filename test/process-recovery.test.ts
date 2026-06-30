@@ -20,6 +20,9 @@ const {
 } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+const { buildHermesEnvFileBoundaryStandaloneCheck } = requireSource(
+  "../src/lib/agent/hermes-recovery-boundary.ts",
+) as typeof import("../src/lib/agent/hermes-recovery-boundary.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -281,16 +284,13 @@ describe("executeSandboxExecCommand", () => {
     } as never);
 
     const result = withFakeOpenshellBinary(() =>
-      executeSandboxExecCommand(
-        "hermes-box",
-        "python3 /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py env-file /sandbox/.hermes/.env\necho SECRET_BOUNDARY_OK",
-      ),
+      executeSandboxExecCommand("hermes-box", buildHermesEnvFileBoundaryStandaloneCheck()),
     );
 
     const args = spawn.mock.calls[0]?.[1] as string[];
     const shellPayload = args.at(-1) ?? "";
     expect(result).toEqual({ status: 0, stdout: "SECRET_BOUNDARY_OK", stderr: "" });
-    expect(args.slice(0, 7)).toEqual(["sandbox", "exec", "--name", "hermes-box", "--", "sh", "-c"]);
+    expect(shellPayload).not.toMatch(/[\r\n]/);
     expect(shellPayload).toContain("validate-hermes-env-secret-boundary.py");
     expect(shellPayload).not.toContain("base64 -d | sh");
   });

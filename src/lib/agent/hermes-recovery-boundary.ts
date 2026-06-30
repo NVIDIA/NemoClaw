@@ -165,7 +165,7 @@ export function buildHermesEnvFileBoundaryStandaloneCheck(): string {
     `  echo ${SECRET_BOUNDARY_REFUSED_MARKER};`,
     `  exit 1;`,
     `fi;`,
-  ].join("\n");
+  ].join(" ");
 }
 
 export const __testing = {

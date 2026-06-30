@@ -33,10 +33,12 @@ describe("sandbox exec command wrapping", () => {
     expect(Buffer.from(encoded as string, "base64").toString("utf8")).toBe(payload);
   });
 
-  it("keeps the Hermes secret-boundary validator on the raw exec path", () => {
+  it("keeps the Hermes secret-boundary validator visible on the raw exec path", () => {
     const payload = buildHermesEnvFileBoundaryStandaloneCheck();
     const wrapped = buildSandboxExecMarkedCommand(payload);
 
+    expect(payload).not.toMatch(/[\r\n]/);
+    expect(wrapped).not.toMatch(/[\r\n]/);
     expect(wrapped).toContain("validate-hermes-env-secret-boundary.py");
     expect(wrapped).not.toContain("base64 -d | sh");
   });

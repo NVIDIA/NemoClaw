@@ -205,7 +205,7 @@ describe("showSandboxChannelStatus config comparison", () => {
     expect(
       signals.find((signal) => signal.label === "Microsoft Teams Client ID (MSTEAMS_APP_ID)"),
     ).toMatchObject({
-      severity: "info",
+      severity: "warn",
       detail: "2542103c-7a1e-408a-b2f3-667e09e86783 (not checked)",
     });
   });
@@ -329,7 +329,7 @@ describe("showSandboxChannelStatus config comparison", () => {
     expect(
       signals.find((signal) => signal.label === "Microsoft Teams Client ID (MSTEAMS_APP_ID)"),
     ).toMatchObject({
-      severity: "info",
+      severity: "warn",
       detail: "2542103c-7a1e-408a-b2f3-667e09e86783 (not checked)",
     });
     expect(
@@ -339,7 +339,7 @@ describe("showSandboxChannelStatus config comparison", () => {
           "Microsoft Teams AAD Object IDs (comma-separated allowlist) (TEAMS_ALLOWED_USERS)",
       ),
     ).toMatchObject({
-      severity: "info",
+      severity: "warn",
       detail: "205f29da-231e-4a0e-a0b2-b398e6302087 (not checked)",
     });
     expect(
@@ -347,7 +347,7 @@ describe("showSandboxChannelStatus config comparison", () => {
         (signal) => signal.label === "Microsoft Teams mention mode (TEAMS_REQUIRE_MENTION)",
       ),
     ).toMatchObject({
-      severity: "info",
+      severity: "warn",
       detail: "1 (not checked)",
     });
     const sourceReadFailures = out_lines
@@ -402,7 +402,7 @@ describe("showSandboxChannelStatus config comparison", () => {
     expect(
       signals.find((signal) => signal.label === "Microsoft Teams Client ID (MSTEAMS_APP_ID)"),
     ).toMatchObject({
-      severity: "info",
+      severity: "warn",
       detail: "2542103c-7a1e-408a-b2f3-667e09e86783 (not checked)",
     });
   });
