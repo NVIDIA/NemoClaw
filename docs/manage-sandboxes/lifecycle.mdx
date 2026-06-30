@@ -250,17 +250,22 @@ To remove NemoClaw and all resources created during setup, run the CLI's built-i
 $$nemoclaw uninstall
 ```
 
-| Flag               | Effect                                               |
-|--------------------|------------------------------------------------------|
-| `--yes`            | Skip the confirmation prompt.                        |
-| `--keep-openshell` | Leave OpenShell binaries installed.                  |
-| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+| Flag                  | Effect                                                                                |
+|-----------------------|---------------------------------------------------------------------------------------|
+| `--yes`               | Skip the confirmation prompt.                                                         |
+| `--keep-openshell`    | Leave OpenShell binaries installed.                                                   |
+| `--delete-models`     | Also remove NemoClaw-pulled Ollama models.                                            |
+| `--destroy-user-data` | Also remove preserved user data (`rebuild-backups/`, `backups/`, `sandboxes.json`).   |
+| `--gateway <name>`    | Override the gateway name to remove (default: `nemoclaw`).                            |
 
 <Note>
 The uninstall command preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots written by snapshot and `backup-all` commands), `~/.nemoclaw/backups/` (workspace backups written by `scripts/backup-workspace.sh`), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
 Uninstall removes every other entry under `~/.nemoclaw/`.
 Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
-For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), pass `--destroy-user-data` (or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`) to acknowledge data loss and remove the preserved entries as well.
+`--yes` stays non-destructive by design.
+It only acknowledges the global confirmation prompt and never purges preserved user data on its own.
+Full purge always requires an explicit `--destroy-user-data` or the matching env var, so existing automation using `--yes` retains its safe behaviour.
 Refer to the [Commands reference](../reference/commands#$$nemoclaw-uninstall) for the full preservation contract.
 </Note>
 
@@ -272,7 +277,7 @@ If the CLI is missing or broken, fall back to the hosted script:
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
 ```
 
-The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
+The same `--yes`, `--keep-openshell`, `--delete-models`, `--destroy-user-data`, and `--gateway` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
