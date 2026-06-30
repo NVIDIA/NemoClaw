@@ -21,7 +21,9 @@
 #     works without an install, matching the resolution that
 #     `agents/hermes/start.sh` uses for `_HERMES_BOUNDARY_VALIDATOR`.
 #
-# Source-of-truth note for the `config show` masking layer:
+# Source-of-truth note for the `config show` masking layer (reported leak is
+# tracked in NVIDIA/NemoClaw#5981; the runtime-env guard for `hermes gateway`
+# was added in NVIDIA/NemoClaw#4975):
 #   - Invalid state: the upstream Hermes CLI prints inline provider `api_key`
 #     values verbatim when asked to render the resolved configuration, so a
 #     user running `hermes config show` sees an `sk-`-prefixed string that
@@ -75,7 +77,16 @@ import subprocess
 import sys
 
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
+# Installed filename is namespaced with `hermes-` because /usr/local/lib/nemoclaw
+# is a flat directory shared across NemoClaw-managed agents, where each agent's
+# validator must not collide on a common name. The source tree at
+# agents/hermes/ provides the namespace via directory, so the source file is
+# the shorter `validate-env-secret-boundary.py`. `agents/hermes/Dockerfile`
+# renames the file during COPY into the install path; the dev fallback below
+# resolves the source-tree filename so a working tree without an install still
+# runs end-to-end.
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
+_DEV_GUARD_FILENAME = "validate-env-secret-boundary.py"
 _TRUSTED_PYTHON3 = (
     "/usr/bin/python3",
     "/usr/local/bin/python3",
@@ -96,7 +107,7 @@ def _resolve_real_hermes() -> str:
 def _resolve_guard() -> str:
     if os.path.isfile(_INSTALLED_GUARD):
         return _INSTALLED_GUARD
-    return os.path.join(_self_dir(), "validate-env-secret-boundary.py")
+    return os.path.join(_self_dir(), _DEV_GUARD_FILENAME)
 
 
 def _resolve_trusted_python3() -> str | None:
