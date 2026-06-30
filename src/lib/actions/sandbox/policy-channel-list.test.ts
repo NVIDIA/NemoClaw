@@ -1,23 +1,37 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
-
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
-
-const requireDist = createRequire(import.meta.url);
-const D = (path: string) => requireDist(`../../${path}`);
 
 type PresetInfo = {
   name: string;
   description?: string;
 };
 
-const registry = D("state/registry.js");
-const policies = D("policy/index.js");
-const { listSandboxPolicies } = D("actions/sandbox/policy-channel.js") as {
-  listSandboxPolicies: (sandboxName: string) => void;
-};
+const moduleMocks = vi.hoisted(() => ({
+  getSandbox: vi.fn<(sandboxName: string) => Record<string, unknown> | null>(),
+  getCustomPolicies: vi.fn<(sandboxName: string) => PresetInfo[]>(),
+  listPresets: vi.fn<() => PresetInfo[]>(),
+  listCustomPresets: vi.fn<(sandboxName: string) => PresetInfo[]>(),
+  getAppliedPresets: vi.fn<(sandboxName: string) => string[]>(),
+  getGatewayPresets: vi.fn<(sandboxName: string) => string[] | null>(),
+}));
+
+vi.mock("../../state/registry", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../state/registry")>()),
+  getSandbox: moduleMocks.getSandbox,
+  getCustomPolicies: moduleMocks.getCustomPolicies,
+}));
+
+vi.mock("../../policy", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../policy")>()),
+  listPresets: moduleMocks.listPresets,
+  listCustomPresets: moduleMocks.listCustomPresets,
+  getAppliedPresets: moduleMocks.getAppliedPresets,
+  getGatewayPresets: moduleMocks.getGatewayPresets,
+}));
+
+import { listSandboxPolicies } from "./policy-channel";
 
 const POLICY_PRESETS: PresetInfo[] = [
   { name: "npm", description: "npm and Yarn registry access" },
@@ -29,9 +43,6 @@ const POLICY_PRESETS: PresetInfo[] = [
 
 let logSpy: MockInstance;
 let errSpy: MockInstance;
-let getSandboxMock: MockInstance;
-let getCustomPoliciesMock: MockInstance;
-let getAppliedPresetsMock: MockInstance;
 
 function printedText(): string {
   return [...logSpy.mock.calls, ...errSpy.mock.calls]
@@ -50,24 +61,23 @@ function arrangeListing({
   tier: string | null;
   agent: string | null;
 }): void {
-  getSandboxMock.mockReturnValue({
+  moduleMocks.getSandbox.mockReturnValue({
     name: "test-sandbox",
     agent,
     policyTier: tier,
     policies: appliedNames,
   });
-  getAppliedPresetsMock.mockReturnValue(appliedNames);
-  vi.spyOn(policies, "getGatewayPresets").mockReturnValue(gatewayNames);
+  moduleMocks.getAppliedPresets.mockReturnValue(appliedNames);
+  moduleMocks.getGatewayPresets.mockReturnValue(gatewayNames);
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  getSandboxMock = vi.spyOn(registry, "getSandbox");
-  getCustomPoliciesMock = vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
-  vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
-  vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
-  getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets");
+  moduleMocks.getCustomPolicies.mockReturnValue([]);
+  moduleMocks.listPresets.mockReturnValue(POLICY_PRESETS);
+  moduleMocks.listCustomPresets.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -91,7 +101,7 @@ describe("listSandboxPolicies provenance", () => {
   });
 
   it("keeps tier attribution when a custom registry entry shadows a tier preset (#5774)", () => {
-    getCustomPoliciesMock.mockReturnValue([
+    moduleMocks.getCustomPolicies.mockReturnValue([
       { name: "npm", description: "sandbox-scoped custom npm policy" },
     ]);
     arrangeListing({
