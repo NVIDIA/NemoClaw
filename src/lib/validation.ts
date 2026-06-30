@@ -147,9 +147,7 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   // including newlines (unlike `.` without the dotAll flag), so multi-line
   // command text is handled correctly. See #4127 / follow-up from #4125.
   const pluginInstallErrorMatch =
-    /The command '[^']*(?:openclaw plugins install|npm:@openclaw\/)[^']*'\s*returned a non-zero code/i.exec(
-      text,
-    );
+    /The command '[^']*openclaw plugins install[^']*'\s*returned a non-zero code/i.exec(text);
   if (pluginInstallErrorMatch) {
     const segment = text.slice(
       0,

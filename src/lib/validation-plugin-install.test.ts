@@ -96,4 +96,13 @@ describe("classifySandboxCreateFailure plugin-install network arm", () => {
     ].join("\n");
     expect(classifySandboxCreateFailure(output).kind).toBe("unknown");
   });
+
+  it("does NOT classify a non-plugin command that names the same scoped package", () => {
+    const output = [
+      "npm error code ENOTFOUND",
+      "npm error network request to https://registry.npmjs.org/@openclaw%2Ftools failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
+      "The command '/bin/sh -c npm install npm:@openclaw/tools' returned a non-zero code: 1",
+    ].join("\n");
+    expect(classifySandboxCreateFailure(output).kind).toBe("unknown");
+  });
 });
