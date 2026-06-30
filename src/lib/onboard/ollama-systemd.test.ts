@@ -8,6 +8,7 @@ import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runt
 import {
   ensureOllamaLoopbackSystemdOverride,
   mergeOllamaLoopbackSystemdOverride,
+  ollamaListenersAreLoopbackOnly,
   shouldSkipOllamaLoopbackForMissingSudo,
 } from "./ollama-systemd";
 
@@ -100,12 +101,33 @@ describe("mergeOllamaLoopbackSystemdOverride", () => {
   });
 });
 
+describe("ollamaListenersAreLoopbackOnly", () => {
+  it("accepts IPv4, IPv6, and IPv4-mapped loopback listeners", () => {
+    const output = [
+      "LISTEN 0 4096 127.0.0.1:11434 0.0.0.0:*",
+      "LISTEN 0 4096 [::1]:11434 [::]:*",
+      "LISTEN 0 4096 [::ffff:127.0.0.2]:11434 [::]:*",
+    ].join("\n");
+    expect(ollamaListenersAreLoopbackOnly(output)).toBe(true);
+  });
+
+  it("rejects wildcard or non-loopback Ollama listeners", () => {
+    expect(ollamaListenersAreLoopbackOnly("LISTEN 0 4096 0.0.0.0:11434 0.0.0.0:*")).toBe(false);
+    expect(ollamaListenersAreLoopbackOnly("LISTEN 0 4096 [::]:11434 [::]:*")).toBe(false);
+    expect(ollamaListenersAreLoopbackOnly("LISTEN 0 4096 192.168.1.8:11434 0.0.0.0:*")).toBe(false);
+  });
+
+  it("rejects missing or unrelated listeners because no positive proof exists", () => {
+    expect(ollamaListenersAreLoopbackOnly("")).toBe(false);
+    expect(ollamaListenersAreLoopbackOnly("LISTEN 0 4096 127.0.0.1:11435 0.0.0.0:*")).toBe(false);
+  });
+});
+
 // #5716: on a Linux aarch64 host running `nemoclaw onboard --non-interactive
 // --yes` without passwordless sudo, the wizard previously aborted with
 // "Refusing to continue with a potentially non-loopback Ollama bind" mid-flow.
-// The new behaviour detects the missing `sudo -n` upfront and skips the
-// loopback override with an actionable warning so the headless install can
-// continue against Ollama's existing bind.
+// The new behaviour detects the missing `sudo -n` upfront and only skips the
+// override after positively verifying the active listener is loopback-only.
 describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () => {
   // CR thread: isolate NEMOCLAW_NON_INTERACTIVE_SUDO_MODE so an outer shell
   // that has set it to `prompt` cannot change which branch of getSudoPrefix
@@ -120,7 +142,7 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
     restoreEnv(SUDO_MODE_ENV, savedSudoMode);
   });
 
-  it("skips the override with a warning when sudo -n is unavailable in non-interactive mode", () => {
+  it("continues with a warning when sudo -n is unavailable but the active listener is loopback-only", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const result = ensureOllamaLoopbackSystemdOverride({
@@ -128,16 +150,38 @@ describe("ensureOllamaLoopbackSystemdOverride non-interactive sudo (#5716)", () 
         hasOllamaSystemdUnitImpl: () => true,
         isNonInteractive: () => true,
         hasPasswordlessSudoImpl: () => false,
+        isOllamaLoopbackOnlyImpl: () => true,
       });
-      expect(result).toBe("not-applicable");
-      expect(warn).toHaveBeenCalledWith(
-        expect.stringContaining("passwordless sudo is not available"),
-      );
+      expect(result).toBe("ready");
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("already loopback-only"));
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining("NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt"),
       );
     } finally {
       warn.mockRestore();
+    }
+  });
+
+  it("fails before override commands when sudo is unavailable and loopback-only binding is unverified", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit ${code}`);
+    }) as never);
+    try {
+      expect(() =>
+        ensureOllamaLoopbackSystemdOverride({
+          platformImpl: () => "linux",
+          hasOllamaSystemdUnitImpl: () => true,
+          isNonInteractive: () => true,
+          hasPasswordlessSudoImpl: () => false,
+          isOllamaLoopbackOnlyImpl: () => false,
+        }),
+      ).toThrow("exit 1");
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("could not be verified"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("potentially exposed"));
+    } finally {
+      exit.mockRestore();
+      error.mockRestore();
     }
   });
 

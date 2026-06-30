@@ -44,6 +44,11 @@ type OllamaLoopbackSystemdOverrideOptions = {
    * without needing a real sudoers config.
    */
   hasPasswordlessSudoImpl?: () => boolean;
+  /**
+   * Positive runtime proof that the active systemd Ollama listener is bound
+   * only to loopback. Defaults to a non-privileged `systemctl` + `ss` probe.
+   */
+  isOllamaLoopbackOnlyImpl?: () => boolean;
 };
 
 function isEnvNonInteractive(): boolean {
@@ -88,6 +93,46 @@ function defaultHasPasswordlessSudo(): boolean {
     timeout: 5_000,
   });
   return !probe.error && probe.status === 0;
+}
+
+function parseListenerEndpoint(token: string): { host: string; port: number } | null {
+  const match = token.match(/^(?:\[([^\]]+)\]|(.+)):(\d+)$/u);
+  if (!match) return null;
+  return {
+    host: String(match[1] ?? match[2])
+      .replace(/%[^%]+$/u, "")
+      .toLowerCase(),
+    port: Number(match[3]),
+  };
+}
+
+/** Return true only when at least one Ollama listener exists and all are loopback-only. */
+export function ollamaListenersAreLoopbackOnly(output: string): boolean {
+  const hosts = output.split(/\r?\n/u).flatMap((line) => {
+    const endpoint = parseListenerEndpoint(line.trim().split(/\s+/u)[3] ?? "");
+    return endpoint?.port === OLLAMA_PORT ? [endpoint.host] : [];
+  });
+  return (
+    hosts.length > 0 &&
+    hosts.every(
+      (host) =>
+        host === "::1" ||
+        /^127(?:\.\d{1,3}){3}$/u.test(host) ||
+        /^::ffff:127(?:\.\d{1,3}){3}$/u.test(host),
+    )
+  );
+}
+
+function isActiveOllamaListenerLoopbackOnly(): boolean {
+  const listeners = runCapture(
+    [
+      "sh",
+      "-c",
+      "command -v systemctl >/dev/null && command -v ss >/dev/null && systemctl is-active --quiet ollama.service && ss -H -ltn 2>/dev/null",
+    ],
+    { ignoreError: true },
+  );
+  return ollamaListenersAreLoopbackOnly(listeners);
 }
 
 function hasOllamaCudaV13Library(): boolean {
@@ -150,40 +195,32 @@ export function ensureOllamaLoopbackSystemdOverride(
     ).trim();
   if (!hasOllamaSystemdUnit) return "not-applicable";
 
-  // #5716: a non-interactive run on a host without passwordless sudo cannot
-  // apply the loopback override (every `sudo -n ...` below would error). The
-  // installer used to march into the override and abort mid-flight with
-  // "Refusing to continue with a potentially non-loopback Ollama bind",
-  // breaking the headless install contract. Detect the unavailable sudo
-  // upfront, log the actionable reason, and skip the override instead of
-  // exiting. Ollama keeps running on its existing bind; the host operator
-  // can re-run with NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt or grant
-  // passwordless sudo to restore the loopback hardening.
-  //
-  // Trade-off (advisor PRA-2): this fall-through accepts a weaker security
-  // posture (Ollama may continue on a non-loopback bind) in exchange for
-  // not breaking the documented headless install contract. The escape
-  // hatches are deliberate and discoverable:
-  //   - NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt opts back into a real
-  //     sudo prompt when a TTY is attached, restoring the loopback override
-  //     end-to-end.
-  //   - The warning surfaces the exact override knob in stderr so an
-  //     operator scanning logs (or a CI run capturing them) sees how to
-  //     re-tighten without grepping the source.
-  // Aborting destroy-style with process.exit(1) here is rejected because
-  // headless pipelines have no recourse: they cannot answer a password
-  // prompt and the only signal they get is exit 1 with no actionable next
-  // step (#5716 reproduction).
+  // #5716: detect missing non-interactive sudo before attempting any override
+  // command. Continuing is safe only when runtime listener evidence proves
+  // the active systemd service is already loopback-only. A loopback HTTP
+  // response is not enough because a wildcard bind responds there too.
   const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const hasPasswordlessSudo = options.hasPasswordlessSudoImpl ?? defaultHasPasswordlessSudo;
   if (shouldSkipOllamaLoopbackForMissingSudo(sudoPrefix, hasPasswordlessSudo)) {
-    console.warn(
-      "  Skipping Ollama systemd loopback override: passwordless sudo is not available " +
-        "on this host. Ollama will keep its current bind; set " +
-        `${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt to allow a password prompt, ` +
-        "or configure passwordless sudo to restore loopback hardening.",
+    const loopbackOnly =
+      options.isOllamaLoopbackOnlyImpl?.() ?? isActiveOllamaListenerLoopbackOnly();
+    if (loopbackOnly) {
+      console.warn(
+        "  Passwordless sudo is not available; verified that the active Ollama service " +
+          "is already loopback-only, so onboarding will continue without rewriting its " +
+          `systemd drop-in. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt to apply the managed override.`,
+      );
+      return "ready";
+    }
+    console.error(
+      "  Passwordless sudo is not available, and the active Ollama listener could not be " +
+        "verified as loopback-only.",
     );
-    return "not-applicable";
+    console.error(
+      `  Refusing to continue with a potentially exposed Ollama bind. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt ` +
+        "with a terminal, or configure passwordless sudo and rerun onboarding.",
+    );
+    process.exit(1);
   }
 
   console.log("  Configuring Ollama systemd loopback override...");
