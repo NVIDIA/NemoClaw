@@ -415,7 +415,7 @@ liveTest(
     const runId = safeTag(`${process.env.GITHUB_RUN_ID ?? "local"}-${process.pid}-${Date.now()}`);
     const image =
       process.env.NEMOCLAW_HERMES_TEST_IMAGE ?? `nemoclaw-hermes-root-entrypoint-smoke:${runId}`;
-    const baseImage = `nemoclaw-hermes-root-entrypoint-base:${runId}`;
+    const baseImage = `nemoclaw-hermes-sandbox-base-local:root-entrypoint-${runId}`;
     const containers: string[] = [];
 
     await artifacts.writeJson("target.json", {
