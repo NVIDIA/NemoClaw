@@ -41,18 +41,21 @@ describe("shared OpenShell policy boundary package contract", () => {
 
     expect(
       fs.existsSync(
-        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.cts"),
+        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.ts"),
       ),
     ).toBe(true);
     expect(
       fs.existsSync(
-        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.js"),
       ),
     ).toBe(true);
     expect(
       fs.existsSync(
-        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.d.cts"),
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.d.ts"),
       ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(path.join(repoRoot, "dist", "shared", "openshell-policy-boundary.js")),
     ).toBe(true);
   });
 });

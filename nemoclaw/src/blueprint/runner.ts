@@ -22,7 +22,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
-import { withoutProviderComposedPolicies } from "../shared/openshell-policy-boundary.cjs";
+import { withoutProviderComposedPolicies } from "../shared/openshell-policy-boundary.js";
 import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";

@@ -1,9 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "outDir": "dist/shared",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "ignoreDeprecations": "6.0",
+    "outDir": "../dist/shared",
     "rootDir": "src/shared"
   },
-  "include": ["src/shared/**/*.cts"],
+  "include": ["src/shared/**/*.ts"],
   "exclude": []
 }

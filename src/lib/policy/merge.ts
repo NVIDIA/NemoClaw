@@ -6,7 +6,7 @@ import YAML from "yaml";
 import type { JsonObject, JsonValue } from "../core/json-types";
 
 const { withoutProviderComposedPolicies } =
-  require("../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+  require("../../../dist/shared/openshell-policy-boundary.js") as {
     withoutProviderComposedPolicies<T>(policies: Record<string, T>): Record<string, T>;
   };
 
