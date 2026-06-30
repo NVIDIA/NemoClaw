@@ -87,6 +87,9 @@ function defaultRun(command: string, args: string[], options: SpawnSyncOptions =
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
+  // `command` is always an internal, trusted literal ("lsof"); it is never
+  // user-supplied. It is also JSON.stringify-quoted, so the `sh -c` here carries
+  // no shell-injection surface.
   return (
     defaultRun("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
       env,

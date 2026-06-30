@@ -538,4 +538,22 @@ describe("stopAll", () => {
 
     expect(releaseGatewaySpy).not.toHaveBeenCalled();
   });
+
+  it("warns but still reports services stopped when gateway port release throws (#5968)", () => {
+    // A stop must never fail because gateway teardown hit an edge case: the
+    // catch-all warns and continues. (info/warn both route to console.log.)
+    releaseGatewaySpy.mockImplementation(() => {
+      throw new Error("registry boom");
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    stopAll({ pidDir, sandboxName: "nemoclaw-5968" });
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    logSpy.mockRestore();
+
+    expect(releaseGatewaySpy).toHaveBeenCalledWith({ sandboxName: "nemoclaw-5968" });
+    expect(output).toContain("Could not release the NemoClaw gateway port: registry boom");
+    expect(output).toContain("All services stopped");
+  });
 });

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync, type SpawnSyncOptions } from "node:child_process";
+import { type SpawnSyncOptions, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -78,6 +78,9 @@ function defaultKill(pid: number, signal?: NodeJS.Signals | number): boolean {
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
+  // `command` is always an internal, trusted literal ("pgrep"); it is never
+  // user-supplied. It is also JSON.stringify-quoted, so the `sh -c` here carries
+  // no shell-injection surface.
   return (
     defaultRun("sh", ["-c", `command -v ${JSON.stringify(command)} >/dev/null 2>&1`], {
       env,
