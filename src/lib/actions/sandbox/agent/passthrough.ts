@@ -3,7 +3,8 @@
 
 // Source-of-truth boundary for the `nemoclaw <name> agent` passthrough.
 //
-// The wrapper enforces three host-side mirrors of upstream contracts:
+// The wrapper enforces three host-side mirrors of upstream contracts and one
+// advisory diagnostic:
 //
 // 1. Agent-kind guard (registry mirror).
 //
@@ -67,6 +68,20 @@
 //      selector case is intercepted; everything else still flows through to
 //      the in-sandbox binary.
 //
+// 4. Recent shields-relock diagnostic (advisory audit mirror).
+//
+//    - Invalid state: after shields auto-relock, the next host CLI
+//      `openclaw agent` dispatch can fail with only `missing scope:
+//      operator.write`, which does not explain the recovery action.
+//    - Source boundary: OpenShell/OpenClaw own current scope state. NemoClaw's
+//      local audit JSONL is non-authoritative and is used only to add likely
+//      relock context; unreadable history never blocks dispatch, and terminal
+//      runtimes are excluded from this OpenClaw-specific diagnostic.
+//    - Source-fix constraint: an already-running in-sandbox OpenClaw TUI has no
+//      host CLI interception point. Covering that surface requires an upstream
+//      structured relock error or a separate extend-on-activity design. This
+//      wrapper intentionally covers only `nemoclaw <name> agent` dispatches.
+//
 // Regression tests: `passthrough.test.ts` covers the Hermes redirect, the
 // forwarded argv, the registry-miss fallback to OpenClaw, registry and
 // manifest-resolution fail-closed paths, quoted manifest command rejection,
@@ -74,8 +89,9 @@
 // unparseable phase fail-closed path, the OpenClaw no-selector rejection, and
 // the `--flag=value` selector-acceptance branch, plus the OpenClaw JSON
 // captured transport path used to append failure provenance without polluting
-// machine-readable stdout, plus shields auto-relock warning with timeout,
-// null-timeout fallback, and no-warning path.
+// machine-readable stdout. `passthrough-shields-warning.test.ts` covers the
+// OpenClaw-only relock diagnostic, validated and fallback timeouts, unreadable
+// and absent audit history, and terminal-runtime exclusion.
 //
 // Removal conditions:
 //
@@ -95,7 +111,11 @@
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
-import { type ShieldsAutoRestoreEvent, readRecentShieldsAutoRestore } from "../../../shields/audit";
+import {
+  readRecentShieldsAutoRestore,
+  type ShieldsAutoRestoreEvent,
+  type ShieldsAutoRestoreReadResult,
+} from "../../../shields/audit";
 import { parseSandboxPhase } from "../../../state/gateway";
 import * as registry from "../../../state/registry";
 import { execSandbox } from "../exec";
@@ -125,6 +145,11 @@ const OPENCLAW_AGENT_VALUE_FLAGS = new Set([
 
 const OPENCLAW_AGENT_BOOLEAN_FLAGS = new Set(["--deliver"]);
 
+// A relock remains useful context briefly after it happens. This is a
+// relevance window measured from the restore event, independent of the
+// original shields-down timeout; a longer window risks stale-session warnings.
+const SHIELDS_RELOCK_WARNING_WINDOW_MS = 10 * 60 * 1000;
+
 export interface AgentPassthroughOptions {
   extraArgs?: readonly string[];
 }
@@ -134,7 +159,7 @@ export interface AgentPassthroughDeps {
   ensureLive?: typeof ensureLiveSandboxOrExit;
   exec?: typeof execSandbox;
   execJson?: typeof runAgentJsonPassthrough;
-  getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreEvent | null;
+  getRecentShieldsAutoRestore?: (sandboxName: string) => ShieldsAutoRestoreReadResult;
   process?: {
     exit(code: number): never;
     stdout?: { write(s: string): unknown };
@@ -358,15 +383,29 @@ function emitShieldsRelockWarning(
   relock: ShieldsAutoRestoreEvent,
   sandboxName: string,
 ): void {
-  const afterPart =
-    relock.timeoutSeconds !== null ? ` after ${String(relock.timeoutSeconds)}s` : "";
-  // timeoutSeconds is pre-validated by readRecentShieldsAutoRestore (finite integer, 1–1800).
+  // Defend the user-facing command suggestion even when tests or future
+  // callers inject an event without going through the audit reader.
+  const timeoutSeconds =
+    relock.timeoutSeconds !== null &&
+    Number.isInteger(relock.timeoutSeconds) &&
+    relock.timeoutSeconds >= 1 &&
+    relock.timeoutSeconds <= 1800
+      ? relock.timeoutSeconds
+      : null;
+  const afterPart = timeoutSeconds !== null ? ` after ${String(timeoutSeconds)}s` : "";
   const timeoutSuggestion =
-    relock.timeoutSeconds !== null
-      ? `--timeout ${String(relock.timeoutSeconds)}s`
-      : "--timeout 60s";
+    timeoutSeconds !== null ? `--timeout ${String(timeoutSeconds)}s` : "--timeout 60s";
   proc.stderr.write(
     `  ⚠ Shields auto-relocked${afterPart} — run \`${CLI_NAME} ${sandboxName} shields down ${timeoutSuggestion}\` to extend.\n`,
+  );
+}
+
+function emitShieldsAuditUnreadableWarning(
+  proc: NonNullable<AgentPassthroughDeps["process"]>,
+  sandboxName: string,
+): void {
+  proc.stderr.write(
+    `  ⚠ Could not read shields audit history; continuing without relock context. Run \`${CLI_NAME} ${sandboxName} shields status\` to verify current state.\n`,
   );
 }
 
@@ -439,15 +478,16 @@ export async function runAgentPassthrough(
   if (isOpenClawPassthroughCommand(command) && !hasTargetSelector(extraArgs)) {
     rejectNoTargetSelector(proc);
   }
-  // 10-min window: shields timeouts range 1–1800s; 10 min covers even the max
-  // 30-min timeout with a 2× buffer. A longer window risks false-positive warnings
-  // on a relock from a prior session. Adjust if the upstream max changes.
-  const checkShields =
-    deps.getRecentShieldsAutoRestore ??
-    ((name: string) => readRecentShieldsAutoRestore(name, 10 * 60 * 1000));
-  const relock = checkShields(sandboxName);
-  if (relock) {
-    emitShieldsRelockWarning(proc, relock, sandboxName);
+  if (isOpenClawPassthroughCommand(command)) {
+    const checkShields =
+      deps.getRecentShieldsAutoRestore ??
+      ((name: string) => readRecentShieldsAutoRestore(name, SHIELDS_RELOCK_WARNING_WINDOW_MS));
+    const relock = checkShields(sandboxName);
+    if (relock.kind === "event") {
+      emitShieldsRelockWarning(proc, relock.event, sandboxName);
+    } else if (relock.kind === "unreadable") {
+      emitShieldsAuditUnreadableWarning(proc, sandboxName);
+    }
   }
   if (isOpenClawPassthroughCommand(command) && requestsOpenClawJsonOutput(extraArgs)) {
     const execJson = deps.execJson ?? runAgentJsonPassthrough;

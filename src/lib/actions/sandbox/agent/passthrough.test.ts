@@ -34,7 +34,9 @@ vi.mock("../../../agent/defs", () => ({
 }));
 // Default to no recent shields auto-restore so tests that don't inject
 // getRecentShieldsAutoRestore don't read ~/.nemoclaw/state/shields-audit.jsonl.
-vi.mock("../../../shields/audit", () => ({ readRecentShieldsAutoRestore: vi.fn(() => null) }));
+vi.mock("../../../shields/audit", () => ({
+  readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
+}));
 
 import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
 
@@ -448,45 +450,6 @@ describe("runAgentPassthrough", () => {
       ["openclaw", "agent", "--session-key=abc-123", "-m", "ping"],
       { tty: false },
     );
-  });
-
-  // Shared helper for shields-warning tests: wires up the OpenClaw mock and
-  // proc, dispatches with a fixed extraArgs, and returns the stderr output.
-  async function runShieldsWarningTest(
-    restore: { timeoutSeconds: number | null } | null,
-  ): Promise<string> {
-    getSandboxMock.mockReturnValueOnce({ agent: "openclaw" });
-    const { writes, proc } = makeProcMock();
-    await runAgentPassthrough(
-      "alpha",
-      { extraArgs: ["--agent", "main", "-m", "hi"] },
-      {
-        process: proc,
-        getRecentShieldsAutoRestore: () =>
-          restore !== null ? { timestamp: new Date().toISOString(), ...restore } : null,
-      },
-    );
-    return writes.join("");
-  }
-
-  it("emits a shields-relock warning with timeout when shields auto-relocked recently (#5922)", async () => {
-    const all = await runShieldsWarningTest({ timeoutSeconds: 20 });
-    expect(execMock).toHaveBeenCalled();
-    expect(all).toMatch(/[Ss]hields auto-relocked after 20s/);
-    expect(all).toMatch(/shields down --timeout 20s/);
-  });
-
-  it("emits a shields-relock warning with fallback timeout when timeoutSeconds is null (#5922)", async () => {
-    const all = await runShieldsWarningTest({ timeoutSeconds: null });
-    expect(execMock).toHaveBeenCalled();
-    expect(all).toMatch(/[Ss]hields auto-relocked/);
-    expect(all).toMatch(/shields down --timeout 60s/);
-  });
-
-  it("emits no shields warning when there was no recent auto-restore (#5922)", async () => {
-    const all = await runShieldsWarningTest(null);
-    expect(execMock).toHaveBeenCalled();
-    expect(all).not.toMatch(/[Ss]hields auto-relocked/);
   });
 
   it("rejects with exit 1 + recovery hints when sandbox phase is non-Ready", async () => {
