@@ -54,6 +54,18 @@ describe("SandboxExecCommand oclif parse path", () => {
     });
   });
 
+  it("forwards the semicolon workaround to the action guard (#5980)", async () => {
+    // Mirrors the action-layer "forwards the semicolon workaround to dispatch"
+    // test: the single-line semicolon-joined command carries no newline, so the
+    // command layer hands it to execSandbox() unchanged for the guard to pass.
+    await SandboxExecCommand.run(["alpha", "--", "bash", "-lc", "echo line1; echo line2"], rootDir);
+    expect(execSandboxMock).toHaveBeenCalledWith(
+      "alpha",
+      ["bash", "-lc", "echo line1; echo line2"],
+      { workdir: undefined, tty: null, timeoutSeconds: undefined },
+    );
+  });
+
   it("preserves --workdir and forwards a single-line command unchanged (#5980)", async () => {
     await SandboxExecCommand.run(
       ["alpha", "--workdir", "/sandbox", "--", "bash", "-lc", "echo line1; echo line2"],
