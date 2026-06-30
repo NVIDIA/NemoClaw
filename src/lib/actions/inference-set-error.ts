@@ -6,7 +6,9 @@ import { compactText } from "../core/url-utils";
 import { redact, redactFull } from "../security/redact";
 
 const FAILURE_DETAIL_LIMIT = 2_000;
-const PROVIDER_ERROR_SCAN_LIMIT = 64 * 1024;
+/** Bound untrusted subprocess output; classification scans this same captured window. */
+export const OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER = 64 * 1024;
+const PROVIDER_ERROR_SCAN_LIMIT = OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER;
 const PROVIDER_QUOTES = ["'", '"', "`"] as const;
 
 function isWordCharacter(value: string | undefined): boolean {
@@ -53,10 +55,11 @@ function lineReportsProviderNotFound(line: string, requestedProvider: string): b
       if (quotedIndex === -1) break;
       const prefix = line.slice(0, quotedIndex).trimEnd();
       const providerIndex = prefix.length - "provider".length;
+      const charBeforeProvider = providerIndex > 0 ? prefix[providerIndex - 1] : undefined;
       const hasProviderLabel =
         providerIndex >= 0 &&
         prefix.slice(providerIndex) === "provider" &&
-        (providerIndex === 0 || !isWordCharacter(prefix[providerIndex - 1]));
+        !isWordCharacter(charBeforeProvider);
       if (hasProviderLabel) {
         const beforeProvider = prefix.slice(0, providerIndex);
         const afterProvider = line.slice(quotedIndex + quotedProvider.length).trimStart();
@@ -89,6 +92,16 @@ export function openshellReportsProviderNotFound(
     .some((line) => lineReportsProviderNotFound(line, normalizedProvider));
 }
 
+export class InferenceSetError extends Error {
+  constructor(
+    message: string,
+    readonly exitCode = 1,
+  ) {
+    super(message);
+    this.name = "InferenceSetError";
+  }
+}
+
 export function buildOpenshellInferenceSetFailureMessage(args: {
   exitCode: number;
   providerNotFound: boolean;
@@ -96,9 +109,9 @@ export function buildOpenshellInferenceSetFailureMessage(args: {
   stderr: string;
   stdout: string;
 }): string {
-  // `redact()` parses URL userinfo and sensitive query parameters; `redactFull()`
-  // then fully masks recognized tokens. Neither pass alone covers both shapes.
-  const detail = compactText(redactFull(redact(`${args.stderr}\n${args.stdout}`))).slice(
+  // Fully mask token patterns first, then use `redact()` only for URL userinfo and
+  // query forms absent from `redactFull`; no secret prefix survives an intermediate.
+  const detail = compactText(redact(redactFull(`${args.stderr}\n${args.stdout}`))).slice(
     0,
     FAILURE_DETAIL_LIMIT,
   );

@@ -29,7 +29,10 @@ import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 import { hermesApiMode, resolveRuntimeInferenceApi } from "./inference-route-api";
+import { InferenceSetError, OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER } from "./inference-set-error";
 import { buildInferenceSetFailure } from "./inference-set-provider-diagnostics";
+
+export { InferenceSetError };
 
 export interface InferenceSetOptions {
   provider: string;
@@ -51,8 +54,6 @@ export interface InferenceSetResult {
   sessionUpdated: boolean;
   inSandboxConfigSynced: boolean;
 }
-
-const OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER = 64 * 1024;
 
 export interface InferenceSetDeps {
   getDefaultSandbox: () => string | null;
@@ -85,16 +86,6 @@ export interface InferenceSetDeps {
   validateLocalProvider: (provider: string) => ValidationResult;
   ensureLocalProviderReachable: (provider: string) => boolean;
   resolveContextWindowForModel: (provider: string, model: string) => number | null;
-}
-
-export class InferenceSetError extends Error {
-  constructor(
-    message: string,
-    readonly exitCode = 1,
-  ) {
-    super(message);
-    this.name = "InferenceSetError";
-  }
 }
 
 const SUPPORTED_PROVIDER_NAMES = [

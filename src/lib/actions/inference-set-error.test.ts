@@ -78,7 +78,7 @@ describe("inference set OpenShell failure diagnostics", () => {
     expect(message).not.toContain(username);
     expect(message).not.toContain(password);
     expect(message).not.toContain(querySecret);
-    expect(message).toContain("https://****:****@gateway.example.test/v1?token=<REDACTED>");
+    expect(message).toContain("https://****:****@gateway.example.test/v1?token=****");
   });
 
   it("keeps malformed and mismatched diagnostics on the generic path (#5924)", () => {

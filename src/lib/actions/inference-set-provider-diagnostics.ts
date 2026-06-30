@@ -5,10 +5,10 @@ import type { CaptureOpenshellOptions, CaptureOpenshellResult } from "../adapter
 import { parseGatewayProviderNames } from "../credentials/provider-list";
 import {
   buildOpenshellInferenceSetFailureMessage,
+  OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
   openshellReportsProviderNotFound,
 } from "./inference-set-error";
 
-const OPEN_SHELL_DIAGNOSTIC_MAX_BUFFER = 64 * 1024;
 const OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS = 5_000;
 
 interface ProviderDiagnosticDeps {
@@ -25,16 +25,16 @@ export function queryRegisteredGatewayProviders(
   try {
     const result = deps.captureOpenshell(["provider", "list", "--names"], {
       ignoreError: true,
-      maxBuffer: OPEN_SHELL_DIAGNOSTIC_MAX_BUFFER,
+      maxBuffer: OPEN_SHELL_FAILURE_CAPTURE_MAX_BUFFER,
       timeout: OPEN_SHELL_DIAGNOSTIC_TIMEOUT_MS,
     });
     if (result.status === 0) {
       return parseGatewayProviderNames(result.output).credentialNames;
     }
-  } catch {
+  } catch (_error: unknown) {
     // #5924: intentionally treat every thrown query or parsing error identically.
-    // Diagnostics must never replace the original route failure or log an exception
-    // that may contain credentials, so the static warning below is the only signal.
+    // The provider-list lookup is secondary diagnostics; its error must not mask
+    // the primary route failure, and the static warning below remains observable.
   }
   deps.log("  ⚠ Could not query registered OpenShell providers while formatting the failure.");
   return undefined;
