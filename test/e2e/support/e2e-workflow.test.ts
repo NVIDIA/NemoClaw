@@ -16,7 +16,7 @@ import {
 } from "../../../tools/e2e/workflow-boundary.mts";
 import { readWorkflow, removeJobNeed } from "../../helpers/e2e-workflow-contract";
 import { testTimeoutOptions } from "../../helpers/timeouts";
-import { assertChannelsStopStartSandboxName } from "../live/channels-stop-start-safety.ts";
+import { assertChannelLifecycleSandboxName } from "../live/channels-lifecycle-helpers.ts";
 
 function generateMatrixScript(): string {
   const workflow = readWorkflow();
@@ -62,16 +62,18 @@ function generateMatrixForDispatch(env: { JOBS: string; TARGETS: string }): Reco
 }
 
 describe("e2e workflow boundary", () => {
-  it("guards channels-stop-start destructive cleanup to test-owned sandboxes", () => {
-    expect(() => assertChannelsStopStartSandboxName("personal-dev")).toThrow(
-      /only accepts sandbox names with prefix e2e-channels-stop-start-/,
+  it("guards channel lifecycle destructive cleanup to test-owned sandboxes", () => {
+    expect(() => assertChannelLifecycleSandboxName("personal-dev")).toThrow(
+      /only accept sandbox names with prefixes e2e-openclaw-channels-add-remove/,
     );
     expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-openclaw"),
+      assertChannelLifecycleSandboxName("e2e-openclaw-channels-add-remove"),
     ).not.toThrow();
+    expect(() => assertChannelLifecycleSandboxName("e2e-hermes-channels-add-remove")).not.toThrow();
     expect(() =>
-      assertChannelsStopStartSandboxName("e2e-channels-stop-start-hermes"),
+      assertChannelLifecycleSandboxName("e2e-openclaw-channels-stop-start"),
     ).not.toThrow();
+    expect(() => assertChannelLifecycleSandboxName("e2e-hermes-channels-stop-start")).not.toThrow();
   });
 
   it("keeps the live E2E target workflow scheduled, dispatchable, pinned, and artifact-safe", () => {
@@ -596,54 +598,36 @@ describe("e2e workflow boundary", () => {
         selectedFreeStandingJobs: ["issue-2478-crash-loop-recovery"],
         registryTargets: [],
       });
+      for (const job of [
+        "gateway-health-honest",
+        "concurrent-gateway-ports",
+        "openclaw-channels-conflict-guard",
+      ]) {
+        for (const selector of ["targets", "jobs"] as const) {
+          expect(evaluateE2eWorkflowDispatchSelectors({ [selector]: job })).toMatchObject({
+            valid: true,
+            liveTargetsRun: false,
+            selectedFreeStandingJobs: [job],
+            registryTargets: [],
+          });
+        }
+      }
       expect(
-        evaluateE2eWorkflowDispatchSelectors({ targets: "gateway-health-honest" }),
+        evaluateE2eWorkflowDispatchSelectors({ targets: "openclaw-channels-add-remove" }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: ["gateway-health-honest"],
-        registryTargets: [],
-      });
-      expect(evaluateE2eWorkflowDispatchSelectors({ jobs: "gateway-health-honest" })).toMatchObject(
-        {
-          valid: true,
-          liveTargetsRun: false,
-          selectedFreeStandingJobs: ["gateway-health-honest"],
-          registryTargets: [],
-        },
-      );
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({ targets: "concurrent-gateway-ports" }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["concurrent-gateway-ports"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({ jobs: "concurrent-gateway-ports" }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["concurrent-gateway-ports"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({ targets: "channels-add-remove" }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["channels-add-remove"],
+        selectedFreeStandingJobs: ["openclaw-channels-add-remove"],
         registryTargets: [],
       });
       expect(
         evaluateE2eWorkflowDispatchSelectors({
-          jobs: "channels-add-remove",
+          jobs: "hermes-channels-add-remove",
         }),
       ).toMatchObject({
         valid: true,
         liveTargetsRun: false,
-        selectedFreeStandingJobs: ["channels-add-remove"],
+        selectedFreeStandingJobs: ["hermes-channels-add-remove"],
         registryTargets: [],
       });
     },
@@ -1179,7 +1163,7 @@ jobs:
     }
   });
 
-  it("rejects channels stop/start workflow-boundary drift for secret and artifact handling", () => {
+  it("rejects OpenClaw channels stop/start workflow-boundary drift for secret and artifact handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -1188,17 +1172,14 @@ jobs:
         {
           env: Record<string, unknown>;
           steps: Array<Record<string, unknown>>;
-          strategy: { matrix: { agent: string[] }; "fail-fast": boolean };
           "timeout-minutes"?: number;
         }
       >;
     };
-    const job = workflow.jobs["channels-stop-start"];
+    const job = workflow.jobs["openclaw-channels-stop-start"];
     expect(job).toBeDefined();
     job["timeout-minutes"] = 45;
-    job.strategy["fail-fast"] = true;
-    job.strategy.matrix.agent = ["openclaw"];
-    job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev-${{ matrix.agent }}";
+    job.env.NEMOCLAW_SANDBOX_NAME = "personal-dev";
     job.env.DOCKER_CONFIG = "${{ github.workspace }}/.docker-config-shared";
     job.env.NVIDIA_INFERENCE_API_KEY = "${{ secrets.NVIDIA_INFERENCE_API_KEY }}";
     const checkoutStep = job.steps.find(
@@ -1223,25 +1204,27 @@ jobs:
     expect(installOpenShellStep).toBeDefined();
     installOpenShellStep!.run = "bash scripts/install-openshell.sh";
 
-    const runStep = job.steps.find((step) => step.name === "Run channels stop/start live test");
+    const runStep = job.steps.find(
+      (step) => step.name === "Run OpenClaw channels stop/start live test",
+    );
     expect(runStep).toBeDefined();
     runStep!.env = {
       TELEGRAM_BOT_TOKEN: "real-token",
     };
     runStep!.run = String(runStep!.run).replace(
-      "test/e2e/live/channels-stop-start.test.ts",
-      "test/e2e/live/channels-add-remove.test.ts",
+      "test/e2e/live/openclaw-channels-stop-start.test.ts",
+      "test/e2e/live/hermes-channels-stop-start.test.ts",
     );
 
     const uploadStep = job.steps.find(
-      (step) => step.name === "Upload channels stop/start artifacts",
+      (step) => step.name === "Upload OpenClaw channels stop/start artifacts",
     );
     expect(uploadStep).toBeDefined();
     uploadStep!.uses = "actions/upload-artifact@v4";
     uploadStep!.with = {
       ...(uploadStep!.with as Record<string, unknown>),
-      name: "channels-stop-start",
-      path: "e2e-artifacts/live/channels-stop-start/",
+      name: "bad-channels-upload",
+      path: "e2e-artifacts/live/bad-channels-upload/",
       "include-hidden-files": true,
       "retention-days": 1,
     };
@@ -1256,23 +1239,22 @@ jobs:
       const errors = validateE2eWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
         expect.arrayContaining([
-          "channels-stop-start job must keep the 90 minute timeout",
-          "channels-stop-start strategy.fail-fast must be false",
-          "channels-stop-start matrix.agent must be openclaw,hermes",
-          "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
-          "channels-stop-start job must isolate Docker auth by matrix agent",
-          "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
-          "channels-stop-start checkout step must set persist-credentials=false",
+          "openclaw-channels-stop-start job must keep the 90 minute timeout",
+          "openclaw-channels-stop-start job env NEMOCLAW_SANDBOX_NAME must be e2e-openclaw-channels-stop-start",
+          "openclaw-channels-stop-start job env DOCKER_CONFIG must be ${{ github.workspace }}/.docker-config-openclaw-channels-stop-start",
+          "openclaw-channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
+          "openclaw-channels-stop-start checkout step must set persist-credentials=false",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
-          "channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
-          "channels-stop-start step must set the fake Telegram token",
-          "step 'Run channels stop/start live test' run script must include test/e2e/live/channels-stop-start.test.ts",
-          "channels-stop-start upload-artifact action must be pinned to a full commit SHA",
-          "channels-stop-start artifact upload name must include matrix.agent",
-          "channels-stop-start artifact upload must set include-hidden-files: false",
-          "channels-stop-start artifact upload retention-days must be 14",
-          "channels-stop-start Docker auth cleanup must always run",
+          "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "openclaw-channels-stop-start step must set fake DISCORD_BOT_TOKEN",
+          "openclaw-channels-stop-start step must set fake MSTEAMS_APP_PASSWORD",
+          "step 'Run OpenClaw channels stop/start live test' run script must include test/e2e/live/openclaw-channels-stop-start.test.ts",
+          "openclaw-channels-stop-start upload-artifact action must be pinned to a full commit SHA",
+          "openclaw-channels-stop-start artifact upload name must be stable",
+          "openclaw-channels-stop-start artifact upload must set include-hidden-files: false",
+          "openclaw-channels-stop-start artifact upload retention-days must be 14",
+          "openclaw-channels-stop-start Docker auth cleanup must always run",
           "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
         ]),
       );

@@ -4,10 +4,13 @@
 import { testTimeoutOptions } from "../../helpers/timeouts";
 import { test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
-import { LIVE_TIMEOUT_MS, runHermesSlackE2E } from "./hermes-slack-e2e-helpers.ts";
+import {
+  CHANNELS_ADD_REMOVE_TIMEOUT_MS,
+  runChannelsAddRemoveTarget,
+} from "./channels-lifecycle-helpers.ts";
 
 test.skipIf(!shouldRunLiveE2E())(
-  "hermes-slack-e2e: onboards Hermes Slack and proves policy, placeholders, egress, and cleanup",
-  testTimeoutOptions(LIVE_TIMEOUT_MS),
-  runHermesSlackE2E,
+  "hermes channels add/remove covers every supported channel",
+  testTimeoutOptions(CHANNELS_ADD_REMOVE_TIMEOUT_MS),
+  (fixtures) => runChannelsAddRemoveTarget("hermes", fixtures),
 );

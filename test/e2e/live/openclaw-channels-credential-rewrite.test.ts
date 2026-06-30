@@ -55,16 +55,18 @@ import {
   startFakeDockerApi,
   stripAnsi,
   tokenValues,
-} from "./messaging-providers-helpers.ts";
+} from "./openclaw-channels-credential-rewrite-helpers.ts";
 
 const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
 
 runLiveTest(
-  "messaging providers preserve placeholder, policy, runtime, and send contracts",
+  "openclaw channels credential rewrite preserves placeholder, policy, runtime, and send contracts",
   testTimeoutOptions(LIVE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, sandbox, skip }) => {
     if (!process.env.NVIDIA_INFERENCE_API_KEY) {
-      skip("NVIDIA_INFERENCE_API_KEY is required for live messaging-provider E2E");
+      skip(
+        "NVIDIA_INFERENCE_API_KEY is required for live openclaw-channels-credential-rewrite E2E",
+      );
       return;
     }
     if (!fs.existsSync(CLI_ENTRYPOINT)) {
@@ -74,7 +76,7 @@ runLiveTest(
     const state = messagingEnv();
     const redactionValues = tokenValues(state.tokens);
     const skips: string[] = [];
-    await artifacts.writeJson("messaging-provider-env-summary.json", {
+    await artifacts.writeJson("openclaw-channels-credential-rewrite-env-summary.json", {
       sandboxName: SANDBOX_NAME,
       telegramTokenChars: state.tokens.telegram.length,
       discordTokenChars: state.tokens.discord.length,
@@ -86,31 +88,34 @@ runLiveTest(
       wechatAccount: state.wechatAccount,
     });
 
-    cleanup.add(`destroy messaging providers sandbox ${SANDBOX_NAME}`, async () => {
-      await bestEffort(() =>
-        runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-          artifactName: "cleanup-nemoclaw-destroy-messaging-providers",
-          env: state.env,
-          redactionValues,
-          timeoutMs: 15 * 60_000,
-        }),
-      );
-      await bestEffort(() =>
-        runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
-          artifactName: "cleanup-openshell-sandbox-delete-messaging-providers",
-          env: state.env,
-          redactionValues,
-          timeoutMs: 120_000,
-        }),
-      );
-    });
+    cleanup.add(
+      `destroy openclaw channels credential rewrite sandbox ${SANDBOX_NAME}`,
+      async () => {
+        await bestEffort(() =>
+          runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
+            artifactName: "cleanup-nemoclaw-destroy-openclaw-channels-credential-rewrite",
+            env: state.env,
+            redactionValues,
+            timeoutMs: 15 * 60_000,
+          }),
+        );
+        await bestEffort(() =>
+          runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
+            artifactName: "cleanup-openshell-sandbox-delete-openclaw-channels-credential-rewrite",
+            env: state.env,
+            redactionValues,
+            timeoutMs: 120_000,
+          }),
+        );
+      },
+    );
 
     const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
     cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
 
     await bestEffort(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "preclean-nemoclaw-destroy-messaging-providers",
+        artifactName: "preclean-nemoclaw-destroy-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 15 * 60_000,
@@ -118,7 +123,7 @@ runLiveTest(
     );
     await bestEffort(() =>
       runHost(host, "openshell", ["sandbox", "delete", SANDBOX_NAME], {
-        artifactName: "preclean-openshell-sandbox-delete-messaging-providers",
+        artifactName: "preclean-openshell-sandbox-delete-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 120_000,
@@ -126,7 +131,7 @@ runLiveTest(
     );
     await bestEffort(() =>
       runHost(host, "openshell", ["gateway", "destroy", "-g", "nemoclaw"], {
-        artifactName: "preclean-openshell-gateway-destroy-messaging-providers",
+        artifactName: "preclean-openshell-gateway-destroy-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 120_000,
@@ -134,7 +139,7 @@ runLiveTest(
     );
 
     const dockerInfo = await runHost(host, "docker", ["info"], {
-      artifactName: "prereq-docker-info-messaging-providers",
+      artifactName: "prereq-docker-info-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: 30_000,
@@ -142,25 +147,27 @@ runLiveTest(
     expectExitZero(dockerInfo, "Docker must be running");
 
     const install = await runHost(host, "bash", ["install.sh", "--non-interactive"], {
-      artifactName: "install-messaging-providers",
+      artifactName: "install-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: INSTALL_TIMEOUT_MS,
     });
     if (install.exitCode !== 0 && isNvidiaEndpointRateLimitFailure(outputText(install))) {
-      await artifacts.writeJson("messaging-provider-early-skip.json", {
+      await artifacts.writeJson("openclaw-channels-credential-rewrite-early-skip.json", {
         reason:
-          "NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran",
+          "NVIDIA endpoint validation was rate-limited before openclaw-channels-credential-rewrite assertions ran",
         exitCode: install.exitCode,
         artifact: install.artifacts.result,
       });
-      skip("NVIDIA endpoint validation was rate-limited before messaging-provider assertions ran");
+      skip(
+        "NVIDIA endpoint validation was rate-limited before openclaw-channels-credential-rewrite assertions ran",
+      );
       return;
     }
     expectExitZero(install, "M0: install.sh completed");
 
     const openshellVersion = await runHost(host, "openshell", ["--version"], {
-      artifactName: "openshell-version-messaging-providers",
+      artifactName: "openshell-version-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: 60_000,
@@ -168,7 +175,7 @@ runLiveTest(
     expectExitZero(openshellVersion, "openshell installed");
 
     const sandboxList = await runHost(host, "openshell", ["sandbox", "list"], {
-      artifactName: "sandbox-list-messaging-providers",
+      artifactName: "sandbox-list-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: 60_000,
@@ -184,7 +191,7 @@ runLiveTest(
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "channels", "add", "whatsapp"],
       {
-        artifactName: "channels-add-whatsapp-messaging-providers",
+        artifactName: "channels-add-whatsapp-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 10 * 60_000,
@@ -201,7 +208,7 @@ runLiveTest(
       "openshell",
       ["provider", "get", `${SANDBOX_NAME}-whatsapp-bridge`],
       {
-        artifactName: "provider-get-whatsapp-messaging-providers",
+        artifactName: "provider-get-whatsapp-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 60_000,
@@ -223,7 +230,7 @@ const channels = registry.sandboxes?.[process.env.SANDBOX_NAME]?.messaging?.plan
 process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "whatsapp") ? 0 : 1);`,
       ],
       {
-        artifactName: "registry-whatsapp-messaging-providers",
+        artifactName: "registry-whatsapp-openclaw-channels-credential-rewrite",
         env: { ...state.env, SANDBOX_NAME },
         redactionValues,
         timeoutMs: 60_000,
@@ -239,7 +246,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "openshell",
       ["policy", "get", "--full", SANDBOX_NAME],
       {
-        artifactName: "whatsapp-policy-pre-rebuild-messaging-providers",
+        artifactName: "whatsapp-policy-pre-rebuild-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 60_000,
@@ -258,7 +265,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "node",
       [CLI_ENTRYPOINT, SANDBOX_NAME, "rebuild", "--yes"],
       {
-        artifactName: "whatsapp-rebuild-messaging-providers",
+        artifactName: "whatsapp-rebuild-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: REBUILD_TIMEOUT_MS,
@@ -271,7 +278,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       "openshell",
       ["policy", "get", "--full", SANDBOX_NAME],
       {
-        artifactName: "whatsapp-policy-post-rebuild-messaging-providers",
+        artifactName: "whatsapp-policy-post-rebuild-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 60_000,
@@ -287,7 +294,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     );
 
     const providerList = await runHost(host, "openshell", ["provider", "list"], {
-      artifactName: "provider-list-messaging-providers",
+      artifactName: "provider-list-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: 60_000,
@@ -321,13 +328,13 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const envDump = await sandboxOutput(
       sandbox,
       "env 2>/dev/null || true",
-      "sandbox-env-dump-messaging-providers",
+      "sandbox-env-dump-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     const processProbe = await sandboxOutput(
       sandbox,
       "cat /proc/[0-9]*/cmdline 2>/dev/null | tr '\\0' '\\n' || true",
-      "sandbox-process-list-messaging-providers",
+      "sandbox-process-list-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     check(envDump.length > 0, "Phase 2: sandbox environment dump is available");
@@ -413,7 +420,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const startLog = await sandboxOutput(
       sandbox,
       "cat /tmp/nemoclaw-start.log 2>/dev/null || true",
-      "start-log-messaging-providers",
+      "start-log-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     check(
@@ -542,7 +549,7 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
     const runtimeChannels = await sandboxOutput(
       sandbox,
       "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null || true",
-      "openclaw-channels-list-messaging-providers",
+      "openclaw-channels-list-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     if (!runtimeChannels) {
@@ -584,7 +591,7 @@ const req = https.get("https://api.telegram.org/", (res) => {
 req.on("error", (e) => console.log("ERROR: " + e.message));
 req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
-      "telegram-reachability-messaging-providers",
+      "telegram-reachability-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     if (/HTTP_/.test(telegramReach)) {
@@ -609,7 +616,7 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
       "openshell",
       ["policy", "get", "--full", SANDBOX_NAME],
       {
-        artifactName: "discord-policy-messaging-providers",
+        artifactName: "discord-policy-openclaw-channels-credential-rewrite",
         env: state.env,
         redactionValues,
         timeoutMs: 60_000,
@@ -626,7 +633,7 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
     const proxyEnv = await sandboxOutput(
       sandbox,
       'printf "HTTPS_PROXY=%s\\nhttps_proxy=%s\\nNO_PROXY=%s\\nno_proxy=%s\\n" "$HTTPS_PROXY" "$https_proxy" "$NO_PROXY" "$no_proxy"',
-      "proxy-env-messaging-providers",
+      "proxy-env-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     check(
@@ -667,7 +674,7 @@ for (const [name, url] of targets) {
   });
 }
 NODE`,
-      "discord-reachability-messaging-providers",
+      "discord-reachability-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     if (discordReach.includes("api:HTTP_") && discordReach.includes("cdn:HTTP_")) {
@@ -689,7 +696,7 @@ NODE`,
     const curlReach = await sandboxOutput(
       sandbox,
       "curl -s --max-time 10 https://api.telegram.org/ 2>&1 || true",
-      "curl-block-messaging-providers",
+      "curl-block-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     if (
@@ -720,7 +727,7 @@ const req = https.get("https://api.telegram.org/bot" + token + "/getMe", (res) =
 req.on("error", (e) => console.log("ERROR: " + e.message));
 req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
-      "telegram-l7-rewrite-messaging-providers",
+      "telegram-l7-rewrite-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     const telegramStatus = telegramApi.match(/^(\d+)/m)?.[1] ?? "";
@@ -758,7 +765,7 @@ const req = https.get({
 req.on("error", (e) => console.log("ERROR: " + e.message));
 req.setTimeout(30000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
-      "discord-l7-rewrite-messaging-providers",
+      "discord-l7-rewrite-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     const discordStatus = discordApi.match(/^(\d+)/m)?.[1] ?? "";
@@ -921,7 +928,7 @@ sock.on("connect", () => { console.log("OPEN"); sock.end(); });
 sock.on("error", () => console.log("CLOSED"));
 setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
 '`,
-      "gateway-port-messaging-providers",
+      "gateway-port-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     check(gatewayPort.includes("OPEN"), "S1: gateway is serving on port 18789");
@@ -929,7 +936,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
     const gatewayLog = await sandboxOutput(
       sandbox,
       "cat /tmp/gateway.log 2>/dev/null || true",
-      "gateway-log-messaging-providers",
+      "gateway-log-openclaw-channels-credential-rewrite",
       redactionValues,
     );
     if (/provider failed to start:.*gateway continues/.test(gatewayLog)) {
@@ -945,7 +952,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
     }
 
     const doctor = await runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "doctor", "--json"], {
-      artifactName: "doctor-json-messaging-providers",
+      artifactName: "doctor-json-openclaw-channels-credential-rewrite",
       env: state.env,
       redactionValues,
       timeoutMs: 120_000,
@@ -978,7 +985,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
         sandbox,
         `OPENCLAW_NO_COLOR=1 openclaw message send --channel telegram --target ${shellQuote(telegramRealTarget)} --message "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
         {
-          artifactName: "real-telegram-send-messaging-providers",
+          artifactName: "real-telegram-send-openclaw-channels-credential-rewrite",
           redactionValues,
           timeoutMs: 120_000,
         },
@@ -1002,7 +1009,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
         sandbox,
         `OPENCLAW_NO_COLOR=1 openclaw message send --channel discord --target ${shellQuote(`channel:${discordRealTarget}`)} --message "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
         {
-          artifactName: "real-discord-send-messaging-providers",
+          artifactName: "real-discord-send-openclaw-channels-credential-rewrite",
           redactionValues,
           timeoutMs: 120_000,
         },
@@ -1025,7 +1032,7 @@ setTimeout(() => { console.log("TIMEOUT"); sock.destroy(); }, 5000);
         sandbox,
         `OPENCLAW_NO_COLOR=1 openclaw message send --channel slack --target ${shellQuote(`channel:${slackRealTarget}`)} --message "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" --json`,
         {
-          artifactName: "real-slack-send-messaging-providers",
+          artifactName: "real-slack-send-openclaw-channels-credential-rewrite",
           redactionValues,
           timeoutMs: 120_000,
         },

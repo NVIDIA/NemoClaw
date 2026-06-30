@@ -13,7 +13,12 @@ describe("release gate workflow resource contracts", () => {
   it("serializes hosted agent proofs after peak hosted lifecycle jobs", () => {
     const fullJob = e2eWorkflow.jobs["full-e2e"];
     const tuiJob = e2eWorkflow.jobs["openclaw-tui-chat-correlation"];
-    const peakDependencies = ["generate-matrix", "token-rotation", "channels-stop-start"];
+    const peakDependencies = [
+      "generate-matrix",
+      "openclaw-channels-token-rotation",
+      "openclaw-channels-stop-start",
+      "hermes-channels-stop-start",
+    ];
 
     expect(fullJob.needs).toEqual(expect.arrayContaining(peakDependencies));
     expect(fullJob.needs).toHaveLength(peakDependencies.length);

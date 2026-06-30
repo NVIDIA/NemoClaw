@@ -6,7 +6,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { expect, test } from "vitest";
+import { expect } from "vitest";
 
 import { testTimeoutOptions } from "../../helpers/timeouts";
 
@@ -138,66 +138,68 @@ function parseDimensions(stdout: string, label: string): Dimensions {
   return parsed as Dimensions;
 }
 
-test(
-  "WhatsApp pairing QR renders compact with the NemoClaw preload",
-  testTimeoutOptions(INSTALL_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2),
-  async () => {
-    expect(await pathExists(PRELOAD), `compact-QR preload missing: ${PRELOAD}`).toBe(true);
-    const openclawVersion = await readBundledOpenClawVersion();
+export const OPENCLAW_WHATSAPP_QR_COMPACT_TIMEOUT_MS = INSTALL_TIMEOUT_MS + PROBE_TIMEOUT_MS * 2;
 
-    const workdir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-wa-qr-e2e-"));
-    try {
-      await fs.writeFile(
-        path.join(workdir, "package.json"),
-        `${JSON.stringify({ name: "wa-qr-e2e", version: "1.0.0", private: true })}\n`,
-      );
+export function openClawWhatsappQrCompactTimeoutOptions(): ReturnType<typeof testTimeoutOptions> {
+  return testTimeoutOptions(OPENCLAW_WHATSAPP_QR_COMPACT_TIMEOUT_MS);
+}
 
-      const install = await runCommand(
-        "npm",
-        [
-          "install",
-          "--no-audit",
-          "--no-fund",
-          `openclaw@${openclawVersion}`,
-          `@openclaw/whatsapp@${openclawVersion}`,
-        ],
-        { cwd: workdir, timeoutMs: INSTALL_TIMEOUT_MS },
-      );
-      expect(install.status, `npm install failed\n${install.stderr}`).toBe(0);
+export async function runOpenClawWhatsappQrCompact(): Promise<void> {
+  expect(await pathExists(PRELOAD), `compact-QR preload missing: ${PRELOAD}`).toBe(true);
+  const openclawVersion = await readBundledOpenClawVersion();
 
-      const whatsappDist = path.join(workdir, "node_modules", "@openclaw", "whatsapp", "dist");
-      expect(
-        await fileContains(whatsappDist, "renderQrTerminal"),
-        "plugin channel-login must render through renderQrTerminal",
-      ).toBe(true);
+  const workdir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-wa-qr-e2e-"));
+  try {
+    await fs.writeFile(
+      path.join(workdir, "package.json"),
+      `${JSON.stringify({ name: "wa-qr-e2e", version: "1.0.0", private: true })}\n`,
+    );
 
-      await fs.writeFile(path.join(workdir, "probe.mjs"), PROBE_SOURCE);
+    const install = await runCommand(
+      "npm",
+      [
+        "install",
+        "--no-audit",
+        "--no-fund",
+        `openclaw@${openclawVersion}`,
+        `@openclaw/whatsapp@${openclawVersion}`,
+      ],
+      { cwd: workdir, timeoutMs: INSTALL_TIMEOUT_MS },
+    );
+    expect(install.status, `npm install failed\n${install.stderr}`).toBe(0);
 
-      const baseline = await runCommand("node", ["probe.mjs"], {
-        cwd: workdir,
-        timeoutMs: PROBE_TIMEOUT_MS,
-      });
-      expect(baseline.status, `baseline probe failed\n${baseline.stderr}`).toBe(0);
-      const baselineDimensions = parseDimensions(baseline.stdout, "baseline");
-      expect(
-        baselineDimensions.rows,
-        `baseline QR should reproduce the oversized form (${baselineDimensions.rows} rows)`,
-      ).toBeGreaterThanOrEqual(OVERSIZE_MIN_ROWS);
+    const whatsappDist = path.join(workdir, "node_modules", "@openclaw", "whatsapp", "dist");
+    expect(
+      await fileContains(whatsappDist, "renderQrTerminal"),
+      "plugin channel-login must render through renderQrTerminal",
+    ).toBe(true);
 
-      const patched = await runCommand("node", ["probe.mjs"], {
-        cwd: workdir,
-        env: { NODE_OPTIONS: `--require ${PRELOAD}` },
-        timeoutMs: PROBE_TIMEOUT_MS,
-      });
-      expect(patched.status, `patched probe failed\n${patched.stderr}`).toBe(0);
-      const patchedDimensions = parseDimensions(patched.stdout, "patched");
-      expect(
-        patchedDimensions.rows,
-        `compact QR should fit the scan frame (${patchedDimensions.rows} rows)`,
-      ).toBeLessThanOrEqual(COMPACT_MAX_ROWS);
-      expect(patchedDimensions.rows).toBeLessThan(baselineDimensions.rows);
-    } finally {
-      await fs.rm(workdir, { recursive: true, force: true });
-    }
-  },
-);
+    await fs.writeFile(path.join(workdir, "probe.mjs"), PROBE_SOURCE);
+
+    const baseline = await runCommand("node", ["probe.mjs"], {
+      cwd: workdir,
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+    expect(baseline.status, `baseline probe failed\n${baseline.stderr}`).toBe(0);
+    const baselineDimensions = parseDimensions(baseline.stdout, "baseline");
+    expect(
+      baselineDimensions.rows,
+      `baseline QR should reproduce the oversized form (${baselineDimensions.rows} rows)`,
+    ).toBeGreaterThanOrEqual(OVERSIZE_MIN_ROWS);
+
+    const patched = await runCommand("node", ["probe.mjs"], {
+      cwd: workdir,
+      env: { NODE_OPTIONS: `--require ${PRELOAD}` },
+      timeoutMs: PROBE_TIMEOUT_MS,
+    });
+    expect(patched.status, `patched probe failed\n${patched.stderr}`).toBe(0);
+    const patchedDimensions = parseDimensions(patched.stdout, "patched");
+    expect(
+      patchedDimensions.rows,
+      `compact QR should fit the scan frame (${patchedDimensions.rows} rows)`,
+    ).toBeLessThanOrEqual(COMPACT_MAX_ROWS);
+    expect(patchedDimensions.rows).toBeLessThan(baselineDimensions.rows);
+  } finally {
+    await fs.rm(workdir, { recursive: true, force: true });
+  }
+}

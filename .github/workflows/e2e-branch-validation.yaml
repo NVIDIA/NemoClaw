@@ -34,19 +34,22 @@ name: E2E / Branch Validation
 #                              migration snapshots, auth-profiles.json deletion, blueprint
 #                              digest verification, symlink traversal protection, and
 #                              runtime sandbox credential checks. Requires running sandbox.
-#   telegram-injection       — 18 tests validating PR #584: command injection prevention
+#   openclaw-channels-telegram-injection-safety
+#                            — OpenClaw Telegram shell metacharacter injection safety.
 #                              through $(cmd), backticks, quote breakout, ${VAR} expansion,
 #                              process table leak checks, and SANDBOX_NAME validation.
 #                              Requires running sandbox.
-#   messaging-providers      — 20+ tests validating PR #1081: provider creation, credential
-#                              isolation, openclaw.json config patching, network reachability,
-#                              and L7 proxy token rewriting for Telegram + Discord. Creates
-#                              its own sandbox (e2e-msg-provider). (~15 min)
+#   openclaw-channels-credential-rewrite
+#                            — OpenClaw provider creation, credential isolation, config
+#                              patching, network reachability, and token rewriting.
+#   openclaw-channels-conflict-guard
+#                            — OpenClaw channel duplicate credential conflict guard.
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
 #   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
 #                              sandbox proof suite from source. (~45 min)
-#   all                      — Runs credential-sanitization + telegram-injection (NOT full,
-#                              which destroys the sandbox the security tests need).
+#   all                      — Runs credential-sanitization, OpenClaw Telegram injection
+#                              safety, OpenClaw channel credential rewrite, and
+#                              OpenClaw channel conflict guard.
 #
 # Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_INFERENCE_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
@@ -66,8 +69,9 @@ on:
         options:
           - full
           - credential-sanitization
-          - telegram-injection
-          - messaging-providers
+          - openclaw-channels-telegram-injection-safety
+          - openclaw-channels-credential-rewrite
+          - openclaw-channels-conflict-guard
           - dashboard-remote-bind
           - gpu
           - all

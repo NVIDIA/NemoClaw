@@ -23,7 +23,8 @@ import {
   shellQuote,
 } from "./phase6-messaging-helpers.ts";
 
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-telegram-injection";
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ?? "e2e-openclaw-channels-telegram-injection-safety";
 const LIVE_TIMEOUT_MS = 35 * 60_000;
 
 function openshellStdinCommand(payload: string, remoteShell: string): string {
@@ -161,7 +162,7 @@ async function assertHostProcessTableDoesNotExposeSecret(
     "echo SECRET_ABSENT",
   ].join("; ");
   const result = await host.command("bash", ["-lc", command], {
-    artifactName: "host-process-table-telegram-injection",
+    artifactName: "host-process-table-openclaw-channels-telegram-injection-safety",
     env,
     redactionValues: redactions,
     timeoutMs: 30_000,
@@ -183,7 +184,7 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
     "echo SECRET_ABSENT",
   ].join("; ");
   const result = await host.command("bash", ["-lc", command], {
-    artifactName: "sandbox-process-table-telegram-injection",
+    artifactName: "sandbox-process-table-openclaw-channels-telegram-injection-safety",
     env: { ...env, SANDBOX_NAME },
     redactionValues: redactions,
     timeoutMs: COMMAND_TIMEOUT_MS,
@@ -193,7 +194,7 @@ async function assertSandboxProcessTableDoesNotExposeSecret(
 }
 
 test.skipIf(!shouldRunLiveE2E())(
-  "Telegram bridge-style message handling treats shell metacharacters as data",
+  "openclaw channels Telegram injection safety treats shell metacharacters as data",
   { timeout: LIVE_TIMEOUT_MS },
   async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
@@ -205,7 +206,7 @@ test.skipIf(!shouldRunLiveE2E())(
     const redactions = redactionValues(apiKey);
 
     await artifacts.writeJson("target.json", {
-      id: "telegram-injection",
+      id: "openclaw-channels-telegram-injection-safety",
       boundary:
         "install.sh OpenClaw sandbox + OpenShell sandbox exec and ssh-config stdin paths + process table and validateName probes",
       sandboxName: SANDBOX_NAME,
@@ -219,9 +220,21 @@ test.skipIf(!shouldRunLiveE2E())(
     });
 
     cleanup.add(`destroy telegram injection sandbox ${SANDBOX_NAME}`, () =>
-      cleanupSandbox(host, SANDBOX_NAME, env, redactions, "cleanup-telegram-injection"),
+      cleanupSandbox(
+        host,
+        SANDBOX_NAME,
+        env,
+        redactions,
+        "cleanup-openclaw-channels-telegram-injection-safety",
+      ),
     );
-    await cleanupSandbox(host, SANDBOX_NAME, env, redactions, "preclean-telegram-injection");
+    await cleanupSandbox(
+      host,
+      SANDBOX_NAME,
+      env,
+      redactions,
+      "preclean-openclaw-channels-telegram-injection-safety",
+    );
 
     const docker = await dockerInfo(host, env);
     expect(docker.exitCode, resultText(docker)).toBe(0);
@@ -230,7 +243,7 @@ test.skipIf(!shouldRunLiveE2E())(
       host,
       env,
       redactions,
-      "install-telegram-injection",
+      "install-openclaw-channels-telegram-injection-safety",
       skip,
       "NVIDIA endpoint validation was rate-limited before Telegram injection assertions ran",
     );
@@ -240,7 +253,7 @@ test.skipIf(!shouldRunLiveE2E())(
       SANDBOX_NAME,
       env,
       redactions,
-      "sandbox-list-telegram-injection",
+      "sandbox-list-openclaw-channels-telegram-injection-safety",
     );
 
     for (const [label, marker, payload] of [
@@ -364,7 +377,7 @@ test.skipIf(!shouldRunLiveE2E())(
 
     await bestEffort(() =>
       host.command("node", [CLI, SANDBOX_NAME, "status"], {
-        artifactName: "post-assert-status-telegram-injection",
+        artifactName: "post-assert-status-openclaw-channels-telegram-injection-safety",
         env,
         redactionValues: redactions,
         timeoutMs: 60_000,

@@ -27,7 +27,9 @@
  *
  * Optional env vars:
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
- *                             credential-sanitization, telegram-injection, messaging-providers,
+ *                             credential-sanitization, openclaw-channels-telegram-injection-safety,
+ *                             openclaw-channels-credential-rewrite,
+ *                             openclaw-channels-conflict-guard,
  *                             messaging-compatible-endpoint, dashboard-remote-bind, all
  *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
@@ -39,10 +41,10 @@
  *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
  *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
  *   BREV_SSH_READY_TIMEOUT_SECONDS — SSH readiness timeout, seconds (default: 900 CPU, 1800 GPU)
- *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
- *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
- *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
- *   SLACK_APP_TOKEN          — Slack app token for messaging-providers test (fake OK)
+ *   TELEGRAM_BOT_TOKEN       — Telegram bot token for channel credential rewrite test (fake OK)
+ *   DISCORD_BOT_TOKEN        — Discord bot token for channel credential rewrite test (fake OK)
+ *   SLACK_BOT_TOKEN          — Slack bot token for channel credential rewrite test (fake OK)
+ *   SLACK_APP_TOKEN          — Slack app token for channel credential rewrite test (fake OK)
  *   SLACK_BOT_TOKEN_REVOKED  — Revoked xoxb- token to test auth pre-validation (#2340)
  *   SLACK_APP_TOKEN_REVOKED  — Paired xapp- token for the revoked bot token
  *   TELEGRAM_BOT_TOKEN_REAL  — Real Telegram token for optional live round-trip
@@ -277,7 +279,7 @@ function sshEnv(
     // sandbox creation while auto-loading a very large default Ollama model.
     envParts.push(`export NEMOCLAW_MODEL='${shellEscape(gpuE2eModel)}'`);
   }
-  // Forward optional messaging tokens for the messaging-providers test
+  // Forward optional messaging tokens for the OpenClaw channel credential rewrite test
   for (const key of [
     "TELEGRAM_BOT_TOKEN",
     "DISCORD_BOT_TOKEN",
@@ -1161,7 +1163,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
 
   // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
   // rebuilds the sandbox from scratch. It cannot run alongside the security tests
-  // (credential-sanitization, telegram-injection) which depend on the sandbox
+  // (credential-sanitization, OpenClaw Telegram injection safety) which depend on the sandbox
   // that beforeAll already created. Run it only when TEST_SUITE=full.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
@@ -1190,10 +1192,13 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     600_000,
   );
 
-  it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
-    "telegram bridge injection suite passes on remote VM",
+  it.runIf(TEST_SUITE === "openclaw-channels-telegram-injection-safety" || TEST_SUITE === "all")(
+    "OpenClaw Telegram injection safety suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/telegram-injection.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/openclaw-channels-telegram-injection-safety.test.ts",
+      );
       expectVitestPassed(output);
     },
     600_000,
@@ -1216,16 +1221,31 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     120_000,
   );
 
-  // NOTE: The messaging-providers test creates its own sandbox (e2e-msg-provider)
+  // NOTE: The OpenClaw channel credential rewrite test creates its own sandbox
   // with messaging tokens attached. It does not conflict with the e2e-test sandbox
   // used by other tests, but it may recreate the gateway.
-  it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
-    "messaging credential provider suite passes on remote VM",
+  it.runIf(TEST_SUITE === "openclaw-channels-credential-rewrite" || TEST_SUITE === "all")(
+    "OpenClaw channel credential rewrite suite passes on remote VM",
     () => {
-      const output = runRemoteVitest("e2e-live", "test/e2e/live/messaging-providers.test.ts");
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/openclaw-channels-credential-rewrite.test.ts",
+      );
       expectVitestPassed(output);
     },
     900_000, // 15 min — creates a new sandbox with messaging providers
+  );
+
+  it.runIf(TEST_SUITE === "openclaw-channels-conflict-guard" || TEST_SUITE === "all")(
+    "OpenClaw channel conflict guard suite passes on remote VM",
+    () => {
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/openclaw-channels-conflict-guard.test.ts",
+      );
+      expectVitestPassed(output);
+    },
+    120_000,
   );
 
   // NOTE: The compatible-endpoint messaging test creates its own sandbox

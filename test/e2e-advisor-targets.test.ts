@@ -380,15 +380,15 @@ jobs:
     if: \${{ inputs.jobs == '' }}
     steps:
       - run: npx vitest run --project e2e-live test/e2e/live/registry-targets.test.ts
-  token-rotation:
-    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
+  openclaw-channels-token-rotation:
+    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',openclaw-channels-token-rotation,') }}
     steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
+      - run: npx vitest run --project e2e-live test/e2e/live/openclaw-channels-token-rotation.test.ts
 `),
     ).toEqual([
       {
-        id: "token-rotation",
-        liveTestFiles: ["test/e2e/live/token-rotation.test.ts"],
+        id: "openclaw-channels-token-rotation",
+        liveTestFiles: ["test/e2e/live/openclaw-channels-token-rotation.test.ts"],
       },
     ]);
   });
@@ -410,24 +410,27 @@ jobs:
         confidence: "high",
       },
       metadata({
-        changedFiles: [".github/workflows/e2e.yaml", "test/e2e/live/token-rotation.test.ts"],
+        changedFiles: [
+          ".github/workflows/e2e.yaml",
+          "test/e2e/live/openclaw-channels-token-rotation.test.ts",
+        ],
       }),
       {
         e2eWorkflowText: String.raw`
 jobs:
-  token-rotation:
-    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
+  openclaw-channels-token-rotation:
+    if: \${{ (inputs.jobs == '' && inputs.targets == '') || contains(format(',{0},', inputs.jobs), ',openclaw-channels-token-rotation,') }}
     steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
+      - run: npx vitest run --project e2e-live test/e2e/live/openclaw-channels-token-rotation.test.ts
 `,
       },
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "token-rotation"],
+      ["job", "openclaw-channels-token-rotation"],
     ]);
     expect(normalized.required[0]?.dispatchCommand).toBe(
-      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=token-rotation",
+      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=openclaw-channels-token-rotation",
     );
     expect(normalized.noTargetE2eReason).toBeNull();
   });
@@ -437,7 +440,7 @@ jobs:
       {
         required: [
           {
-            id: "token-rotation",
+            id: "openclaw-channels-token-rotation",
             workflow: E2E_WORKFLOW,
             selectorType: "job",
             reason: "focused job covers the changed live test",
@@ -448,23 +451,23 @@ jobs:
         noTargetE2eReason: null,
         confidence: "high",
       },
-      metadata({ changedFiles: ["test/e2e/live/token-rotation.test.ts"] }),
+      metadata({ changedFiles: ["test/e2e/live/openclaw-channels-token-rotation.test.ts"] }),
       {
         e2eWorkflowText: String.raw`
 jobs:
-  token-rotation:
-    if: \${{ contains(format(',{0},', inputs.jobs), ',token-rotation,') }}
+  openclaw-channels-token-rotation:
+    if: \${{ contains(format(',{0},', inputs.jobs), ',openclaw-channels-token-rotation,') }}
     steps:
-      - run: npx vitest run --project e2e-live test/e2e/live/token-rotation.test.ts
+      - run: npx vitest run --project e2e-live test/e2e/live/openclaw-channels-token-rotation.test.ts
 `,
       },
     );
 
     expect(normalized.required.map((item) => [item.selectorType, item.id])).toEqual([
-      ["job", "token-rotation"],
+      ["job", "openclaw-channels-token-rotation"],
     ]);
     expect(normalized.required[0]?.dispatchCommand).toBe(
-      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=token-rotation",
+      "gh workflow run e2e.yaml --ref <pr-head-ref> --field jobs=openclaw-channels-token-rotation",
     );
   });
 

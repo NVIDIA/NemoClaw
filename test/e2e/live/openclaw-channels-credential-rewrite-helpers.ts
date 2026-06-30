@@ -27,7 +27,8 @@ export const BASE_POLICY = path.join(
   "openclaw-sandbox.yaml",
 );
 export const FAKE_LIB_DIR = path.join(REPO_ROOT, "test", "e2e", "lib");
-export const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-msg-provider-${process.pid}`;
+export const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-openclaw-channels-credential-rewrite-${process.pid}`;
 export const INSTALL_TIMEOUT_MS = 45 * 60_000;
 export const REBUILD_TIMEOUT_MS = 25 * 60_000;
 export const PROBE_TIMEOUT_MS = 120_000;
@@ -368,7 +369,7 @@ export async function skipNote(
 ): Promise<void> {
   notes.push(message);
   console.warn(`[skip] ${message}`);
-  await artifacts.writeJson("messaging-provider-skips.json", notes);
+  await artifacts.writeJson("openclaw-channels-credential-rewrite-skips.json", notes);
 }
 
 export function policyTextHasHost(text: string, host: string): boolean {
@@ -449,7 +450,7 @@ export async function readOpenClawConfig(
 import json
 print(json.dumps(json.load(open('/sandbox/.openclaw/openclaw.json'))))
 PY`,
-    { artifactName: "read-openclaw-config-messaging-providers", redactionValues },
+    { artifactName: "read-openclaw-config-openclaw-channels-credential-rewrite", redactionValues },
   );
   expectExitZero(result, "read openclaw.json");
   return JSON.parse(result.stdout.trim()) as OpenClawConfig;

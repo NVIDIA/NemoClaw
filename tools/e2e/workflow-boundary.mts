@@ -520,11 +520,22 @@ function validateSerializedHostedAgentProofs(errors: string[], jobs: WorkflowRec
   const specs = [
     {
       jobName: "full-e2e",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start"],
+      dependencies: [
+        "generate-matrix",
+        "openclaw-channels-token-rotation",
+        "openclaw-channels-stop-start",
+        "hermes-channels-stop-start",
+      ],
     },
     {
       jobName: "openclaw-tui-chat-correlation",
-      dependencies: ["generate-matrix", "token-rotation", "channels-stop-start", "full-e2e"],
+      dependencies: [
+        "generate-matrix",
+        "openclaw-channels-token-rotation",
+        "openclaw-channels-stop-start",
+        "hermes-channels-stop-start",
+        "full-e2e",
+      ],
     },
   ] as const;
 
@@ -1953,40 +1964,50 @@ function validateUpgradeStaleSandboxJob(errors: string[], jobs: WorkflowRecord):
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
-function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "token-rotation";
+function validateOpenClawChannelsTokenRotationJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openclaw-channels-token-rotation";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
-    errors.push("workflow missing token-rotation job");
+    errors.push("workflow missing openclaw-channels-token-rotation job");
     return;
   }
 
   if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("token-rotation job must run on ubuntu-latest");
+    errors.push("openclaw-channels-token-rotation job must run on ubuntu-latest");
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName, "token-rotation");
+  validateFreeStandingJobSelector(errors, jobs, jobName, "openclaw-channels-token-rotation");
   if (job["timeout-minutes"] !== 45) {
-    errors.push("token-rotation job must keep the legacy 45 minute timeout");
+    errors.push("openclaw-channels-token-rotation job must keep the legacy 45 minute timeout");
   }
   const jobEnv = asRecord(job.env);
   if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("token-rotation job must set NEMOCLAW_RUN_LIVE_E2E=1");
+    errors.push("openclaw-channels-token-rotation job must set NEMOCLAW_RUN_LIVE_E2E=1");
   }
-  if (jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/token-rotation") {
-    errors.push("token-rotation job must write artifacts under e2e-artifacts/live/token-rotation");
+  if (
+    jobEnv.E2E_ARTIFACT_DIR !==
+    "${{ github.workspace }}/e2e-artifacts/live/openclaw-channels-token-rotation"
+  ) {
+    errors.push(
+      "openclaw-channels-token-rotation job must write artifacts under e2e-artifacts/live/openclaw-channels-token-rotation",
+    );
   }
   if (!stringValue(jobEnv.NEMOCLAW_CLI_BIN).includes("bin/nemoclaw.js")) {
-    errors.push("token-rotation job must point NEMOCLAW_CLI_BIN at the repo CLI");
+    errors.push("openclaw-channels-token-rotation job must point NEMOCLAW_CLI_BIN at the repo CLI");
   }
-  requireEnvDoesNotExposeSecret(errors, "token-rotation job", jobEnv, "NVIDIA_INFERENCE_API_KEY");
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "openclaw-channels-token-rotation job",
+    jobEnv,
+    "NVIDIA_INFERENCE_API_KEY",
+  );
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    if (step.name !== "Run token rotation live test") {
+    if (step.name !== "Run OpenClaw channels token rotation live test") {
       requireEnvDoesNotExposeSecret(
         errors,
-        `token-rotation step '${step.name ?? step.uses ?? "<unnamed>"}'`,
+        `openclaw-channels-token-rotation step '${step.name ?? step.uses ?? "<unnamed>"}'`,
         asRecord(step.env),
         "NVIDIA_INFERENCE_API_KEY",
       );
@@ -1994,25 +2015,31 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("token-rotation job missing checkout step");
-  requireFullShaAction(errors, checkout, "token-rotation checkout");
+  if (!checkout) errors.push("openclaw-channels-token-rotation job missing checkout step");
+  requireFullShaAction(errors, checkout, "openclaw-channels-token-rotation checkout");
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("token-rotation checkout step must set persist-credentials=false");
+    errors.push(
+      "openclaw-channels-token-rotation checkout step must set persist-credentials=false",
+    );
   }
 
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("token-rotation Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(
+      "openclaw-channels-token-rotation Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
+    );
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("token-rotation Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+    errors.push(
+      "openclaw-channels-token-rotation Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
+    );
   }
   requireRunContains(errors, dockerHubAuth, "docker login docker.io");
 
   const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("token-rotation job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "token-rotation setup-node");
+  if (!setupNode) errors.push("openclaw-channels-token-rotation job missing step: Set up Node");
+  requireFullShaAction(errors, setupNode, "openclaw-channels-token-rotation setup-node");
 
   const installRootDependencies = requireJobStep(
     errors,
@@ -2025,16 +2052,23 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
   const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
   requireRunContains(errors, buildCli, "npm run build:cli");
 
-  const runVitest = requireJobStep(errors, jobName, steps, "Run token rotation live test");
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run OpenClaw channels token rotation live test",
+  );
   const runVitestEnv = asRecord(runVitest?.env);
   requireEnvDoesNotExposeSecret(
     errors,
-    "token-rotation step",
+    "openclaw-channels-token-rotation step",
     runVitestEnv,
     "NVIDIA_INFERENCE_API_KEY",
   );
   if (runVitestEnv.GITHUB_TOKEN !== "${{ github.token }}") {
-    errors.push("token-rotation step must receive GITHUB_TOKEN from github.token");
+    errors.push(
+      "openclaw-channels-token-rotation step must receive GITHUB_TOKEN from github.token",
+    );
   }
   for (const tokenName of [
     "TELEGRAM_BOT_TOKEN_A",
@@ -2052,28 +2086,41 @@ function validateTokenRotationJob(errors: string[], jobs: WorkflowRecord): void 
       tokenValue.includes("${{") ||
       !/^(test-fake-token-|dc-|xoxb-fake-|xapp-fake-)/.test(tokenValue)
     ) {
-      errors.push(`token-rotation step must set ${tokenName}`);
+      errors.push(`openclaw-channels-token-rotation step must set ${tokenName}`);
     }
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/token-rotation.test.ts");
+  requireRunContains(errors, runVitest, "test/e2e/live/openclaw-channels-token-rotation.test.ts");
 
-  const upload = requireJobStep(errors, jobName, steps, "Upload token rotation artifacts");
-  requireFullShaAction(errors, upload, "token-rotation upload-artifact");
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload OpenClaw channels token rotation artifacts",
+  );
+  requireFullShaAction(errors, upload, "openclaw-channels-token-rotation upload-artifact");
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-token-rotation") {
-    errors.push("token-rotation artifact upload name must be stable");
+  if (uploadWith.name !== "e2e-openclaw-channels-token-rotation") {
+    errors.push("openclaw-channels-token-rotation artifact upload name must be stable");
   }
   const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/token-rotation/");
+  requireUploadPathContains(
+    errors,
+    uploadPath,
+    "e2e-artifacts/live/openclaw-channels-token-rotation/",
+  );
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("token-rotation artifact upload must set include-hidden-files: false");
+    errors.push(
+      "openclaw-channels-token-rotation artifact upload must set include-hidden-files: false",
+    );
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("token-rotation artifact upload must ignore missing fixture artifacts");
+    errors.push(
+      "openclaw-channels-token-rotation artifact upload must ignore missing fixture artifacts",
+    );
   }
   if (uploadWith["retention-days"] !== 14) {
-    errors.push("token-rotation artifact upload retention-days must be 14");
+    errors.push("openclaw-channels-token-rotation artifact upload retention-days must be 14");
   }
 }
 
@@ -3965,65 +4012,72 @@ function validateIssue2478CrashLoopRecoveryJob(errors: string[], jobs: WorkflowR
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
-function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "channels-add-remove";
-  const targetName = "channels-add-remove";
+type ChannelLifecycleAgent = "openclaw" | "hermes";
+type ChannelLifecycleKind = "add-remove" | "stop-start";
+
+function channelLifecycleJobName(agent: ChannelLifecycleAgent, kind: ChannelLifecycleKind): string {
+  return `${agent}-channels-${kind}`;
+}
+
+function channelLifecycleDisplayAgent(agent: ChannelLifecycleAgent): string {
+  return agent === "openclaw" ? "OpenClaw" : "Hermes";
+}
+
+function validateChannelLifecycleJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+  agent: ChannelLifecycleAgent,
+  kind: ChannelLifecycleKind,
+): void {
+  const jobName = channelLifecycleJobName(agent, kind);
+  const actionLabel = kind === "add-remove" ? "add/remove" : "stop/start";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
-    errors.push("workflow missing channels-add-remove job");
+    errors.push(`workflow missing ${jobName} job`);
     return;
   }
 
   if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("channels-add-remove job must run on ubuntu-latest");
+    errors.push(`${jobName} job must run on ubuntu-latest`);
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 75) {
-    errors.push("channels-add-remove job must keep the legacy 75 minute timeout");
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["timeout-minutes"] !== 90) {
+    errors.push(`${jobName} job must keep the 90 minute timeout`);
   }
+
   const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("channels-add-remove job must set NEMOCLAW_RUN_LIVE_E2E=1");
+  const expectedEnv: Record<string, string> = {
+    E2E_JOB: "1",
+    E2E_TARGET_ID: jobName,
+    DOCKER_CONFIG: `\${{ github.workspace }}/.docker-config-${jobName}`,
+    E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_AGENT: agent,
+    NEMOCLAW_SANDBOX_NAME: `e2e-${jobName}`,
+    OPENSHELL_GATEWAY: "nemoclaw",
+  };
+  for (const [key, value] of Object.entries(expectedEnv)) {
+    if (jobEnv[key] !== value) {
+      errors.push(`${jobName} job env ${key} must be ${value}`);
+    }
   }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !== "${{ github.workspace }}/e2e-artifacts/live/channels-add-remove"
-  ) {
-    errors.push(
-      "channels-add-remove job must write artifacts under e2e-artifacts/live/channels-add-remove",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("channels-add-remove job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove job must set NEMOCLAW_SANDBOX_NAME=e2e-channels-add-remove");
-  }
-  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
-    errors.push("channels-add-remove job must set NEMOCLAW_NON_INTERACTIVE=1");
-  }
-  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
-    errors.push("channels-add-remove job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("channels-add-remove job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  if (jobEnv.NEMOCLAW_E2E_USE_HOSTED_INFERENCE !== "1") {
-    errors.push("channels-add-remove job must enable hosted-compatible inference mode");
-  }
-  if (jobEnv.NEMOCLAW_PROVIDER !== "custom") {
-    errors.push("channels-add-remove job must route hosted inference through the custom provider");
-  }
-  if (jobEnv.NEMOCLAW_ENDPOINT_URL !== "https://inference-api.nvidia.com/v1") {
-    errors.push("channels-add-remove job must use the hosted compatible inference endpoint");
-  }
-  if (jobEnv.NEMOCLAW_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must use the hosted Inference Hub model id");
-  }
-  if (jobEnv.NEMOCLAW_COMPAT_MODEL !== "nvidia/nvidia/nemotron-3-ultra") {
-    errors.push("channels-add-remove job must set NEMOCLAW_COMPAT_MODEL to the hosted model id");
-  }
-  if (jobEnv.NEMOCLAW_PREFERRED_API !== "openai-completions") {
-    errors.push("channels-add-remove job must prefer openai-completions for hosted inference");
+  if (kind === "add-remove") {
+    const hostedProviderEnv: Record<string, string> = {
+      NEMOCLAW_PROVIDER: "custom",
+      NEMOCLAW_ENDPOINT_URL: "https://inference-api.nvidia.com/v1",
+      NEMOCLAW_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_COMPAT_MODEL: "nvidia/nvidia/nemotron-3-ultra",
+      NEMOCLAW_PREFERRED_API: "openai-completions",
+    };
+    for (const [key, value] of Object.entries(hostedProviderEnv)) {
+      if (jobEnv[key] !== value) {
+        errors.push(`${jobName} job env ${key} must be ${value}`);
+      }
+    }
   }
   for (const secret of [
     "NVIDIA_INFERENCE_API_KEY",
@@ -4032,15 +4086,17 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
     "DOCKERHUB_TOKEN",
     "GITHUB_TOKEN",
   ]) {
-    requireEnvDoesNotExposeSecret(errors, "channels-add-remove job", jobEnv, secret);
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
   }
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    const stepName = `channels-add-remove step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
     const stepEnv = asRecord(step.env);
-    if (step.name !== "Run channels add/remove live test") {
+    if (
+      step.name !== `Run ${channelLifecycleDisplayAgent(agent)} channels ${actionLabel} live test`
+    ) {
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
       requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "COMPATIBLE_API_KEY");
     }
@@ -4053,26 +4109,28 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("channels-add-remove job missing checkout step");
-  requireFullShaAction(errors, checkout, "channels-add-remove checkout");
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("channels-add-remove checkout step must set persist-credentials=false");
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
   if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("channels-add-remove Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
   }
   if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("channels-add-remove Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
   }
+  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
+  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
   requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
+  requireRunContains(errors, dockerHubAuth, "--password-stdin");
 
   const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-add-remove job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-add-remove setup-node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
 
   const installRootDependencies = requireJobStep(
     errors,
@@ -4093,110 +4151,373 @@ function validateChannelsAddRemoveJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
   requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
 
-  const runVitest = requireJobStep(errors, jobName, steps, "Run channels add/remove live test");
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    `Run ${channelLifecycleDisplayAgent(agent)} channels ${actionLabel} live test`,
+  );
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("channels-add-remove step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
-  if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push(
-      "channels-add-remove step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
-    );
+  if (
+    kind === "add-remove" &&
+    runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
+  ) {
+    errors.push(`${jobName} step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY`);
   }
-  if (runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-add-remove-e2e") {
-    errors.push("channels-add-remove step must set the fake Telegram token");
+  for (const tokenName of [
+    "TELEGRAM_BOT_TOKEN",
+    "DISCORD_BOT_TOKEN",
+    "SLACK_BOT_TOKEN",
+    "SLACK_APP_TOKEN",
+    "WECHAT_BOT_TOKEN",
+    "MSTEAMS_APP_PASSWORD",
+  ]) {
+    const tokenValue = stringValue(runVitestEnv[tokenName]);
+    if (tokenValue.length === 0 || tokenValue.includes("${{")) {
+      errors.push(`${jobName} step must set fake ${tokenName}`);
+    }
   }
-  if (runVitestEnv.TELEGRAM_ALLOWED_IDS !== "123456789") {
-    errors.push("channels-add-remove step must set TELEGRAM_ALLOWED_IDS");
+  for (const configName of [
+    "MSTEAMS_APP_ID",
+    "MSTEAMS_TENANT_ID",
+    "TEAMS_ALLOWED_USERS",
+    "MSTEAMS_PORT",
+    "TEAMS_REQUIRE_MENTION",
+  ]) {
+    const configValue = stringValue(runVitestEnv[configName]);
+    if (configValue.length === 0 || configValue.includes("${{")) {
+      errors.push(`${jobName} step must set fake ${configName}`);
+    }
   }
-  if (runVitestEnv.TELEGRAM_REQUIRE_MENTION !== "0") {
-    errors.push("channels-add-remove step must set TELEGRAM_REQUIRE_MENTION");
+  if (!/^[0-9]+$/.test(stringValue(runVitestEnv.MSTEAMS_PORT))) {
+    errors.push(`${jobName} step must set numeric MSTEAMS_PORT`);
+  }
+  if (!["0", "1"].includes(stringValue(runVitestEnv.TEAMS_REQUIRE_MENTION))) {
+    errors.push(`${jobName} step must set TEAMS_REQUIRE_MENTION to 0 or 1`);
   }
   requireRunContains(errors, runVitest, "OPENSHELL_BIN");
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/channels-add-remove.test.ts");
+  requireRunContains(errors, runVitest, `test/e2e/live/${jobName}.test.ts`);
 
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels add/remove artifacts");
-  requireFullShaAction(errors, upload, "channels-add-remove upload-artifact");
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    `Upload ${channelLifecycleDisplayAgent(agent)} channels ${actionLabel} artifacts`,
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-add-remove") {
-    errors.push("channels-add-remove artifact upload name must be stable");
+  if (uploadWith.name !== `e2e-${jobName}`) {
+    errors.push(`${jobName} artifact upload name must be stable`);
   }
   const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/channels-add-remove/");
+  requireUploadPathContains(errors, uploadPath, `e2e-artifacts/live/${jobName}/`);
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-add-remove artifact upload must set include-hidden-files: false");
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-add-remove artifact upload must ignore missing fixture artifacts");
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
   }
   if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-add-remove artifact upload retention-days must be 14");
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
   }
+
+  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
+  if (cleanup?.if !== "always()") {
+    errors.push(`${jobName} Docker auth cleanup must always run`);
+  }
+  requireRunContains(errors, cleanup, "docker logout docker.io");
+  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
-function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "openclaw-discord-pairing";
-  const targetName = "openclaw-discord-pairing";
+function validateOpenClawChannelsCredentialRewriteJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "openclaw-channels-credential-rewrite";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
-    errors.push("workflow missing openclaw-discord-pairing job");
+    errors.push(`workflow missing ${jobName} job`);
     return;
   }
-
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
   if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("openclaw-discord-pairing job must run on ubuntu-latest");
+    errors.push(`${jobName} job must run on ubuntu-latest`);
   }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("openclaw-discord-pairing job must keep the 60 minute timeout");
+  if (job["timeout-minutes"] !== 90) {
+    errors.push(`${jobName} job must keep the 90 minute timeout`);
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
 
   const jobEnv = asRecord(job.env);
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("openclaw-discord-pairing job must not set DOCKER_CONFIG at job level");
+  for (const [key, value] of Object.entries({
+    E2E_JOB: "1",
+    E2E_TARGET_ID: jobName,
+    E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    OPENSHELL_GATEWAY: "nemoclaw",
+  })) {
+    if (jobEnv[key] !== value) errors.push(`${jobName} job env ${key} must be ${value}`);
   }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "openclaw-discord-pairing job", jobEnv, secret);
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
   }
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    const stepName = `openclaw-discord-pairing step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run OpenClaw Discord pairing live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    if (step.name !== "Run OpenClaw channels credential rewrite live Vitest test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        stepName,
+        asRecord(step.env),
+        "NVIDIA_INFERENCE_API_KEY",
+      );
     }
     if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_TOKEN");
       requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("openclaw-discord-pairing job missing checkout step");
-  requireFullShaAction(errors, checkout, "openclaw-discord-pairing checkout");
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("openclaw-discord-pairing checkout step must set persist-credentials=false");
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-discord-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-discord-pairing setup-node");
+  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  const dockerHubEnv = asRecord(dockerHubAuth?.env);
+  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
+  }
+  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
+  }
+  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
 
-  const installRootDependencies = requireJobStep(
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Install root dependencies"),
+    "npm ci --ignore-scripts",
+  );
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Build CLI"),
+    "npm run build:cli",
+  );
+
+  const runVitest = requireJobStep(
     errors,
     jobName,
     steps,
-    "Install root dependencies",
+    "Run OpenClaw channels credential rewrite live Vitest test",
   );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
+  if (
+    asRecord(runVitest?.env).NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
+  ) {
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
+  }
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e/live/openclaw-channels-credential-rewrite.test.ts",
+  );
 
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload OpenClaw channels credential rewrite artifacts",
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== `e2e-${jobName}`) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  requireUploadPathContains(errors, stringValue(uploadWith.path), `e2e-artifacts/live/${jobName}/`);
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
+  }
+}
+
+function validateOpenClawChannelsConflictGuardJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openclaw-channels-conflict-guard";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${jobName} job must run on ubuntu-latest`);
+  }
+  if (job["timeout-minutes"] !== 30) {
+    errors.push(`${jobName} job must keep the 30 minute timeout`);
+  }
+
+  const jobEnv = asRecord(job.env);
+  for (const [key, value] of Object.entries({
+    E2E_JOB: "1",
+    E2E_TARGET_ID: jobName,
+    E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    OPENSHELL_GATEWAY: "nemoclaw",
+  })) {
+    if (jobEnv[key] !== value) errors.push(`${jobName} job env ${key} must be ${value}`);
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    for (const secret of COMMON_SECRET_ENV_NAMES) {
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), secret);
+    }
+    requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
+  }
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Install root dependencies"),
+    "npm ci --ignore-scripts",
+  );
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Build CLI"),
+    "npm run build:cli",
+  );
+
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run OpenClaw channels conflict guard live test",
+  );
+  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
+  requireRunContains(errors, runVitest, "test/e2e/live/openclaw-channels-conflict-guard.test.ts");
+
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload OpenClaw channels conflict guard artifacts",
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
+  const uploadWith = asRecord(upload?.with);
+  if (uploadWith.name !== `e2e-${jobName}`) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  requireUploadPathContains(errors, stringValue(uploadWith.path), `e2e-artifacts/live/${jobName}/`);
+  if (uploadWith["include-hidden-files"] !== false) {
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
+  }
+  if (uploadWith["if-no-files-found"] !== "ignore") {
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
+  }
+  if (uploadWith["retention-days"] !== 14) {
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
+  }
+}
+
+function validateOpenClawChannelsPairingJob(errors: string[], jobs: WorkflowRecord): void {
+  const jobName = "openclaw-channels-pairing";
+  const job = asRecord(jobs[jobName]);
+  if (Object.keys(job).length === 0) {
+    errors.push(`workflow missing ${jobName} job`);
+    return;
+  }
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
+  if (job["runs-on"] !== "ubuntu-latest") {
+    errors.push(`${jobName} job must run on ubuntu-latest`);
+  }
+  if (job["timeout-minutes"] !== 60) {
+    errors.push(`${jobName} job must keep the 60 minute timeout`);
+  }
+  const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push(`${jobName} job must not set DOCKER_CONFIG at job level`);
+  }
+  for (const [key, value] of Object.entries({
+    E2E_JOB: "1",
+    E2E_TARGET_ID: jobName,
+    E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_DISCORD_PAIRING_SANDBOX_NAME: "e2e-openclaw-channels-pairing-discord",
+    NEMOCLAW_SLACK_PAIRING_SANDBOX_NAME: "e2e-openclaw-channels-pairing-slack",
+    OPENSHELL_GATEWAY: "nemoclaw",
+  })) {
+    if (jobEnv[key] !== value) errors.push(`${jobName} job env ${key} must be ${value}`);
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
+  }
+
+  const steps = asSteps(job.steps);
+  requireNoDispatchInputInterpolation(errors, steps);
+  for (const step of steps) {
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    if (step.name !== "Run OpenClaw channels pairing live tests") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        stepName,
+        asRecord(step.env),
+        "NVIDIA_INFERENCE_API_KEY",
+      );
+    }
+    if (step.name !== "Authenticate to Docker Hub") {
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_TOKEN");
+      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
+    }
+    requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
+  }
 
   const configureDockerAuth = requireJobStep(
     errors,
@@ -4207,7 +4528,7 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   requireRunContains(
     errors,
     configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-discord-pairing" >> "$GITHUB_ENV"',
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-pairing" >> "$GITHUB_ENV"',
   );
   requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
   requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
@@ -4215,19 +4536,29 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
   if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "openclaw-discord-pairing Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
   }
   if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push(
-      "openclaw-discord-pairing Docker Hub auth must receive DOCKERHUB_TOKEN from secrets",
-    );
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
   }
   requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
   requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
   requireRunContains(errors, dockerLogin, "docker login docker.io");
   requireRunContains(errors, dockerLogin, "--password-stdin");
+
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Install root dependencies"),
+    "npm ci --ignore-scripts",
+  );
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Build CLI"),
+    "npm run build:cli",
+  );
 
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
@@ -4241,416 +4572,117 @@ function validateOpenClawDiscordPairingJob(errors: string[], jobs: WorkflowRecor
     errors,
     jobName,
     steps,
-    "Run OpenClaw Discord pairing live test",
+    "Run OpenClaw channels pairing live tests",
   );
   const runVitestEnv = asRecord(runVitest?.env);
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("openclaw-discord-pairing step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
   if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-pairing-e2e") {
-    errors.push("openclaw-discord-pairing step must use fake Discord token");
+    errors.push(`${jobName} step must use fake Discord token`);
+  }
+  if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-pairing-e2e") {
+    errors.push(`${jobName} step must use fake Slack bot token`);
+  }
+  if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-pairing-e2e") {
+    errors.push(`${jobName} step must use fake Slack app token`);
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/openclaw-discord-pairing.test.ts");
+  requireRunContains(errors, runVitest, "test/e2e/live/openclaw-channels-pairing.test.ts");
 
   const upload = requireJobStep(
     errors,
     jobName,
     steps,
-    "Upload OpenClaw Discord pairing artifacts",
+    "Upload OpenClaw channels pairing artifacts",
   );
-  requireFullShaAction(errors, upload, "openclaw-discord-pairing upload-artifact");
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
   const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-discord-pairing/");
+  if (uploadWith.name !== `e2e-${jobName}`) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  requireUploadPathContains(errors, stringValue(uploadWith.path), `e2e-artifacts/live/${jobName}/`);
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-discord-pairing artifact upload must set include-hidden-files: false");
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-discord-pairing artifact upload must ignore missing fixture artifacts");
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
   }
   if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-discord-pairing artifact upload retention-days must be 14");
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
   }
 
   const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
   if (cleanup?.if !== "always()") {
-    errors.push("openclaw-discord-pairing Docker auth cleanup must always run");
+    errors.push(`${jobName} Docker auth cleanup must always run`);
   }
   requireRunContains(errors, cleanup, "docker logout docker.io");
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
 }
 
-function validateOpenClawSlackPairingJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "openclaw-slack-pairing";
-  const targetName = "openclaw-slack-pairing";
+function validateOpenClawChannelsTelegramInjectionSafetyJob(
+  errors: string[],
+  jobs: WorkflowRecord,
+): void {
+  const jobName = "openclaw-channels-telegram-injection-safety";
   const job = asRecord(jobs[jobName]);
   if (Object.keys(job).length === 0) {
-    errors.push("workflow missing openclaw-slack-pairing job");
+    errors.push(`workflow missing ${jobName} job`);
     return;
   }
-
+  validateFreeStandingJobSelector(errors, jobs, jobName, jobName);
   if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("openclaw-slack-pairing job must run on ubuntu-latest");
-  }
-  if (job["timeout-minutes"] !== 60) {
-    errors.push("openclaw-slack-pairing job must keep the 60 minute timeout");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-
-  const jobEnv = asRecord(job.env);
-  if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("openclaw-slack-pairing job must not set DOCKER_CONFIG at job level");
-  }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "openclaw-slack-pairing job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `openclaw-slack-pairing step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run OpenClaw Slack pairing live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("openclaw-slack-pairing job missing checkout step");
-  requireFullShaAction(errors, checkout, "openclaw-slack-pairing checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("openclaw-slack-pairing checkout step must set persist-credentials=false");
-  }
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("openclaw-slack-pairing job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "openclaw-slack-pairing setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  const configureDockerAuth = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Configure isolated Docker auth directory",
-  );
-  requireRunContains(
-    errors,
-    configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-slack-pairing" >> "$GITHUB_ENV"',
-  );
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
-  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
-
-  const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerLoginEnv = asRecord(dockerLogin?.env);
-  if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push(
-      "openclaw-slack-pairing Docker Hub auth must receive DOCKERHUB_USERNAME from secrets",
-    );
-  }
-  if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("openclaw-slack-pairing Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell CLI");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run OpenClaw Slack pairing live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("openclaw-slack-pairing step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-pairing-e2e") {
-    errors.push("openclaw-slack-pairing step must use fake Slack bot token");
-  }
-  if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-pairing-e2e") {
-    errors.push("openclaw-slack-pairing step must use fake Slack app token");
-  }
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/openclaw-slack-pairing.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload OpenClaw Slack pairing artifacts");
-  requireFullShaAction(errors, upload, "openclaw-slack-pairing upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/openclaw-slack-pairing/");
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("openclaw-slack-pairing artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("openclaw-slack-pairing artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("openclaw-slack-pairing artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("openclaw-slack-pairing Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
-}
-
-function validateChannelsStopStartJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "channels-stop-start";
-  const targetName = "channels-stop-start";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing channels-stop-start job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("channels-stop-start job must run on ubuntu-latest");
-  }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-  if (job["timeout-minutes"] !== 90) {
-    errors.push("channels-stop-start job must keep the 90 minute timeout");
-  }
-  const strategy = asRecord(job.strategy);
-  if (strategy["fail-fast"] !== false) {
-    errors.push("channels-stop-start strategy.fail-fast must be false");
-  }
-  const matrix = asRecord(strategy.matrix);
-  if (!Array.isArray(matrix.agent) || matrix.agent.join(",") !== "openclaw,hermes") {
-    errors.push("channels-stop-start matrix.agent must be openclaw,hermes");
-  }
-
-  const jobEnv = asRecord(job.env);
-  if (jobEnv.NEMOCLAW_RUN_LIVE_E2E !== "1") {
-    errors.push("channels-stop-start job must set NEMOCLAW_RUN_LIVE_E2E=1");
-  }
-  if (
-    jobEnv.E2E_ARTIFACT_DIR !==
-    "${{ github.workspace }}/e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}"
-  ) {
-    errors.push(
-      "channels-stop-start job must write artifacts under e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}",
-    );
-  }
-  if (jobEnv.NEMOCLAW_CLI_BIN !== "${{ github.workspace }}/bin/nemoclaw.js") {
-    errors.push("channels-stop-start job must point NEMOCLAW_CLI_BIN at the repo CLI");
-  }
-  if (jobEnv.NEMOCLAW_SANDBOX_NAME !== "e2e-channels-stop-start-${{ matrix.agent }}") {
-    errors.push(
-      "channels-stop-start job must derive NEMOCLAW_SANDBOX_NAME from matrix.agent with the e2e-channels-stop-start- prefix",
-    );
-  }
-  if (jobEnv.NEMOCLAW_AGENT !== "${{ matrix.agent }}") {
-    errors.push("channels-stop-start job must pass matrix.agent through NEMOCLAW_AGENT");
-  }
-  if (jobEnv.NEMOCLAW_CHANNELS_STOP_START_AGENT !== "${{ matrix.agent }}") {
-    errors.push(
-      "channels-stop-start job must pass matrix.agent through NEMOCLAW_CHANNELS_STOP_START_AGENT",
-    );
-  }
-  if (jobEnv.NEMOCLAW_NON_INTERACTIVE !== "1") {
-    errors.push("channels-stop-start job must set NEMOCLAW_NON_INTERACTIVE=1");
-  }
-  if (jobEnv.NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE !== "1") {
-    errors.push("channels-stop-start job must set NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1");
-  }
-  if (jobEnv.OPENSHELL_GATEWAY !== "nemoclaw") {
-    errors.push("channels-stop-start job must force OPENSHELL_GATEWAY=nemoclaw");
-  }
-  if (
-    jobEnv.DOCKER_CONFIG !==
-    "${{ github.workspace }}/.docker-config-channels-stop-start-${{ matrix.agent }}"
-  ) {
-    errors.push("channels-stop-start job must isolate Docker auth by matrix agent");
-  }
-  for (const secret of [
-    "NVIDIA_INFERENCE_API_KEY",
-    "DOCKERHUB_USERNAME",
-    "DOCKERHUB_TOKEN",
-    "GITHUB_TOKEN",
-  ]) {
-    requireEnvDoesNotExposeSecret(errors, "channels-stop-start job", jobEnv, secret);
-  }
-
-  const steps = asSteps(job.steps);
-  requireNoDispatchInputInterpolation(errors, steps);
-  for (const step of steps) {
-    const stepName = `channels-stop-start step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run channels stop/start live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-    }
-    if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
-      requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
-    }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
-  }
-
-  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
-  if (!checkout) errors.push("channels-stop-start job missing checkout step");
-  requireFullShaAction(errors, checkout, "channels-stop-start checkout");
-  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
-    errors.push("channels-stop-start checkout step must set persist-credentials=false");
-  }
-
-  const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
-  const dockerHubEnv = asRecord(dockerHubAuth?.env);
-  if (dockerHubEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("channels-stop-start Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
-  }
-  if (dockerHubEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("channels-stop-start Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
-  }
-  requireRunContains(errors, dockerHubAuth, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerHubAuth, "docker login docker.io");
-  requireRunContains(errors, dockerHubAuth, "--password-stdin");
-  requireRunContains(errors, dockerHubAuth, "continuing with anonymous pulls");
-
-  const setupNode = namedStep(steps, "Set up Node");
-  if (!setupNode) errors.push("channels-stop-start job missing step: Set up Node");
-  requireFullShaAction(errors, setupNode, "channels-stop-start setup-node");
-
-  const installRootDependencies = requireJobStep(
-    errors,
-    jobName,
-    steps,
-    "Install root dependencies",
-  );
-  requireRunContains(errors, installRootDependencies, "npm ci --ignore-scripts");
-
-  const buildCli = requireJobStep(errors, jobName, steps, "Build CLI");
-  requireRunContains(errors, buildCli, "npm run build:cli");
-
-  const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
-  requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
-  requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_USERNAME");
-  requireRunContains(errors, installOpenShell, "-u DOCKERHUB_TOKEN");
-  requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
-  requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
-
-  const runVitest = requireJobStep(errors, jobName, steps, "Run channels stop/start live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets");
-  }
-  if (
-    runVitestEnv.TELEGRAM_BOT_TOKEN !== "test-fake-telegram-token-stop-start-${{ matrix.agent }}"
-  ) {
-    errors.push("channels-stop-start step must set the fake Telegram token");
-  }
-  if (runVitestEnv.DISCORD_BOT_TOKEN !== "test-fake-discord-token-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start step must set the fake Discord token");
-  }
-  if (runVitestEnv.SLACK_BOT_TOKEN !== "xoxb-fake-slack-token-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start step must set the fake Slack bot token");
-  }
-  if (runVitestEnv.SLACK_APP_TOKEN !== "xapp-fake-slack-token-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start step must set the fake Slack app token");
-  }
-  if (runVitestEnv.WECHAT_BOT_TOKEN !== "test-fake-wechat-token-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start step must set the fake WeChat token");
-  }
-  requireRunContains(errors, runVitest, "OPENSHELL_BIN");
-  requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/channels-stop-start.test.ts");
-
-  const upload = requireJobStep(errors, jobName, steps, "Upload channels stop/start artifacts");
-  requireFullShaAction(errors, upload, "channels-stop-start upload-artifact");
-  const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-channels-stop-start-${{ matrix.agent }}") {
-    errors.push("channels-stop-start artifact upload name must include matrix.agent");
-  }
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(
-    errors,
-    uploadPath,
-    "e2e-artifacts/live/channels-stop-start/${{ matrix.agent }}/",
-  );
-  if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("channels-stop-start artifact upload must set include-hidden-files: false");
-  }
-  if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("channels-stop-start artifact upload must ignore missing fixture artifacts");
-  }
-  if (uploadWith["retention-days"] !== 14) {
-    errors.push("channels-stop-start artifact upload retention-days must be 14");
-  }
-
-  const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
-  if (cleanup?.if !== "always()") {
-    errors.push("channels-stop-start Docker auth cleanup must always run");
-  }
-  requireRunContains(errors, cleanup, "docker logout docker.io");
-  requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
-}
-
-function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): void {
-  const jobName = "telegram-injection";
-  const targetName = "telegram-injection";
-  const job = asRecord(jobs[jobName]);
-  if (Object.keys(job).length === 0) {
-    errors.push("workflow missing telegram-injection job");
-    return;
-  }
-
-  if (job["runs-on"] !== "ubuntu-latest") {
-    errors.push("telegram-injection job must run on ubuntu-latest");
+    errors.push(`${jobName} job must run on ubuntu-latest`);
   }
   if (job["timeout-minutes"] !== 45) {
-    errors.push("telegram-injection job must keep the 45 minute timeout");
+    errors.push(`${jobName} job must keep the 45 minute timeout`);
   }
-  validateFreeStandingJobSelector(errors, jobs, jobName, targetName);
-
   const jobEnv = asRecord(job.env);
   if ("DOCKER_CONFIG" in jobEnv) {
-    errors.push("telegram-injection job must not set DOCKER_CONFIG at job level");
+    errors.push(`${jobName} job must not set DOCKER_CONFIG at job level`);
   }
-  for (const secret of [...COMMON_SECRET_ENV_NAMES]) {
-    requireEnvDoesNotExposeSecret(errors, "telegram-injection job", jobEnv, secret);
+  for (const [key, value] of Object.entries({
+    E2E_JOB: "1",
+    E2E_TARGET_ID: jobName,
+    E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
+    NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
+    NEMOCLAW_RUN_LIVE_E2E: "1",
+    NEMOCLAW_E2E_USE_HOSTED_INFERENCE: "1",
+    NEMOCLAW_NON_INTERACTIVE: "1",
+    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+    NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-channels-telegram-injection-safety",
+    OPENSHELL_GATEWAY: "nemoclaw",
+  })) {
+    if (jobEnv[key] !== value) errors.push(`${jobName} job env ${key} must be ${value}`);
+  }
+  for (const secret of COMMON_SECRET_ENV_NAMES) {
+    requireEnvDoesNotExposeSecret(errors, `${jobName} job`, jobEnv, secret);
   }
 
   const steps = asSteps(job.steps);
   requireNoDispatchInputInterpolation(errors, steps);
   for (const step of steps) {
-    const stepName = `telegram-injection step '${step.name ?? step.uses ?? "<unnamed>"}'`;
-    const stepEnv = asRecord(step.env);
-    if (step.name !== "Run Telegram injection live test") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "NVIDIA_INFERENCE_API_KEY");
+    const stepName = `${jobName} step '${step.name ?? step.uses ?? "<unnamed>"}'`;
+    if (step.name !== "Run OpenClaw channels Telegram injection safety live test") {
+      requireEnvDoesNotExposeSecret(
+        errors,
+        stepName,
+        asRecord(step.env),
+        "NVIDIA_INFERENCE_API_KEY",
+      );
     }
     if (step.name !== "Authenticate to Docker Hub") {
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_USERNAME");
-      requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "DOCKERHUB_TOKEN");
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_USERNAME");
+      requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_TOKEN");
       requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     }
-    requireEnvDoesNotExposeSecret(errors, stepName, stepEnv, "GITHUB_TOKEN");
+  }
+
+  const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
+  if (!checkout) errors.push(`${jobName} job missing checkout step`);
+  requireFullShaAction(errors, checkout, `${jobName} checkout`);
+  if (asRecord(checkout?.with)["persist-credentials"] !== false) {
+    errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
 
   const configureDockerAuth = requireJobStep(
@@ -4662,24 +4694,34 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(
     errors,
     configureDockerAuth,
-    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-telegram-injection" >> "$GITHUB_ENV"',
+    'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-telegram-injection-safety" >> "$GITHUB_ENV"',
   );
   requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
   requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
 
   const dockerLogin = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
+  requireRunContains(errors, dockerLogin, "docker login docker.io");
   const dockerLoginEnv = asRecord(dockerLogin?.env);
   if (dockerLoginEnv.DOCKERHUB_USERNAME !== "${{ secrets.DOCKERHUB_USERNAME }}") {
-    errors.push("telegram-injection Docker Hub auth must receive DOCKERHUB_USERNAME from secrets");
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_USERNAME from secrets`);
   }
   if (dockerLoginEnv.DOCKERHUB_TOKEN !== "${{ secrets.DOCKERHUB_TOKEN }}") {
-    errors.push("telegram-injection Docker Hub auth must receive DOCKERHUB_TOKEN from secrets");
+    errors.push(`${jobName} Docker Hub auth must receive DOCKERHUB_TOKEN from secrets`);
   }
-  requireRunContains(errors, dockerLogin, 'mkdir -p "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, 'chmod 700 "${DOCKER_CONFIG}"');
-  requireRunContains(errors, dockerLogin, "docker login docker.io");
-  requireRunContains(errors, dockerLogin, "--password-stdin");
 
+  const setupNode = namedStep(steps, "Set up Node");
+  if (!setupNode) errors.push(`${jobName} job missing step: Set up Node`);
+  requireFullShaAction(errors, setupNode, `${jobName} setup-node`);
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Install root dependencies"),
+    "npm ci --ignore-scripts",
+  );
+  requireRunContains(
+    errors,
+    requireJobStep(errors, jobName, steps, "Build CLI"),
+    "npm run build:cli",
+  );
   const installOpenShell = requireJobStep(errors, jobName, steps, "Install OpenShell");
   requireRunContains(errors, installOpenShell, "bash scripts/install-openshell.sh");
   requireRunContains(errors, installOpenShell, "env -u DOCKER_CONFIG");
@@ -4688,31 +4730,49 @@ function validateTelegramInjectionJob(errors: string[], jobs: WorkflowRecord): v
   requireRunContains(errors, installOpenShell, "-u NVIDIA_INFERENCE_API_KEY");
   requireRunContains(errors, installOpenShell, "-u GITHUB_TOKEN");
 
-  const runVitest = requireJobStep(errors, jobName, steps, "Run Telegram injection live test");
-  const runVitestEnv = asRecord(runVitest?.env);
-  if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
-    errors.push("telegram-injection step must receive NVIDIA_INFERENCE_API_KEY from secrets");
+  const runVitest = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Run OpenClaw channels Telegram injection safety live test",
+  );
+  if (
+    asRecord(runVitest?.env).NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
+  ) {
+    errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
   requireRunContains(errors, runVitest, "npx vitest run --project e2e-live");
-  requireRunContains(errors, runVitest, "test/e2e/live/telegram-injection.test.ts");
+  requireRunContains(
+    errors,
+    runVitest,
+    "test/e2e/live/openclaw-channels-telegram-injection-safety.test.ts",
+  );
 
-  const upload = requireJobStep(errors, jobName, steps, "Upload Telegram injection artifacts");
+  const upload = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Upload OpenClaw channels Telegram injection safety artifacts",
+  );
+  requireFullShaAction(errors, upload, `${jobName} upload-artifact`);
   const uploadWith = asRecord(upload?.with);
-  const uploadPath = stringValue(uploadWith.path);
-  requireUploadPathContains(errors, uploadPath, "e2e-artifacts/live/telegram-injection/");
+  if (uploadWith.name !== `e2e-${jobName}`) {
+    errors.push(`${jobName} artifact upload name must be stable`);
+  }
+  requireUploadPathContains(errors, stringValue(uploadWith.path), `e2e-artifacts/live/${jobName}/`);
   if (uploadWith["include-hidden-files"] !== false) {
-    errors.push("telegram-injection artifact upload must set include-hidden-files: false");
+    errors.push(`${jobName} artifact upload must set include-hidden-files: false`);
   }
   if (uploadWith["if-no-files-found"] !== "ignore") {
-    errors.push("telegram-injection artifact upload must ignore missing fixture artifacts");
+    errors.push(`${jobName} artifact upload must ignore missing fixture artifacts`);
   }
   if (uploadWith["retention-days"] !== 14) {
-    errors.push("telegram-injection artifact upload retention-days must be 14");
+    errors.push(`${jobName} artifact upload retention-days must be 14`);
   }
 
   const cleanup = requireJobStep(errors, jobName, steps, "Clean up Docker auth");
   if (cleanup?.if !== "always()") {
-    errors.push("telegram-injection Docker auth cleanup must always run");
+    errors.push(`${jobName} Docker auth cleanup must always run`);
   }
   requireRunContains(errors, cleanup, "docker logout docker.io");
   requireRunContains(errors, cleanup, 'rm -rf "${DOCKER_CONFIG}"');
@@ -5200,7 +5260,6 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateRuntimeOverridesJob(errors, jobs);
   validateDoubleOnboardJob(errors, jobs);
   validateHermesE2EJob(errors, jobs);
-  validateFreeStandingJobSelector(errors, jobs, "hermes-discord", "hermes-discord");
   validateHermesRootEntrypointSmokeJob(errors, jobs);
   validateHermesSandboxSecretBoundaryJob(errors, jobs);
   validateNetworkPolicyJob(errors, jobs);
@@ -5212,8 +5271,10 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   validateSandboxRebuildJob(errors, jobs);
   validateStateBackupRestoreJob(errors, jobs);
   validateUpgradeStaleSandboxJob(errors, jobs);
-  validateTokenRotationJob(errors, jobs);
+  validateOpenClawChannelsTokenRotationJob(errors, jobs);
   validateMessagingCompatibleEndpointJob(errors, jobs);
+  validateOpenClawChannelsCredentialRewriteJob(errors, jobs);
+  validateOpenClawChannelsConflictGuardJob(errors, jobs);
   validateSerializedHostedAgentProofs(errors, jobs);
   validateFreeStandingJobSelector(errors, jobs, "gateway-guard-recovery", "gateway-guard-recovery");
   validateGatewayGuardRecoveryJob(errors, jobs);
@@ -5303,11 +5364,12 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
     "concurrent-gateway-ports",
   );
 
-  validateChannelsAddRemoveJob(errors, jobs);
-  validateOpenClawDiscordPairingJob(errors, jobs);
-  validateOpenClawSlackPairingJob(errors, jobs);
-  validateChannelsStopStartJob(errors, jobs);
-  validateTelegramInjectionJob(errors, jobs);
+  validateChannelLifecycleJob(errors, jobs, "openclaw", "add-remove");
+  validateChannelLifecycleJob(errors, jobs, "hermes", "add-remove");
+  validateChannelLifecycleJob(errors, jobs, "openclaw", "stop-start");
+  validateChannelLifecycleJob(errors, jobs, "hermes", "stop-start");
+  validateOpenClawChannelsPairingJob(errors, jobs);
+  validateOpenClawChannelsTelegramInjectionSafetyJob(errors, jobs);
 
   const reportToPr = asRecord(jobs["report-to-pr"]);
   if (Object.keys(reportToPr).length === 0) {

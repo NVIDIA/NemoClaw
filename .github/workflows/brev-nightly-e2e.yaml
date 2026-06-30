@@ -7,8 +7,11 @@ name: E2E / Brev Nightly
 # main E2E workflow remains isolated from Brev platform flakiness.
 #
 # Suites:
-#   all                 credential-sanitization + telegram-injection
-#   messaging-providers Telegram + Discord provider/L7 proxy validation
+#   all                 credential-sanitization + OpenClaw channel safety/credential rewrite/conflict guard
+#   openclaw-channels-credential-rewrite
+#                       OpenClaw channel provider/L7 proxy validation
+#   openclaw-channels-conflict-guard
+#                       OpenClaw channel duplicate credential conflict guard
 #   full                install/onboard/inference/CLI path
 
 on:
@@ -39,7 +42,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        test_suite: [all, messaging-providers, full]
+        test_suite: [all, openclaw-channels-credential-rewrite, full]
     uses: ./.github/workflows/e2e-branch-validation.yaml
     with:
       branch: ${{ github.event_name == 'schedule' && 'main' || inputs.branch || github.ref_name }}

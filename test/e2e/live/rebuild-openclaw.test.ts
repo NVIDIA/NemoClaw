@@ -773,7 +773,7 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
       stateDirCount: Array.isArray(manifest.stateDirs) ? manifest.stateDirs.length : undefined,
       policyPresets: manifest.policyPresets,
       telegramBridgeTraffic:
-        "real bot response remains owned by the messaging-providers E2E; this rebuild target asserts restored Telegram policy and api.telegram.org reachability",
+        "real bot response remains owned by the openclaw-channels-credential-rewrite E2E; this rebuild target asserts restored Telegram policy and api.telegram.org reachability",
     });
     expect(manifest.policyPresets).toEqual(expect.arrayContaining([...POLICY_PRESETS]));
     expect(backupCredentialLeakPaths(backupDir, PRE_REBUILD_GATEWAY_TOKEN)).toEqual([]);
@@ -803,8 +803,8 @@ print(json.dumps({'tokenPresent': bool(token), 'tokenRotated': token != old, 'ru
     expectExitZero(postPolicyList, "nemoclaw policy-list after rebuild");
     expect(postPolicyList.stdout).toMatch(/●\s+telegram/i);
 
-    // #1952's real bot-response clause is owned by the messaging-providers
-    // E2E. This rebuild/state migration keeps the deterministic
+    // #1952's real bot-response clause is owned by the
+    // openclaw-channels-credential-rewrite E2E. This rebuild/state migration keeps the deterministic
     // prerequisite: Telegram policy is restored and the gateway does not block
     // api.telegram.org after rebuild.
     const telegramApiReachability = await sandbox.exec(

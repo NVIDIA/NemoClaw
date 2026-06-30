@@ -4,13 +4,12 @@
 import { test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import {
-  CHANNELS_STOP_START_TEST_NAME,
-  LIVE_TIMEOUT_MS,
+  CHANNELS_STOP_START_TIMEOUT_MS,
   runChannelsStopStartTarget,
-} from "./channels-stop-start-helpers.ts";
+} from "./channels-lifecycle-helpers.ts";
 
 test.skipIf(!shouldRunLiveE2E())(
-  CHANNELS_STOP_START_TEST_NAME,
-  { timeout: LIVE_TIMEOUT_MS },
-  runChannelsStopStartTarget,
+  "hermes channels stop/start preserves credentials and toggles runtime config",
+  { timeout: CHANNELS_STOP_START_TIMEOUT_MS },
+  (fixtures) => runChannelsStopStartTarget("hermes", fixtures),
 );

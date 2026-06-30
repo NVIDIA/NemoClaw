@@ -9,7 +9,10 @@ import type { HostCliClient } from "../fixtures/clients/host.ts";
 import type { SandboxClient } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { type FakeDockerApi, startFakeDockerApi } from "./messaging-providers-helpers.ts";
+import {
+  type FakeDockerApi,
+  startFakeDockerApi,
+} from "./openclaw-channels-credential-rewrite-helpers.ts";
 import {
   bestEffort,
   cleanupSandbox,

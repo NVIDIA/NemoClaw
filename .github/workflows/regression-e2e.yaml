@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,whatsapp-qr-compact-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e,openclaw-channels-pairing-whatsapp-qr-e2e
         required: false
         type: string
         default: ""
@@ -51,7 +51,7 @@ jobs:
 
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
       openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
-      whatsapp_qr_compact: ${{ steps.select.outputs.whatsapp_qr_compact }}
+      openclaw_channels_pairing_whatsapp_qr: ${{ steps.select.outputs.openclaw_channels_pairing_whatsapp_qr }}
     steps:
       - id: select
         env:
@@ -104,10 +104,10 @@ jobs:
             echo "openclaw_plugin_runtime_exdev=false" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ -z "$normalized" ] || includes_job "whatsapp-qr-compact-e2e"; then
-            echo "whatsapp_qr_compact=true" >> "$GITHUB_OUTPUT"
+          if [ -z "$normalized" ] || includes_job "openclaw-channels-pairing-whatsapp-qr-e2e"; then
+            echo "openclaw_channels_pairing_whatsapp_qr=true" >> "$GITHUB_OUTPUT"
           else
-            echo "whatsapp_qr_compact=false" >> "$GITHUB_OUTPUT"
+            echo "openclaw_channels_pairing_whatsapp_qr=false" >> "$GITHUB_OUTPUT"
           fi
 
   dashboard-remote-bind-e2e:
@@ -320,18 +320,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # ── WhatsApp compact-QR reporter-workflow E2E ──────────────────
+  # ── OpenClaw channel pairing WhatsApp compact-QR E2E ────────────
   # Coverage guard for #4522. Drives the real @openclaw/whatsapp +
   # openclaw renderQrTerminal path (the symbol the in-sandbox
   # `openclaw channels login --channel whatsapp` onQr callback invokes)
   # at the version bundled in Dockerfile.base, and asserts the pairing QR
   # renders compact with the NemoClaw preload and oversized without it.
   # Hermetic: only needs node + npm (no Docker, GPU, or NVIDIA_INFERENCE_API_KEY).
-  whatsapp-qr-compact-e2e:
+  openclaw-channels-pairing-whatsapp-qr-e2e:
     needs: select_regression_jobs
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
-      needs.select_regression_jobs.outputs.whatsapp_qr_compact == 'true'
+      needs.select_regression_jobs.outputs.openclaw_channels_pairing_whatsapp_qr == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -348,10 +348,8 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
-      - name: Run WhatsApp compact-QR reporter-workflow Vitest test
-        env:
-          NEMOCLAW_RUN_LIVE_E2E: "1"
+      - name: Run OpenClaw channels pairing WhatsApp compact-QR Vitest test
         run: |
           npx vitest run --project e2e-live \
-            test/e2e/live/whatsapp-qr-compact.test.ts \
+            test/e2e/live/openclaw-channels-pairing.test.ts \
             --silent=false --reporter=default

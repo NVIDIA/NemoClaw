@@ -19,7 +19,8 @@ import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
 const REGISTRY_FILE = path.join(process.env.HOME ?? "/tmp", ".nemoclaw", "sandboxes.json");
-const SANDBOX_NAME = process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-token-rotation-${process.pid}`;
+const SANDBOX_NAME =
+  process.env.NEMOCLAW_SANDBOX_NAME ?? `e2e-openclaw-channels-token-rotation-${process.pid}`;
 validateSandboxName(SANDBOX_NAME);
 
 const ONBOARD_TIMEOUT_MS = 25 * 60_000;
@@ -70,7 +71,7 @@ function stripAnsi(value: string): string {
 function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
   return {
     ...buildAvailabilityProbeEnv(),
-    COMPATIBLE_API_KEY: "token-rotation-compatible-e2e",
+    COMPATIBLE_API_KEY: "openclaw-channels-token-rotation-compatible-e2e",
     TELEGRAM_BOT_TOKEN: tokens.telegram,
     DISCORD_BOT_TOKEN: tokens.discord,
     SLACK_BOT_TOKEN: tokens.slackBot,
@@ -153,7 +154,7 @@ function assertTokenPairsDiffer(): void {
 
 function redactionValues(): string[] {
   return [
-    "token-rotation-compatible-e2e",
+    "openclaw-channels-token-rotation-compatible-e2e",
     process.env.NVIDIA_INFERENCE_API_KEY,
     process.env.GITHUB_TOKEN,
     ...Object.values(TOKEN_A),
@@ -258,7 +259,7 @@ async function destroyGatewayIfOpenshellExists(
 const liveTest = shouldRunLiveE2E() ? test : test.skip;
 
 liveTest(
-  "messaging token rotation rebuilds only the changed provider and reuses unchanged credentials",
+  "openclaw channels token rotation rebuilds only the changed provider and reuses unchanged credentials",
   testTimeoutOptions(PHASE_TIMEOUT_MS),
   async ({ artifacts, cleanup, host, skip }) => {
     expect(
@@ -269,7 +270,7 @@ liveTest(
     assertTokenPairsDiffer();
 
     const docker = await host.command("docker", ["info"], {
-      artifactName: "prereq-docker-info-token-rotation",
+      artifactName: "prereq-docker-info-openclaw-channels-token-rotation",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
@@ -292,12 +293,12 @@ liveTest(
     });
 
     await artifacts.writeJson("target.json", {
-      id: "token-rotation",
+      id: "openclaw-channels-token-rotation",
       runner: "vitest",
       boundary: "direct-cli-onboard-openshell",
       workflow: {
         workflow: "e2e.yaml",
-        job: "token-rotation",
+        job: "openclaw-channels-token-rotation",
         runsOn: "ubuntu-latest",
         resources: [
           "Docker",
@@ -318,31 +319,34 @@ liveTest(
     });
 
     const cleanupEnv = buildAvailabilityProbeEnv();
-    cleanup.add(`destroy token-rotation sandbox ${SANDBOX_NAME}`, async () => {
+    cleanup.add(`destroy openclaw-channels-token-rotation sandbox ${SANDBOX_NAME}`, async () => {
       await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-        artifactName: "cleanup-nemoclaw-destroy-token-rotation",
+        artifactName: "cleanup-nemoclaw-destroy-openclaw-channels-token-rotation",
         env: cleanupEnv,
         timeoutMs: 120_000,
       });
-      await deleteSandboxIfOpenshellExists(host, "cleanup-openshell-sandbox-delete-token-rotation");
+      await deleteSandboxIfOpenshellExists(
+        host,
+        "cleanup-openshell-sandbox-delete-openclaw-channels-token-rotation",
+      );
       await destroyGatewayIfOpenshellExists(
         host,
-        "cleanup-openshell-gateway-destroy-token-rotation",
+        "cleanup-openshell-gateway-destroy-openclaw-channels-token-rotation",
       );
     });
 
     await host.command("node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {
-      artifactName: "pre-cleanup-nemoclaw-destroy-token-rotation",
+      artifactName: "pre-cleanup-nemoclaw-destroy-openclaw-channels-token-rotation",
       env: cleanupEnv,
       timeoutMs: 120_000,
     });
     await deleteSandboxIfOpenshellExists(
       host,
-      "pre-cleanup-openshell-sandbox-delete-token-rotation",
+      "pre-cleanup-openshell-sandbox-delete-openclaw-channels-token-rotation",
     );
     await destroyGatewayIfOpenshellExists(
       host,
-      "pre-cleanup-openshell-gateway-destroy-token-rotation",
+      "pre-cleanup-openshell-gateway-destroy-openclaw-channels-token-rotation",
     );
 
     const first = await runInstall(host, fakeOpenAI.baseUrl, TOKEN_A, {
@@ -351,7 +355,7 @@ liveTest(
     expect(first.exitCode, resultText(first)).toBe(0);
 
     const openshellVersion = await host.command("openshell", ["--version"], {
-      artifactName: "phase-0-openshell-version-token-rotation",
+      artifactName: "phase-0-openshell-version-openclaw-channels-token-rotation",
       env: buildAvailabilityProbeEnv(),
       timeoutMs: 30_000,
     });
@@ -463,7 +467,7 @@ liveTest(
     expect(afterSlackSameText).toContain("reusing it");
 
     await artifacts.writeJson("target-result.json", {
-      id: "token-rotation",
+      id: "openclaw-channels-token-rotation",
       sandboxName: SANDBOX_NAME,
       assertions: {
         providersCreated: true,

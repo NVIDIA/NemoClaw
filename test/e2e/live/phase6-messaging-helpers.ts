@@ -14,7 +14,7 @@ import {
 } from "../fixtures/clients/sandbox.ts";
 import { expect } from "../fixtures/e2e-test.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
-import { isNvidiaEndpointRateLimitFailure } from "./messaging-providers-helpers.ts";
+import { isNvidiaEndpointRateLimitFailure } from "./openclaw-channels-credential-rewrite-helpers.ts";
 
 export const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 export const CLI = process.env.NEMOCLAW_CLI_BIN ?? path.join(REPO_ROOT, "bin", "nemoclaw.js");

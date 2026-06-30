@@ -54,12 +54,13 @@ describe("Regression E2E workflow contract", () => {
     expect(selectorScript).not.toContain("strict_tool_call_probe");
   });
 
-  it("runs WhatsApp compact QR through Vitest instead of the retired shell script", () => {
-    const job = workflow.jobs?.["whatsapp-qr-compact-e2e"];
+  it("runs WhatsApp compact QR through the consolidated OpenClaw pairing Vitest lane", () => {
+    const job = workflow.jobs?.["openclaw-channels-pairing-whatsapp-qr-e2e"];
     const runText = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
 
-    expect(runText).toContain("test/e2e/live/whatsapp-qr-compact.test.ts");
+    expect(runText).toContain("test/e2e/live/openclaw-channels-pairing.test.ts");
     expect(runText).toContain("npx vitest run --project e2e-live");
+    expect(runText).not.toContain("NEMOCLAW_RUN_LIVE_E2E");
   });
 
   it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {

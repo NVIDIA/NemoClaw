@@ -9,7 +9,7 @@
  * the file actually appearing inside the sandbox with the expected mode,
  * symlinks at the target being replaced rather than followed, and the
  * refresh firing only after a successful policy mutation — is exercised
- * end-to-end by the `network-policy-e2e` and `channels-add-remove-e2e`
+ * end-to-end by the `network-policy-e2e` and per-agent channels add/remove
  * jobs under `test/e2e/`, which spin up a real OpenShell sandbox and run
  * the full `policy-add`/`policy-remove`/`rebuild` flow. The unit
  * harness intentionally stays inside the JS process; runtime regressions
