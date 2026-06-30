@@ -173,10 +173,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "patch-openclaw-chat-send.js"),
     path.join(stagedScriptsDir, "patch-openclaw-chat-send.js"),
   );
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "verify-openclaw-fetch-guard-runtime.ts"),
-    path.join(stagedScriptsDir, "verify-openclaw-fetch-guard-runtime.ts"),
-  );
 
   return { buildCtx, stagedDockerfile };
 }
