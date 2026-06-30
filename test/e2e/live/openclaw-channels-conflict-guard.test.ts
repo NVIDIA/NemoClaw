@@ -19,6 +19,7 @@ const CLI_ENTRYPOINT = path.resolve(
 );
 const CONFLICT_TIMEOUT_MS = 30_000;
 const runLiveTest = shouldRunLiveE2E() ? test : test.skip;
+const CREDENTIALED_CHANNELS = CHANNELS.filter((channel) => channel !== "whatsapp");
 
 type SecretFixture = {
   credentialId: string;
@@ -152,9 +153,12 @@ const CHANNEL_FIXTURES: Record<MessagingChannel, ChannelFixture> = {
 };
 
 function mustHash(value: string): string {
-  const hash = hashCredential(value);
-  if (!hash) throw new Error("test fixture credential must hash");
-  return hash;
+  return (
+    hashCredential(value) ??
+    (() => {
+      throw new Error("test fixture credential must hash");
+    })()
+  );
 }
 
 function channelPlan(channel: MessagingChannel): SandboxMessagingPlan["channels"][number] {
@@ -280,24 +284,12 @@ function commandEnv(homeDir: string, channel: MessagingChannel): NodeJS.ProcessE
   };
 }
 
-for (const channel of CHANNELS) {
-  const title =
-    channel === "whatsapp"
-      ? "openclaw channels conflict guard documents WhatsApp QR-only credential boundary"
-      : `openclaw channels conflict guard handles duplicate ${channel} credentials without leaking secrets`;
+for (const channel of CREDENTIALED_CHANNELS) {
+  const title = `openclaw channels conflict guard handles duplicate ${channel} credentials without leaking secrets`;
   runLiveTest(title, testTimeoutOptions(CONFLICT_TIMEOUT_MS), async ({ artifacts, host }) => {
     const tokens = CHANNEL_FIXTURES[channel].secrets.map((secret) => secret.token);
     const hashes = tokens.map(mustHash);
     artifacts.addRedactionValues([...tokens, ...hashes]);
-    if (channel === "whatsapp") {
-      await artifacts.writeJson("openclaw-channels-conflict-guard-whatsapp.json", {
-        channel,
-        assertion:
-          "WhatsApp is covered by CHANNELS but has no host-side credential in the manifest, so duplicate credential conflict detection intentionally has no token/hash to compare.",
-      });
-      expect(CHANNEL_FIXTURES[channel].secrets).toHaveLength(0);
-      return;
-    }
 
     expect(
       fs.existsSync(CLI_ENTRYPOINT),
@@ -356,3 +348,17 @@ for (const channel of CHANNELS) {
     }
   });
 }
+
+runLiveTest(
+  "openclaw channels conflict guard documents WhatsApp QR-only credential boundary",
+  testTimeoutOptions(CONFLICT_TIMEOUT_MS),
+  async ({ artifacts }) => {
+    await artifacts.writeJson("openclaw-channels-conflict-guard-whatsapp.json", {
+      channel: "whatsapp",
+      assertion:
+        "WhatsApp is covered by CHANNELS but has no host-side credential in the manifest, so duplicate credential conflict detection intentionally has no token/hash to compare.",
+    });
+    expect(CHANNELS).toContain("whatsapp");
+    expect(CHANNEL_FIXTURES.whatsapp.secrets).toHaveLength(0);
+  },
+);
