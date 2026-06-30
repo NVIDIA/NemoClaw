@@ -20,6 +20,7 @@ import {
   BUILT_IN_CHANNEL_MANIFESTS,
   createBuiltInChannelManifestRegistry,
   discordManifest,
+  getBuiltInRenderedConfigParser,
   slackManifest,
   teamsManifest,
   telegramManifest,
@@ -219,6 +220,15 @@ describe("built-in channel manifests", () => {
     expect(JSON.parse(JSON.stringify(BUILT_IN_CHANNEL_MANIFESTS))).toEqual(
       BUILT_IN_CHANNEL_MANIFESTS,
     );
+  });
+
+  it("keeps rendered config parsers aligned with built-in manifests", () => {
+    expect(
+      BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [
+        manifest.id,
+        Boolean(getBuiltInRenderedConfigParser(manifest.id)),
+      ]),
+    ).toEqual(BUILT_IN_CHANNEL_MANIFESTS.map((manifest) => [manifest.id, true]));
   });
 
   it("keeps phase-1 manifest and hook files free of production side-effect imports", () => {

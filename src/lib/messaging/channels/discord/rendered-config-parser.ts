@@ -78,6 +78,7 @@ function discordRequireMention(
         : undefined,
     )
     .filter((entry): entry is MessagingSerializableValue => entry !== undefined);
+  if (values.length === 0) return undefined;
   const uniqueValues = Array.from(new Set(values.map(formatProjectionValue)));
   return uniqueValues.length === 1 ? values[0] : uniqueValues;
 }

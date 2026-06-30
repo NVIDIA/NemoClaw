@@ -659,6 +659,53 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
     expect(dump).not.toMatch(/TELEGRAM_BOT_TOKEN/);
   });
 
+  it("compares Hermes Telegram group policy from rendered env config", async () => {
+    const { deps } = makeDeps({
+      exec: (_sandbox, command) =>
+        command.includes("/sandbox/.hermes/.env")
+          ? {
+              status: 0,
+              stdout: ["TELEGRAM_ALLOWED_USERS=7895072570", "TELEGRAM_GROUP_POLICY=allowlist"].join(
+                "\n",
+              ),
+              stderr: "",
+            }
+          : { status: 1, stdout: "", stderr: "" },
+      agentName: "hermes",
+      sandbox: entry(
+        ["telegram"],
+        [],
+        {
+          telegram: [
+            {
+              channelId: "telegram",
+              inputId: "groupPolicy",
+              kind: "config",
+              required: false,
+              sourceEnv: "TELEGRAM_GROUP_POLICY",
+              statePath: "telegramConfig.groupPolicy",
+              value: "allowlist",
+            },
+          ],
+        },
+        "hermes",
+      ),
+      appliedPresets: ["telegram"],
+    });
+    const result = await showSandboxChannelStatus("alpha", {
+      deps,
+      channel: "telegram",
+    });
+
+    const signals = result && "signals" in result ? result.signals : [];
+    expect(
+      signals.find((signal) => signal.label === "Telegram group policy (TELEGRAM_GROUP_POLICY)"),
+    ).toMatchObject({
+      severity: "ok",
+      detail: "allowlist",
+    });
+  });
+
   it("warns when rendered config differs from the sandbox entry", async () => {
     const { deps } = makeDeps({
       exec: () => ({
@@ -1106,37 +1153,44 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
   });
 
   it("compares OpenClaw WeChat account render values", async () => {
-    const { deps } = makeDeps({
-      exec: (_sandbox, command) => {
-        if (command.includes("/sandbox/.openclaw/openclaw.json")) {
-          return {
-            status: 0,
-            stdout: JSON.stringify({
-              channels: {
-                "openclaw-weixin": {
-                  accounts: {
-                    "wechat-account": {
-                      enabled: true,
-                    },
+    const renderedResponses: Array<[string, ExecResult]> = [
+      [
+        "/sandbox/.openclaw/openclaw.json",
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            channels: {
+              "openclaw-weixin": {
+                accounts: {
+                  "wechat-account": {
+                    enabled: true,
                   },
                 },
               },
-            }),
-            stderr: "",
-          };
-        }
-        if (command.includes("/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json")) {
-          return {
-            status: 0,
-            stdout: JSON.stringify({
-              baseUrl: "https://ilinkai.wechat.com",
-              userId: "wechat-user",
-            }),
-            stderr: "",
-          };
-        }
-        return { status: 1, stdout: "", stderr: "" };
-      },
+            },
+          }),
+          stderr: "",
+        },
+      ],
+      [
+        "/sandbox/.openclaw/openclaw-weixin/accounts/wechat-account.json",
+        {
+          status: 0,
+          stdout: JSON.stringify({
+            baseUrl: "https://ilinkai.wechat.com",
+            userId: "wechat-user",
+          }),
+          stderr: "",
+        },
+      ],
+    ];
+    const { deps } = makeDeps({
+      exec: (_sandbox, command) =>
+        renderedResponses.find(([needle]) => command.includes(needle))?.[1] ?? {
+          status: 1,
+          stdout: "",
+          stderr: "",
+        },
       sandbox: entry(["wechat"], [], {
         wechat: [
           {

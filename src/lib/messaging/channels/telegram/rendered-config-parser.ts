@@ -32,6 +32,7 @@ export const telegramRenderedConfigParser: RenderedChannelConfigParser = {
     if (context.agentId === "hermes") {
       return [
         envConfigKey("allowedIds", "~/.hermes/.env", "TELEGRAM_ALLOWED_USERS"),
+        envConfigKey("groupPolicy", "~/.hermes/.env", "TELEGRAM_GROUP_POLICY"),
         structuredConfigKey("requireMention", "~/.hermes/config.yaml", [
           "telegram",
           "require_mention",
