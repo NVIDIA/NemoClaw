@@ -745,13 +745,15 @@ describe.sequential("common-egress agent live targets", () => {
       // The agent must leave the fetched body behind. The host-side assertion
       // independently validates it, so merely echoing the reply token cannot pass.
       const weatherProofCommand = [
+        "set -eu",
         `proof=${shellQuote(weatherProofPath)}`,
         "if test -s \"$proof\"; then printf 'WEATHER_AGENT_OK\\n'; exit 0; fi",
         "tmp=$(mktemp)",
         "trap 'rm -f \"$tmp\"' EXIT",
         "curl -fsS --max-time 30 --output \"$tmp\" 'https://wttr.in/:help'",
         'test -s "$tmp"',
-        "grep -qiE '(usage|weather|wttr\\.in)' \"$tmp\"",
+        "grep -Fq 'Usage:' \"$tmp\"",
+        "grep -Fq 'Special URLs:' \"$tmp\"",
         'mv "$tmp" "$proof"',
         "trap - EXIT",
         "printf 'WEATHER_AGENT_OK\\n'",
@@ -769,7 +771,7 @@ After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`
       const weatherProof = await sandbox.execShell(
         OPENCLAW_BALANCED_SANDBOX,
         trustedSandboxShellScript(
-          `test -s ${shellQuote(weatherProofPath)} && grep -qiE '(usage|weather|wttr\\.in)' ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
+          `test -s ${shellQuote(weatherProofPath)} && grep -Fq 'Usage:' ${shellQuote(weatherProofPath)} && grep -Fq 'Special URLs:' ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
         ),
         {
           artifactName: "c1-weather-agent-proof",
