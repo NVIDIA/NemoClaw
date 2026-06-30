@@ -130,7 +130,7 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
   // proxy and is intentionally left byte-for-byte unchanged). The stanza must
   // therefore never wrap or alias those tools — doing so would pipe their
   // stderr and regress TTY progress/colour. Lock the contract in tests.
-  it("does not wrap or alias curl/git/wget (proactive-only contract, #6018)", () => {
+  it("does not wrap or alias curl/git/wget, keeping the proactive-only contract (#5978)", () => {
     expect(stanza).not.toMatch(/(^|\n)\s*(curl|git|wget)\s*\(\s*\)\s*\{/);
     expect(stanza).not.toMatch(/(^|\n)\s*alias\s+(curl|git|wget)=/);
   });
