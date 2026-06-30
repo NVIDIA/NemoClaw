@@ -64,7 +64,7 @@ export function requiredMessagingChannelPolicyPresets(
 // every other channel's preset (Discord, Telegram, WhatsApp, Teams, WeChat) from
 // the persisted selection, so `policy-list` shows them unapplied even though the
 // channel was configured during onboard. See #5967.
-export function mergeRequiredMessagingChannelPolicyPresets(
+export function mergeEnabledMessagingChannelPolicyPresets(
   selectedPresets: string[],
   channels: string[] | null | undefined,
   knownPresetNames?: Iterable<string> | null,

@@ -15,7 +15,7 @@ import {
 import {
   hasDisabledMessagingPolicyPreset,
   mergeAppliedPolicyPresetsForDisabledMessagingCleanup,
-  mergeRequiredMessagingChannelPolicyPresets,
+  mergeEnabledMessagingChannelPolicyPresets,
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
@@ -113,7 +113,7 @@ export function mergeRequiredSetupPolicyPresets(
 ): string[] {
   const agentFilteredPresets = filterSetupPolicyPresetNamesForAgent(policyPresets, options.agent);
   const mergedPresets = mergeRequiredOpenclawOtelPolicyPresets(
-    mergeRequiredMessagingChannelPolicyPresets(
+    mergeEnabledMessagingChannelPolicyPresets(
       mergeRequiredHermesToolGatewayPolicyPresets(
         agentFilteredPresets,
         options.hermesToolGateways,
