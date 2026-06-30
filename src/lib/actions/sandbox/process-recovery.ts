@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Buffer } from "node:buffer";
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { dockerSpawnSync } from "../../adapters/docker";
@@ -41,6 +40,11 @@ import {
   sandboxAgentName,
 } from "./gateway-restart";
 import { printGatewayWedgeDiagnostics } from "./gateway-wedge-diagnostics";
+import { enforceHermesSecretBoundaryOnRunningGateway } from "./hermes-secret-boundary-recovery";
+import {
+  buildSandboxExecMarkedCommand,
+  extractSandboxExecCommandStdout,
+} from "./sandbox-exec-output";
 
 export type { SandboxForwardHealth, SandboxForwardListEntry } from "./forward-health";
 export {
@@ -61,7 +65,6 @@ export type SandboxCommandResult = {
   stderr: string;
 };
 
-const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
 const DEFAULT_SANDBOX_EXEC_TIMEOUT_MS = 15000;
 
 type AuxiliaryRecoveryResult = {
@@ -81,60 +84,9 @@ function anyAuxiliaryRecovered(results: AuxiliaryRecoveryResult[]): boolean {
   return results.some((result) => result.recovered === true);
 }
 
-function buildSandboxExecMarkedCommand(command: string): string {
-  if (!command.includes("validate-hermes-env-secret-boundary.py")) {
-    return `printf '%s\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
-  }
-  const encodedCommand = Buffer.from(command, "utf8").toString("base64");
-  return [
-    `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'`,
-    "command -v base64 >/dev/null 2>&1 || { echo NEMOCLAW_BASE64_MISSING >&2; exit 127; }",
-    `printf '%s' '${encodedCommand}' | base64 -d | sh`,
-  ].join("; ");
-}
-
-function parseSandboxExecStdoutFrame(line: string): { text: string; framed: boolean } {
-  const trimmed = line.trimStart();
-  const stdoutPrefix = trimmed.match(/^(?:\[stdout\]|stdout:)\s*/i);
-  if (!stdoutPrefix) return { text: line, framed: false };
-  return { text: trimmed.slice(stdoutPrefix[0].length), framed: true };
-}
-
 function resolveSandboxExecTimeout(timeout = DEFAULT_SANDBOX_EXEC_TIMEOUT_MS): number {
   const timeoutOverride = Number(process.env.NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS || "");
   return Number.isFinite(timeoutOverride) && timeoutOverride > 0 ? timeoutOverride : timeout;
-}
-
-/**
- * Extract child-command stdout from `openshell sandbox exec` output after the
- * sentinel printed by `markedCommand`. Some OpenShell versions frame child
- * stdout for humans, e.g. `stdout: __NEMOCLAW_SANDBOX_EXEC_STARTED__`, while
- * older versions pass raw stdout through unchanged. Normalize only recognized
- * stdout frame prefixes at this transport boundary so recovery, status, and
- * Hermes boundary callers keep consuming plain command stdout.
- *
- * Security boundary: the sentinel must occupy its own stdout line after optional
- * frame-prefix stripping. A preamble that merely contains the sentinel string is
- * rejected so sandbox output cannot move the parser boundary forward. Remove
- * this compatibility shim once OpenShell exposes a stable machine-readable exec
- * output mode that preserves child stdout/stderr without human framing.
- */
-function extractSandboxExecCommandStdout(output: string): string | null {
-  const stdout = output.trim();
-  if (!stdout) return null;
-  const lines = stdout.split(/\r?\n/).map(parseSandboxExecStdoutFrame);
-  const exactMarkerIndex = lines.findIndex(
-    (line) => line.text.trim() === SANDBOX_EXEC_STARTED_MARKER,
-  );
-  if (exactMarkerIndex >= 0) {
-    return lines
-      .slice(exactMarkerIndex + 1)
-      .map((line) => line.text)
-      .join("\n")
-      .trim();
-  }
-
-  return null;
 }
 
 function getSandboxHealthProbeUrl(sandboxName: string): string {
@@ -741,88 +693,6 @@ function isHermesAgent(
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
 ): agent is NonNullable<ReturnType<typeof agentRuntime.getSessionAgent>> & { name: "hermes" } {
   return !!agent && agent.name === "hermes";
-}
-
-type SecretBoundaryRefusalReason = "raw-secret" | "inconclusive";
-
-type HermesSecretBoundaryEnforcement =
-  | { refused: false }
-  | { refused: true; reason: SecretBoundaryRefusalReason; stderr: string };
-
-function printValidatorStderr(stderr: string): void {
-  if (!stderr.trim()) return;
-  for (const line of stderr.split(/\r?\n/)) {
-    if (line.trim()) console.error(`  ${line}`);
-  }
-}
-
-/**
- * Re-run the Hermes env-file secret boundary through the authenticated PID 1
- * control path before a healthy recover returns. PID 1 owns the exact gateway
- * child, so a raw-secret refusal can stop the listener without regex matching
- * or a second process racing the supervisor. Missing helpers and transport
- * failures remain fail-closed but leave an otherwise healthy legacy gateway
- * untouched so the operator can rebuild it deliberately.
- */
-function enforceHermesSecretBoundaryOnRunningGateway(
-  sandboxName: string,
-  agent: ReturnType<typeof agentRuntime.getSessionAgent>,
-  requestGatewaySupervisorAction: typeof executeGatewaySupervisorAction,
-): HermesSecretBoundaryEnforcement | null {
-  const persistedAgent = registry.getSandbox(sandboxName)?.agent;
-  if (persistedAgent !== "hermes") return null;
-  if (!isHermesAgent(agent)) {
-    console.error("");
-    console.error(
-      `  ${R}Hermes agent definition could not be loaded for sandbox '${sandboxName}'.${R}`,
-    );
-    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    return { refused: true, reason: "inconclusive", stderr: "" };
-  }
-  const result = requestGatewaySupervisorAction(sandboxName, "recover");
-  if (!result) {
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary check could not run against the Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    return { refused: true, reason: "inconclusive", stderr: "" };
-  }
-  const output = `${result.stdout}\n${result.stderr}`;
-  if (result.status === 0 && result.stdout.includes("GATEWAY_PID=")) {
-    return { refused: false };
-  }
-  if (output.includes("SECRET_BOUNDARY_REFUSED")) {
-    printValidatorStderr(result.stderr);
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary check refused recovery of Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error("  /sandbox/.hermes/.env contains raw secret-shaped values. Replace them with");
-    console.error(
-      "  openshell:resolve:env:<name> placeholders and re-run `nemoclaw <sandbox> recover`.",
-    );
-    return { refused: true, reason: "raw-secret", stderr: result.stderr };
-  }
-  if (output.includes("SECRET_BOUNDARY_VALIDATOR_MISSING")) {
-    printValidatorStderr(result.stderr);
-    console.error("");
-    console.error(
-      `  ${R}Secret-boundary validator missing for Hermes gateway in '${sandboxName}'.${R}`,
-    );
-    console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
-    console.error("  Re-image the sandbox to enable per-run enforcement.");
-    return { refused: true, reason: "inconclusive", stderr: result.stderr };
-  }
-  printValidatorStderr(result.stderr);
-  console.error("");
-  console.error(
-    `  ${R}Secret-boundary check did not complete cleanly for Hermes gateway in '${sandboxName}'.${R}`,
-  );
-  console.error(
-    "  Refusing recovery; inspect the validator output above before re-running `nemoclaw <sandbox> recover`.",
-  );
-  return { refused: true, reason: "inconclusive", stderr: result.stderr };
 }
 
 /**

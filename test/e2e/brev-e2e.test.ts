@@ -53,6 +53,7 @@
 import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child_process";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../../src/lib/core/shell-quote";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -99,7 +100,7 @@ function requireInstanceName(): string {
 }
 
 // Launchable configuration
-// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, npm deps, Docker images.
+// CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
 // Default: use the repo-local script (hermetic — always matches the checked-out branch).
 // Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
@@ -400,14 +401,17 @@ function runRemoteCommand(
   command: string,
   timeoutMs = GPU_TEST_SUITE ? 1_800_000 : 900_000,
 ): string {
+  const dockerGroupCommand = shellQuote(`${command} 2>&1 | tee /tmp/test-output.log`);
   const cmd = [
     `set -o pipefail`,
     `source ~/.nvm/nvm.sh 2>/dev/null || true`,
     `cd ${remoteDir}`,
     `export npm_config_prefix=$HOME/.local`,
     `export PATH=$HOME/.local/bin:$PATH`,
-    // Docker socket is chmod 666 by setup script, no sg docker needed.
-    `${command} 2>&1 | tee /tmp/test-output.log`,
+    // The setup adds this user to the docker group without weakening the
+    // host-root-equivalent socket. `sg` also handles a session created before
+    // that group membership became visible.
+    `sg docker -c ${dockerGroupCommand}`,
   ].join(" && ");
 
   // Stream test output to CI log AND capture it for assertions
@@ -442,7 +446,7 @@ function printRemoteFailureDiagnostics(): void {
         `echo "--- openshell sandbox list ---"`,
         `PATH=$HOME/.local/bin:$PATH openshell sandbox list 2>&1 || true`,
         `echo "--- docker ps ---"`,
-        `docker ps -a --filter label=openshell.ai/managed-by=openshell 2>&1 || true`,
+        `sg docker -c 'docker ps -a --filter label=openshell.ai/managed-by=openshell' 2>&1 || true`,
         `echo "--- openshell gateway log ---"`,
         `tail -200 "$HOME/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log" 2>&1 || true`,
         `latest="$(find "$HOME/.nemoclaw/onboard-failures" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort | tail -1)"`,
@@ -749,7 +753,6 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
     `sudo nvidia-ctk runtime configure --runtime=docker`,
     `sudo systemctl restart docker`,
-    `sudo chmod 666 /var/run/docker.sock`,
     // Brev GPU branch-validation VMs are single-use CI hosts. The
     // openshell-docker network is created later by gateway startup, so this
     // setup cannot know the exact future bridge subnet. Allow Docker's default
@@ -758,7 +761,7 @@ function gpuDockerRuntimeSetupCommands(): string[] {
     // route is actually broken (#3959).
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
     `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
-    `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
+    `sg docker -c 'docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi'`,
   ];
 }
 
@@ -884,12 +887,10 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
  * hand off to writeManualRegistry() to kill the hung process.
  */
 function pollForSandboxReady(elapsed: () => string): void {
-  // Launch onboard fully detached. We chmod the docker socket so we don't
-  // need sg docker (which complicates backgrounding). nohup + </dev/null +
-  // disown ensures the SSH session can exit cleanly without waiting for
-  // the background process.
+  // Launch onboard fully detached inside a docker-group shell. nohup plus
+  // redirected descriptors lets the SSH session exit cleanly while retaining
+  // least-privilege Docker socket ownership.
   console.log(`[${elapsed()}] Starting nemoclaw onboard in background...`);
-  ssh(`sudo chmod 666 /var/run/docker.sock 2>/dev/null || true`, { timeout: 10_000 });
   // Launch onboard in background. The SSH command may exit with code 255
   // (SSH error) because background processes keep file descriptors open.
   // That's fine — we just need the process to start; we'll poll for
@@ -899,7 +900,7 @@ function pollForSandboxReady(elapsed: () => string): void {
       [
         `source ~/.nvm/nvm.sh 2>/dev/null || true`,
         `cd ${remoteDir}`,
-        `nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 & disown`,
+        `sg docker -c ${shellQuote("nohup nemoclaw onboard --non-interactive </dev/null >/tmp/nemoclaw-onboard.log 2>&1 &")}`,
         `sleep 2`,
         `echo "onboard launched"`,
       ].join(" && "),
@@ -1108,9 +1109,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     } else {
       // ── Launchable path: pre-baked CI environment ──────────────────
       // Uses brev create with --startup-script.
-      // The script pre-installs Docker, Node.js, OpenShell CLI, npm deps,
-      // and pre-pulls Docker images. We just need to rsync branch code and
-      // run onboard.
+      // The script pre-installs Docker, Node.js, OpenShell CLI, and npm deps.
+      // We just need to rsync branch code and run onboard.
       createBrevInstanceAndWaitForSsh(elapsed);
 
       // Wait for launchable setup to finish (sentinel file)

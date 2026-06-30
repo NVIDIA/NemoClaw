@@ -52,7 +52,7 @@ import {
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import { mergeRebuildMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
 import { shellQuote } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
@@ -1011,8 +1011,13 @@ export async function rebuildSandbox(
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
-    const savedPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest?.policyPresets ?? registryPolicyPresets,
+    const rebuildEnabledChannelIds = (rebuildMessagingPlan?.channels ?? [])
+      .filter((ch) => !ch.disabled)
+      .map((ch) => ch.channelId);
+    const savedPresets = mergeRebuildMessagingPolicyPresets(
+      backupManifest?.policyPresets,
+      registryPolicyPresets,
+      rebuildEnabledChannelIds,
       rebuildDisabledChannels,
     );
     const restoredPresets: string[] = [];

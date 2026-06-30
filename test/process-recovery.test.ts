@@ -16,6 +16,7 @@ const { checkAndRecoverSandboxProcesses } = requireSource(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 function decodeSandboxExecShellPayload(payload: string): string {
@@ -962,7 +963,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
       recovered: false,
       forwardRecovered: false,
       secretBoundaryRefused: true,
-      secretBoundaryReason: "inconclusive",
+      secretBoundaryReason: "agent-missing",
     });
     expect(requestGatewaySupervisorAction).not.toHaveBeenCalled();
     expect(forwardListCalls).toBe(0);
@@ -1092,7 +1093,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     );
   });
 
-  it("refuses recovery when the Hermes secret-boundary validator is absent", () => {
+  it("refuses recovery when the Hermes secret-boundary validator is absent on an older sandbox image", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -1147,15 +1148,15 @@ hermes-box  127.0.0.1  8642  12346  running`;
       recovered: false,
       forwardRecovered: false,
       secretBoundaryRefused: true,
-      secretBoundaryReason: "inconclusive",
+      secretBoundaryReason: "validator-missing",
     });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     const errorOutput = errorSpy.mock.calls.map((call) => String(call[0] ?? "")).join("\n");
     expect(errorOutput).toContain("[gateway-recovery] ERROR");
     expect(errorOutput).toContain(
-      "Secret-boundary validator missing for Hermes gateway in 'hermes-box'",
+      "Hermes secret-boundary validator missing in sandbox 'hermes-box'",
     );
-    expect(errorOutput).toContain("Re-image the sandbox to enable per-run enforcement.");
+    expect(errorOutput).toContain("Re-image the sandbox with a current Hermes build.");
   });
 
   it("does not invoke the Hermes PID 1 supervisor path for a running OpenClaw sandbox", () => {
@@ -1248,7 +1249,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
       recovered: false,
       forwardRecovered: false,
       secretBoundaryRefused: true,
-      secretBoundaryReason: "inconclusive",
+      secretBoundaryReason: "exec-failed",
     });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");
@@ -1260,7 +1261,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
     );
   });
 
-  it("treats a non-zero boundary check without the REFUSED marker as inconclusive, not raw-secret", () => {
+  it("treats a non-zero boundary check without the REFUSED marker as unexpected, not raw-secret", () => {
     const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
     const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     const registry = requireSource("../src/lib/state/registry.js");
@@ -1313,7 +1314,7 @@ hermes-box  127.0.0.1  8642  12346  running`;
       recovered: false,
       forwardRecovered: false,
       secretBoundaryRefused: true,
-      secretBoundaryReason: "inconclusive",
+      secretBoundaryReason: "unexpected-marker",
     });
     expect(requestGatewaySupervisorAction).toHaveBeenCalledOnce();
     expect(requestGatewaySupervisorAction).toHaveBeenCalledWith("hermes-box", "recover");

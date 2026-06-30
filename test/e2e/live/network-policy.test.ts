@@ -21,6 +21,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import {
   POLICY_ADD_EXPECT_SCRIPT,
   requirePolicyPresetNumber,
@@ -46,6 +47,9 @@ const PACKAGE_MANAGER_TIMEOUT_MS = 5 * 60_000;
 const POLICY_SETTLE_MS =
   process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 5_000 : 3_000;
 const ONBOARD_ATTEMPTS = process.env.CI === "true" || process.env.GITHUB_ACTIONS === "true" ? 3 : 1;
+const DENIED_REASON_HOST = "nemoclaw-prr-repro-long-hostname-for-truncation-test.example.invalid";
+const DENIED_REASON_ENDPOINT = `${DENIED_REASON_HOST}:443`;
+const DENIED_REASON_URL = `https://${DENIED_REASON_HOST}/some/long/path`;
 type NemoEnv = NodeJS.ProcessEnv;
 
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
@@ -171,6 +175,22 @@ async function curlStatus(
     { artifactName },
   );
   return text(result).trim();
+}
+
+async function waitForDeniedReasonLog(host: HostCliClient) {
+  return pollDeniedReasonLog({
+    attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
+    endpoint: DENIED_REASON_ENDPOINT,
+    readLogs: async (attempt) => {
+      const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
+        artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
+        timeoutMs: 60_000,
+      });
+      expect(logs.exitCode, text(logs)).toBe(0);
+      return text(logs);
+    },
+    settle: () => sleep(1_000),
+  });
 }
 
 async function startMarkerServer(
@@ -374,6 +394,7 @@ RUN_NETWORK_POLICY_TEST(
       boundary: "live-sandbox-network-policy",
       contracts: [
         "deny-by-default egress",
+        "OpenShell 0.0.71 preserves the full denied endpoint and policy disposition through nemoclaw logs --tail 50 (#4760)",
         "read-only preset allowlist behavior",
         "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
         "live policy-add and dry-run behavior",
@@ -409,6 +430,7 @@ RUN_NETWORK_POLICY_TEST(
       timeoutMs: 30_000,
     });
     expect(openshellVersion.exitCode, text(openshellVersion)).toBe(0);
+    expect(text(openshellVersion)).toContain("0.0.71");
 
     const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
     cleanup.add(`destroy network-policy sandbox ${SANDBOX_NAME}`, async () => {
@@ -496,6 +518,31 @@ RUN_NETWORK_POLICY_TEST(
     expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
       /STATUS_403|ERROR_/,
     );
+
+    const longHostnameDenial = await sandboxBash(sandbox, `curl -m 5 -sS ${DENIED_REASON_URL}`, {
+      artifactName: "tc-net-4760-denied-long-hostname",
+    });
+    expect(
+      longHostnameDenial.exitCode !== 0 || /403|denied|forbidden/i.test(text(longHostnameDenial)),
+      `long-hostname egress probe must be denied: ${text(longHostnameDenial)}`,
+    ).toBe(true);
+
+    const deniedReason = await waitForDeniedReasonLog(host);
+    expect(deniedReason.reason, deniedReason.line).toContain(DENIED_REASON_ENDPOINT);
+    expect(deniedReason.reason, deniedReason.line).toMatch(
+      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i,
+    );
+    expect(deniedReason.reason, deniedReason.line).not.toContain("...");
+    const policyField = deniedReason.line.match(/\[policy:([^\s\]]+)/u)?.[1] ?? "";
+    const hasCompletePolicyDisposition =
+      (policyField !== "" && policyField !== "-") ||
+      /not (?:in|allowed by) (?:any )?policy|is not allowed by any policy/i.test(
+        deniedReason.reason,
+      );
+    expect(
+      hasCompletePolicyDisposition,
+      `DENIED log must retain a named policy or the explicit any-policy rejection: ${deniedReason.line}`,
+    ).toBe(true);
 
     const weatherApply = await applyPreset(host, "weather");
     expect(weatherApply.exitCode, text(weatherApply)).toBe(0);

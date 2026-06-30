@@ -273,7 +273,7 @@ describe("gateway serving watchdog (#4710)", () => {
       curlPlan: [0, 7, 7, 7, 7],
       cmdline: "vim notes.txt",
       expectKill: false,
-      settleSeconds: 0.8,
+      settleSeconds: 1.2,
     });
     try {
       expect(result.status, `script failed: ${result.stderr}`).toBe(0);
@@ -363,6 +363,9 @@ describe("gateway serving watchdog (#4710)", () => {
         '  rest="$(tail -n +2 "$_CURL_PLAN" 2>/dev/null)"',
         '  if [ -n "$rest" ]; then printf "%s\\n" "$rest" >"$_CURL_PLAN"; fi',
         `  printf 'probe\\n' >> ${JSON.stringify(probeLog)}`,
+        '  case "$next" in',
+        '    0) record_gateway_pid "$GATEWAY_B" "$GATEWAY_B_START" ;;',
+        "  esac",
         '  return "$next"',
         "}",
         "command sleep 60 &",
@@ -380,10 +383,8 @@ describe("gateway serving watchdog (#4710)", () => {
         'capture_openclaw_pid_start_identity() { printf -v "$2" "%s" "watchdog-test"; }',
         'record_gateway_pid "$GATEWAY_A" "$GATEWAY_A_START"',
         "start_gateway_serving_watchdog",
-        // Wait until gateway A has been probed (and armed via the plan's 0),
-        // then swap the pidfile to gateway B while refusals continue.
-        `for _ in $(command seq 1 200); do [ -s ${JSON.stringify(probeLog)} ] && break; command sleep 0.02; done`,
-        'record_gateway_pid "$GATEWAY_B" "$GATEWAY_B_START"',
+        // The curl stub swaps to gateway B during A's successful probe,
+        // before the watchdog can start counting refused probes again.
         'printf "B_PID=%s\\n" "$GATEWAY_B"',
         "command sleep 0.6",
         'if kill -0 "$GATEWAY_B" 2>/dev/null; then printf "B_ALIVE=1\\n"; else printf "B_ALIVE=0\\n"; fi',
