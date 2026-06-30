@@ -2478,10 +2478,11 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
 # Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
-# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
+# approval semantics. In OpenClaw 2026.5.x and 2026.6.x, a gateway-pinned
 # `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
-# for its own connection and return the same pending-scope error it is trying
-# to resolve. List calls must stay gateway-pinned so we inspect the live
+# for its own connection, replace the pending request, and return the same
+# pending-scope error it is trying to resolve. List calls must stay
+# gateway-pinned so we inspect the live
 # gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
 # OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
 # pairing fallback. Remove this when OpenClaw approve can complete scope
@@ -2995,11 +2996,19 @@ if not isinstance(pending, dict):
     pending = {}
 request = next((item for item in pending.values() if isinstance(item, dict) and item.get("requestId") == request_id), None)
 if request:
-    print(json.dumps({
+    snapshot = {
         "requestId": request_id,
         "deviceId": request.get("deviceId"),
-        "scopes": request.get("scopes") or request.get("requestedScopes") or [],
-    }, sort_keys=True))
+        "publicKey": request.get("publicKey"),
+        "clientId": request.get("clientId"),
+        "clientMode": request.get("clientMode"),
+        "role": request.get("role"),
+        "roles": request.get("roles"),
+    }
+    for key in ("scopes", "requestedScopes"):
+        if key in request:
+            snapshot[key] = request.get(key)
+    print(json.dumps(snapshot, sort_keys=True))
 PYAPPROVEBEFORE
 )"
     fi
@@ -3050,6 +3059,60 @@ def norm(value):
 def scope_set(entry, key="scopes"):
     return {norm(scope) for scope in (entry.get(key) or []) if norm(scope)}
 
+def roles(entry):
+    result = {norm(role) for role in (entry.get("roles") or []) if norm(role)}
+    if norm(entry.get("role")):
+        result.add(norm(entry.get("role")))
+    return result
+
+def canonical_operator_scopes(scopes):
+    canonical = set(scopes)
+    if "operator.write" in canonical:
+        canonical.add("operator.read")
+    if {"operator.read", "operator.write"} & canonical:
+        canonical.add("operator.pairing")
+    return canonical
+
+def requested_scope_view(entry):
+    views = []
+    for key in ("scopes", "requestedScopes"):
+        if key not in entry:
+            continue
+        value = entry.get(key)
+        if not isinstance(value, list):
+            return None
+        view = canonical_operator_scopes({norm(scope) for scope in value if norm(scope)})
+        if not view:
+            return None
+        views.append(view)
+    if not views or any(view != views[0] for view in views[1:]):
+        return None
+    return views[0]
+
+def is_same_identity_scope_replacement(original, replacement, paired_device, paired_scope_set, requested):
+    original_key = norm(original.get("publicKey"))
+    replacement_key = norm(replacement.get("publicKey"))
+    paired_key = norm(paired_device.get("publicKey"))
+    original_mode = norm(original.get("clientMode")).lower()
+    client_id = norm(original.get("clientId"))
+    replacement_scopes = requested_scope_view(replacement)
+    return (
+        bool(original_key)
+        and original_key == replacement_key == paired_key
+        and original_mode == "cli"
+        and norm(replacement.get("clientMode")).lower() == original_mode
+        and norm(paired_device.get("clientMode")).lower() == original_mode
+        and bool(client_id)
+        and norm(replacement.get("clientId")) == client_id
+        and norm(paired_device.get("clientId")) == client_id
+        and norm(paired_device.get("deviceId")) == norm(original.get("deviceId"))
+        and roles(original) == roles(replacement) == roles(paired_device) == {"operator"}
+        and replacement_scopes is not None
+        and replacement_scopes.issubset({"operator.pairing", "operator.read", "operator.write"})
+        and canonical_operator_scopes(paired_scope_set | replacement_scopes)
+        == canonical_operator_scopes(paired_scope_set | requested)
+    )
+
 def output_mentions_request_id(value):
     request = norm(value)
     return bool(request and re.search(r"(?<![0-9A-Za-z_-])" + re.escape(request) + r"(?![0-9A-Za-z_-])", approve_output))
@@ -3060,7 +3123,7 @@ def is_scope_upgrade_approval_compat_failure(output):
         "gatewayclientrequesterror" in text or "gateway" in text
     )
 
-requested = scope_set(before)
+requested = requested_scope_view(before)
 device_id = norm(before.get("deviceId"))
 pending = load("pending.json")
 paired = load("paired.json")
@@ -3072,6 +3135,12 @@ for key, item in pending.items():
 still_pending = original_pending_key is not None
 paired_entry = paired.get(device_id) if device_id else None
 paired_scopes = scope_set(paired_entry or {}, "approvedScopes") | scope_set(paired_entry or {})
+allowed = {"operator.pairing", "operator.read", "operator.write"}
+if (not request_id or norm(before.get("requestId")) != request_id or not device_id
+        or requested is None or not requested.issubset(allowed)
+        or "operator.pairing" not in paired_scopes or not isinstance(paired_entry, dict)
+        or norm(paired_entry.get("deviceId")) != device_id):
+    raise SystemExit(1)
 # Compatibility boundary: treat a nonzero approve as success only when OpenClaw
 # already removed the pending request and persisted the requested paired scopes.
 if request_id and requested and not still_pending and isinstance(paired_entry, dict) and requested.issubset(paired_scopes):
@@ -3079,31 +3148,50 @@ if request_id and requested and not still_pending and isinstance(paired_entry, d
     raise SystemExit(0)
 
 # Compatibility boundary: repair only the local OpenClaw device state after a
-# failed approve leaves behind exactly one same-device admin-shaped replacement
-# request. Some OpenClaw failures only surface opaque gateway text, so the state
-# files are the source of truth; stderr is only used as an exact disambiguator
-# when it carries a replacement request ID. Remove this once OpenClaw stops
-# replacing operator.write approvals with admin-shaped pending requests or
-# exposes a supported approval repair API.
-allowed = {"operator.pairing", "operator.read", "operator.write"}
-if not request_id or not device_id or not requested or not requested.issubset(allowed) or "operator.pairing" not in paired_scopes:
-    raise SystemExit(1)
+# failed approve leaves behind one exact same-identity non-admin replacement, or
+# the older reviewed admin-shaped replacement. The non-admin form must be the
+# only canonical-scope match and its request ID must appear in the known gateway
+# failure. Some older failures only surface opaque text, so the state files remain
+# the source of truth for the separately bounded admin-shaped case. Remove this
+# when OpenClaw stops replacing operator.write approvals or exposes a supported
+# approval repair API.
 replacement_allowed = allowed | {"operator.admin"}
 candidates = []
 mentioned = []
+same_scope_candidates = []
+same_scope_mentioned = []
+same_device_pending = []
 for key, item in pending.items():
     item_scopes = scope_set(item) if isinstance(item, dict) else set()
+    same_scope_view = requested_scope_view(item) if isinstance(item, dict) else None
+    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
+            and norm(item.get("deviceId")) == device_id):
+        same_device_pending.append((key, item))
+    if (isinstance(item, dict) and norm(item.get("requestId")) != request_id
+            and norm(item.get("deviceId")) == device_id and same_scope_view is not None
+            and same_scope_view.issubset(allowed)
+            and is_same_identity_scope_replacement(before, item, paired_entry, paired_scopes, requested)):
+        same_scope_candidates.append((key, item))
+        if output_mentions_request_id(item.get("requestId")):
+            same_scope_mentioned.append((key, item))
     if (isinstance(item, dict) and norm(item.get("requestId")) != request_id and norm(item.get("deviceId")) == device_id and
             "operator.admin" in item_scopes and requested.issubset(item_scopes) and item_scopes.issubset(replacement_allowed)):
         candidates.append((key, item))
         if output_mentions_request_id(item.get("requestId")):
             mentioned.append((key, item))
 compatibility = "openclaw-approve-recovered-replacement"
-if len(mentioned) == 1:
+if (is_scope_upgrade_approval_compat_failure(approve_output)
+        and not still_pending and len(same_device_pending) == 1
+        and len(same_scope_candidates) == 1
+        and len(same_scope_mentioned) == 1):
+    replacement_key, replacement = same_scope_mentioned[0]
+    compatibility = "openclaw-approve-recovered-same-scope-replacement"
+elif len(mentioned) == 1:
     replacement_key, replacement = mentioned[0]
 elif len(candidates) == 1 and not re.search(r"\brequestId\b|\brequest[-_ ]?id\b", approve_output, re.IGNORECASE):
     replacement_key, replacement = candidates[0]
-elif still_pending and not candidates and is_scope_upgrade_approval_compat_failure(approve_output):
+elif (still_pending and not candidates and not same_device_pending
+        and is_scope_upgrade_approval_compat_failure(approve_output)):
     replacement_key = original_pending_key
     compatibility = "openclaw-approve-recovered-original"
 else:

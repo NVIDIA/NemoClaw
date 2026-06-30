@@ -1039,11 +1039,11 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.mkdirSync(devicesDir, { recursive: true });
       fs.writeFileSync(
         pendingFile,
-        '{"original":{"requestId":"request-1","deviceId":"device-1","scopes":["operator.write"]}}',
+        '{"original":{"requestId":"request-1","deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.write"]}}',
       );
       fs.writeFileSync(
         pairedFile,
-        '{"device-1":{"deviceId":"device-1","scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
+        '{"device-1":{"deviceId":"device-1","publicKey":"public-key-1","clientId":"openclaw-cli","clientMode":"cli","role":"operator","roles":["operator"],"scopes":["operator.pairing"],"approvedScopes":["operator.pairing"],"tokens":{"operator":{"role":"operator","scopes":["operator.pairing"]}}}}',
       );
     };
     fs.writeFileSync(
