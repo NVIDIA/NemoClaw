@@ -12,7 +12,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs such as jetson-nvmap-gpu-vitest and sandbox-rlimits-connect-vitest are skipped unless selected."
+        description: "Optional comma-separated free-standing live Vitest job ids. Empty runs default-enabled jobs only when scenarios is also empty; explicit-only jobs openshell-gateway-auth-contract-vitest, jetson-nvmap-gpu-vitest, and sandbox-rlimits-connect-vitest are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -38,6 +38,8 @@ env:
   # A dispatch selects one OpenShell integration target for the entire fan-out.
   # Individual jobs must not silently select a different release channel.
   NEMOCLAW_OPENSHELL_CHANNEL: ${{ inputs.openshell_channel }}
+  # The explicit dev choice authorizes the moving, unverified dev artifact.
+  NEMOCLAW_ALLOW_DEV_NO_VERIFY: ${{ inputs.openshell_channel == 'dev' && '1' || '0' }}
 
 concurrency:
   group: e2e-vitest-scenarios-${{ github.ref }}-${{ inputs.scenarios || 'supported' }}-${{ inputs.jobs || 'all-jobs' }}
@@ -371,6 +373,76 @@ jobs:
         with:
           name: e2e-vitest-scenarios-openshell-version-pin
           path: e2e-artifacts/vitest/openshell-version-pin/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  openshell-gateway-auth-contract-vitest:
+    needs: generate-matrix
+    # Accepted release-gate tradeoff: this resource-heavy live probe remains
+    # selective because regular PR CI enforces the generated auth/JWT config and
+    # package-service fail-closed boundary in focused unit tests. Affected PRs
+    # must explicitly dispatch this job and record its result before merge.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract-vitest,') || contains(format(',{0},', inputs.scenarios), ',openshell-gateway-auth-contract,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FREE_STANDING_VITEST_JOB: "1"
+      FREE_STANDING_SCENARIO_ID: "openshell-gateway-auth-contract"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/openshell-gateway-auth-contract
+      NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72"
+      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: bash scripts/install-openshell.sh
+
+      - name: Pre-pull pinned gateway auth probe image
+        run: docker pull "$DOCKER_GRPC_PROBE_IMAGE"
+
+      - name: Run OpenShell gateway auth contract live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell-gateway >/dev/null 2>&1; then
+            OPENSHELL_GATEWAY_BIN="$(command -v openshell-gateway)"
+          elif [ -x "$HOME/.local/bin/openshell-gateway" ]; then
+            OPENSHELL_GATEWAY_BIN="$HOME/.local/bin/openshell-gateway"
+          else
+            echo "::error::OpenShell gateway binary not found after install"
+            ls -la /usr/local/bin/openshell-gateway "$HOME/.local/bin/openshell-gateway" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_GATEWAY_BIN
+          echo "Using OPENSHELL_GATEWAY_BIN=$OPENSHELL_GATEWAY_BIN"
+          "$OPENSHELL_GATEWAY_BIN" --version
+          npx vitest run --project e2e-scenarios-live \
+            test/e2e-scenario/live/openshell-gateway-auth-source-contract.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenShell gateway auth contract artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-vitest-scenarios-openshell-gateway-auth-contract
+          path: e2e-artifacts/vitest/openshell-gateway-auth-contract/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -6155,11 +6227,15 @@ jobs:
   # consistent comment formatting across both suites.
   report-to-pr:
     runs-on: ubuntu-latest
+    # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
+    # makes the report wait for and record any requested job without adding
+    # skipped checks to the normal pull_request workflow.
     needs:
       [
         generate-matrix,
         live-scenarios,
         openshell-version-pin-vitest,
+        openshell-gateway-auth-contract-vitest,
         mcp-bridge-vitest,
         onboard-negative-paths-vitest,
         skill-agent-vitest,
@@ -6259,6 +6335,11 @@ jobs:
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
             const explicitOnlySkippedJobs = [
               {
+                job: 'openshell-gateway-auth-contract-vitest',
+                scenario: 'openshell-gateway-auth-contract',
+                reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
+              },
+              {
                 job: 'jetson-nvmap-gpu-vitest',
                 scenario: 'jetson-nvmap-gpu',
                 reason: 'default dispatch excludes Jetson until a stable Jetson runner is available',
@@ -6353,7 +6434,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu-vitest` and `sandbox-rlimits-connect-vitest` are skipped unless selected)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract-vitest`, `jetson-nvmap-gpu-vitest`, and `sandbox-rlimits-connect-vitest` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',

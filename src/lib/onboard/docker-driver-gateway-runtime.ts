@@ -9,11 +9,11 @@ import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { isErrnoException } from "../core/errno";
 import * as dockerDriverGatewayRuntimeMarker from "./docker-driver-gateway-runtime-marker";
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
+import * as gatewayBinding from "./gateway-binding";
 import {
   gatewayProcessCmdlineMatches,
   OPENSHELL_GATEWAY_PROCESS_NAMES,
 } from "./gateway-process-identity";
-import * as gatewayBinding from "./gateway-binding";
 import type { PortProbeResult } from "./preflight";
 import * as vmDriverProcess from "./vm-driver-process";
 
@@ -173,7 +173,7 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
     versionOutput: string | null = null,
     platform: NodeJS.Platform = process.platform,
   ): Record<string, string> {
-    return dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
+    const gatewayEnv = dockerDriverGatewayEnv.buildDockerDriverGatewayEnv({
       platform,
       gatewayPort: currentGatewayPort(),
       stateDir: getDockerDriverGatewayStateDir(),
@@ -181,6 +181,10 @@ export function createDockerDriverGatewayRuntimeHelpers(deps: DockerDriverGatewa
       getDockerSupervisorImage: () => getOpenShellDockerSupervisorImage(versionOutput),
       resolveSandboxBin: resolveOpenShellSandboxBinary,
     });
+    if (gatewayEnv.OPENSHELL_LOCAL_TLS_DIR) {
+      process.env.OPENSHELL_LOCAL_TLS_DIR = gatewayEnv.OPENSHELL_LOCAL_TLS_DIR;
+    }
+    return gatewayEnv;
   }
 
   function isPidAlive(pid: number): boolean {

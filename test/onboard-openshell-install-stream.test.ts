@@ -9,8 +9,8 @@ const { spawnSyncMock } = vi.hoisted(() => ({ spawnSyncMock: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawnSync: spawnSyncMock }));
 
 import {
-  runOpenshellInstall,
   type RunOpenshellInstallDeps,
+  runOpenshellInstall,
 } from "../src/lib/onboard/openshell-pin";
 
 function makeDeps(overrides: Partial<RunOpenshellInstallDeps> = {}): RunOpenshellInstallDeps {

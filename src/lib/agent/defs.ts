@@ -13,12 +13,12 @@ import {
   resolveAgentNameAlias as resolveKnownAgentNameAlias,
 } from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
-import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
+import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
 
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
-export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
+export type { AgentWebAuth, AgentWebAuthMethod } from "./web-auth";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 

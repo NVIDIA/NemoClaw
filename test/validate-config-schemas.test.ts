@@ -9,11 +9,11 @@
  * Vitest project.
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
+import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { discoverTargets } from "../scripts/validate-configs";

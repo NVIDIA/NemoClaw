@@ -74,15 +74,18 @@ import {
   hydrateMessagingChannelConfig,
   MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
 } from "../../messaging-channel-config";
-import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
-import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
-import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
-import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
-import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
-import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
 import { isLinuxDockerDriverGatewayEnabled } from "../../onboard/docker-driver-platform";
+import { enforceDockerGpuPatchPreserveNetwork } from "../../onboard/docker-gpu-local-inference";
+import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
+import { markLastStartedStepFailed } from "../../onboard/exit-step-failure";
+import { resolveSandboxGatewayName } from "../../onboard/gateway-binding";
+import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
+import {
+  allMessagingChannelPolicyPresets,
+  pruneDisabledMessagingPolicyPresets,
+} from "../../onboard/messaging-policy-presets";
+import { resolveRecreatePolicyPresets } from "../../onboard/policy-preset-persistence";
 import { resolveSandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
 import { agentSupportsWebSearch } from "../../onboard/web-search-support";
 import * as policies from "../../policy";
@@ -106,10 +109,8 @@ import {
   reattachMcpProvidersAfterRebuildAbort,
   restoreMcpBridgesAfterRebuild,
 } from "./mcp-bridge";
-import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
-import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import * as rebuildImagePreflight from "./rebuild-custom-image-preflight";
 import {
   REBUILD_HERMES_DASHBOARD_ENV_KEYS,
@@ -119,10 +120,11 @@ import {
   resolveRebuildHermesDashboardEnv,
   validatedRebuildRegistryUpdate,
 } from "./rebuild-durable-config";
+import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
 import {
   backupSandboxStateForRebuild,
-  ensureRebuildTargetGatewaySelected,
   ensureRebuildAgentBaseImage,
+  ensureRebuildTargetGatewaySelected,
   openRebuildShieldsWindowForState,
   pinRebuildAgentBaseImageForRecreate,
   type RebuildSandboxEntry,
@@ -134,6 +136,7 @@ import {
   getRebuildSandboxGpuOverrides,
   type RebuildRecreateOnboardOpts,
 } from "./rebuild-gpu-opt-out";
+import { prepareMcpBeforeBestEffortNimStop } from "./rebuild-mcp-order";
 import {
   checkRebuildGatewayProviderOrBail,
   shouldVerifyRebuildGatewayProvider,
@@ -900,6 +903,20 @@ function hydrateMessagingConfigForRebuild(sandboxName: string, log: (msg: string
   }
 }
 
+function restoreEnabledMessagingPolicyPresets(
+  policyPresets: string[],
+  messagingPlan: SandboxMessagingPlan | null,
+): string[] {
+  const restored = [...policyPresets];
+  const enabledChannelIds = (messagingPlan?.channels ?? [])
+    .filter((channel) => !channel.disabled)
+    .map((channel) => channel.channelId);
+  for (const preset of allMessagingChannelPolicyPresets(enabledChannelIds)) {
+    if (!restored.includes(preset)) restored.push(preset);
+  }
+  return restored;
+}
+
 function printRebuildVersionSummary(
   sandboxName: string,
   agentName: string,
@@ -1374,9 +1391,16 @@ async function rebuildSandboxUnlocked(
       ? sb.policies.filter((value: unknown): value is string => typeof value === "string")
       : [];
     const rebuildDisabledChannels = [...(rebuildMessagingPlan?.disabledChannels ?? [])];
-    const rebuildPolicyPresets = pruneDisabledMessagingPolicyPresets(
-      backupManifest?.policyPresets ?? registryPolicyPresets,
-      rebuildDisabledChannels,
+    // A prior stop+rebuild can legitimately prune disabled channel presets
+    // from the registry. Restore every preset for channels that are enabled in
+    // the durable plan so a later start+rebuild does not silently lose their
+    // egress policy (#5596).
+    const rebuildPolicyPresets = restoreEnabledMessagingPolicyPresets(
+      pruneDisabledMessagingPolicyPresets(
+        backupManifest?.policyPresets ?? registryPolicyPresets,
+        rebuildDisabledChannels,
+      ),
+      rebuildMessagingPlan,
     );
     const rebuildSessionPolicyPresets = resolveRecreatePolicyPresets(
       rebuildPolicyPresets,

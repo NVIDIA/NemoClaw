@@ -301,7 +301,7 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 }
 
 /**
- * Parse the output of `openshell policy get --full` which has a metadata
+ * Parse the output of `openshell policy get --base` which has a metadata
  * header (Version, Hash, etc.) followed by `---` and then the actual YAML.
  */
 function parseCurrentPolicy(raw: string | null | undefined): string {
@@ -409,7 +409,7 @@ function buildPolicySetCommand(policyFile: string, sandboxName: string): string[
  * Build the openshell policy get command as an argv array.
  */
 function buildPolicyGetCommand(sandboxName: string): string[] {
-  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
+  return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];
 }
 
 /**

@@ -33,8 +33,10 @@ esac
 
 info "Detected $OS_LABEL ($ARCH_LABEL)"
 
-# Minimum version required for native messaging credential rewrite plus
-# MCP/JSON-RPC L7 policy enforcement (NVIDIA/OpenShell#1865).
+# Minimum version required for native messaging credential rewrite and
+# round-trippable base policies: WebSocket text frames, provider-shaped
+# aliases, REST request bodies, MCP/JSON-RPC L7 enforcement, and
+# `policy get --base` for MCP/JSON-RPC-safe read-modify-write operations.
 MIN_VERSION="0.0.72"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
@@ -44,7 +46,7 @@ MAX_VERSION="0.0.72"
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.44"
+DEV_MIN_VERSION="0.0.72"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -62,6 +64,13 @@ if [ "$CHANNEL" = "auto" ]; then
   RESOLVED_CHANNEL="stable"
 else
   RESOLVED_CHANNEL="$CHANNEL"
+fi
+
+if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+  if [ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  fi
+  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
 fi
 
 # Honour the TS installer's blueprint-derived env overrides only on the stable
@@ -107,6 +116,44 @@ if [ "$RESOLVED_CHANNEL" = "dev" ]; then
 else
   RELEASE_TAG="v${PIN_VERSION}"
 fi
+
+openshell_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+      ;;
+    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
+      ;;
+    v0.0.72:openshell-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d"
+      ;;
+    v0.0.72:openshell-gateway-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
+      ;;
+    v0.0.72:openshell-gateway-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108"
+      ;;
+    v0.0.72:openshell-gateway-aarch64-apple-darwin.tar.gz)
+      printf '%s\n' "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb"
+      ;;
+    v0.0.72:openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230"
+      ;;
+    v0.0.72:openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz)
+      printf '%s\n' "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openshell_checksum_line() {
+  local checksum_file="$1" asset="$2"
+  awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
 
 version_gte() {
   # Returns 0 (true) if $1 >= $2 — portable, no sort -V (BSD compat)
@@ -516,7 +563,7 @@ if command -v openshell >/dev/null 2>&1; then
       elif ! openshell_has_required_messaging_features "$ACTIVE_OPENSHELL_BIN"; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite and MCP L7 policy support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, request-body credential rewrite, and MCP/JSON-RPC L7 policy enforcement.}"
       else
-        info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite and MCP L7 capable)"
+        info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite, MCP L7, and policy --base capable)"
         exit 0
       fi
     else
@@ -627,7 +674,16 @@ select_sha_cmd
 for i in "${!ASSETS[@]}"; do
   asset_name="${ASSETS[$i]}"
   checksum_file="${CHECKSUM_FILES[$i]}"
-  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | $SHA_CMD -c -) \
+  checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset_name")" \
+    || fail "OpenShell checksum file $checksum_file does not list $asset_name"
+  if [ "$RELEASE_TAG" != "dev" ]; then
+    expected_sha="$(openshell_pinned_sha256 "$RELEASE_TAG" "$asset_name")" \
+      || fail "No NemoClaw-pinned SHA-256 for OpenShell $RELEASE_TAG asset $asset_name"
+    release_sha="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+    [ "$release_sha" = "$expected_sha" ] \
+      || fail "OpenShell release checksum for $asset_name does not match NemoClaw-pinned $RELEASE_TAG digest"
+  fi
+  (cd "$tmpdir" && printf '%s\n' "$checksum_line" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
 done
 

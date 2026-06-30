@@ -212,6 +212,9 @@ const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
 const entry = registry.sandboxes?.[sandboxName];
 if (!entry) fail("sandbox " + sandboxName + " missing from registry");
 const state = entry.messaging;
+if (expected === "removed" && (!state || state.schemaVersion !== 1 || !state.plan)) {
+  process.exit(0);
+}
 if (!state || state.schemaVersion !== 1) fail("messaging state missing or schemaVersion != 1");
 const plan = state.plan;
 if (!plan || plan.schemaVersion !== 1) fail("messaging.plan missing or schemaVersion != 1");

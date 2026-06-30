@@ -7,8 +7,8 @@ import { assertDockerBridgeAndContainerDnsHealthy } from "./bridge-dns-preflight
 import { isLinuxDockerDriverGatewayEnabled } from "./docker-driver-platform";
 import { warnIfHostProxyMissesLoopback } from "./http-proxy-preflight";
 import {
-  assessHost,
   assertCdiNvidiaGpuSpecPresent,
+  assessHost,
   type HostAssessment,
   planHostRemediation,
 } from "./preflight";

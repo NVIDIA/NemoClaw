@@ -3,8 +3,6 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import type { WebSearchConfig } from "../../inference/web-search";
 import {
   HERMES_DASHBOARD_ENABLE_ENV,
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
@@ -16,8 +14,9 @@ import {
   HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
   HERMES_PROVIDER_NAME,
 } from "../../hermes-provider-auth";
-import type { Session } from "../../state/onboard-session";
+import type { WebSearchConfig } from "../../inference/web-search";
 import { resolveHermesDashboardOnboardState } from "../../onboard/hermes-dashboard";
+import type { Session } from "../../state/onboard-session";
 import type { RebuildSandboxEntry } from "./rebuild-flow-helpers";
 import type { RebuildResumeConfig } from "./rebuild-resume-config";
 

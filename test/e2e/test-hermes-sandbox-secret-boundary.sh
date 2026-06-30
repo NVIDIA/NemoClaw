@@ -42,7 +42,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUN_ID="${GITHUB_RUN_ID:-local}-$$"
 IMAGE="${NEMOCLAW_HERMES_TEST_IMAGE:-nemoclaw-hermes-secret-boundary:${RUN_ID}}"
 BASE_IMAGE_FROM_ENV="${NEMOCLAW_HERMES_BASE_IMAGE:-${HERMES_BASE_IMAGE:-}}"
-BASE_IMAGE="${BASE_IMAGE_FROM_ENV:-nemoclaw-hermes-secret-boundary-base:${RUN_ID}}"
+BASE_IMAGE="${BASE_IMAGE_FROM_ENV:-nemoclaw-hermes-sandbox-base-local:secret-boundary-${RUN_ID}}"
 MANAGED_IMAGE="${NEMOCLAW_HERMES_MANAGED_TEST_IMAGE:-nemoclaw-hermes-secret-boundary-managed:${RUN_ID}}"
 MANAGED_PRESETS_B64="$(
   python3 - <<'PY'

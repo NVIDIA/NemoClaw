@@ -16,7 +16,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { DASHBOARD_PORT } from "../core/ports";
-import { printRemediationActions } from "./remediation";
 import {
   assessNvidiaCdiHost,
   buildNvidiaCdiRefreshCommands,
@@ -28,10 +27,12 @@ import {
   extractCdiMismatchFilePath,
   getNvidiaCdiSpecPath,
 } from "./docker-cdi";
+import { printRemediationActions } from "./remediation";
 import {
   isWslDockerDesktopRuntime,
   wslDockerDesktopGpuCompatibilityAction,
 } from "./wsl-docker-desktop-gpu";
+
 export { getNvidiaCdiSpecPath, parseDockerCdiSpecDirs } from "./docker-cdi";
 export { isWslDockerDesktopRuntime } from "./wsl-docker-desktop-gpu";
 

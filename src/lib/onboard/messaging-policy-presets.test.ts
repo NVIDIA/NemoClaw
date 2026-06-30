@@ -77,6 +77,20 @@ describe("messaging policy presets", () => {
     expect(hasDisabledMessagingPolicyPreset(["npm", "pypi"], ["slack"])).toBe(false);
   });
 
+  it("recovers presets for enabled channels absent from sb.policies after a prior stop+rebuild (#5596)", () => {
+    const afterStopRebuildPolicies = ["npm", "pypi"];
+    const enabledChannels = ["telegram", "discord", "whatsapp", "wechat", "slack"];
+    const channelPresets = allMessagingChannelPolicyPresets(enabledChannels);
+    const recovered = [...new Set([...afterStopRebuildPolicies, ...channelPresets])];
+    expect(recovered).toContain("telegram");
+    expect(recovered).toContain("discord");
+    expect(recovered).toContain("whatsapp");
+    expect(recovered).toContain("wechat");
+    expect(recovered).toContain("slack");
+    expect(recovered).toContain("npm");
+    expect(recovered).toContain("pypi");
+  });
+
   it("preserves unrelated applied presets when cleaning disabled messaging presets", () => {
     expect(
       mergeAppliedPolicyPresetsForDisabledMessagingCleanup(

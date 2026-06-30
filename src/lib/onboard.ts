@@ -644,6 +644,7 @@ const {
 });
 
 import type { JsonObject as LooseObject } from "./core/json-types";
+
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
 let NON_INTERACTIVE = false;
@@ -2068,9 +2069,7 @@ async function startDockerDriverGateway({
   skipSandboxBridgeReachability?: boolean;
 } = {}): Promise<void> {
   const gatewayBin = resolveOpenShellGatewayBinary();
-  const openshellVersionOutput = runCaptureOpenshell(["--version"], {
-    ignoreError: true,
-  });
+  const openshellVersionOutput = runCaptureOpenshell(["--version"], { ignoreError: true });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
   const stateDir = getDockerDriverGatewayStateDir();
   const runtimeIdentity = gatewayBin
@@ -2081,6 +2080,7 @@ async function startDockerDriverGateway({
         sandboxBin: resolveOpenShellSandboxBinary(),
         gatewayName: GATEWAY_NAME,
         compatContainerName: gatewayBinding.resolveGatewayCompatContainerName(GATEWAY_PORT),
+        ensureLocalTlsBundle: true,
       })
     : null;
   const gatewayLaunch = runtimeIdentity?.launch ?? null;

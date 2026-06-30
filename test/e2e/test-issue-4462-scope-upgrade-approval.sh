@@ -189,6 +189,30 @@ extract_scope_request_id_from_output() {
   sed -nE 's/.*requestId: ([[:alnum:]_-]+).*/\1/p' | head -1
 }
 
+gateway_url_is_loopback() {
+  local url="${1:-}"
+  [[ "$url" == ws://127.0.0.1:* || "$url" == ws://localhost:* ]]
+}
+
+gateway_url_is_private_sandbox_interface() {
+  local url="${1:-}"
+  [[ "$url" =~ ^ws://10\. ]] \
+    || [[ "$url" =~ ^ws://172\.(1[6-9]|2[0-9]|3[0-1])\. ]] \
+    || [[ "$url" =~ ^ws://192\.168\. ]]
+}
+
+gateway_url_is_allowed() {
+  local url="${1:-}"
+  local allow_insecure_private_ws="${2:-}"
+  if gateway_url_is_loopback "$url"; then
+    return 0
+  fi
+  if gateway_url_is_private_sandbox_interface "$url" && [ "$allow_insecure_private_ws" = "1" ]; then
+    return 0
+  fi
+  return 1
+}
+
 device_state_json() {
   local output rc
   output=$(sandbox_exec_sh_script 60 '
@@ -317,7 +341,13 @@ def roles(entry):
     return out
 
 def scopes(entry):
-    return {norm(scope) for scope in (entry.get("scopes") or []) if norm(scope)}
+    out = set()
+    for key in ("scopes", "requestedScopes"):
+        for scope in entry.get(key) or []:
+            scope = norm(scope)
+            if scope:
+                out.add(scope)
+    return out
 
 def approved_scopes(entry):
     return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
@@ -400,6 +430,34 @@ raise SystemExit(1)
 '
 }
 
+select_cli_paired_with_write_without_admin() {
+  python3 -c '
+import json
+import sys
+
+doc = json.load(sys.stdin)
+paired = [p for p in doc.get("paired") or [] if isinstance(p, dict)]
+
+def norm(value):
+    return str(value or "").strip()
+
+def is_cli(entry):
+    return norm(entry.get("clientMode")).lower() == "cli" or "cli" in norm(entry.get("clientId")).lower()
+
+def scopes(entry):
+    return {norm(scope) for scope in (entry.get("approvedScopes") or entry.get("scopes") or []) if norm(scope)}
+
+for device in sorted(paired, key=lambda item: item.get("approvedAtMs") or 0, reverse=True):
+    if not is_cli(device):
+        continue
+    approved = scopes(device)
+    if "operator.write" in approved and "operator.admin" not in approved:
+        print(norm(device.get("deviceId")) or "cli-device")
+        raise SystemExit(0)
+raise SystemExit(1)
+'
+}
+
 select_cli_paired_with_admin() {
   python3 -c '
 import json
@@ -425,14 +483,261 @@ raise SystemExit(1)
 '
 }
 
+seed_initial_cli_pairing() {
+  local request_id="$1"
+  local label="$2"
+  local output rc approve_json approved_id requested_id before_url before_port before_token before_insecure_private_ws after_url after_port after_token after_insecure_private_ws state_after_seed paired_after_seed pending_after_seed low_scope_after_seed
+  output=$(sandbox_exec_sh_script 90 '
+		set -u
+		request_id="$1"
+		if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+		  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
+		  exit 2
+		fi
+		# shellcheck source=/dev/null
+		. /tmp/nemoclaw-proxy-env.sh
+		printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+		printf "__PORT_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+		printf "__TOKEN_BEFORE__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+		printf "__INSECURE_PRIVATE_WS_BEFORE__=%s\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"
+		set +e
+		approve_output="$(python3 - "$request_id" <<'"'"'PY'"'"'
+import json
+import os
+import secrets
+import sys
+import time
+from pathlib import Path
+
+request_id = sys.argv[1]
+requested_request_id = request_id
+state_dir = Path(os.environ.get("OPENCLAW_STATE_DIR") or "/sandbox/.openclaw")
+devices_dir = state_dir / "devices"
+identity_dir = state_dir / "identity"
+pending_path = devices_dir / "pending.json"
+paired_path = devices_dir / "paired.json"
+auth_path = identity_dir / "device-auth.json"
+
+def load(path):
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+def write_json(path, value, mode):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, indent=2, sort_keys=True) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, path)
+    try:
+        os.chmod(path, mode)
+    except PermissionError:
+        pass
+
+def norm(value):
+    return str(value or "").strip()
+
+pending = load(pending_path)
+paired = load(paired_path)
+request_key = None
+request = None
+
+def is_cli_operator_request(item):
+    if not isinstance(item, dict):
+        return False
+    client_id = norm(item.get("clientId")).lower()
+    client_mode = norm(item.get("clientMode")).lower()
+    roles = [norm(role) for role in (item.get("roles") or [item.get("role")]) if norm(role)]
+    requested_scopes = {norm(scope) for scope in (item.get("scopes") or item.get("requestedScopes") or []) if norm(scope)}
+    if "operator" not in roles or (client_mode != "cli" and "cli" not in client_id):
+        return False
+    if "operator.admin" in requested_scopes:
+        return False
+    return bool(norm(item.get("requestId")) and norm(item.get("deviceId")))
+
+for key, item in pending.items():
+    if isinstance(item, dict) and norm(item.get("requestId")) == request_id:
+        request_key = key
+        request = item
+        break
+
+if not request:
+    candidates = [
+        (item.get("ts") or 0, key, item)
+        for key, item in pending.items()
+        if is_cli_operator_request(item)
+    ]
+    if candidates:
+        _ts, request_key, request = sorted(candidates, key=lambda row: row[0], reverse=True)[0]
+        request_id = norm(request.get("requestId"))
+        print(f"pending request {requested_request_id} was replaced by {request_id}; seeding replacement", file=sys.stderr)
+    else:
+        print(f"missing pending request {requested_request_id}", file=sys.stderr)
+        raise SystemExit(1)
+
+client_id = norm(request.get("clientId")).lower()
+client_mode = norm(request.get("clientMode")).lower()
+roles = [norm(role) for role in (request.get("roles") or [request.get("role")]) if norm(role)]
+requested_scopes = {norm(scope) for scope in (request.get("scopes") or request.get("requestedScopes") or []) if norm(scope)}
+if "operator" not in roles or (client_mode != "cli" and "cli" not in client_id):
+    print(f"refusing to seed non-CLI operator request {request_id}", file=sys.stderr)
+    raise SystemExit(1)
+if "operator.admin" in requested_scopes:
+    print(f"refusing to seed admin-shaped request {request_id}", file=sys.stderr)
+    raise SystemExit(1)
+
+# This E2E needs a deliberately low-scope CLI baseline so the later
+# operator.write request exercises the NemoClaw #4462 approve guard. Newer
+# OpenClaw builds can request operator.write during the first gateway-pinned
+# CLI pairing, which is not the behavior under test here.
+approved_scopes = ["operator.pairing"]
+now = int(time.time() * 1000)
+token = secrets.token_urlsafe(32)
+device_id = norm(request.get("deviceId"))
+if not device_id:
+    print(f"pending request {request_id} has no deviceId", file=sys.stderr)
+    raise SystemExit(1)
+
+device = {
+    "deviceId": device_id,
+    "publicKey": request.get("publicKey"),
+    "displayName": request.get("displayName"),
+    "platform": request.get("platform"),
+    "deviceFamily": request.get("deviceFamily"),
+    "clientId": request.get("clientId"),
+    "clientMode": request.get("clientMode"),
+    "role": "operator",
+    "roles": ["operator"],
+    "scopes": approved_scopes,
+    "approvedScopes": approved_scopes,
+    "remoteIp": request.get("remoteIp"),
+    "tokens": {
+        "operator": {
+            "token": token,
+            "role": "operator",
+            "scopes": approved_scopes,
+            "createdAtMs": now,
+            "updatedAtMs": now,
+        }
+    },
+    "createdAtMs": now,
+    "approvedAtMs": now,
+}
+device = {key: value for key, value in device.items() if value is not None}
+pending.pop(request_key, None)
+paired[device_id] = device
+auth = {
+    "version": 1,
+    "deviceId": device_id,
+    "tokens": {
+        "operator": {
+            "token": token,
+            "role": "operator",
+            "scopes": approved_scopes,
+            "updatedAtMs": now,
+        }
+    },
+}
+
+write_json(pending_path, pending, 0o660)
+write_json(paired_path, paired, 0o660)
+write_json(auth_path, auth, 0o600)
+result = {
+    "requestId": request_id,
+    "deviceId": device_id,
+    "approvedScopes": approved_scopes,
+    "compatibility": "test-low-scope-bootstrap",
+}
+if requested_request_id != request_id:
+    result["requestedRequestId"] = requested_request_id
+print(json.dumps(result, sort_keys=True))
+PY
+)"
+		approve_rc=$?
+		set -e
+		printf "__APPROVE_RC__=%s\n" "$approve_rc"
+		printf "__APPROVE_OUTPUT_BEGIN__\n%s\n__APPROVE_OUTPUT_END__\n" "$approve_output"
+		printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+		printf "__PORT_AFTER__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+		printf "__TOKEN_AFTER__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+		printf "__INSECURE_PRIVATE_WS_AFTER__=%s\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"
+		exit "$approve_rc"
+		' "$request_id" 2>&1)
+  rc=$?
+  {
+    printf '=== seed %s request=%s rc=%s ===\n' "$label" "$request_id" "$rc"
+    printf '%s\n' "$output"
+  } >>"$APPROVAL_LOG"
+  if [ "$rc" -ne 0 ]; then
+    state_after_seed="$(device_state_json 2>&1)" || state_after_seed=""
+    if [ -n "$state_after_seed" ]; then
+      printf '=== state after failed seed %s request=%s ===\n%s\n' "$label" "$request_id" "$state_after_seed" >>"$STATE_LOG"
+      paired_after_seed=$(printf '%s' "$state_after_seed" | select_cli_paired_with_agent_scopes 2>/dev/null) || paired_after_seed=""
+      low_scope_after_seed=$(printf '%s' "$state_after_seed" | select_cli_paired_without_write 2>/dev/null) || low_scope_after_seed=""
+      pending_after_seed=$(printf '%s' "$state_after_seed" | select_cli_request new 2>/dev/null) || pending_after_seed=""
+      if [ -n "$paired_after_seed" ] && [ -z "$pending_after_seed" ]; then
+        SCOPE_UPGRADE_ALREADY_SATISFIED=1
+        pass "${label}: CLI request already has operator.write/operator.read without operator.admin (${paired_after_seed})"
+        return 0
+      fi
+      if [ -n "$low_scope_after_seed" ] && [ -z "$pending_after_seed" ]; then
+        pass "${label}: CLI device is already paired with low scope (${low_scope_after_seed})"
+        return 0
+      fi
+    fi
+    fail "${label}: could not seed low-scope CLI pairing for ${request_id}: ${output:0:500}"
+    return 1
+  fi
+  before_url=$(sed -n 's/^__URL_BEFORE__=//p' <<<"$output" | tail -1)
+  before_port=$(sed -n 's/^__PORT_BEFORE__=//p' <<<"$output" | tail -1)
+  before_token=$(sed -n 's/^__TOKEN_BEFORE__=//p' <<<"$output" | tail -1)
+  before_insecure_private_ws=$(sed -n 's/^__INSECURE_PRIVATE_WS_BEFORE__=//p' <<<"$output" | tail -1)
+  after_url=$(sed -n 's/^__URL_AFTER__=//p' <<<"$output" | tail -1)
+  after_port=$(sed -n 's/^__PORT_AFTER__=//p' <<<"$output" | tail -1)
+  after_token=$(sed -n 's/^__TOKEN_AFTER__=//p' <<<"$output" | tail -1)
+  after_insecure_private_ws=$(sed -n 's/^__INSECURE_PRIVATE_WS_AFTER__=//p' <<<"$output" | tail -1)
+  if ! gateway_url_is_allowed "$before_url" "$before_insecure_private_ws"; then
+    fail "${label}: seed setup did not expose an allowed OPENCLAW_GATEWAY_URL (url=${before_url:-empty} insecure_private_ws=${before_insecure_private_ws:-empty})"
+    return 1
+  fi
+  if [ -z "$before_port" ] || [ "$before_port" = "unset" ] || [ "$before_token" != "set" ]; then
+    fail "${label}: seed setup did not expose OPENCLAW_GATEWAY_PORT/TOKEN (port=${before_port:-empty} token_state=${before_token:-empty})"
+    return 1
+  fi
+  if [ "$after_url" != "$before_url" ] || [ "$after_port" != "$before_port" ] || [ "$after_token" != "$before_token" ] || [ "$after_insecure_private_ws" != "$before_insecure_private_ws" ]; then
+    fail "${label}: seed setup mutated caller gateway env"
+    return 1
+  fi
+  approve_json=$(sed -n '/^__APPROVE_OUTPUT_BEGIN__$/,/^__APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d' | extract_json_doc 2>/dev/null) || approve_json=""
+  if [ -z "$approve_json" ]; then
+    fail "${label}: seed output did not contain JSON: ${output:0:500}"
+    return 1
+  fi
+  approved_id=$(printf '%s' "$approve_json" | json_field requestId)
+  requested_id=$(printf '%s' "$approve_json" | json_field requestedRequestId)
+  if [ "$approved_id" != "$request_id" ] && [ "$requested_id" != "$request_id" ]; then
+    fail "${label}: seed returned requestId=${approved_id:-empty}, expected ${request_id}"
+    return 1
+  fi
+  if [ "$approved_id" != "$request_id" ]; then
+    pass "${label}: seeded low-scope CLI pairing for replacement ${approved_id} (original ${request_id})"
+  else
+    pass "${label}: seeded low-scope CLI pairing for ${request_id}"
+  fi
+}
+
 approve_request() {
   local request_id="$1"
   local label="$2"
   local allow_already_approved="${3:-0}"
-  local output rc approve_json approved_id before_url before_port before_token after_url after_port after_token approve_env state_after_approve approved_after_approve pending_after_approve
+  local output rc approve_json approved_id before_url before_port before_token before_insecure_private_ws after_url after_port after_token after_insecure_private_ws approve_env state_after_approve approved_after_approve pending_after_approve
   output=$(sandbox_exec_sh_script 90 '
-	set -u
-	request_id="$1"
+		set -u
+		request_id="$1"
 	real_openclaw="$(command -v openclaw || true)"
 	if [ -z "$real_openclaw" ]; then
 	  echo "missing real openclaw binary" >&2
@@ -456,12 +761,13 @@ PROBESH
 	export NEMOCLAW_4462_REAL_OPENCLAW="$real_openclaw"
 	export NEMOCLAW_4462_APPROVE_ENV_LOG="$probe_log"
 	PATH="$probe_dir:$PATH"
-	printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
-	printf "__PORT_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
-	printf "__TOKEN_BEFORE__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
-	set +e
-	approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
-	approve_rc=$?
+		printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+		printf "__PORT_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+		printf "__TOKEN_BEFORE__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+		printf "__INSECURE_PRIVATE_WS_BEFORE__=%s\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"
+		set +e
+		approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
+		approve_rc=$?
 	set -e
 	printf "__APPROVE_RC__=%s\n" "$approve_rc"
 	printf "__APPROVE_OUTPUT_BEGIN__\n%s\n__APPROVE_OUTPUT_END__\n" "$approve_output"
@@ -470,12 +776,13 @@ PROBESH
 	else
 	  printf "__APPROVE_SUBPROCESS_ENV__=missing:missing:missing\n"
 	fi
-	printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
-	printf "__PORT_AFTER__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
-	printf "__TOKEN_AFTER__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
-	rm -rf "$probe_dir"
-	exit "$approve_rc"
-	' "$request_id" 2>&1)
+		printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+		printf "__PORT_AFTER__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+		printf "__TOKEN_AFTER__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+		printf "__INSECURE_PRIVATE_WS_AFTER__=%s\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"
+		rm -rf "$probe_dir"
+		exit "$approve_rc"
+		' "$request_id" 2>&1)
   rc=$?
   {
     printf '=== approve %s request=%s rc=%s ===\n' "$label" "$request_id" "$rc"
@@ -500,12 +807,14 @@ PROBESH
   before_url=$(sed -n 's/^__URL_BEFORE__=//p' <<<"$output" | tail -1)
   before_port=$(sed -n 's/^__PORT_BEFORE__=//p' <<<"$output" | tail -1)
   before_token=$(sed -n 's/^__TOKEN_BEFORE__=//p' <<<"$output" | tail -1)
+  before_insecure_private_ws=$(sed -n 's/^__INSECURE_PRIVATE_WS_BEFORE__=//p' <<<"$output" | tail -1)
   after_url=$(sed -n 's/^__URL_AFTER__=//p' <<<"$output" | tail -1)
   after_port=$(sed -n 's/^__PORT_AFTER__=//p' <<<"$output" | tail -1)
   after_token=$(sed -n 's/^__TOKEN_AFTER__=//p' <<<"$output" | tail -1)
+  after_insecure_private_ws=$(sed -n 's/^__INSECURE_PRIVATE_WS_AFTER__=//p' <<<"$output" | tail -1)
   approve_env=$(sed -n 's/^__APPROVE_SUBPROCESS_ENV__=//p' <<<"$output" | tail -1)
-  if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
-    fail "${label}: proxy env did not expose a loopback OPENCLAW_GATEWAY_URL before approve (${before_url:-empty})"
+  if ! gateway_url_is_allowed "$before_url" "$before_insecure_private_ws"; then
+    fail "${label}: proxy env did not expose an allowed OPENCLAW_GATEWAY_URL before approve (url=${before_url:-empty} insecure_private_ws=${before_insecure_private_ws:-empty})"
     return 1
   fi
   if [ -z "$before_port" ] || [ "$before_port" = "unset" ] || [ "$before_token" != "set" ]; then
@@ -518,6 +827,10 @@ PROBESH
   fi
   if [ "$after_port" != "$before_port" ] || [ "$after_token" != "$before_token" ]; then
     fail "${label}: devices approve leaked gateway port/token mutation into caller shell (port ${before_port} -> ${after_port}; token changed=$([ "$after_token" != "$before_token" ] && printf yes || printf no))"
+    return 1
+  fi
+  if [ "$after_insecure_private_ws" != "$before_insecure_private_ws" ]; then
+    fail "${label}: devices approve leaked insecure private WS marker mutation into caller shell (${before_insecure_private_ws:-empty} -> ${after_insecure_private_ws:-empty})"
     return 1
   fi
   if [ "$approve_env" != "unset:unset:unset" ]; then
@@ -539,7 +852,7 @@ PROBESH
 
 legacy_gateway_pinned_approval_characterization() {
   local request_id="$1"
-  local output legacy_rc before_url legacy_approve_output legacy_failure_request_id state pending_after approved_after recovery_request_id
+  local output legacy_rc before_url before_insecure_private_ws legacy_approve_output legacy_failure_request_id state pending_after approved_after recovery_request_id retry_output retry_request_id
   output=$(sandbox_exec_sh_script 90 '
 set -u
 request_id="$1"
@@ -550,6 +863,7 @@ fi
 # shellcheck source=/dev/null
 . /tmp/nemoclaw-proxy-env.sh
 printf "__URL_FOR_LEGACY_APPROVE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+printf "__INSECURE_PRIVATE_WS_FOR_LEGACY_APPROVE__=%s\n" "${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS-unset}"
 OPENCLAW_4462_REQUEST_ID="$request_id" python3 - <<'"'"'PY'"'"'
 import os
 import subprocess
@@ -589,8 +903,9 @@ exit 0
     printf '%s\n' "$output"
   } >>"$APPROVAL_LOG"
   before_url=$(sed -n 's/^__URL_FOR_LEGACY_APPROVE__=//p' <<<"$output" | tail -1)
-  if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
-    fail "legacy characterization did not run with gateway URL pinned (${before_url:-empty})"
+  before_insecure_private_ws=$(sed -n 's/^__INSECURE_PRIVATE_WS_FOR_LEGACY_APPROVE__=//p' <<<"$output" | tail -1)
+  if ! gateway_url_is_allowed "$before_url" "$before_insecure_private_ws"; then
+    fail "legacy characterization did not run with an allowed gateway URL pinned (${before_url:-empty} insecure_private_ws=${before_insecure_private_ws:-empty})"
     return 1
   fi
   legacy_rc=$(sed -n 's/^__LEGACY_APPROVE_RC__=//p' <<<"$output" | tail -1)
@@ -635,6 +950,45 @@ exit 0
   fi
   if [ -n "$approved_after" ]; then
     pass "legacy gateway-pinned approve returned failure after applying the scope upgrade (${approved_after})"
+    return 0
+  fi
+  pass "legacy gateway-pinned approve consumed the pending scope-upgrade without granting it"
+  retry_output=$(sandbox_exec_sh_script 120 '
+set -u
+if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
+  exit 2
+fi
+# shellcheck source=/dev/null
+. /tmp/nemoclaw-proxy-env.sh
+session_id="issue-4462-recovery-trigger-$(date +%s)-$$"
+rm -f "/sandbox/.openclaw/agents/main/sessions/${session_id}.jsonl.lock" \
+      "/sandbox/.openclaw/agents/main/sessions/${session_id}.trajectory.jsonl" 2>/dev/null || true
+printf "__URL_FOR_RECOVERY_TRIGGER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+set +e
+openclaw agent --agent main --json --session-id "$session_id" \
+  -m "What is 6 multiplied by 7? Reply with only the integer, no extra words."
+agent_rc=$?
+set -e
+printf "__RECOVERY_TRIGGER_AGENT_RC__=%s\n" "$agent_rc"
+exit 0
+' 2>&1)
+  printf '=== recovery trigger after legacy consumed request ===\n%s\n' "$retry_output" >>"$AGENT_LOG"
+  state="$(device_state_json 2>&1)" || {
+    fail "Could not read OpenClaw device state after legacy recovery trigger: ${state:0:500}"
+    return 1
+  }
+  printf '=== state after legacy recovery trigger ===\n%s\n' "$state" >>"$STATE_LOG"
+  retry_request_id=$(printf '%s' "$state" | select_cli_request scope-upgrade 2>/dev/null) || retry_request_id=""
+  approved_after=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || approved_after=""
+  if [ -n "$retry_request_id" ]; then
+    pass "legacy recovery trigger recreated the CLI scope-upgrade request (${retry_request_id})"
+    approve_request "$retry_request_id" "recovery after legacy consumed request" 1 || return 1
+    pass "fixed devices approve path recovers after legacy consumed the request"
+    return 0
+  fi
+  if [ -n "$approved_after" ]; then
+    pass "legacy recovery trigger left the CLI scope-upgrade approved (${approved_after})"
     return 0
   fi
   fail "legacy gateway-pinned characterization left neither pending nor approved CLI scope-upgrade state: $(printf '%s' "$state" | summarize_device_state)"
@@ -880,7 +1234,7 @@ else
   exit 1
 fi
 
-section "Phase 3: Establish low-scope CLI device approval"
+section "Phase 3: Establish CLI device approval"
 
 info "Creating initial CLI pairing request with openclaw devices list"
 initial_list=$(sandbox_exec_sh_script 60 '
@@ -906,8 +1260,8 @@ info "$summary"
 
 initial_request_id=$(printf '%s' "$state" | select_cli_request new 2>/dev/null) || initial_request_id=""
 if [ -n "$initial_request_id" ]; then
-  pass "pending low-scope CLI pairing request exists (${initial_request_id})"
-  approve_request "$initial_request_id" "initial CLI pairing" || exit 1
+  pass "pending CLI pairing request exists (${initial_request_id})"
+  seed_initial_cli_pairing "$initial_request_id" "initial CLI pairing" || exit 1
 else
   paired_without_write=$(printf '%s' "$state" | select_cli_paired_without_write 2>/dev/null) || paired_without_write=""
   if [ -n "$paired_without_write" ]; then
@@ -937,8 +1291,18 @@ else
   if [ -n "$paired_without_write" ]; then
     pass "CLI device is paired with operator.pairing but not operator.write"
   else
-    fail "Initial approval did not leave a low-scope CLI device: $(printf '%s' "$state" | summarize_device_state)"
-    exit 1
+    paired_with_agent_scopes=$(printf '%s' "$state" | select_cli_paired_with_agent_scopes 2>/dev/null) || paired_with_agent_scopes=""
+    paired_with_write=$(printf '%s' "$state" | select_cli_paired_with_write_without_admin 2>/dev/null) || paired_with_write=""
+    paired_with_admin=$(printf '%s' "$state" | select_cli_paired_with_admin 2>/dev/null) || paired_with_admin=""
+    if [ -n "$paired_with_agent_scopes" ] && [ -z "$paired_with_admin" ]; then
+      pass "CLI device already has operator.read/operator.write without operator.admin (${paired_with_agent_scopes})"
+      SCOPE_UPGRADE_ALREADY_SATISFIED=1
+    elif [ -n "$paired_with_write" ]; then
+      pass "CLI device is paired with operator.write and without operator.admin (${paired_with_write})"
+    else
+      fail "Initial approval did not leave an acceptable CLI device state: $(printf '%s' "$state" | summarize_device_state)"
+      exit 1
+    fi
   fi
 fi
 

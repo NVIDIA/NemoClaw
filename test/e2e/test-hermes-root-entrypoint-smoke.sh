@@ -28,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUN_ID="${GITHUB_RUN_ID:-local}-$$"
 IMAGE="${NEMOCLAW_HERMES_TEST_IMAGE:-nemoclaw-hermes-root-entrypoint-smoke:${RUN_ID}}"
-BASE_IMAGE="nemoclaw-hermes-root-entrypoint-base:${RUN_ID}"
+BASE_IMAGE="nemoclaw-hermes-sandbox-base-local:root-entrypoint-${RUN_ID}"
 containers=()
 
 dump_container() {

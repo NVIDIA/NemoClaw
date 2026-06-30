@@ -74,10 +74,19 @@ describe("MCP OpenShell workflow boundary", () => {
     expect(nightly.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("stable");
     expect(vitest.on?.workflow_dispatch?.inputs?.openshell_channel?.default).toBe("stable");
     expect(nightly.env?.NEMOCLAW_OPENSHELL_CHANNEL).toContain("|| 'stable'");
+    expect(nightly.env?.NEMOCLAW_ALLOW_DEV_NO_VERIFY).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel == 'dev' && '1' || '0' }}",
+    );
     expect(reusable.jobs.run.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe(
       "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'stable' }}",
     );
+    expect(reusable.jobs.run.env?.NEMOCLAW_ALLOW_DEV_NO_VERIFY).toBe(
+      "${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel == 'dev' && '1' || '0' }}",
+    );
     expect(vitest.env?.NEMOCLAW_OPENSHELL_CHANNEL).toBe("${{ inputs.openshell_channel }}");
+    expect(vitest.env?.NEMOCLAW_ALLOW_DEV_NO_VERIFY).toBe(
+      "${{ inputs.openshell_channel == 'dev' && '1' || '0' }}",
+    );
     expect(nightlyInstall?.env).not.toHaveProperty("NEMOCLAW_OPENSHELL_CHANNEL");
     const nightlyChannel =
       "${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'stable' }}";
@@ -103,6 +112,7 @@ describe("MCP OpenShell workflow boundary", () => {
       ([, candidate]) => candidate.uses === "./.github/workflows/e2e-script.yaml",
     )) {
       const laneEnv = JSON.parse(String(job.with?.env_json ?? "{}")) as Record<string, unknown>;
+      expect(laneEnv.NEMOCLAW_ALLOW_DEV_NO_VERIFY, name).toBeUndefined();
       expect(laneEnv.NEMOCLAW_OPENSHELL_CHANNEL, name).toBeUndefined();
     }
   });

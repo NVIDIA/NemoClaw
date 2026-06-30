@@ -12,6 +12,16 @@ import YAML from "yaml";
 import { redact, runCapture } from "../src/lib/runner";
 
 const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
+  cliLinuxArm64: "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
+  cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
+  gatewayDarwinArm64: "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
+  gatewayLinuxArm64: "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
+  gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxArm64: "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
+  sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+};
 
 type SpawnCallOptions = {
   stdio?: StdioOptions;
@@ -682,22 +692,20 @@ exit 0
             case "$(basename "$out")" in
             openshell-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
-                'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
-                'ignored  openshell-x86_64-apple-darwin.tar.gz' \
-                'ignored  openshell-aarch64-apple-darwin.tar.gz' \
-                'ignored  openshell-driver-vm-aarch64-apple-darwin.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-gateway-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
               ;;
             openshell-sandbox-checksums-sha256.txt)
               printf '%s\n' \
-                'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-                'ignored  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
               ;;
             *)
               : > "$out"
@@ -762,16 +770,39 @@ exit 0
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() {
           echo "CURL_FALLBACK $*"
-          printf '%s\n' \
-            'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
-            'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
-            'ignored  openshell-x86_64-apple-darwin.tar.gz' \
-            'ignored  openshell-aarch64-apple-darwin.tar.gz' \
-            'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
-            'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
-            'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' \
-            'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
-            'ignored  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "\${!#}"
+          local out=""
+          while [ "$#" -gt 0 ]; do
+            if [ "$1" = "-o" ]; then
+              shift
+              out="$1"
+            fi
+            shift || true
+          done
+          if [ -n "$out" ]; then
+            case "$(basename "$out")" in
+            openshell-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxX64}  openshell-x86_64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.cliDarwinArm64}  openshell-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-gateway-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64}  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.gatewayDarwinArm64}  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-sandbox-checksums-sha256.txt)
+              printf '%s\n' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64}  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+              ;;
+            *)
+              : > "$out"
+              ;;
+            esac
+          fi
+          return 0
         }
         export -f curl
         sha256sum() { cat >/dev/null; echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }

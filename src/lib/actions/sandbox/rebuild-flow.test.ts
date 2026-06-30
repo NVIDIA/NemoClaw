@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+
 type RebuildSandbox = typeof import("./rebuild")["rebuildSandbox"];
 const requireDist = createRequire(import.meta.url);
 const rebuildModulePath = "./rebuild.js";
-
 requireDist(rebuildModulePath);
 delete require.cache[requireDist.resolve(rebuildModulePath)];
 

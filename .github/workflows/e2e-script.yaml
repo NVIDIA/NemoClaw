@@ -122,6 +122,7 @@ jobs:
       # Reusable workflows do not inherit caller workflow env. Read the caller
       # event selection explicitly and keep scheduled lanes on the pinned stable release.
       NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel || 'stable' }}
+      NEMOCLAW_ALLOW_DEV_NO_VERIFY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.openshell_channel == 'dev' && '1' || '0' }}
     steps:
       - name: Checkout target ref
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -144,7 +145,7 @@ jobs:
           fi
 
           case "$E2E_CHECKED_OUT_REF_ENV" in
-            ACTIONS_*|GITHUB_*|INPUT_*|RUNNER_*|CI|HOME|NEMOCLAW_OPENSHELL_CHANNEL|PATH|PWD|SHELL)
+            ACTIONS_*|GITHUB_*|INPUT_*|RUNNER_*|CI|HOME|NEMOCLAW_ALLOW_DEV_NO_VERIFY|NEMOCLAW_OPENSHELL_CHANNEL|PATH|PWD|SHELL)
               echo "::error::Reserved checked_out_ref_env variable name: $E2E_CHECKED_OUT_REF_ENV" >&2
               exit 1
               ;;
@@ -195,6 +196,7 @@ jobs:
           reserved_names = {
               "CI",
               "HOME",
+              "NEMOCLAW_ALLOW_DEV_NO_VERIFY",
               "NEMOCLAW_OPENSHELL_CHANNEL",
               "PATH",
               "PWD",

@@ -43,8 +43,11 @@ export type TrustedSandboxShellScript = string & {
 };
 
 export function trustedSandboxShellScript(script: string): TrustedSandboxShellScript {
-  if (script.length === 0 || script.includes("\0")) {
-    throw new Error("sandbox shell script must be non-empty and contain no NUL bytes");
+  if (script.length === 0) {
+    throw new Error("sandbox shell script must not be empty");
+  }
+  if (script.includes("\0")) {
+    throw new Error("sandbox shell script must contain no NUL bytes");
   }
   return script as TrustedSandboxShellScript;
 }

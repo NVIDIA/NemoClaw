@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import type { AgentDefinition } from "../../agent/defs";
 import { createAgentSandbox } from "../../agent/onboard";
-import { dockerBuild, dockerRmi } from "../../adapters/docker";
 import type { WebSearchConfig } from "../../inference/web-search";
-import { ROOT } from "../../runner";
-import { OPENCLAW_SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } from "../../sandbox-base-image";
 import { stageCreateSandboxBuildContext } from "../../onboard/build-context-stage";
 import { prepareSandboxDockerfilePatch } from "../../onboard/sandbox-dockerfile-patch-flow";
 import type { SandboxGpuConfig } from "../../onboard/sandbox-gpu-mode";
+import { ROOT } from "../../runner";
+import { OPENCLAW_SANDBOX_BASE_IMAGE, SANDBOX_BASE_TAG } from "../../sandbox-base-image";
 
 type PreflightInput = {
   agent: AgentDefinition | null;

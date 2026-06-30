@@ -1,13 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
+import { loadAgent } from "../../agent/defs";
+import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
 import {
   resolveGatewayPortFromName,
   resolveSandboxGatewayName,
 } from "../../onboard/gateway-binding";
-import { loadAgent } from "../../agent/defs";
-import { shouldManageDashboardForAgent } from "../../onboard/dashboard-runtime";
+import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
 export type RebuildGpuOptOutEntry = {
   sandboxGpuMode?: string | null;

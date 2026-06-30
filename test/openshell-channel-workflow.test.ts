@@ -87,26 +87,48 @@ function resolveLaunchableVersion(options: { channel: string; explicit?: string 
   }
 }
 
+function runLaunchableDevGate() {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-launchable-dev-gate-"));
+  try {
+    return spawnSync("bash", [LAUNCHABLE], {
+      encoding: "utf8",
+      env: {
+        HOME: tempDir,
+        LAUNCH_LOG: path.join(tempDir, "launch.log"),
+        LOGNAME: "tester",
+        NEMOCLAW_OPENSHELL_CHANNEL: "dev",
+        PATH: "/usr/bin:/bin",
+        SUDO_USER: "tester",
+        USER: "tester",
+      },
+    });
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
 describe("OpenShell channel workflow boundary", () => {
   it("rejects lane-local attempts to replace the selected channel", () => {
     const reusable = readWorkflow(".github/workflows/e2e-script.yaml");
     const envJsonExport = namedStep(reusable, "run", "Export script environment");
-    const envJsonResult = runCommand(envJsonExport.run ?? "", {
-      E2E_ENV_JSON: JSON.stringify({ NEMOCLAW_OPENSHELL_CHANNEL: "stable" }),
-    });
-    expect(envJsonResult.status).not.toBe(0);
-    expect(`${envJsonResult.stdout}${envJsonResult.stderr}`).toContain(
-      "Reserved env_json variable name: NEMOCLAW_OPENSHELL_CHANNEL",
-    );
-
     const refExport = namedStep(reusable, "run", "Export checked-out ref environment");
-    const refResult = runCommand(refExport.run ?? "", {
-      E2E_CHECKED_OUT_REF_ENV: "NEMOCLAW_OPENSHELL_CHANNEL",
-    });
-    expect(refResult.status).not.toBe(0);
-    expect(`${refResult.stdout}${refResult.stderr}`).toContain(
-      "Reserved checked_out_ref_env variable name: NEMOCLAW_OPENSHELL_CHANNEL",
-    );
+    for (const name of ["NEMOCLAW_ALLOW_DEV_NO_VERIFY", "NEMOCLAW_OPENSHELL_CHANNEL"]) {
+      const envJsonResult = runCommand(envJsonExport.run ?? "", {
+        E2E_ENV_JSON: JSON.stringify({ [name]: "1" }),
+      });
+      expect(envJsonResult.status).not.toBe(0);
+      expect(`${envJsonResult.stdout}${envJsonResult.stderr}`).toContain(
+        `Reserved env_json variable name: ${name}`,
+      );
+
+      const refResult = runCommand(refExport.run ?? "", {
+        E2E_CHECKED_OUT_REF_ENV: name,
+      });
+      expect(refResult.status).not.toBe(0);
+      expect(`${refResult.stdout}${refResult.stderr}`).toContain(
+        `Reserved checked_out_ref_env variable name: ${name}`,
+      );
+    }
   });
 
   it.each([
@@ -125,6 +147,17 @@ describe("OpenShell channel workflow boundary", () => {
     expect(result.status).not.toBe(0);
     expect(`${result.stdout}${result.stderr}`).toContain(
       "NEMOCLAW_OPENSHELL_CHANNEL must be one of: stable, dev, auto",
+    );
+  });
+
+  it("requires explicit opt-in before a launchable consumes unverified dev artifacts", () => {
+    const result = runLaunchableDevGate();
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain("NEMOCLAW_ALLOW_DEV_NO_VERIFY=1");
+
+    const source = fs.readFileSync(LAUNCHABLE, "utf8");
+    expect(source).toContain(
+      'if [[ "$OPENSHELL_VERSION" != "dev" ]]; then\n    verify_openshell_cli_asset',
     );
   });
 });

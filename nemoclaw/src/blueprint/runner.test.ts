@@ -183,7 +183,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (
       args[0] === "policy" &&
       args[1] === "get" &&
-      args[2] === "--full" &&
+      args[2] === "--base" &&
       args[3] === "test-sandbox"
     ) {
       return { exitCode: 0, stdout, stderr: "" };
@@ -639,7 +639,7 @@ describe("runner", () => {
       );
     });
 
-    it("applies blueprint policy additions by merging into the live policy", async () => {
+    it("applies blueprint policy additions by merging into the base policy", async () => {
       const bp = minimalBlueprint({
         components: {
           inference: {
@@ -674,12 +674,11 @@ describe("runner", () => {
           },
         },
       });
-
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (
           args[0] === "policy" &&
           args[1] === "get" &&
-          args[2] === "--full" &&
+          args[2] === "--base" &&
           args[3] === "test-sandbox"
         ) {
           return {
@@ -775,7 +774,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("fails closed when policy get --full does not include a policy document", async () => {
+    it("fails closed when policy get --base does not include a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",

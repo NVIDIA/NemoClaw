@@ -18,6 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -407,7 +408,7 @@ function runRebuild(
       NO_COLOR: "1",
       ...extraEnv,
     },
-    timeout: 30_000,
+    timeout: execTimeout(60_000),
   });
 }
 

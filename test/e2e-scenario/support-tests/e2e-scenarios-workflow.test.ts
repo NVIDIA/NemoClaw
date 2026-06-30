@@ -640,15 +640,19 @@ describe("e2e-vitest-scenarios workflow boundary", () => {
   it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
     expect(validateFreeStandingWorkflowInventory()).toEqual([]);
-    expect(inventory.allowedJobs).toContain("openshell-version-pin-vitest");
-    expect(inventory.allowedJobs).toContain("gateway-guard-recovery");
-    expect(inventory.allowedJobs).toContain("upgrade-stale-sandbox-vitest");
-    expect(inventory.scenarioToJob.get("openshell-version-pin")).toBe(
-      "openshell-version-pin-vitest",
+    expect(inventory.allowedJobs).toEqual(
+      expect.arrayContaining([
+        "openshell-version-pin-vitest",
+        "openshell-gateway-auth-contract-vitest",
+        "gateway-guard-recovery",
+        "upgrade-stale-sandbox-vitest",
+      ]),
     );
-    expect(inventory.scenarioToJob.get("upgrade-stale-sandbox")).toBe(
-      "upgrade-stale-sandbox-vitest",
-    );
+    expect(Object.fromEntries(inventory.scenarioToJob)).toMatchObject({
+      "openshell-gateway-auth-contract": "openshell-gateway-auth-contract-vitest",
+      "openshell-version-pin": "openshell-version-pin-vitest",
+      "upgrade-stale-sandbox": "upgrade-stale-sandbox-vitest",
+    });
     expect(inventory.scenarioToJob.get("credential-migration")).toBeUndefined();
     expect(
       inventory.allowedJobs.every((job) =>
@@ -990,6 +994,7 @@ jobs:
           "double-onboard-vitest job env must not include DOCKERHUB_TOKEN",
           "step 'Run double-onboard live Vitest test' run script must not interpolate dispatch inputs directly",
           "workflow missing hermes-e2e-vitest job",
+          "workflow missing openshell-gateway-auth-contract-vitest job",
           "workflow missing skill-agent-vitest job",
           "workflow missing diagnostics-vitest job",
           "workflow missing model-router-provider-routed-inference-vitest job",

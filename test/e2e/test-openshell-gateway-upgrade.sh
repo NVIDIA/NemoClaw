@@ -311,13 +311,13 @@ else
 fi
 EOF
 
-  cat >"$fake_bin/openshell" <<'EOF'
+  cat >"$fake_bin/openshell" <<EOF
 #!/usr/bin/env bash
 # request-body-credential-rewrite
 # websocket-credential-rewrite
 # allow_all_known_mcp_methods
-if [ "${1:-}" = "--version" ]; then
-  printf 'openshell 0.0.72\n'
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openshell %s\n' "$CURRENT_OPENSHELL_VERSION"
   exit 0
 fi
 exit 99
@@ -402,13 +402,13 @@ else
 fi
 EOF
 
-  cat >"$fake_bin/openshell" <<'EOF'
+  cat >"$fake_bin/openshell" <<EOF
 #!/usr/bin/env bash
 # request-body-credential-rewrite
 # websocket-credential-rewrite
 # allow_all_known_mcp_methods
-if [ "${1:-}" = "--version" ]; then
-  printf 'openshell 0.0.72\n'
+if [ "\${1:-}" = "--version" ]; then
+  printf 'openshell %s\n' "$CURRENT_OPENSHELL_VERSION"
   exit 0
 fi
 exit 99

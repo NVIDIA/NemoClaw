@@ -196,6 +196,9 @@ env:
   # Scheduled and manually selected lanes must exercise one OpenShell target.
   # Reusable e2e-script jobs mirror this expression inside their own workflow.
   NEMOCLAW_OPENSHELL_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel || 'stable' }}
+  # Selecting the moving dev release is the explicit CI opt-in to its
+  # unverified release artifacts. Stable and scheduled lanes stay verified.
+  NEMOCLAW_ALLOW_DEV_NO_VERIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.openshell_channel == 'dev' && '1' || '0' }}
 
 concurrency:
   group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.ref, inputs.pr_number || 'manual') || 'schedule' }}

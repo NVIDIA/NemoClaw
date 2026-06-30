@@ -6,12 +6,14 @@
     "src/lib/inference/nim.test.ts": 2068,
     "src/lib/onboard/preflight.test.ts": 1904,
     "test/channels-add-preset.test.ts": 1871,
+    "test/e2e-scenario/support-tests/e2e-scenarios-workflow.test.ts": 1502,
     "test/generate-openclaw-config.test.ts": 1972,
     "test/install-preflight.test.ts": 3935,
     "test/nemoclaw-start.test.ts": 5043,
     "test/onboard-messaging.test.ts": 2062,
     "test/onboard-selection.test.ts": 6867,
     "test/onboard.test.ts": 4774,
-    "test/policies.test.ts": 2489
+    "test/policies.test.ts": 2489,
+    "test/process-recovery.test.ts": 1567
   }
 }

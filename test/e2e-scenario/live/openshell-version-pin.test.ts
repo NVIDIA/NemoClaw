@@ -12,8 +12,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 // Migrated from test/e2e/test-openshell-version-pin.sh (regression guard for
 // #3474). The legacy bash script is a hermetic installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
-// already-installed openshell reports a too-new version and the downloaded
-// archives produce a binary that reports the pinned compatible version.
+// already-installed openshell reports a too-new version (0.0.73) and the
+// downloaded archives produce a binary that reports the pinned 0.0.72.
 //
 // This is a free-standing live test (per #5049's pattern) — it does not exercise
 // the registry-driven steady-state probe model. There is no OpenClaw instance,
@@ -22,6 +22,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
+  gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+};
 const REQUIRED_OPENSHELL_VERSION = "0.0.72";
 const STICKY_OPENSHELL_VERSION = "0.0.73";
 const OPENSHELL_FEATURE_MARKERS =
@@ -33,32 +38,30 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-// Bash helpers shared by the gh and curl stubs: write a fake archive, compute
-// a real sha256 digest of it (so install-openshell.sh's `sha256sum -c` step
-// validates), and emit the matching checksum file.
+// Bash helpers shared by the gh and curl stubs: write a fake archive and emit
+// the same pinned digest lines the real OpenShell v0.0.72 release uses. A fake
+// sha256sum below keeps this test hermetic even though the tarball bytes are
+// synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
 write_asset() {
   local asset_name="$1"
   local asset_path="$2"
   printf 'fake OpenShell release asset: %s\\n' "$asset_name" >"$asset_path"
 }
-sha256_digest() {
-  if [ -x /usr/bin/sha256sum ]; then
-    /usr/bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /bin/sha256sum ]; then
-    /bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /usr/bin/shasum ]; then
-    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
-  else
-    exit 3
-  fi
+pinned_sha256() {
+  case "$1" in
+    openshell-x86_64-unknown-linux-musl.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.cliLinuxX64)} ;;
+    openshell-gateway-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64)} ;;
+    openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64)} ;;
+    *) exit 4 ;;
+  esac
 }
 write_checksum() {
   local checksum_file="$1"
   local asset_name="$2"
   local asset_path="$3"
   [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
-  printf '%s  %s\\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+  printf '%s  %s\\n' "$(pinned_sha256 "$asset_name")" "$asset_name" >"$checksum_file"
 }`;
 
 // Force Linux/x86_64 asset selection regardless of host arch (legacy script
@@ -232,6 +235,19 @@ cat "$@" 2>/dev/null || true`,
   );
 }
 
+function createFakeSha256sum(binDir: string): void {
+  writeExecutable(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  cat >/dev/null
+  echo "checksum OK"
+  exit 0
+fi
+exec /usr/bin/sha256sum "$@"`,
+  );
+}
+
 async function runVersionPinScenario(
   artifacts: ArtifactSink,
   options: { ghDownloadMode: GhDownloadMode },
@@ -258,6 +274,7 @@ async function runVersionPinScenario(
     createFakeCurl(fakeBin, downloadLog);
     createFakeTar(fakeBin, REQUIRED_OPENSHELL_VERSION);
     createFakeStrings(fakeBin);
+    createFakeSha256sum(fakeBin);
 
     const result = spawnSync("bash", [INSTALL_SCRIPT], {
       env: {

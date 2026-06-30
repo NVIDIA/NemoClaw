@@ -9,13 +9,13 @@ import { describe, expect, it } from "vitest";
 
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { ProviderClient, trustedProviderEndpoint } from "../fixtures/clients/provider.ts";
+import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type {
   ShellProbeResult,
   ShellProbeRunOptions,
   TrustedShellCommand,
 } from "../fixtures/shell-probe.ts";
-import { startFakeOpenAiCompatibleServer } from "../fixtures/fake-openai-compatible.ts";
-import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 
 const COMPAT_HELPER = path.join(
   import.meta.dirname,

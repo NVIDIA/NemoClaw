@@ -31,6 +31,7 @@
 # Environment overrides:
 #   OPENSHELL_VERSION     — Explicit OpenShell CLI release tag override
 #   NEMOCLAW_OPENSHELL_CHANNEL — stable/dev/auto release selection when no explicit tag is set
+#   NEMOCLAW_ALLOW_DEV_NO_VERIFY — Set to 1 to authorize unverified dev artifacts
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
 #   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
@@ -44,9 +45,6 @@ set -euo pipefail
 # ── Configuration ────────────────────────────────────────────────────
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
-TARGET_USER="${SUDO_USER:-$(id -un)}"
-TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
-NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
@@ -74,6 +72,13 @@ fail() {
   exit 1
 }
 
+assert_openshell_version() {
+  local raw="$1"
+  if [[ ! "$raw" =~ ^v?[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    fail "Invalid OPENSHELL_VERSION '$raw'; expected vX.Y.Z or X.Y.Z"
+  fi
+}
+
 if [ -z "$OPENSHELL_VERSION" ]; then
   case "${NEMOCLAW_OPENSHELL_CHANNEL:-stable}" in
     dev) OPENSHELL_VERSION="dev" ;;
@@ -85,6 +90,21 @@ if [ "${1:-}" = "--print-openshell-version" ]; then
   printf '%s\n' "$OPENSHELL_VERSION"
   exit 0
 fi
+if [[ "$OPENSHELL_VERSION" = "dev" ]]; then
+  if [[ "${NEMOCLAW_ALLOW_DEV_NO_VERIFY:-}" != "1" ]]; then
+    fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ALLOW_DEV_NO_VERIFY=1 to allow unverified OpenShell dev-channel installs."
+  fi
+  warn "Dev channel install skips SHA-256 verification. Use only in trusted environments."
+else
+  assert_openshell_version "$OPENSHELL_VERSION"
+  if [[ "$OPENSHELL_VERSION" != v* ]]; then
+    OPENSHELL_VERSION="v${OPENSHELL_VERSION}"
+  fi
+fi
+OPENSHELL_VERSION_NO_V="${OPENSHELL_VERSION#v}"
+TARGET_USER="${SUDO_USER:-$(id -un)}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 # ── Retry helper ─────────────────────────────────────────────────────
 # Usage: retry 3 10 "description" command arg1 arg2
@@ -122,6 +142,77 @@ wait_for_apt_lock() {
     sleep 5
     ((elapsed += 5))
   done
+}
+
+openshell_cli_asset_for_arch() {
+  local arch
+  arch="$(uname -m)"
+  case "$arch" in
+    x86_64 | amd64) printf '%s\n' "openshell-x86_64-unknown-linux-musl.tar.gz" ;;
+    aarch64 | arm64) printf '%s\n' "openshell-aarch64-unknown-linux-musl.tar.gz" ;;
+    *) fail "Unsupported architecture: $arch" ;;
+  esac
+}
+
+openshell_cli_pinned_sha256() {
+  local release_tag="$1" asset="$2"
+  case "${release_tag}:${asset}" in
+    v0.0.72:openshell-x86_64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+      ;;
+    v0.0.72:openshell-aarch64-unknown-linux-musl.tar.gz)
+      printf '%s\n' "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+openshell_checksum_line() {
+  local checksum_file="$1" asset="$2"
+  awk -v asset="$asset" '$2 == asset { print; found=1; exit } END { if (!found) exit 1 }' "$checksum_file"
+}
+
+verify_openshell_cli_asset() {
+  local tmpdir="$1" asset="$2" checksum_file="openshell-checksums-sha256.txt"
+  local checksum_line expected_sha release_sha
+  local -a sha_cmd
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha_cmd=(sha256sum)
+  elif command -v shasum >/dev/null 2>&1; then
+    sha_cmd=(shasum -a 256)
+  else
+    fail "No SHA-256 tool available (sha256sum/shasum)"
+  fi
+
+  retry 3 10 "download openshell checksum" \
+    curl -fsSL -o "$tmpdir/$checksum_file" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${checksum_file}"
+  checksum_line="$(openshell_checksum_line "$tmpdir/$checksum_file" "$asset")" \
+    || fail "OpenShell checksum file does not list $asset"
+  expected_sha="$(openshell_cli_pinned_sha256 "$OPENSHELL_VERSION" "$asset")" \
+    || fail "No NemoClaw-pinned SHA-256 for OpenShell ${OPENSHELL_VERSION} asset ${asset}"
+  release_sha="$(printf '%s\n' "$checksum_line" | awk '{print $1}')"
+  [[ "$release_sha" == "$expected_sha" ]] \
+    || fail "OpenShell release checksum for $asset does not match NemoClaw-pinned ${OPENSHELL_VERSION} digest"
+  (cd "$tmpdir" && printf '%s\n' "$checksum_line" | "${sha_cmd[@]}" -c -) \
+    || fail "OpenShell CLI checksum verification failed for $asset"
+}
+
+install_openshell_cli_release() {
+  local asset tmpdir
+  asset="$(openshell_cli_asset_for_arch)"
+  tmpdir="$(mktemp -d)"
+  retry 3 10 "download openshell" \
+    curl -fsSL -o "$tmpdir/$asset" \
+    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${asset}"
+  if [[ "$OPENSHELL_VERSION" != "dev" ]]; then
+    verify_openshell_cli_asset "$tmpdir" "$asset"
+  fi
+  tar xzf "$tmpdir/$asset" -C "$tmpdir"
+  sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
+  rm -rf "$tmpdir"
 }
 
 # ══════════════════════════════════════════════════════════════════════
@@ -185,8 +276,8 @@ else
   elif command -v shasum >/dev/null 2>&1; then
     actual_hash="$(shasum -a 256 "$ns_tmp" | awk '{print $1}')"
   else
-    warn "No SHA-256 tool found — skipping NodeSource integrity check"
-    actual_hash="$NODESOURCE_SHA256"
+    rm -f "$ns_tmp"
+    fail "No SHA-256 tool available (sha256sum/shasum)"
   fi
   if [[ "$actual_hash" != "$NODESOURCE_SHA256" ]]; then
     rm -f "$ns_tmp"
@@ -205,41 +296,17 @@ fi
 # ══════════════════════════════════════════════════════════════════════
 if command -v openshell >/dev/null 2>&1; then
   _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
-  _pinned_ver="${OPENSHELL_VERSION#v}" # strip leading 'v'
+  _pinned_ver="$OPENSHELL_VERSION_NO_V"
   if [ "$_installed_ver" = "$_pinned_ver" ]; then
     info "OpenShell CLI already installed at pinned version: $_installed_ver"
   else
     info "OpenShell CLI $_installed_ver does not match pinned ${_pinned_ver} — reinstalling..."
-    ARCH="$(uname -m)"
-    case "$ARCH" in
-      x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-      aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
-      *) fail "Unsupported architecture: $ARCH" ;;
-    esac
-    tmpdir="$(mktemp -d)"
-    retry 3 10 "download openshell" \
-      curl -fsSL -o "$tmpdir/$ASSET" \
-      "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${ASSET}"
-    tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
-    sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
-    rm -rf "$tmpdir"
+    install_openshell_cli_release
     info "OpenShell CLI upgraded: $(openshell --version 2>&1 || echo unknown)"
   fi
 else
   info "Installing OpenShell CLI ${OPENSHELL_VERSION}..."
-  ARCH="$(uname -m)"
-  case "$ARCH" in
-    x86_64 | amd64) ASSET="openshell-x86_64-unknown-linux-musl.tar.gz" ;;
-    aarch64 | arm64) ASSET="openshell-aarch64-unknown-linux-musl.tar.gz" ;;
-    *) fail "Unsupported architecture: $ARCH" ;;
-  esac
-  tmpdir="$(mktemp -d)"
-  retry 3 10 "download openshell" \
-    curl -fsSL -o "$tmpdir/$ASSET" \
-    "https://github.com/NVIDIA/OpenShell/releases/download/${OPENSHELL_VERSION}/${ASSET}"
-  tar xzf "$tmpdir/$ASSET" -C "$tmpdir"
-  sudo install -m 755 "$tmpdir/openshell" /usr/local/bin/openshell
-  rm -rf "$tmpdir"
+  install_openshell_cli_release
   info "OpenShell CLI installed: $(openshell --version 2>&1 || echo unknown)"
 fi
 
@@ -264,7 +331,7 @@ DOCKER_PULL_PID=""
 if [[ "${SKIP_DOCKER_PULL:-0}" != "1" ]]; then
   info "Pre-pulling Docker images in background..."
   (
-    SUPERVISOR_TAG="${OPENSHELL_VERSION#v}" # v0.0.72 -> 0.0.72
+    SUPERVISOR_TAG="$OPENSHELL_VERSION_NO_V"
     SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor:${SUPERVISOR_TAG}"
 
     # Pull all images in parallel

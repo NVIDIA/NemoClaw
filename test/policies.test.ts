@@ -854,7 +854,7 @@ exit 1
     it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toMatch(/openshell$/);
-      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
+      expect(cmd.slice(1)).toEqual(["policy", "get", "--base", "my-assistant"]);
     });
   });
 
@@ -912,7 +912,7 @@ exit 1
     it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toBe(fakeOpenshell);
-      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--base", "my-assistant"]);
     });
 
     it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {

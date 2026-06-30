@@ -21,6 +21,9 @@ LOG_FILE="/tmp/nemoclaw-e2e-openshell-version-pin.log"
 INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-version-pin-install.log"
 DOWNLOAD_LOG="/tmp/nemoclaw-e2e-openshell-version-pin-downloads.log"
 FAKE_BIN="/tmp/nemoclaw-e2e-openshell-version-pin-bin"
+PINNED_OPENSHELL_LINUX_X64_SHA256="37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256="03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
+PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256="811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230"
 REQUIRED_OPENSHELL_VERSION="0.0.72"
 STICKY_OPENSHELL_VERSION="0.0.73"
 OPENSHELL_FEATURE_MARKERS="request-body-credential-rewrite websocket-credential-rewrite allow_all_known_mcp_methods"
@@ -104,15 +107,12 @@ write_asset() {
   printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
 }
 sha256_digest() {
-  if [ -x /usr/bin/sha256sum ]; then
-    /usr/bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /bin/sha256sum ]; then
-    /bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /usr/bin/shasum ]; then
-    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
-  else
-    exit 3
-  fi
+  case "$(basename "$1")" in
+    openshell-x86_64-unknown-linux-musl.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_LINUX_X64_SHA256:?}" ;;
+    openshell-gateway-x86_64-unknown-linux-gnu.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256:?}" ;;
+    openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256:?}" ;;
+    *) exit 3 ;;
+  esac
 }
 write_checksum() {
   local checksum_file="$1"
@@ -166,15 +166,12 @@ write_asset() {
   printf 'fake OpenShell release asset: %s\n' "$asset_name" >"$asset_path"
 }
 sha256_digest() {
-  if [ -x /usr/bin/sha256sum ]; then
-    /usr/bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /bin/sha256sum ]; then
-    /bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /usr/bin/shasum ]; then
-    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
-  else
-    exit 3
-  fi
+  case "$(basename "$1")" in
+    openshell-x86_64-unknown-linux-musl.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_LINUX_X64_SHA256:?}" ;;
+    openshell-gateway-x86_64-unknown-linux-gnu.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256:?}" ;;
+    openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz) printf '%s\n' "${PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256:?}" ;;
+    *) exit 3 ;;
+  esac
 }
 write_checksum() {
   local checksum_file="$1"
@@ -219,8 +216,19 @@ echo "checksum OK"
 exit 0
 SH
 
+write_executable "$FAKE_BIN/sha256sum" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "-c" ]; then
+  cat >/dev/null
+  echo "checksum OK"
+  exit 0
+fi
+exec /usr/bin/sha256sum "$@"
+SH
+
 # The installer extracts three archives. Create the binary each archive would
-# have produced. The replacement openshell reports REQUIRED_OPENSHELL_VERSION and contains the
+# have produced. The replacement openshell reports REQUIRED_OPENSHELL_VERSION
+# and contains the
 # feature strings checked by install-openshell.sh.
 write_executable "$FAKE_BIN/tar" <<'SH'
 #!/usr/bin/env bash
@@ -263,6 +271,9 @@ env \
   PATH="$FAKE_BIN:/usr/bin:/bin" \
   HOME="${HOME}" \
   DOWNLOAD_LOG="$DOWNLOAD_LOG" \
+  PINNED_OPENSHELL_LINUX_X64_SHA256="$PINNED_OPENSHELL_LINUX_X64_SHA256" \
+  PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256="$PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256" \
+  PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256="$PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256" \
   REQUIRED_OPENSHELL_VERSION="$REQUIRED_OPENSHELL_VERSION" \
   STICKY_OPENSHELL_VERSION="$STICKY_OPENSHELL_VERSION" \
   bash scripts/install-openshell.sh >"$INSTALL_LOG" 2>&1

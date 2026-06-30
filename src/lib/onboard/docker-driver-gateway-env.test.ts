@@ -16,24 +16,27 @@ import {
 
 describe("buildDockerDriverGatewayEnv", () => {
   it("sets Docker-driver gateway networking from NemoClaw configuration", () => {
-    expect(
-      buildDockerDriverGatewayEnv({
-        platform: "linux",
-        stateDir: "/tmp/nemoclaw-gateway",
-        getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
-        resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
-      }),
-    ).toMatchObject({
+    const env = buildDockerDriverGatewayEnv({
+      platform: "linux",
+      stateDir: "/tmp/nemoclaw-gateway",
+      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+      resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
+    });
+
+    expect(env).toMatchObject({
       OPENSHELL_DRIVERS: "docker",
       OPENSHELL_BIND_ADDRESS: "127.0.0.1",
       OPENSHELL_SERVER_PORT: "8080",
-      OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
+      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/nemoclaw-gateway/tls",
       OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
       OPENSHELL_SSH_GATEWAY_PORT: "8080",
       OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
       OPENSHELL_DOCKER_SUPERVISOR_BIN: "/usr/bin/openshell-sandbox",
+      OPENSHELL_GATEWAY_CONFIG: "/tmp/nemoclaw-gateway/openshell-gateway.toml",
     });
+    expect(env.OPENSHELL_DISABLE_GATEWAY_AUTH).toBeUndefined();
   });
 
   it("uses the Docker driver on macOS without VM helper state", () => {
@@ -48,9 +51,11 @@ describe("buildDockerDriverGatewayEnv", () => {
       OPENSHELL_DRIVERS: "docker",
       OPENSHELL_BIND_ADDRESS: "127.0.0.1",
       OPENSHELL_SERVER_PORT: "8080",
-      OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
+      OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
+      OPENSHELL_LOCAL_TLS_DIR: "/tmp/nemoclaw-gateway/tls",
       OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
       OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+      OPENSHELL_GATEWAY_CONFIG: "/tmp/nemoclaw-gateway/openshell-gateway.toml",
     });
     expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
     expect(env.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
@@ -185,6 +190,12 @@ describe("writeDockerGatewayDebEnvOverride", () => {
   it("writes the service env only when package-managed startup prepares the service", async () => {
     const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-env-"));
     const envFile = path.join(tempHome, ".config", "openshell", "gateway.env");
+    const gatewayEnv = buildDockerDriverGatewayEnv({
+      platform: "darwin",
+      stateDir: path.join(tempHome, "state"),
+      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.72",
+      resolveSandboxBin: () => null,
+    });
     const existsSpy = vi
       .spyOn(fs, "existsSync")
       .mockImplementation(
@@ -197,10 +208,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
         startPackageManagedDockerDriverGatewayWithEnvOverride({
           clearDockerDriverGatewayRuntimeFiles: vi.fn(),
           exitOnFailure: false,
-          gatewayEnv: {
-            OPENSHELL_BIND_ADDRESS: "127.0.0.1",
-            OPENSHELL_GATEWAY_CONFIG: "/tmp/openshell-gateway.toml",
-          },
+          gatewayEnv,
           gatewayName: "nemoclaw",
           hasOpenShellGatewayUserService: () => true,
           isDockerDriverGatewayReady: async () => true,
@@ -220,7 +228,7 @@ describe("writeDockerGatewayDebEnvOverride", () => {
 
       expect(fs.readFileSync(envFile, "utf-8")).toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1\n");
       expect(fs.readFileSync(envFile, "utf-8")).toContain(
-        "OPENSHELL_GATEWAY_CONFIG=/tmp/openshell-gateway.toml\n",
+        `OPENSHELL_GATEWAY_CONFIG=${gatewayEnv.OPENSHELL_GATEWAY_CONFIG}\n`,
       );
     } finally {
       existsSpy.mockRestore();

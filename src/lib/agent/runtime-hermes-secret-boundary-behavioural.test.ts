@@ -164,19 +164,20 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.pkillCalls.length).toBe(0);
   });
 
-  it("env-file guard warns and skips the boundary check when the validator script is absent", () => {
+  it("env-file guard refuses recovery when the validator script is absent", () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryGuard(),
       pythonExit: 0,
       validatorExists: false,
     });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain("REACHED_LAUNCH");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
     expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
-    expect(result.pkillCalls.length).toBe(0);
-    expect(result.recoveryLog).toContain("[gateway-recovery] WARNING");
+    expect(result.stdout).not.toContain("REACHED_LAUNCH");
+    expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
+    expect(result.recoveryLog).toContain("[gateway-recovery] REFUSING");
     expect(result.recoveryLog).toContain("missing on this sandbox image");
-    expect(result.stderr).toContain("[gateway-recovery] WARNING");
+    expect(result.stderr).toContain("[gateway-recovery] REFUSING");
   });
 
   it("runtime-env guard exits 1 on python validator failure, kills processes, and logs [SECURITY]", {
@@ -222,16 +223,17 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.pkillCalls.length).toBe(0);
   });
 
-  it("standalone env-file check emits SECRET_BOUNDARY_VALIDATOR_MISSING and exits 0 when validator script is absent", () => {
+  it("standalone env-file check refuses and kills processes when validator script is absent", () => {
     const result = runGuard({
       guard: __testing.buildHermesEnvFileBoundaryStandaloneCheck(),
       pythonExit: 0,
       validatorExists: false,
     });
-    expect(result.status).toBe(0);
+    expect(result.status).toBe(1);
     expect(result.stdout).toContain("SECRET_BOUNDARY_VALIDATOR_MISSING");
     expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
-    expect(result.pkillCalls.length).toBe(0);
+    expect(result.stdout).not.toContain("REACHED_LAUNCH");
+    expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -288,6 +290,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       gatewayLogPath: string;
       recoveryFallbackLog: string;
       tmp: string;
+      extraEnv?: NodeJS.ProcessEnv;
       procRoot?: string;
       rootLifecycleMarkerPath?: string;
       trustManagerValidation?: boolean;
@@ -332,7 +335,11 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
     return spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 15000,
-      env: { PATH: `${opts.stubsDir}:/usr/bin:/bin`, HOME: opts.tmp },
+      env: {
+        PATH: `${opts.stubsDir}:/usr/bin:/bin`,
+        HOME: opts.tmp,
+        ...opts.extraEnv,
+      },
     });
   }
 
@@ -458,7 +465,6 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", {
       removeTempDir(harness.tmp);
     }
   });
-
   it("refuses on runtime-env violation after sourcing proxy-env (stubbed python3)", () => {
     const harness = prepareRecoveryHarness("runtime-env-stub");
     const validatorRoot = path.join(harness.tmp, "usr-local-lib-nemoclaw");

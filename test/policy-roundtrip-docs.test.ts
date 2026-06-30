@@ -14,7 +14,7 @@ const DOCS = [
 ];
 
 const SOURCE_REVIEW_MARKERS = [
-  "invalidState: OpenShell 0.0.44 policy get --full emits metadata before the --- YAML header.",
+  "invalidState: OpenShell 0.0.72 policy get --base emits metadata before the --- YAML header.",
   "sourceBoundary: OpenShell CLI output is owned by the separate OpenShell project.",
   "whyNotSourceFix: NemoClaw pins OpenShell but cannot change that upstream formatter here.",
   "regressionTest: test/policy-roundtrip-docs.test.ts validates this shared docs pattern.",
@@ -33,13 +33,13 @@ describe("policy round-trip documentation examples", () => {
   it("keeps raw policy get/set snippets aligned with NemoClaw's OpenShell command builders", () => {
     for (const docPath of DOCS) {
       const text = readDoc(docPath);
-      expect(text, docPath).toContain("OpenShell 0.0.44+");
-      expect(text, docPath).toMatch(/openshell policy get --full (?:my-assistant|<sandbox-name>)/);
+      expect(text, docPath).toContain("OpenShell 0.0.72+");
+      expect(text, docPath).toMatch(/openshell policy get --base (?:my-assistant|<sandbox-name>)/);
       expect(text, docPath).toMatch(
         /openshell policy set --policy current-policy\.yaml --wait (?:my-assistant|<sandbox-name>)/,
       );
       expect(text, docPath).not.toMatch(
-        /openshell policy get (?:my-assistant|<sandbox-name>) --full/,
+        /openshell policy get (?:my-assistant|<sandbox-name>) --base/,
       );
       expect(text, docPath).not.toMatch(
         /openshell policy set (?:my-assistant|<sandbox-name>) --policy/,
