@@ -69,8 +69,13 @@ if len(errors) != len(bad):
       { url: "https://224.0.0.1/mcp", accepted: false },
       { url: "https://[::1]/mcp", accepted: false },
       { url: "https://2130706433/mcp", accepted: false },
+      { url: "https://user:password@mcp.example.com/mcp", accepted: false },
+      { url: "https://mcp.example.com//mcp", accepted: false },
+      { url: "https://mcp.example.com/mcp\\child", accepted: false },
       { url: "https://mcp.example.com/%2f", accepted: false },
       { url: "https://mcp.example.com/mcp?token=x", accepted: false },
+      { url: "https://mcp.example.com/mcp#fragment", accepted: false },
+      { url: "wss://mcp.example.com/mcp", accepted: false },
     ];
     const expected = cases.map(({ accepted }) => accepted);
     const hostResults = cases.map(({ url }) => {
@@ -112,6 +117,195 @@ print(json.dumps(results))
     expect(JSON.parse(result.stdout)).toEqual(expected);
   });
 
+  it("accepts only HTTPS endpoint definitions with one OpenShell placeholder", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+base = {
+    "server": "safe_name-1",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+}
+valid = [
+    ("add", {**base, "replace_existing": False}),
+    ("remove", {**base, "force": False}),
+]
+invalid = [
+    ("restart", {**base, "force": False}),
+    ("add", {**base, "replace_existing": False, "command": "touch /tmp/pwned"}),
+    ("add", {**base, "replace_existing": False, "args": ["--token", "raw"]}),
+    ("add", {**base, "replace_existing": False, "transport": "stdio"}),
+    ("add", {**base, "replace_existing": False, "env": {"SAFE_MCP_TOKEN": "raw"}}),
+    ("add", {**base, "replace_existing": False, "url": "http://mcp.example.test/mcp"}),
+    ("add", {**base, "replace_existing": False, "url": "https://mcp.example.test/../mcp"}),
+    ("add", {**base, "replace_existing": False, "url": "https://mcp.example.test/./mcp"}),
+    ("add", {**base, "replace_existing": False, "url": "https://mcp.example.test/mcp?transport=sse"}),
+    ("add", {**base, "replace_existing": False, "headers": {}}),
+    ("add", {**base, "replace_existing": False, "headers": {"authorization": base["headers"]["Authorization"]}}),
+    ("add", {**base, "replace_existing": False, "headers": {**base["headers"], "X-Api-Key": "raw"}}),
+    ("add", {**base, "replace_existing": False, "headers": {"Authorization": "Bearer raw-secret"}}),
+    ("add", {**base, "replace_existing": False, "headers": {"Authorization": "openshell:resolve:env:SAFE_MCP_TOKEN"}}),
+    ("add", {**base, "replace_existing": False, "headers": {"Authorization": "Bearer openshell:resolve:env:1INVALID"}}),
+    ("add", {**base, "replace_existing": False, "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN extra"}}),
+]
+
+accepted = []
+for action, payload in valid + invalid:
+    try:
+        module._validate_payload(action, payload)
+    except (TypeError, ValueError):
+        accepted.append(False)
+    else:
+        accepted.append(True)
+print(json.dumps(accepted))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([true, true, ...Array(16).fill(false)]);
+  });
+
+  it("rejects command, YAML-tag, and terminal-control injection without executing it", () => {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-mcp-injection-"));
+    const sentinel = path.join(temp, "executed");
+    const invalidPayload = {
+      server: `safe;touch ${sentinel}\n\u001b[31mFORGED`,
+      url: "https://mcp.example.test/mcp",
+      headers: { Authorization: "Bearer openshell:resolve:env:SAFE_MCP_TOKEN" },
+      replace_existing: false,
+    };
+    const commandResult = spawnSync(
+      "python3",
+      [TRANSACTION, "add", "--payload", JSON.stringify(invalidPayload)],
+      { encoding: "utf8" },
+    );
+
+    try {
+      expect(commandResult.status).toBe(2);
+      expect(commandResult.stderr).not.toContain("\u001b");
+      expect(commandResult.stderr.trim().split("\n")).toHaveLength(1);
+      expect(fs.existsSync(sentinel)).toBe(false);
+
+      const hermesDir = path.join(temp, ".hermes");
+      fs.mkdirSync(hermesDir);
+      fs.writeFileSync(
+        path.join(hermesDir, "config.yaml"),
+        `model: !!python/object/apply:os.system ["touch ${sentinel}"]\n`,
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(path.join(hermesDir, ".env"), "HERMES_TEST=1\n", { mode: 0o600 });
+      fs.writeFileSync(path.join(hermesDir, ".config-hash"), "untrusted\n", { mode: 0o600 });
+      const yamlResult = runPython(
+        `
+import importlib.util, json, os, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+module.GUARD_PATH = sys.argv[2]
+module.HERMES_DIR = sys.argv[3]
+module.CONFIG_PATH = os.path.join(module.HERMES_DIR, "config.yaml")
+module.os.geteuid = lambda: 1000
+module._assert_non_root_lifecycle_identity = lambda: None
+payload = {
+    "server": "safe",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+    "replace_existing": False,
+}
+sys.argv = [sys.argv[1], "add", "--payload", json.dumps(payload)]
+print(json.dumps({"exit_code": module.main()}))
+`,
+        [hermesDir],
+      );
+
+      expect(yamlResult.status, `${yamlResult.stdout}\n${yamlResult.stderr}`).toBe(0);
+      expect(JSON.parse(yamlResult.stdout)).toEqual({ exit_code: 2 });
+      expect(yamlResult.stderr.trim()).toBe("Invalid Hermes config: YAML parsing failed");
+      expect(yamlResult.stderr).not.toContain("python/object");
+      expect(fs.existsSync(sentinel)).toBe(false);
+    } finally {
+      fs.rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  it("emits bounded one-line errors with payload and runtime secrets redacted", () => {
+    const result = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+payload = {
+    "server": "safe",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+    "replace_existing": False,
+}
+def fail(action, received):
+    raise RuntimeError(
+        "reload failed Authorization: " + received["headers"]["Authorization"]
+        + " Bearer runtime-secret-123 token=second-secret-456 "
+        + "https://user:password@example.test/mcp?token=query-secret-789 "
+        + "\\x1b[31m\\nFORGED\\u202e" + ("A" * 1000)
+    )
+module.execute = fail
+sys.argv = [sys.argv[1], "add", "--payload", json.dumps(payload)]
+print(json.dumps({"exit_code": module.main()}))
+`);
+
+    expect(result.status, result.stdout).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ exit_code: 2 });
+    expect(result.stderr).toContain("<REDACTED>");
+    for (const secret of [
+      "SAFE_MCP_TOKEN",
+      "runtime-secret-123",
+      "second-secret-456",
+      "password",
+      "query-secret-789",
+    ]) {
+      expect(result.stderr).not.toContain(secret);
+    }
+    expect(result.stderr).not.toContain("\u001b");
+    expect(result.stderr).not.toContain("\u202e");
+    expect(result.stderr.trim().split("\n")).toHaveLength(1);
+    expect(result.stderr.trim().length).toBeLessThanOrEqual(512);
+
+    const representations = runPython(`
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+messages = [
+    "failed {'api_key': 'raw-secret-1'}",
+    "failed {'token': 'raw-secret-2'}",
+    'Authorization: Bearer "runtime secret with spaces", comma-secret',
+    "Bearer 'quoted bearer secret', suffix-secret",
+]
+print(json.dumps([
+    module._sanitize_error_message(RuntimeError(message)) for message in messages
+]))
+`);
+    expect(representations.status, representations.stderr).toBe(0);
+    const sanitized = JSON.parse(representations.stdout) as string[];
+    expect(sanitized).toHaveLength(4);
+    for (const message of sanitized) expect(message).toContain("<REDACTED>");
+    for (const secret of [
+      "raw-secret-1",
+      "raw-secret-2",
+      "runtime secret with spaces",
+      "comma-secret",
+      "quoted bearer secret",
+      "suffix-secret",
+    ]) {
+      expect(sanitized.join("\n")).not.toContain(secret);
+    }
+  });
+
   it("refuses a locked config snapshot", () => {
     const result = runPython(`
 import importlib.util, sys, types
@@ -130,6 +324,286 @@ else:
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("locked");
+  });
+
+  it("blocks symlink, hardlink, permission, inode-race, and atomic-write guard bypasses", () => {
+    const result = runPython(`
+import hashlib, importlib.util, json, os, shutil, sys, tempfile
+
+TRANSACTION_PATH = sys.argv[1]
+GUARD_PATH = sys.argv[2]
+CONFIG_TEXT = "model: test\\n"
+ENV_TEXT = "HERMES_TEST=1\\n"
+PAYLOAD = {
+    "server": "safe",
+    "url": "https://mcp.example.test/mcp",
+    "headers": {"Authorization": "Bearer openshell:resolve:env:SAFE_MCP_TOKEN"},
+    "replace_existing": False,
+}
+
+def load_transaction(name):
+    spec = importlib.util.spec_from_file_location(name, TRANSACTION_PATH)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+def fixture(name):
+    root = tempfile.mkdtemp(prefix="nemoclaw-hermes-mcp-" + name + "-")
+    hermes_dir = os.path.join(root, ".hermes")
+    os.mkdir(hermes_dir, 0o700)
+    config_path = os.path.join(hermes_dir, "config.yaml")
+    env_path = os.path.join(hermes_dir, ".env")
+    hash_path = os.path.join(hermes_dir, ".config-hash")
+    for path, text in ((config_path, CONFIG_TEXT), (env_path, ENV_TEXT)):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.chmod(path, 0o600)
+    hash_text = (
+        hashlib.sha256(CONFIG_TEXT.encode()).hexdigest() + "  " + config_path + "\\n"
+        + hashlib.sha256(ENV_TEXT.encode()).hexdigest() + "  " + env_path + "\\n"
+    )
+    with open(hash_path, "w", encoding="utf-8") as handle:
+        handle.write(hash_text)
+    os.chmod(hash_path, 0o600)
+    return root, hermes_dir, config_path, hash_path, hash_text
+
+def configure(module, hermes_dir):
+    module.GUARD_PATH = GUARD_PATH
+    module.HERMES_DIR = hermes_dir
+    module.CONFIG_PATH = os.path.join(hermes_dir, "config.yaml")
+    module.os.geteuid = lambda: 1000
+    module._assert_mutable_snapshot = lambda snapshot: None
+
+def blocked(operation):
+    try:
+        operation()
+    except Exception as error:
+        return True, type(error).__name__
+    return False, "none"
+
+results = {}
+roots = []
+try:
+    root, hermes_dir, config_path, _, _ = fixture("config-symlink")
+    roots.append(root)
+    target = os.path.join(root, "config-target")
+    os.replace(config_path, target)
+    os.symlink(target, config_path)
+    module = load_transaction("mcp_tx_config_symlink")
+    configure(module, hermes_dir)
+    was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+    results["config_symlink"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "preserved": open(target, encoding="utf-8").read() == CONFIG_TEXT,
+    }
+
+    root, hermes_dir, config_path, _, _ = fixture("config-hardlink")
+    roots.append(root)
+    alias = os.path.join(root, "config-alias")
+    os.link(config_path, alias)
+    module = load_transaction("mcp_tx_config_hardlink")
+    configure(module, hermes_dir)
+    was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+    results["config_hardlink"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "preserved": open(alias, encoding="utf-8").read() == CONFIG_TEXT,
+    }
+
+    root, hermes_dir, config_path, _, _ = fixture("config-mode")
+    roots.append(root)
+    os.chmod(config_path, 0o620)
+    module = load_transaction("mcp_tx_config_mode")
+    configure(module, hermes_dir)
+    was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+    results["config_group_writable"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "preserved": open(config_path, encoding="utf-8").read() == CONFIG_TEXT,
+    }
+
+    for kind in ("symlink", "hardlink"):
+        root, hermes_dir, config_path, hash_path, hash_text = fixture("hash-" + kind)
+        roots.append(root)
+        alias = os.path.join(root, "hash-alias")
+        if kind == "symlink":
+            os.replace(hash_path, alias)
+            os.symlink(alias, hash_path)
+        else:
+            os.link(hash_path, alias)
+        module = load_transaction("mcp_tx_hash_" + kind)
+        configure(module, hermes_dir)
+        was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+        results["hash_" + kind] = {
+            "blocked": was_blocked,
+            "error": error,
+            "config_preserved": open(config_path, encoding="utf-8").read() == CONFIG_TEXT,
+            "hash_preserved": open(alias, encoding="utf-8").read() == hash_text,
+        }
+
+    root, hermes_dir, config_path, _, _ = fixture("config-race")
+    roots.append(root)
+    module = load_transaction("mcp_tx_config_race")
+    configure(module, hermes_dir)
+    guard = module._load_guard()
+    module._load_guard = lambda: guard
+    original_write = guard._write_existing
+    raced = {"done": False}
+    def race_before_write(path, text, snapshot, mode=None):
+        if path == config_path and not raced["done"]:
+            raced["done"] = True
+            replacement = os.path.join(hermes_dir, "attacker-config")
+            with open(replacement, "w", encoding="utf-8") as handle:
+                handle.write("attacker: preserved\\n")
+            os.chmod(replacement, 0o600)
+            os.replace(replacement, config_path)
+        return original_write(path, text, snapshot, mode=mode)
+    guard._write_existing = race_before_write
+    was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+    results["config_inode_race"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "attacker_preserved": open(config_path, encoding="utf-8").read() == "attacker: preserved\\n",
+    }
+
+    root, hermes_dir, config_path, _, _ = fixture("atomic-failure")
+    roots.append(root)
+    module = load_transaction("mcp_tx_atomic_failure")
+    configure(module, hermes_dir)
+    guard = module._load_guard()
+    module._load_guard = lambda: guard
+    original_replace = guard.os.replace
+    def fail_config_replace(source, destination, *args, **kwargs):
+        if destination == "config.yaml":
+            raise OSError("simulated atomic replace failure")
+        return original_replace(source, destination, *args, **kwargs)
+    guard.os.replace = fail_config_replace
+    was_blocked, error = blocked(lambda: module.apply_transaction("add", PAYLOAD))
+    guard.os.replace = original_replace
+    results["atomic_replace_failure"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "config_preserved": open(config_path, encoding="utf-8").read() == CONFIG_TEXT,
+        "temp_cleaned": not any(".nemoclaw." in name for name in os.listdir(hermes_dir)),
+    }
+
+    root, hermes_dir, config_path, hash_path, hash_text = fixture("hash-race")
+    roots.append(root)
+    module = load_transaction("mcp_tx_hash_race")
+    configure(module, hermes_dir)
+    guard = module._load_guard()
+    original_hash_text = guard._hash_text
+    raced = {"done": False}
+    def race_after_hash(*args):
+        value = original_hash_text(*args)
+        if not raced["done"]:
+            raced["done"] = True
+            replacement = os.path.join(hermes_dir, "raced-config")
+            with open(replacement, "w", encoding="utf-8") as handle:
+                handle.write("attacker: after-hash\\n")
+            os.chmod(replacement, 0o600)
+            os.replace(replacement, config_path)
+        return value
+    guard._hash_text = race_after_hash
+    was_blocked, error = blocked(lambda: module._refresh_and_verify_hashes(guard, False))
+    results["hash_inode_race"] = {
+        "blocked": was_blocked,
+        "error": error,
+        "hash_preserved": open(hash_path, encoding="utf-8").read() == hash_text,
+    }
+finally:
+    for root in roots:
+        shutil.rmtree(root, ignore_errors=True)
+
+print(json.dumps(results, sort_keys=True))
+`);
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    const scenarios = JSON.parse(result.stdout) as Record<string, Record<string, unknown>>;
+    expect(Object.keys(scenarios).sort()).toEqual([
+      "atomic_replace_failure",
+      "config_group_writable",
+      "config_hardlink",
+      "config_inode_race",
+      "config_symlink",
+      "hash_hardlink",
+      "hash_inode_race",
+      "hash_symlink",
+    ]);
+    const expectedErrors: Record<string, string> = {
+      atomic_replace_failure: "OSError",
+      config_group_writable: "UnsafePathError",
+      config_hardlink: "UnsafePathError",
+      config_inode_race: "UnsafePathError",
+      config_symlink: "OSError",
+      hash_hardlink: "UnsafePathError",
+      hash_inode_race: "UnsafePathError",
+      hash_symlink: "OSError",
+    };
+    for (const [name, scenario] of Object.entries(scenarios)) {
+      expect(scenario.blocked, name).toBe(true);
+      expect(scenario.error, `${name}.error`).toBe(expectedErrors[name]);
+      for (const [property, value] of Object.entries(scenario)) {
+        if (property.endsWith("preserved") || property === "temp_cleaned") {
+          expect(value, `${name}.${property}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("keeps config ownership and gateway lifecycle identities separated", () => {
+    const result = runPython(`
+import importlib.util, json, stat, sys, types
+spec = importlib.util.spec_from_file_location("mcp_tx", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+errors = []
+module.os.geteuid = lambda: 1000
+for snapshot in (
+    types.SimpleNamespace(mode=0o600, uid=2000, gid=1000),
+    types.SimpleNamespace(mode=0o400, uid=1000, gid=1000),
+):
+    try:
+        module._assert_mutable_snapshot(snapshot)
+    except RuntimeError as error:
+        errors.append(str(error))
+
+module.os.geteuid = lambda: 0
+module.pwd.getpwnam = lambda name: types.SimpleNamespace(pw_uid=1000)
+module.grp.getgrnam = lambda name: types.SimpleNamespace(gr_gid=1000)
+for snapshot in (
+    types.SimpleNamespace(mode=0o600, uid=2000, gid=1000),
+    types.SimpleNamespace(mode=0o600, uid=1000, gid=2000),
+):
+    try:
+        module._assert_mutable_snapshot(snapshot)
+    except RuntimeError as error:
+        errors.append(str(error))
+
+module.os.geteuid = lambda: 1000
+unsafe_markers = (
+    types.SimpleNamespace(st_mode=stat.S_IFLNK | 0o777, st_uid=0),
+    types.SimpleNamespace(st_mode=stat.S_IFREG | 0o444, st_uid=1000),
+)
+for marker in unsafe_markers:
+    module.os.lstat = lambda path, marker=marker: marker
+    try:
+        module._assert_non_root_lifecycle_identity()
+    except PermissionError as error:
+        errors.append(str(error))
+
+print(json.dumps(errors))
+`);
+
+    expect(result.status, result.stderr).toBe(0);
+    const errors = JSON.parse(result.stdout) as string[];
+    expect(errors).toHaveLength(6);
+    expect(errors.slice(0, 4).every((error) => error.includes("not owned"))).toBe(true);
+    expect(errors.slice(4).every((error) => error.includes("marker is unsafe"))).toBe(true);
   });
 
   it("treats edits to any managed field as drift during removal", () => {

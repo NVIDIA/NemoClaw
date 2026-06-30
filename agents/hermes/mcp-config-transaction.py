@@ -37,6 +37,7 @@ import signal
 import stat
 import sys
 import time
+import unicodedata
 from types import ModuleType
 from urllib.parse import urlsplit
 
@@ -54,6 +55,25 @@ SERVER_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 ENV_PLACEHOLDER_RE = re.compile(
     r"^Bearer openshell:resolve:env:[A-Za-z_][A-Za-z0-9_]{0,127}$"
 )
+ANSI_ESCAPE_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\)|[@-_])"
+)
+AUTHORIZATION_FIELD_RE = re.compile(
+    r"(?i)((?:[\"']?authorization[\"']?)\s*[:=]\s*)[^;}\]]+"
+)
+BEARER_VALUE_RE = re.compile(r"(?i)(\bBearer\s+)[^;}\]]+")
+SENSITIVE_ASSIGNMENT_RE = re.compile(
+    r"(?i)((?:[\"']?(?:api[_-]?key|token|secret|password|credential)[\"']?)"
+    r"\s*[:=]\s*)[^;}\]]+"
+)
+URL_USERINFO_RE = re.compile(r"(?i)(https?://)[^/@\s]+@")
+SENSITIVE_QUERY_RE = re.compile(
+    r"(?i)([?&](?:api[_-]?key|token|secret|password|credential|auth)\s*=)[^&#\s]+"
+)
+SENSITIVE_PAYLOAD_KEY_RE = re.compile(
+    r"(?i)(?:authorization|bearer|api[_-]?key|token|secret|password|credential)"
+)
+MAX_ERROR_MESSAGE_LENGTH = 512
 BLOCKED_IPV4_NETWORKS = tuple(
     ipaddress.ip_network(cidr)
     for cidr in (
@@ -121,7 +141,61 @@ def _parse_payload(raw: str) -> dict[str, object]:
     return payload
 
 
+def _display_safe_text(value: object) -> str:
+    """Collapse terminal controls so one error cannot forge extra log lines."""
+    text = ANSI_ESCAPE_RE.sub("", str(value))
+    text = "".join(
+        character
+        for character in text
+        if unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+    )
+    return " ".join(text.split())
+
+
+def _sensitive_payload_values(payload: object) -> tuple[str, ...]:
+    values: list[str] = []
+
+    def visit(value: object, sensitive: bool = False) -> None:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                key_is_sensitive = isinstance(key, str) and bool(
+                    SENSITIVE_PAYLOAD_KEY_RE.search(key)
+                )
+                visit(child, sensitive or key_is_sensitive)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child, sensitive)
+        elif sensitive and isinstance(value, str) and value:
+            values.append(_display_safe_text(value))
+
+    visit(payload)
+    return tuple(sorted(set(values), key=len, reverse=True))
+
+
+def _sanitize_error_message(error: Exception, payload: object = None) -> str:
+    """Return a bounded, single-line diagnostic without credential material."""
+    if isinstance(error, yaml.YAMLError):
+        return "Invalid Hermes config: YAML parsing failed"
+    if isinstance(error, (json.JSONDecodeError, UnicodeError)):
+        return "Hermes MCP mutation payload could not be decoded"
+
+    message = _display_safe_text(error)
+    for value in _sensitive_payload_values(payload):
+        if value:
+            message = message.replace(value, "<REDACTED>")
+    message = AUTHORIZATION_FIELD_RE.sub(r"\1<REDACTED>", message)
+    message = BEARER_VALUE_RE.sub(r"\1<REDACTED>", message)
+    message = SENSITIVE_ASSIGNMENT_RE.sub(r"\1<REDACTED>", message)
+    message = URL_USERINFO_RE.sub(r"\1<REDACTED>@", message)
+    message = SENSITIVE_QUERY_RE.sub(r"\1<REDACTED>", message)
+    if not message:
+        message = "Hermes MCP transaction failed"
+    return message[:MAX_ERROR_MESSAGE_LENGTH]
+
+
 def _validate_payload(action: str, payload: dict[str, object]) -> None:
+    if action not in {"add", "remove"}:
+        raise ValueError("Unsupported MCP config action")
     allowed = {"server", "url", "headers"}
     allowed.add("replace_existing" if action == "add" else "force")
     unexpected = sorted(set(payload) - allowed)
@@ -179,8 +253,12 @@ def _validate_payload(action: str, payload: dict[str, object]) -> None:
     ):
         raise ValueError("MCP mutation payload URL uses a non-global address")
     path = parsed.path or "/"
-    if not path.startswith("/") or any(
-        char in path for char in ("%", "\\", ";", "*", "?", "[", "]", "{", "}")
+    path_segments = path.split("/")
+    if (
+        not path.startswith("/")
+        or "" in path_segments[1:-1]
+        or any(segment in {".", ".."} for segment in path_segments)
+        or any(char in path for char in ("%", "\\", ";", "*", "?", "[", "]", "{", "}"))
     ):
         raise ValueError("MCP mutation payload URL path must be literal and canonical")
     default_port = 443
@@ -577,6 +655,7 @@ def main() -> int:
     parser.add_argument("action", choices=("add", "remove", "probe"))
     parser.add_argument("--payload")
     args = parser.parse_args()
+    payload: dict[str, object] | None = None
     try:
         if args.action == "probe":
             if args.payload is not None:
@@ -585,9 +664,10 @@ def main() -> int:
         elif args.payload is None:
             raise ValueError("Hermes MCP mutation requires --payload")
         else:
-            result = execute(args.action, _parse_payload(args.payload))
+            payload = _parse_payload(args.payload)
+            result = execute(args.action, payload)
     except Exception as error:
-        print(str(error), file=sys.stderr)
+        print(_sanitize_error_message(error, payload), file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True))
     return 0
