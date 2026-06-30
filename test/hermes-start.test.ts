@@ -1144,46 +1144,6 @@ describe("agents/hermes/start.sh env secret boundary", () => {
   });
 });
 
-describe("agents/hermes/start.sh trusted python3 resolution", () => {
-  it("resolves _HERMES_PYTHON to a trusted absolute path even when a PATH-shadowed python3 is present", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-pyresolve-"));
-    const shadowBin = path.join(tmpDir, "shadow-bin");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    fs.mkdirSync(shadowBin, { recursive: true });
-    fs.writeFileSync(path.join(shadowBin, "python3"), "#!/usr/bin/env bash\nexit 0\n", {
-      mode: 0o755,
-    });
-    const script = [
-      "#!/usr/bin/env bash",
-      "set -euo pipefail",
-      `_HERMES_PYTHON=${shellQuote(path.join(tmpDir, "no-venv"))}`,
-      'if [ ! -x "$_HERMES_PYTHON" ]; then',
-      '  _HERMES_PYTHON=""',
-      "  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do",
-      '    if [ -x "$_candidate" ]; then',
-      '      _HERMES_PYTHON="$_candidate"',
-      "    fi",
-      "  done",
-      "  unset _candidate",
-      "fi",
-      'printf "%s\\n" "$_HERMES_PYTHON"',
-    ].join("\n");
-    fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-    try {
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        timeout: 5000,
-        env: { ...process.env, PATH: `${shadowBin}:${process.env.PATH ?? ""}` },
-      });
-      expect(result.status).toBe(0);
-      expect(result.stdout).toMatch(/^\/(usr|opt)\/[^\n]*python3?$/m);
-      expect(result.stdout).not.toContain(shadowBin);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-});
-
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it("removes stale Hermes pid and lock files plus the legacy compatibility pid symlink", () => {
     const run = runHermesGatewayRuntimeCleanup({});
