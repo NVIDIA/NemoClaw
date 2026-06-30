@@ -47,7 +47,12 @@
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
 
-_self_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+_self_src="${BASH_SOURCE[0]:-$0}"
+_self_parent="${_self_src%/*}"
+if [ "$_self_parent" = "$_self_src" ]; then
+  _self_parent="."
+fi
+_self_dir="$(cd "$_self_parent" && pwd)"
 
 REAL_HERMES="/usr/local/bin/hermes.real"
 [ -x "$REAL_HERMES" ] || REAL_HERMES="${_self_dir}/hermes.real"
@@ -75,46 +80,26 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
     exit 127
   }
-  # mktemp and rm are resolved from trusted absolute paths so a PATH-shadowed
-  # mktemp cannot redirect the raw stderr buffer to an attacker-chosen path and
-  # a PATH-shadowed rm cannot retain the buffer past the EXIT trap. Same threat
-  # model as the python3 resolver above.
-  MKTEMP="$(_resolve_trusted_path /usr/bin/mktemp /bin/mktemp)" || {
-    echo "[SECURITY] Refusing hermes config show: no mktemp at a trusted absolute path" >&2
-    exit 127
-  }
-  RM="$(_resolve_trusted_path /bin/rm /usr/bin/rm)" || {
-    echo "[SECURITY] Refusing hermes config show: no rm at a trusted absolute path" >&2
-    exit 127
-  }
-  # Buffer Hermes stderr through an anonymous file descriptor so its masker's
-  # exit status is observable. A process-substitution `2> >(... mask ...)`
-  # cannot be checked via PIPESTATUS — Bash does not record the substituted
-  # command's exit status — so a stderr-side masker that crashed or refused
-  # unexpected input would silently fall back to whatever the substitution
-  # wrote (which on failure is nothing, but the wrapper would also miss
-  # observing the failure and return the Hermes status as if everything
-  # succeeded). The buffer is created with mktemp, opened read-write on a
-  # private FD, then unlinked immediately so the raw stderr bytes never live
-  # at an observable filesystem path while Hermes is running — closing the
-  # same-UID-process / shared-TMPDIR side channel. The masker reads the FD
-  # via /proc/self/fd, which on Linux re-opens the same inode with a fresh
-  # position-0 cursor. The masker itself buffers in memory and writes only
-  # on success, so neither stream produces a partial secret.
-  _stderr_buf="$("$MKTEMP")" || {
-    echo "[SECURITY] Refusing hermes config show: cannot create stderr buffer" >&2
-    exit 1
-  }
-  exec 9<>"$_stderr_buf"
-  "$RM" -f "$_stderr_buf"
-  _stderr_buf=""
+  # Stream Hermes stderr through a bash coprocess so the raw bytes only ever
+  # live in a kernel pipe — no temp file, no procfs-visible inode, and no
+  # process-substitution PID that PIPESTATUS would silently drop. The
+  # coprocess runs the same Python masker as the stdout pipeline. After
+  # Hermes exits, we close the write end of the stderr pipe so the masker
+  # sees EOF, then `wait` for it and capture its exit status. The masker
+  # itself buffers in memory and writes only on success, so a mid-stream
+  # crash never produces a partial secret on either stream.
+  coproc STDERR_MASK { "$PYTHON3" "$GUARD" mask-config-output >&2; }
+  _stderr_mask_pid=$STDERR_MASK_PID
+  exec 9>&${STDERR_MASK[1]}
+  eval "exec ${STDERR_MASK[1]}>&-"
+  eval "exec ${STDERR_MASK[0]}<&-"
   "$REAL_HERMES" "$@" 2>&9 | "$PYTHON3" "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
   stdout_masker_status="${statuses[1]}"
-  "$PYTHON3" "$GUARD" mask-config-output </proc/self/fd/9 >&2
-  stderr_masker_status=$?
   exec 9>&-
+  wait "$_stderr_mask_pid"
+  stderr_masker_status=$?
   if [ "$stdout_masker_status" -ne 0 ]; then
     echo "[SECURITY] Refusing hermes config show: output masker failed (stdout)" >&2
     exit "$stdout_masker_status"

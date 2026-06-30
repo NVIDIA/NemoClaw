@@ -498,7 +498,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
   });
 
-  it("ignores PATH-shadowed mktemp/rm so the stderr buffer cannot be redirected to an attacker path", () => {
+  it("ignores PATH-shadowed external helpers so the stderr buffer cannot be redirected to an attacker path", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-pathshadow-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
@@ -514,12 +514,13 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
       const evilBin = path.join(dir, "evil-bin");
       fs.mkdirSync(evilBin);
-      const evilMktempPath = path.join(evilBin, "mktemp");
-      const evilRmPath = path.join(evilBin, "rm");
       const evilMktempLeak = path.join(dir, "evil-mktemp-leak.txt");
       const evilRmMarker = path.join(dir, "evil-rm-called.txt");
-      fs.writeFileSync(
-        evilMktempPath,
+      const evilDirnameMarker = path.join(dir, "evil-dirname-called.txt");
+      const writeEvil = (name: string, body: string) =>
+        fs.writeFileSync(path.join(evilBin, name), body, { mode: 0o755 });
+      writeEvil(
+        "mktemp",
         [
           "#!/usr/bin/env bash",
           `out=${JSON.stringify(evilMktempLeak)}`,
@@ -527,16 +528,23 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
           'echo "$out"',
           "",
         ].join("\n"),
-        { mode: 0o755 },
       );
-      fs.writeFileSync(
-        evilRmPath,
+      writeEvil(
+        "rm",
         [
           "#!/usr/bin/env bash",
           `printf 'evil-rm called with %s\\n' "$*" > ${JSON.stringify(evilRmMarker)}`,
           "",
         ].join("\n"),
-        { mode: 0o755 },
+      );
+      writeEvil(
+        "dirname",
+        [
+          "#!/usr/bin/env bash",
+          `printf 'evil-dirname called with %s\\n' "$*" > ${JSON.stringify(evilDirnameMarker)}`,
+          'echo "/evil/path"',
+          "",
+        ].join("\n"),
       );
 
       const result = spawnSync("bash", [path.join(dir, "hermes"), "config", "show"], {
@@ -550,6 +558,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       expect(result.stderr).toContain("api_key: sk-****");
       expect(fs.existsSync(evilMktempLeak)).toBe(false);
       expect(fs.existsSync(evilRmMarker)).toBe(false);
+      expect(fs.existsSync(evilDirnameMarker)).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
