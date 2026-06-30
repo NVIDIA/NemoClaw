@@ -210,13 +210,17 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
   //     ExitError(0) unit test in src/lib/cli/oclif-runner.test.ts).
   // Both resolve at oclif's command lookup, before any gateway probe, so they
   // stay hermetic under the fakes above.
-  it("a native-route user error prints oclif's error and exits non-zero (#5974)", testTimeoutOptions(30_000), () => {
-    const { status, signal, error, combined } = runCli(["sandbox", "bogus-subcmd"]);
-    expect(error).toBeUndefined();
-    expect(signal).toBeNull();
-    expect(combined).toContain("not found");
-    expect(status).toBeGreaterThan(0);
-  });
+  it(
+    "a native-route user error prints oclif's error and exits non-zero (#5974)",
+    testTimeoutOptions(30_000),
+    () => {
+      const { status, signal, error, combined } = runCli(["sandbox", "bogus-subcmd"]);
+      expect(error).toBeUndefined();
+      expect(signal).toBeNull();
+      expect(combined).toContain("not found");
+      expect(status).toBeGreaterThan(0);
+    },
+  );
 
   it("a native-route --help stays a clean exit 0 (#5974)", testTimeoutOptions(30_000), () => {
     const { status, signal, error, combined } = runCli(["sandbox", "--help"]);
