@@ -16,6 +16,12 @@ import {
   writeSandboxRegistry,
 } from "./helpers";
 
+const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
+  "decode_sandbox_exec_cmd() {",
+  `  ${JSON.stringify(process.execPath)} -e "const s=process.argv[1]||'';const m=s.match(/printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d \\| sh/);process.stdout.write(m?Buffer.from(m[1],'base64').toString('utf8'):s);" "$1"`,
+  "}",
+];
+
 describe("CLI dispatch", () => {
   it("connect does not pre-start a duplicate port forward", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-forward-"));
@@ -159,6 +165,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
@@ -173,6 +180,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
         '    *"OPENCLAW="*)',
         '      echo recovered > "$state_file"',
@@ -221,6 +229,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
@@ -236,6 +245,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
         '    *"OPENCLAW="*)',
         '      echo recovered > "$state_file"',
@@ -285,6 +295,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
@@ -298,6 +309,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  if [[ "$cmd" == *"curl -so"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo RUNNING; exit 0; fi',
         '  if [[ "$cmd" == *"OPENCLAW="* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo UNEXPECTED_RECOVERY; exit 1; fi',
         "fi",
@@ -333,6 +345,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         'printf \'%s\\n\' "$*" >> "$marker_file"',
         'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
@@ -346,6 +359,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  if [[ "$cmd" == *"OPENCLAW="* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo RECOVERY_FAILED >&2; exit 42; fi',
         '  if [[ "$cmd" == *"curl -so"* ]]; then echo "__NEMOCLAW_SANDBOX_EXEC_STARTED__"; echo STOPPED; exit 0; fi',
         "fi",
@@ -550,6 +564,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `calls=${JSON.stringify(openshellCalls)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         'printf \'%s\\n\' "$*" >> "$calls"',
@@ -564,6 +579,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  if [[ "$cmd" == *"curl -so"* ]]; then',
         "    echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
         '    if [ "$(cat "$state_file")" = recovered ]; then echo RUNNING; else echo STOPPED; fi',

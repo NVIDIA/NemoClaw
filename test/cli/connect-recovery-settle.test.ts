@@ -7,12 +7,18 @@
 // declaring a recovery that is already dying. Split from
 // connect-recovery.test.ts, which is at the default size budget.
 
-import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./helpers";
+
+const DECODE_SANDBOX_EXEC_COMMAND_LINES = [
+  "decode_sandbox_exec_cmd() {",
+  `  ${JSON.stringify(process.execPath)} -e "const s=process.argv[1]||'';const m=s.match(/printf '%s' '([A-Za-z0-9+/=]+)' \\| base64 -d \\| sh/);process.stdout.write(m?Buffer.from(m[1],'base64').toString('utf8'):s);" "$1"`,
+  "}",
+];
 
 describe("CLI dispatch", () => {
   it("fails probe-only when a wedged gateway serves once and then drops its listener (#4710)", () => {
@@ -28,6 +34,7 @@ describe("CLI dispatch", () => {
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        ...DECODE_SANDBOX_EXEC_COMMAND_LINES,
         `marker_file=${JSON.stringify(markerFile)}`,
         `state_file=${JSON.stringify(stateFile)}`,
         `ready_count_file=${JSON.stringify(readyCountFile)}`,
@@ -43,6 +50,7 @@ describe("CLI dispatch", () => {
         "fi",
         'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
         '  cmd="$8"',
+        '  cmd="$(decode_sandbox_exec_cmd "$cmd")"',
         '  case "$cmd" in',
         '    *"OPENCLAW="*)',
         '      echo recovered > "$state_file"',
