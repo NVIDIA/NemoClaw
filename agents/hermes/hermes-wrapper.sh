@@ -9,25 +9,32 @@
 # Source-of-truth note for the `config show` masking layer.
 #
 # - Invalid state: the upstream Hermes CLI emits inline provider `api_key`
-#   values verbatim when asked to print the resolved configuration.
-# - Source boundary: those values are written by the build-time config
-#   generator at `agents/hermes/config/hermes-config.ts:buildHermesConfig`
-#   into the `model`, `providers`, and `custom_providers` sections. The
-#   placeholder `sk-OPENSHELL-PROXY-REWRITE` is later substituted at the
-#   OpenShell egress boundary, not in-process; the seed routing at
-#   `agents/hermes/seed-dashboard-config.py:_route_api_key` requires an
-#   `sk-`-prefixed value for downstream LiteLLM validation.
+#   values verbatim when asked to print the resolved configuration, so a
+#   user running `hermes config show` sees an `sk-`-prefixed string that
+#   looks like a real credential.
+# - Value being masked: the literal placeholder `sk-OPENSHELL-PROXY-REWRITE`
+#   hard-coded by `agents/hermes/config/hermes-config.ts:buildHermesConfig`
+#   for the `model`, `providers`, and `custom_providers` `api_key` fields.
+#   The user's real provider credential is never written into the rendered
+#   config: requests carrying the placeholder are rewritten at the OpenShell
+#   egress boundary, and the `sk-`-prefix exists only to satisfy LiteLLM's
+#   input validation in the upstream Hermes runtime. The masker therefore
+#   protects against the cosmetic appearance of a credential leak (#5981),
+#   not the leak of a real secret — even an unfiltered raw stream contains
+#   only a constant placeholder string.
+# - Source boundary: see `buildHermesConfig` and the seed-time routing in
+#   `agents/hermes/seed-dashboard-config.py:_route_api_key`.
 # - Source-fix constraint: removing the inline `api_key` would require
-#   either Hermes CLI native env-var reference support (an upstream
-#   change) or a redesigned dashboard/runtime contract that no longer
-#   needs an `sk-`-prefixed placeholder in the rendered config.
+#   either Hermes CLI native env-var reference support (an upstream change)
+#   or a redesigned dashboard/runtime contract that no longer needs an
+#   `sk-`-prefixed placeholder in the rendered config.
 # - Regression test: see `test/hermes-gateway-wrapper.test.ts` —
-#   `masks every api_key emitted by buildHermesConfig ...` derives a
-#   fixture from `buildHermesConfig()` and asserts no raw placeholder
-#   survives in stdout for `config show`.
+#   `masks every api_key emitted by buildHermesConfig ...` derives a fixture
+#   from `buildHermesConfig()` and asserts no raw placeholder survives in
+#   stdout for `config show`.
 # - Removal condition: delete this `config show` branch when Hermes CLI
-#   redacts credential-shaped fields natively or `buildHermesConfig`
-#   stops emitting an inline `api_key` value.
+#   redacts credential-shaped fields natively or `buildHermesConfig` stops
+#   emitting an inline `api_key` value.
 #
 # Scope note: this masker covers the CLI path only. The Hermes dashboard is
 # upstream-managed (Hermes' own HTTP surface); per the linked report the
@@ -103,11 +110,13 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   #
   # Residual surface: a same-UID process inside the sandbox can in principle
   # open the pipe FDs via /proc/<pid>/fd and race-read raw bytes before the
-  # masker reads them. Closing that surface requires sandbox-level procfs
-  # isolation (hidepid mount or a PID namespace), which is the OpenShell
-  # sandbox's responsibility and lives outside this wrapper. The source-
-  # level fix (Hermes CLI native env-var references) would eliminate the
-  # raw value upstream entirely.
+  # masker reads them. The race is bounded: the raw stream contains only
+  # the constant placeholder `sk-OPENSHELL-PROXY-REWRITE` (see the
+  # source-of-truth note above), never a user-provided credential — so a
+  # successful race yields a public placeholder string, not a secret.
+  # Closing the side channel entirely would require sandbox-level procfs
+  # isolation (hidepid mount or a PID namespace) outside this wrapper, or
+  # the upstream Hermes CLI redacting the field natively.
   coproc STDERR_MASK { "$PYTHON3" "$GUARD" mask-config-output >&2; }
   _stderr_mask_pid=$STDERR_MASK_PID
   # shellcheck disable=SC2086  # bash redirect targets cannot be quoted; quoting forces filename semantics
