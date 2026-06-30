@@ -12,8 +12,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 // Migrated from test/e2e/test-openshell-version-pin.sh (regression guard for
 // #3474). The legacy bash script is a hermetic installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
-// already-installed openshell reports a too-new version (0.0.72) and the
-// downloaded archives produce a binary that reports the pinned 0.0.71.
+// already-installed openshell reports a too-new version (0.0.73) and the
+// downloaded archives produce a binary that reports the pinned 0.0.72.
 //
 // This is a free-standing live test (per #5049's pattern) — it does not exercise
 // the registry-driven steady-state probe model. There is no OpenClaw instance,
@@ -23,9 +23,9 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 const PINNED_OPEN_SHELL_SHA256 = {
-  cliLinuxX64: "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716",
-  gatewayLinuxX64: "85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d",
-  sandboxLinuxX64: "dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d",
+  cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
+  gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
 };
 
 type GhDownloadMode = "success" | "fail";
@@ -35,7 +35,7 @@ function writeExecutable(target: string, contents: string): void {
 }
 
 // Bash helpers shared by the gh and curl stubs: write a fake archive and emit
-// the same pinned digest lines the real OpenShell v0.0.71 release uses. A fake
+// the same pinned digest lines the real OpenShell v0.0.72 release uses. A fake
 // sha256sum below keeps this test hermetic even though the tarball bytes are
 // synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
@@ -264,11 +264,11 @@ async function runVersionPinScenario(
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
-    createFakeStickyOpenshell(fakeBin, "0.0.72");
+    createFakeStickyOpenshell(fakeBin, "0.0.73");
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.71");
+    createFakeTar(fakeBin, "0.0.72");
     createFakeStrings(fakeBin);
     createFakeSha256sum(fakeBin);
 
@@ -291,40 +291,40 @@ async function runVersionPinScenario(
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
-    // Assertion 2: download-log-contains-v0.0.71 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.0.72 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.71");
+    expect(downloads).toContain("v0.0.72");
 
-    // Assertion 3: download-log-excludes-v0.0.72 — the too-new sticky version
+    // Assertion 3: download-log-excludes-v0.0.73 — the too-new sticky version
     // is never re-fetched.
-    expect(downloads).not.toContain("v0.0.72");
+    expect(downloads).not.toContain("v0.0.73");
 
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.71");
+      expect(downloads).toContain("gh download-fail v0.0.72");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.0.71");
+      expect(downloads).toContain("gh download v0.0.72");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.0.71 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.0.72 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.71 build.
+    // there and it is writable) was overwritten with the pinned 0.0.72 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.71");
-    expect(replacedVersion.stdout).not.toContain("0.0.72");
+    expect(replacedVersion.stdout).toContain("0.0.72");
+    expect(replacedVersion.stdout).not.toContain("0.0.73");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.71 via gh download", async ({
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.72 via gh download", async ({
   artifacts,
 }) => {
   await runVersionPinScenario(artifacts, { ghDownloadMode: "success" });

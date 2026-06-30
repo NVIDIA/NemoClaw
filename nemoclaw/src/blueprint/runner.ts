@@ -334,15 +334,15 @@ function parseCurrentPolicy(raw: string): UnknownRecord {
     parsed = YAML.parse(yaml);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Current policy from openshell policy get --full is not valid YAML: ${detail}`);
+    throw new Error(`Current policy from openshell policy get --base is not valid YAML: ${detail}`);
   }
 
   if (!isObjectLike(parsed)) {
-    throw new Error("Current policy from openshell policy get --full must be a YAML mapping");
+    throw new Error("Current policy from openshell policy get --base must be a YAML mapping");
   }
   if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
     throw new Error(
-      "Current policy from openshell policy get --full does not contain a policy YAML document",
+      "Current policy from openshell policy get --base does not contain a policy YAML document",
     );
   }
   return parsed;
@@ -793,7 +793,7 @@ export async function actionApply(
 
   if (Object.keys(policyAdditions).length > 0) {
     progress(78, "Applying policy additions");
-    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--base", sandboxName], {
       reject: false,
     });
     if (currentPolicy.exitCode !== 0) {

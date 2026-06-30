@@ -183,7 +183,7 @@ function mockCurrentPolicy(stdout: string): void {
     if (
       args[0] === "policy" &&
       args[1] === "get" &&
-      args[2] === "--full" &&
+      args[2] === "--base" &&
       args[3] === "test-sandbox"
     ) {
       return { exitCode: 0, stdout, stderr: "" };
@@ -639,7 +639,7 @@ describe("runner", () => {
       );
     });
 
-    it("applies blueprint policy additions by merging into the live policy", async () => {
+    it("merges additions into the round-trippable base policy while preserving MCP rules", async () => {
       const bp = minimalBlueprint({
         components: {
           inference: {
@@ -674,28 +674,47 @@ describe("runner", () => {
           },
         },
       });
+      const basePolicy = `version: 1
+network_policies:
+  existing_mcp:
+    endpoints:
+      - host: mcp.example.com
+        port: 443
+        path: /mcp
+        protocol: mcp
+        enforcement: enforce
+        mcp:
+          allow_all_known_mcp_methods: true
+          max_body_bytes: 131072
+          strict_tool_names: true
+        rules:
+          - allow:
+              tool: { any: [search_web, list_tools] }
+        deny_rules:
+          - tool: { any: [send_email, delete_resource] }
+  existing_json_rpc:
+    endpoints:
+      - host: rpc.example.com
+        port: 443
+        path: /rpc
+        protocol: json-rpc
+        enforcement: enforce
+        json_rpc: { max_body_bytes: 131072 }
+        rules:
+          - allow: { method: reports.search }
+`;
+      const basePolicies = YAML.parse(basePolicy).network_policies;
 
       mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
         if (
           args[0] === "policy" &&
           args[1] === "get" &&
-          args[2] === "--full" &&
+          args[2] === "--base" &&
           args[3] === "test-sandbox"
         ) {
           return {
             exitCode: 0,
-            stdout: [
-              "Version: 1",
-              "Hash: sha256:test",
-              "---",
-              "version: 1",
-              "network_policies:",
-              "  existing_service:",
-              "    mode: allow",
-              "    endpoints:",
-              "      - https://api.example.com",
-              "",
-            ].join("\n"),
+            stdout: ["Version: 1", "Hash: sha256:test", "---", basePolicy].join("\n"),
             stderr: "",
           };
         }
@@ -726,8 +745,10 @@ describe("runner", () => {
       const merged = YAML.parse(mergedEntry.content) as {
         network_policies?: Record<string, unknown>;
       };
-      expect(merged.network_policies).toHaveProperty("existing_service");
-      expect(merged.network_policies).toHaveProperty("nim_service");
+      expect(merged.network_policies).toEqual({
+        ...basePolicies,
+        nim_service: expect.any(Object),
+      });
     });
 
     it("fails closed when the live policy cannot be parsed", async () => {
@@ -775,7 +796,7 @@ describe("runner", () => {
       expect(policySetCalls).toEqual([]);
     });
 
-    it("fails closed when policy get --full does not include a policy document", async () => {
+    it("fails closed when policy get --base does not include a policy document", async () => {
       const bp = blueprintWithPolicyAdditions({
         nim_service: {
           name: "nim_service",

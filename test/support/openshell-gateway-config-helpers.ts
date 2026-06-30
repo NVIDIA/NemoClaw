@@ -24,7 +24,7 @@ export const GATEWAY_AUTH_REVIEW_NOTE = path.join(
   REPO_ROOT,
   "docs",
   "security",
-  "openshell-0.0.71-gateway-auth-review.md",
+  "openshell-0.0.72-compatibility-review.md",
 );
 const SANDBOX_JWT_SUBJECT_PREFIX = "spiffe://openshell/sandbox/";
 
@@ -39,7 +39,7 @@ export function baseGatewayEnv(stateDir: string): Record<string, string> {
     OPENSHELL_GRPC_ENDPOINT: "https://127.0.0.1:8080",
     OPENSHELL_LOCAL_TLS_DIR: path.join(stateDir, "tls"),
     OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.71",
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.72",
   };
 }
 

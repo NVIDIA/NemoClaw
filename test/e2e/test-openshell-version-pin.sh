@@ -8,11 +8,11 @@
 # pinned compatible version instead of failing before the reinstall path.
 #
 # Expected result on unfixed main: FAIL. scripts/install-openshell.sh sees the
-# fake installed `openshell 0.0.72`, compares it to MAX_VERSION=0.0.71, and
-# exits with "above the maximum" before downloading the pinned 0.0.71 release.
+# fake installed `openshell 0.0.73`, compares it to MAX_VERSION=0.0.72, and
+# exits with "above the maximum" before downloading the pinned 0.0.72 release.
 #
 # Expected result after the fix: PASS. The script warns about the too-new
-# installed OpenShell, downloads v0.0.71, replaces openshell plus helper
+# installed OpenShell, downloads v0.0.72, replaces openshell plus helper
 # binaries, and exits successfully.
 
 set -euo pipefail
@@ -21,9 +21,9 @@ LOG_FILE="/tmp/nemoclaw-e2e-openshell-version-pin.log"
 INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-version-pin-install.log"
 DOWNLOAD_LOG="/tmp/nemoclaw-e2e-openshell-version-pin-downloads.log"
 FAKE_BIN="/tmp/nemoclaw-e2e-openshell-version-pin-bin"
-PINNED_OPENSHELL_LINUX_X64_SHA256="b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716"
-PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256="85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d"
-PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256="dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d"
+PINNED_OPENSHELL_LINUX_X64_SHA256="37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4"
+PINNED_OPENSHELL_GATEWAY_LINUX_X64_SHA256="03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877"
+PINNED_OPENSHELL_SANDBOX_LINUX_X64_SHA256="811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230"
 
 exec > >(tee "$LOG_FILE") 2>&1
 
@@ -77,7 +77,7 @@ SH
 # the pinned compatible release.
 write_executable "$FAKE_BIN/openshell" <<'SH'
 #!/usr/bin/env bash
-if [ "${1:-}" = "--version" ]; then echo "openshell 0.0.72"; exit 0; fi
+if [ "${1:-}" = "--version" ]; then echo "openshell 0.0.73"; exit 0; fi
 # request-body-credential-rewrite websocket-credential-rewrite
 exit 0
 SH
@@ -222,7 +222,7 @@ exec /usr/bin/sha256sum "$@"
 SH
 
 # The installer extracts three archives. Create the binary each archive would
-# have produced. The replacement openshell reports 0.0.71 and contains the
+# have produced. The replacement openshell reports 0.0.72 and contains the
 # feature strings checked by install-openshell.sh.
 write_executable "$FAKE_BIN/tar" <<'SH'
 #!/usr/bin/env bash
@@ -244,7 +244,7 @@ case "$*" in
 esac
 cat > "$outdir/$name" <<'EOS'
 #!/usr/bin/env bash
-if [ "${1:-}" = "--version" ]; then echo "openshell 0.0.71"; exit 0; fi
+if [ "${1:-}" = "--version" ]; then echo "openshell 0.0.72"; exit 0; fi
 # request-body-credential-rewrite websocket-credential-rewrite
 exit 0
 EOS
@@ -259,7 +259,7 @@ cat "$@" 2>/dev/null || true
 SH
 
 cd "$REPO_ROOT"
-info "Running install-openshell.sh with sticky openshell 0.0.72 and max 0.0.71"
+info "Running install-openshell.sh with sticky openshell 0.0.73 and max 0.0.72"
 set +e
 env \
   PATH="$FAKE_BIN:/usr/bin:/bin" \
@@ -273,26 +273,26 @@ install_rc=$?
 set -e
 
 if [ "$install_rc" -ne 0 ]; then
-  if grep -q "openshell 0.0.72 is above the maximum (0.0.71)" "$INSTALL_LOG"; then
-    fail "Installer hard-failed on sticky OpenShell 0.0.72 instead of reinstalling pinned 0.0.71 (#3474)"
+  if grep -q "openshell 0.0.73 is above the maximum (0.0.72)" "$INSTALL_LOG"; then
+    fail "Installer hard-failed on sticky OpenShell 0.0.73 instead of reinstalling pinned 0.0.72 (#3474)"
   fi
   fail "install-openshell.sh failed before proving sticky-version recovery (exit ${install_rc})"
 fi
 pass "install-openshell.sh completed"
 
-if ! grep -q "v0.0.71" "$DOWNLOAD_LOG"; then
-  fail "Expected installer to download pinned OpenShell v0.0.71"
+if ! grep -q "v0.0.72" "$DOWNLOAD_LOG"; then
+  fail "Expected installer to download pinned OpenShell v0.0.72"
 fi
-pass "Installer downloaded pinned OpenShell v0.0.71"
+pass "Installer downloaded pinned OpenShell v0.0.72"
 
-if grep -q "v0.0.72" "$DOWNLOAD_LOG"; then
-  fail "Installer downloaded OpenShell v0.0.72 despite NemoClaw max 0.0.71"
+if grep -q "v0.0.73" "$DOWNLOAD_LOG"; then
+  fail "Installer downloaded OpenShell v0.0.73 despite NemoClaw max 0.0.72"
 fi
-pass "Installer did not download too-new OpenShell v0.0.72"
+pass "Installer did not download too-new OpenShell v0.0.73"
 
-if ! "$FAKE_BIN/openshell" --version 2>&1 | grep -q "0.0.71"; then
-  fail "openshell binary was not replaced with pinned 0.0.71"
+if ! "$FAKE_BIN/openshell" --version 2>&1 | grep -q "0.0.72"; then
+  fail "openshell binary was not replaced with pinned 0.0.72"
 fi
-pass "Sticky openshell 0.0.72 was replaced with pinned 0.0.71"
+pass "Sticky openshell 0.0.73 was replaced with pinned 0.0.72"
 
 info "OpenShell sticky-version pin guard complete"
