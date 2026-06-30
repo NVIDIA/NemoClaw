@@ -8,31 +8,27 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const MUTATION_SOURCES = ["src/lib/policy/index.ts", "nemoclaw/src/blueprint/runner.ts"];
-const FORBIDDEN_FULL_READS = [
-  "policy get --full",
-  '"policy", "get", "--full"',
-  "'policy', 'get', '--full'",
+const MUTATION_READS = [
+  {
+    relativePath: "src/lib/policy/index.ts",
+    baseCommand: 'return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName]',
+    fullCommand: 'return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName]',
+  },
+  {
+    relativePath: "nemoclaw/src/blueprint/runner.ts",
+    baseCommand: '["openshell", "policy", "get", "--base", sandboxName]',
+    fullCommand: '["openshell", "policy", "get", "--full", sandboxName]',
+  },
 ];
-const REQUIRED_BASE_READS = new Map([
-  [
-    "src/lib/policy/index.ts",
-    'return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName]',
-  ],
-  ["nemoclaw/src/blueprint/runner.ts", '["openshell", "policy", "get", "--base", sandboxName]'],
-]);
 
 const violations: string[] = [];
-for (const relativePath of MUTATION_SOURCES) {
+for (const { relativePath, baseCommand, fullCommand } of MUTATION_READS) {
   const source = readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
-  const requiredBaseRead = REQUIRED_BASE_READS.get(relativePath) ?? "";
-  if (!source.includes(requiredBaseRead)) {
+  if (!source.includes(baseCommand)) {
     violations.push(`${relativePath}: expected the audited policy mutation read to use --base`);
   }
-  for (const forbidden of FORBIDDEN_FULL_READS) {
-    if (source.includes(forbidden)) {
-      violations.push(`${relativePath}: policy mutation code must never read --full output`);
-    }
+  if (source.includes(fullCommand)) {
+    violations.push(`${relativePath}: audited policy mutation read must never use --full output`);
   }
 }
 
