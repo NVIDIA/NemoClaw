@@ -21,6 +21,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { buildHermesConfig } from "../agents/hermes/config/hermes-config.ts";
+import { buildOpenshellExecArgs } from "../src/lib/actions/sandbox/exec.ts";
 
 const WRAPPER = path.join(import.meta.dirname, "..", "agents", "hermes", "hermes-wrapper.sh");
 const VALIDATOR = path.join(
@@ -617,6 +618,72 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("api_key: sk-****");
     expect(run.stdout).toContain("garbage line with no colons at all");
     expect(run.stdout).toContain("next: not-a-secret-value");
+  });
+
+  it("composes the openshell dispatch argv built by buildOpenshellExecArgs with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
+    const dispatchArgv = buildOpenshellExecArgs("hermes-sandbox", ["hermes", "config", "show"]);
+    expect(dispatchArgv).toEqual([
+      "sandbox",
+      "exec",
+      "--name",
+      "hermes-sandbox",
+      "--",
+      "hermes",
+      "config",
+      "show",
+    ]);
+    const innerCommand = dispatchArgv.slice(dispatchArgv.indexOf("--") + 1);
+    expect(innerCommand).toEqual(["hermes", "config", "show"]);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-dispatch-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const fixture = [
+        "◆ Model",
+        "  Model:        {'default': 'meta/llama-3.1-8b-instruct', 'provider': 'custom',",
+        "                 'base_url': 'https://inference.local/v1',",
+        "                 'api_key': 'sk-OPENSHELL-PROXY-REWRITE'}",
+      ].join("\n");
+      const stubScript = [
+        "#!/usr/bin/env bash",
+        `cat <<'__NEMOCLAW_STUB_EOF__'\n${fixture}\n__NEMOCLAW_STUB_EOF__`,
+        `printf 'api_key: sk-OPENSHELL-PROXY-REWRITE\\n' >&2`,
+        "exit 0",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+      const openshellStubPath = path.join(dir, "openshell");
+      fs.writeFileSync(
+        openshellStubPath,
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ]; then',
+          "  shift 2",
+          '  while [ "$1" != "--" ]; do shift; done',
+          "  shift",
+          '  shift  # drop the program name (e.g. "hermes") so the wrapper receives only its args',
+          `  exec ${JSON.stringify(path.join(dir, "hermes"))} "$@"`,
+          "fi",
+          "exit 2",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const result = spawnSync(openshellStubPath, dispatchArgv, {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+
+      expect(result.status).toBe(0);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(combined).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+      expect(result.stdout).toContain("'api_key': 'sk-****'");
+      expect(result.stderr).toContain("api_key: sk-****");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reproduces the public `nemoclaw hermes exec -- hermes config show` dispatch path with masked output (#5981)", () => {
