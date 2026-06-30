@@ -93,6 +93,32 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     expect(removed.network_policies).toEqual(EXISTING_POLICY.network_policies);
   });
 
+  it("drops provider-composed entries from merge and removal mutation payloads", () => {
+    const taintedPolicy = {
+      ...EXISTING_POLICY,
+      network_policies: {
+        ...EXISTING_POLICY.network_policies,
+        _provider_unexpected: { name: "must-not-round-trip" },
+      },
+    };
+    const merged = policies.mergePresetIntoPolicy(YAML.stringify(taintedPolicy), PRESET_ENTRIES);
+    const removed = YAML.parse(policies.removePresetFromPolicy(merged, PRESET_ENTRIES));
+
+    expect(YAML.parse(merged).network_policies).not.toHaveProperty("_provider_unexpected");
+    expect(removed.network_policies).toEqual(EXISTING_POLICY.network_policies);
+  });
+
+  it("does not let custom preset input author reserved provider-composed entries", () => {
+    const reservedEntries = YAML.stringify({
+      _provider_injected: { name: "must-not-submit" },
+    }).replace(/^/gm, "  ");
+    const merged = YAML.parse(
+      policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), reservedEntries),
+    );
+
+    expect(merged.network_policies).toEqual(EXISTING_POLICY.network_policies);
+  });
+
   it("replaces a legacy network_policies array without serializing array entries as keys", () => {
     const legacy = YAML.stringify({
       version: 1,

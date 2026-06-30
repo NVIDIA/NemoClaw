@@ -325,6 +325,30 @@ function parseCurrentPolicy(raw: string | null | undefined): string {
   return candidate;
 }
 
+// invalidState: OpenShell `policy get --base` unexpectedly includes a
+// provider-composed `_provider_*` entry that `policy set` must never receive.
+// sourceBoundary: OpenShell owns base-policy composition; NemoClaw owns every
+// read-modify-write payload it submits. The upstream formatter cannot be fixed
+// here, so filter defensively until the supported OpenShell contract guarantees
+// these entries are absent. Regression: policy-openshell-072-roundtrip.test.ts.
+function withoutProviderComposedPolicies(policies: PolicyObject): PolicyObject {
+  return Object.fromEntries(
+    Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
+  );
+}
+
+function stripProviderComposedPolicies(policy: string): string {
+  try {
+    const parsed = YAML.parse(policy);
+    if (!isPolicyDocument(parsed) || !isPolicyObject(parsed.network_policies)) return policy;
+    const filtered = withoutProviderComposedPolicies(parsed.network_policies);
+    if (Object.keys(filtered).length === Object.keys(parsed.network_policies).length) return policy;
+    return YAML.stringify({ ...parsed, network_policies: filtered });
+  } catch {
+    return policy;
+  }
+}
+
 /**
  * Resolve the openshell binary, preferring an absolute path so spawnSync does
  * not raise ENOENT in non-interactive shells where ~/.local/bin/ is absent
@@ -440,7 +464,7 @@ function textBasedMerge(currentPolicy: string, presetEntries: string): string {
  * @returns {string} Merged YAML
  */
 function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): string {
-  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parseCurrentPolicy(currentPolicy));
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
@@ -451,7 +475,9 @@ function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): st
   try {
     const wrapped = "network_policies:\n" + presetEntries;
     const parsed = YAML.parse(wrapped);
-    presetPolicies = parsed?.network_policies;
+    presetPolicies = isPolicyObject(parsed?.network_policies)
+      ? withoutProviderComposedPolicies(parsed.network_policies)
+      : parsed?.network_policies;
   } catch {
     presetPolicies = null;
   }
@@ -531,7 +557,7 @@ function removePresetFromPolicy(
   currentPolicy: string,
   presetEntries: string | null | undefined,
 ): string {
-  const normalizedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const normalizedCurrentPolicy = stripProviderComposedPolicies(parseCurrentPolicy(currentPolicy));
   if (!presetEntries) {
     return normalizedCurrentPolicy || "version: 1\n\nnetwork_policies:\n";
   }
