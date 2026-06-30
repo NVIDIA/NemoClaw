@@ -480,6 +480,7 @@ RUN_NETWORK_POLICY_TEST(
             NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
             NEMOCLAW_RECREATE_SANDBOX: "1",
             NEMOCLAW_POLICY_TIER: "restricted",
+            NEMOCLAW_WEB_SEARCH_ENABLED: "1",
           }),
           redactionValues: [apiKey],
           timeoutMs: ONBOARD_TIMEOUT_MS,
