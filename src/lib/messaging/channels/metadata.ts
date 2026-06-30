@@ -10,6 +10,15 @@ import type {
 } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
 
+const CONFIG_ENV_ALIASES_BY_ENV_KEY: Readonly<Record<string, readonly string[]>> = {
+  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
+  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
+  MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
+  MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
+  TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
+  MSTEAMS_PORT: ["TEAMS_PORT"],
+};
+
 export interface MessagingManifestMetadataOptions {
   readonly agent?: MessagingAgentId;
   readonly manifests?: readonly ChannelManifest[];
@@ -30,7 +39,6 @@ export interface MessagingConfigEnvMetadata {
   readonly channelId: string;
   readonly inputId: string;
   readonly envKey: string;
-  readonly envAliases: readonly string[];
   readonly statePath?: string;
   readonly validValues?: readonly string[];
 }
@@ -162,7 +170,6 @@ export function listMessagingConfigEnvMetadata(
           channelId: manifest.id,
           inputId: input.id,
           envKey: input.envKey,
-          envAliases: input.envAliases ?? [],
           ...(input.statePath ? { statePath: input.statePath } : {}),
           ...(input.validValues ? { validValues: input.validValues } : {}),
         },
@@ -180,10 +187,9 @@ export function listMessagingConfigEnvKeys(
 export function getMessagingConfigEnvAliases(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
+  const envKeys = new Set(listMessagingConfigEnvKeys(options));
   return Object.fromEntries(
-    listMessagingConfigEnvMetadata(options)
-      .filter((input) => input.envAliases.length > 0)
-      .map((input) => [input.envKey, input.envAliases]),
+    Object.entries(CONFIG_ENV_ALIASES_BY_ENV_KEY).filter(([envKey]) => envKeys.has(envKey)),
   );
 }
 

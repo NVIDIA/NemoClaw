@@ -54,6 +54,7 @@ function watchdogFunctions(): string {
     safeTmpHelpers(src),
     extractShellFunction(src, "record_gateway_pid"),
     extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
+    extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
     extractShellFunction(src, "start_gateway_serving_watchdog"),
   ].join("\n");
 }
@@ -566,6 +567,7 @@ describe("gateway launch wiring (#4710)", () => {
       ),
       extractShellFunction(src, "record_gateway_pid"),
       extractShellFunction(src, "gateway_pid_is_openclaw_gateway"),
+      extractShellFunction(src, "gateway_watchdog_positive_int_ok"),
       extractShellFunction(src, "start_gateway_serving_watchdog"),
     ].join("\n");
 

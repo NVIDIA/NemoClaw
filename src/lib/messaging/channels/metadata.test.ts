@@ -69,7 +69,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
-  it("resolves config env keys and aliases from manifest inputs", () => {
+  it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
       "TELEGRAM_REQUIRE_MENTION",
@@ -351,7 +351,6 @@ function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): C
     credentials: [],
     policyPresets: [preset],
     render: [],
-    state: {},
     hooks: [],
   };
 }

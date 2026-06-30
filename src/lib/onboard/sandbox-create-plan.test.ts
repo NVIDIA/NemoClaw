@@ -101,6 +101,7 @@ describe("prepareSandboxCreatePlan", () => {
         dockerGpuPatch: false,
         additionalPresets: ["github"],
         agentName: "langchain-deepagents-code",
+        policyTier: null,
       },
     );
     expect(result.createArgs).toEqual([
