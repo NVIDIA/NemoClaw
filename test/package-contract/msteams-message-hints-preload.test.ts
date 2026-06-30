@@ -20,16 +20,77 @@ const compiledPreload = path.join(
   "msteams-message-hints.js",
 );
 
-function writePinnedPackageEntry(root: string): void {
-  const distDir = path.join(root, "node_modules", "@openclaw", "msteams", "dist");
+// Reviewed from the published @openclaw/msteams artifact, not inferred from
+// NemoClaw source. The integrity is npm's dist.integrity; the SHA-256 values
+// identify the exact runtime entry and plugin entry reviewed for 2026.5.27.
+// This fixture intentionally models only that package/load boundary. It does
+// not vendor or claim to test the upstream Bot Framework send/parser code.
+const REVIEWED_MSTEAMS_CONTRACT = {
+  version: "2026.5.27",
+  npmIntegrity:
+    "sha512-zKMIt/7Y0JmuYOFIgG1uzXw24Y+jWoRntS7v7WnOArbT7jp5v3ld1/bfuzd195viHd5ViJZ7SftR6VUG/HvVzQ==",
+  runtimeExtension: "./dist/index.js",
+  pluginSpecifier: "./channel-plugin-api.js",
+  indexSha256: "2a83ee979d5ee9f12c7ac507ebd87024be3315de3f2cc87c81effc9ca85246d1",
+  pluginEntrySha256: "3b2f2964c8d2a448f158d6284ad9bc8f4b8f2f08245a6167fd05c3faeeddb5d0",
+} as const;
+
+function readPinnedOpenClawVersion(): string {
+  const packageJson = JSON.parse(
+    fs.readFileSync(path.join(repoRoot, "nemoclaw", "package.json"), "utf8"),
+  ) as { openclaw?: { build?: { openclawVersion?: unknown } } };
+  const version = packageJson.openclaw?.build?.openclawVersion;
+  if (typeof version !== "string" || !version) {
+    throw new Error("nemoclaw/package.json is missing openclaw.build.openclawVersion");
+  }
+  return version;
+}
+
+function writeReviewedPackageShape(root: string, version: string): string {
+  const packageDir = path.join(root, "node_modules", "@openclaw", "msteams");
+  const distDir = path.join(packageDir, "dist");
   fs.mkdirSync(distDir, { recursive: true });
   fs.writeFileSync(
-    path.join(root, "node_modules", "@openclaw", "msteams", "package.json"),
+    path.join(packageDir, "package.json"),
     JSON.stringify({
       name: "@openclaw/msteams",
-      version: "2026.5.27",
-      main: "dist/index.js",
+      version,
+      type: "module",
+      openclaw: { runtimeExtensions: [REVIEWED_MSTEAMS_CONTRACT.runtimeExtension] },
     }),
+  );
+  fs.writeFileSync(
+    path.join(distDir, "reviewed-channel-entry-contract.js"),
+    // The published package's runtime extension delegates to
+    // defineBundledChannelEntry. OpenClaw 2026.5.27 then uses createRequire for
+    // built dist/*.js plugin entries. Preserve that reviewed loader seam here
+    // without copying the upstream Teams sender or parser implementation.
+    [
+      'import { createRequire } from "node:module";',
+      'import { fileURLToPath } from "node:url";',
+      "const nodeRequire = createRequire(import.meta.url);",
+      "export function defineBundledChannelEntry({ importMetaUrl, plugin }) {",
+      "  return {",
+      "    loadChannelPlugin() {",
+      "      const modulePath = fileURLToPath(new URL(plugin.specifier, importMetaUrl));",
+      "      const loaded = nodeRequire(modulePath);",
+      "      return loaded[plugin.exportName];",
+      "    },",
+      "  };",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(
+    path.join(distDir, "index.js"),
+    [
+      'import { defineBundledChannelEntry } from "./reviewed-channel-entry-contract.js";',
+      "export default defineBundledChannelEntry({",
+      "  importMetaUrl: import.meta.url,",
+      `  plugin: { specifier: ${JSON.stringify(REVIEWED_MSTEAMS_CONTRACT.pluginSpecifier)}, exportName: "msteamsPlugin" },`,
+      "});",
+      "",
+    ].join("\n"),
   );
   fs.writeFileSync(
     path.join(distDir, "channel-plugin-api.js"),
@@ -42,36 +103,49 @@ function writePinnedPackageEntry(root: string): void {
       "    ],",
       "  },",
       "};",
-      "module.exports = { msteamsPlugin };",
+      "export { msteamsPlugin };",
       "",
     ].join("\n"),
   );
-  fs.writeFileSync(
-    path.join(distDir, "index.js"),
-    'module.exports = require("./channel-plugin-api.js");\n',
-  );
+  return packageDir;
 }
 
 describe("compiled Microsoft Teams message hint preload contract", () => {
-  it("patches the pinned package entry shape and restores the loader hook", () => {
+  it("requires package-shape re-review when the repository OpenClaw pin changes", () => {
+    expect(readPinnedOpenClawVersion()).toBe(REVIEWED_MSTEAMS_CONTRACT.version);
+  });
+
+  it("patches the reviewed package-load shape without claiming Bot Framework delivery", () => {
     expect(
       fs.existsSync(compiledPreload),
       "Run `npm run build:cli` before the package-contract project.",
     ).toBe(true);
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-msteams-package-contract-"));
-    writePinnedPackageEntry(tmp);
+    const packageDir = writeReviewedPackageShape(tmp, readPinnedOpenClawVersion());
     try {
       const script = `
 process.title = "openclaw-gateway";
+const fs = require("node:fs");
+const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
 const originalLoad = Module._load;
 require(${JSON.stringify(compiledPreload)});
-const plugin = require("@openclaw/msteams").msteamsPlugin;
-process.stdout.write(JSON.stringify({
-  hints: plugin.agentPrompt.messageToolHints({ cfg: {} }),
-  restored: Module._load === originalLoad,
-}));
+(async () => {
+  const packageDir = ${JSON.stringify(packageDir)};
+  const packageJson = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+  const entryPath = path.join(packageDir, packageJson.openclaw.runtimeExtensions[0]);
+  const entry = (await import(pathToFileURL(entryPath).href)).default;
+  const plugin = entry.loadChannelPlugin();
+  process.stdout.write(JSON.stringify({
+    hints: plugin.agentPrompt.messageToolHints({ cfg: {} }),
+    restored: Module._load === originalLoad,
+  }));
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exitCode = 1;
+});
 `;
       const result = spawnSync(process.execPath, ["-e", script], {
         cwd: tmp,
