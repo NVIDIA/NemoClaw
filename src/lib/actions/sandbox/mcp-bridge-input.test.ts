@@ -16,6 +16,7 @@ import {
   resolveCredentialEnv,
 } from "./mcp-bridge";
 import { validateMcpServerUrlResolvedTarget } from "./mcp-bridge-validation";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
 
 describe("MCP CLI parsing", () => {
   it("sorts and deduplicates public DNS pins deterministically", async () => {
@@ -73,7 +74,11 @@ describe("MCP CLI parsing", () => {
   });
 
   it("rejects OpenShell child-environment compatibility keys as MCP credentials", () => {
-    const materializedKeys = [
+    expect(childVisibleCredentialManifest).toMatchObject({
+      openshellVersion: "0.0.72",
+      openshellCommit: "8cb16de9eae4c44d7d31e1493747d8c10abb5963",
+    });
+    expect(childVisibleCredentialManifest.rawChildValueKeys).toEqual([
       "GCP_PROJECT_ID",
       "GOOGLE_CLOUD_PROJECT",
       "CLOUD_ML_REGION",
@@ -82,8 +87,8 @@ describe("MCP CLI parsing", () => {
       "GOOSE_PROVIDER",
       "ANTHROPIC_VERTEX_PROJECT_ID",
       "VERTEX_LOCATION",
-    ];
-    for (const name of materializedKeys) {
+    ]);
+    for (const name of childVisibleCredentialManifest.rawChildValueKeys) {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
       ).toThrow(/materialized as a raw child-process value/);
@@ -97,7 +102,12 @@ describe("MCP CLI parsing", () => {
       ).toThrow(/materialized as a raw child-process value/);
     }
 
-    for (const name of ["GCE_METADATA_HOST", "GCE_METADATA_IP", "METADATA_SERVER_DETECTION"]) {
+    expect(childVisibleCredentialManifest.rewrittenChildValueKeys).toEqual([
+      "GCE_METADATA_HOST",
+      "GCE_METADATA_IP",
+      "METADATA_SERVER_DETECTION",
+    ]);
+    for (const name of childVisibleCredentialManifest.rewrittenChildValueKeys) {
       expect(() =>
         parseMcpAddArgs(["github", "--url", "https://mcp.example.test/mcp", "--env", name]),
       ).toThrow(/rewritten by OpenShell's Google Cloud metadata compatibility path/);

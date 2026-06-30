@@ -16,30 +16,20 @@ import {
   type ParsedEnvReference,
   type ParsedMcpAddArgs,
 } from "./mcp-bridge-contracts";
+import childVisibleCredentialManifest from "./openshell-child-visible-credentials.v0.0.72.json";
 
 export { MCP_SERVER_URL_MAX_LENGTH } from "../../security/mcp-url-target";
 
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const VALID_SANDBOX_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-// Keep this synchronized with OpenShell google_cloud::STATIC_CONFIG_KEYS.
-// Those keys are intentionally de-placeholderized for child SDK startup and
-// therefore cannot be used for a host-only bearer credential.
-const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set([
-  "GCP_PROJECT_ID",
-  "GOOGLE_CLOUD_PROJECT",
-  "CLOUD_ML_REGION",
-  "GCP_LOCATION",
-  "GCP_SERVICE_ACCOUNT_EMAIL",
-  "GOOSE_PROVIDER",
-  "ANTHROPIC_VERTEX_PROJECT_ID",
-  "VERTEX_LOCATION",
-]);
-const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set([
-  "GCE_METADATA_HOST",
-  "GCE_METADATA_IP",
-  "METADATA_SERVER_DETECTION",
-]);
+// OpenShell deliberately materializes these keys in fresh sandbox children.
+// Keep the boundary pinned to the shipped source commit rather than a hand-
+// maintained duplicate that can drift independently of compatibility review.
+const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set(childVisibleCredentialManifest.rawChildValueKeys);
+const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
+  childVisibleCredentialManifest.rewrittenChildValueKeys,
+);
 // OpenShell attaches provider keys to every fresh sandbox exec. A placeholder
 // under one of these names can alter a loader, shell, or supported agent
 // runtime before the requested command starts (for example, PYTHONHOME makes

@@ -57,7 +57,8 @@ NemoClaw persists only the variable name, writes `openshell:resolve:env:KEY` int
 
 Do not reuse OpenShell's Google Cloud compatibility names as MCP bearer keys.
 NemoClaw rejects `GCP_PROJECT_ID`, `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION`, `GCP_LOCATION`, `GCP_SERVICE_ACCOUNT_EMAIL`, `GOOSE_PROVIDER`, `ANTHROPIC_VERTEX_PROJECT_ID`, and `VERTEX_LOCATION` because OpenShell exposes those non-secret configuration names as child-process values.
-NemoClaw also rejects `GCE_METADATA_HOST`, which OpenShell rewrites for its metadata emulator.
+NemoClaw also rejects `GCE_METADATA_HOST`, `GCE_METADATA_IP`, and `METADATA_SERVER_DETECTION`, which OpenShell rewrites for its metadata emulator.
+The child-visible compatibility list is pinned to OpenShell `v0.0.72` commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963` and must be reviewed with every OpenShell version change.
 Choose a dedicated name such as `MY_SERVICE_MCP_TOKEN`.
 NemoClaw also rejects host subprocess control names such as `PATH`, proxy/TLS variables, and `OPENSHELL_*`, `GRPC_*`, `LC_*`, or `XDG_*` keys so the selected credential cannot be inherited by unrelated OpenShell commands. Loader, shell, language, and agent runtime controls such as `LD_PRELOAD`, `BASH_ENV`, `NODE_OPTIONS`, `PYTHONHOME`, `NEMOCLAW_*`, and `OPENCLAW_*` are rejected as well because OpenShell attaches provider keys to fresh sandbox execs; use a dedicated service name such as `MY_SERVICE_MCP_TOKEN`.
 
