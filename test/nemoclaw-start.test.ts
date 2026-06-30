@@ -1180,7 +1180,7 @@ describe("nemoclaw-start persistent gateway log hardening", () => {
       scriptPath,
       [
         "#!/usr/bin/env bash",
-        "set -euo pipefail",
+        'set -euo pipefail\n# Identity capture is covered by supervisor suites.\ncapture_openclaw_pid_start_identity() { printf -v "$2" "%s" "test:$1"; }',
         persistentLogFunction(tmpDir, gatewayLog),
         "start_persistent_gateway_log_mirror",
         "sleep 0.2",

@@ -174,15 +174,17 @@ describe("agent definitions", () => {
   });
 
   it("rejects invalid forward_ports values in manifests", () => {
-    const agentName = `invalid-forward-port-${String(Date.now())}`;
-    writeTempAgentManifest(
-      agentName,
-      [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", "  - 70000"].join(
-        "\n",
-      ),
-    );
+    for (const port of [1023, 70000]) {
+      const agentName = `invalid-forward-port-${String(port)}-${String(Date.now())}`;
+      writeTempAgentManifest(
+        agentName,
+        [`name: ${agentName}`, "display_name: Broken Ports", "forward_ports:", `  - ${port}`].join(
+          "\n",
+        ),
+      );
 
-    expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
+      expect(() => loadAgent(agentName)).toThrow(/forward_ports\[0\]/);
+    }
   });
 
   it("rejects invalid health_probe.port values in manifests", () => {

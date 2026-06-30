@@ -97,12 +97,16 @@ RUN arch="$(dpkg --print-architecture)" \
 #
 # `gateway` is also a member of the `sandbox` group so both users can write
 # to the mutable-default OpenClaw config tree (chmod g+w + setgid below).
+# Keep root in that group too: hardened runtimes may drop CAP_DAC_OVERRIDE,
+# but the root PID 1 lifecycle guard still needs descriptor-safe access to the
+# sandbox-owned mutable tree before it can validate or transition it.
 # This replaces the previous EACCES-swallow approach for control-UI config
 # mutations — see #2681. UIDs stay distinct (security separation preserved);
 # the shared group only governs the mutable-default state directory.
 RUN groupadd -r gateway && useradd -r -g gateway -d /sandbox -s /usr/sbin/nologin gateway \
     && groupadd -r sandbox && useradd -r -g sandbox -d /sandbox -s /bin/bash sandbox \
     && usermod -aG sandbox gateway \
+    && usermod -aG sandbox root \
     && mkdir -p /sandbox/.nemoclaw \
     && chown -R sandbox:sandbox /sandbox
 
