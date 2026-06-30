@@ -94,8 +94,8 @@ function policySetCalls(): unknown[][] {
 
 function mergedPolicy(): Record<string, unknown> {
   const key = [...store.keys()].find((candidate) => candidate.endsWith("/merged-policy.yaml"));
-  if (!key) throw new Error("merged policy was not written");
-  return YAML.parse(store.get(key)?.content ?? "");
+  expect(key).toBeDefined();
+  return YAML.parse(store.get(key ?? "")?.content ?? "");
 }
 
 function blueprint(): Parameters<typeof actionApply>[1] {
