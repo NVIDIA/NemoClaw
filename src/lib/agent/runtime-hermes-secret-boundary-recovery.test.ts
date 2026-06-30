@@ -38,6 +38,9 @@ const SHARED_PYTHON_STUB_BY_MODE = [
   'if [ "$1" = "-c" ]; then',
   "  exit 0",
   "fi",
+  'if [ "$1" = "-I" ]; then',
+  "  shift",
+  "fi",
   'mode="$2"',
   'if [ -n "${STUB_VALIDATOR_MODE_LOG:-}" ]; then',
   '  printf "%s\\n" "$mode" >>"$STUB_VALIDATOR_MODE_LOG"',
@@ -106,6 +109,15 @@ describe("Hermes secret-boundary guard - runtime recovery behaviour", () => {
   ) {
     const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
     expect(recoveryScript).not.toBeNull();
+    const stubPython3 = path.join(opts.stubsDir, "python3");
+    try {
+      fs.writeFileSync(stubPython3, '#!/usr/bin/env bash\nexec /usr/bin/python3 "$@"\n', {
+        mode: 0o755,
+        flag: "wx",
+      });
+    } catch (_err) {
+      // Already populated by writeStub() earlier — keep that stub.
+    }
     let stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, opts)
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), opts.validatorPath)
       .replace(/\/tmp\/gateway-recovery\.log/g, opts.recoveryLogPath)
@@ -113,7 +125,10 @@ describe("Hermes secret-boundary guard - runtime recovery behaviour", () => {
       .replace(
         /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
         `_GATEWAY_LOG=${opts.recoveryFallbackLog}`,
-      );
+      )
+      .replace(/\/usr\/local\/bin\/python3/g, stubPython3)
+      .replace(/\/usr\/bin\/python3/g, stubPython3)
+      .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, stubPython3);
     stubbed = opts.envFilePath
       ? stubbed.replace(/\/sandbox\/\.hermes\/\.env/g, opts.envFilePath)
       : stubbed;
@@ -239,7 +254,7 @@ describe("Hermes secret-boundary guard - runtime recovery behaviour", () => {
       "..",
       "agents",
       "hermes",
-      "validate-env-secret-boundary.py",
+      "validate-hermes-env-secret-boundary.py",
     );
     fs.writeFileSync(envFile, "API_SERVER_PORT=18642\n");
     fs.writeFileSync(
