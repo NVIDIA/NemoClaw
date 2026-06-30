@@ -280,9 +280,15 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(stdout).not.toContain("logs --tail 50");
   });
 
-  // Reporter-workflow E2E in the real sandbox base image (opt-in).
+  // Reporter-workflow E2E in the real sandbox base image (opt-in). Drives the
+  // full acceptance clause from #5978 — both reporter commands (`curl` and
+  // `git clone`) under a real policy denial — plus the proactive-only and
+  // noninteractive-silence contracts, against the image's own shell hooks. This
+  // is the runtime validation the always-run stanza tests cannot reach (PTY
+  // behaviour, base-image /etc/profile.d + /etc/bash.bashrc hooks, natural
+  // SHLVL, real tool exit codes).
   it.skipIf(!DOCKER_E2E)(
-    "real base image: connect shell shows the breadcrumb once and curl is denied with 403",
+    "real base image: one breadcrumb, denied curl+git keep native error/exit, noninteractive stays silent",
     () => {
       // A 403-on-CONNECT proxy reproduces the OpenShell L7 denial. The connect
       // shell starts at SHLVL=0→1 (a fresh login shell), so the stanza's
@@ -307,7 +313,18 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
         "awk '/# nemoclaw-policy-denial-hint begin/{f=1} f{print} /# nemoclaw-policy-denial-hint end/{f=0}' /work/scripts/nemoclaw-start.sh > /tmp/stanza.sh",
         "{ echo 'export OPENSHELL_SANDBOX=qa-5978'; echo 'export HTTPS_PROXY=http://127.0.0.1:8888'; cat /tmp/stanza.sh; } > /tmp/nemoclaw-proxy-env.sh",
         "chmod 444 /tmp/nemoclaw-proxy-env.sh",
-        "SHLVL=0 bash -lic 'curl -sS https://example.com/'",
+        // Interactive connect session: the breadcrumb prints once at login, then
+        // both reporter commands are denied. Each must keep its OWN native error
+        // and non-zero exit status — the hint never wraps or rewrites the tools.
+        "SHLVL=0 bash -lic '",
+        '  curl -sS https://example.com/; echo "CURL_EXIT=$?"',
+        '  git clone https://github.com/torvalds/linux /tmp/linux-clone; echo "GIT_EXIT=$?"',
+        '  printf "CURL_TYPE=%s\\n" "$(type -t curl || echo none)"',
+        '  printf "GIT_TYPE=%s\\n" "$(type -t git || echo none)"',
+        "'",
+        // Noninteractive execution (scripts / `openshell sandbox exec`) must stay
+        // silent even with proxy vars set — proven by the single-breadcrumb count.
+        "SHLVL=0 bash -lc 'curl -sS https://example.com/ >/dev/null 2>&1; echo NONINTERACTIVE_DONE'",
         "",
       ].join("\n");
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nc-5978-e2e-"));
@@ -333,10 +350,25 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
         const out = (result.stdout ?? "").replace(/\r/g, "");
         // Breadcrumb shown by the real image hooks, naming the logs command…
         expect(out).toContain("nemoclaw qa-5978 logs --tail 50");
-        // …exactly once (both /etc/profile.d and /etc/bash.bashrc source it)…
+        // …exactly once across the whole run: both /etc/profile.d and
+        // /etc/bash.bashrc source it in the login shell, and the later
+        // noninteractive shell must not re-emit it.
         expect(out.split("nemoclaw qa-5978 logs --tail 50").length - 1).toBe(1);
-        // …and a real curl surfaces the exact signature the breadcrumb names.
+        // Denied real curl: its native 403 signature and a non-zero exit survive
+        // (the tool is informational-hinted, never wrapped).
         expect(out).toContain("CONNECT tunnel failed, response 403");
+        expect(out).toMatch(/CURL_EXIT=[1-9][0-9]*/);
+        // Denied real `git clone` (the other reporter command): its own native
+        // error and non-zero exit likewise survive unchanged.
+        expect(out).toContain("fatal: unable to access");
+        expect(out).toMatch(/GIT_EXIT=[1-9][0-9]*/);
+        // Proactive-only contract in the real image: neither tool became a shell
+        // function or alias — both still resolve to the on-disk binary.
+        expect(out).toContain("CURL_TYPE=file");
+        expect(out).toContain("GIT_TYPE=file");
+        // The noninteractive shell ran (marker present) but added no breadcrumb,
+        // as proven by the single-occurrence count asserted above.
+        expect(out).toContain("NONINTERACTIVE_DONE");
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
