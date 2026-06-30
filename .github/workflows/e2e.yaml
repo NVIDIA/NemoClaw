@@ -5087,7 +5087,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-channels-add-remove"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-openclaw-channels-add-remove
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-channels-add-remove
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5106,6 +5105,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-add-remove" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:
@@ -5218,7 +5220,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-channels-add-remove"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-hermes-channels-add-remove
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-channels-add-remove
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5237,6 +5238,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-channels-add-remove" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:
@@ -5457,7 +5461,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "openclaw-channels-stop-start"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-openclaw-channels-stop-start
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openclaw-channels-stop-start
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5471,6 +5474,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-stop-start" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:
@@ -5566,7 +5572,6 @@ jobs:
     env:
       E2E_JOB: "1"
       E2E_TARGET_ID: "hermes-channels-stop-start"
-      DOCKER_CONFIG: ${{ github.workspace }}/.docker-config-hermes-channels-stop-start
       E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-channels-stop-start
       NEMOCLAW_CLI_BIN: ${{ github.workspace }}/bin/nemoclaw.js
       NEMOCLAW_RUN_LIVE_E2E: "1"
@@ -5580,6 +5585,9 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
+
+      - name: Configure isolated Docker auth directory
+        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-hermes-channels-stop-start" >> "$GITHUB_ENV"
 
       - name: Authenticate to Docker Hub
         env:

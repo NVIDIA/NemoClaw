@@ -1180,6 +1180,13 @@ jobs:
     dockerAuthStep!.run =
       "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}";
 
+    const configureDockerAuthStep = job.steps.find(
+      (step) => step.name === "Configure isolated Docker auth directory",
+    );
+    expect(configureDockerAuthStep).toBeDefined();
+    configureDockerAuthStep!.run =
+      'echo "DOCKER_CONFIG=${{ github.workspace }}/.docker-config-shared" >> "$GITHUB_ENV"';
+
     const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
     expect(installRootStep).toBeDefined();
     installRootStep!.run = "npm install";
@@ -1225,9 +1232,11 @@ jobs:
         expect.arrayContaining([
           "openclaw-channels-stop-start job must keep the 90 minute timeout",
           "openclaw-channels-stop-start job env NEMOCLAW_SANDBOX_NAME must be e2e-openclaw-channels-stop-start",
-          "openclaw-channels-stop-start job env DOCKER_CONFIG must be ${{ github.workspace }}/.docker-config-openclaw-channels-stop-start",
+          "openclaw-channels-stop-start job must not set DOCKER_CONFIG at job level",
           "openclaw-channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "openclaw-channels-stop-start checkout step must set persist-credentials=false",
+          'step \'Configure isolated Docker auth directory\' run script must include echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-openclaw-channels-stop-start" >> "$GITHUB_ENV"',
+          "step 'Configure isolated Docker auth directory' run script must not include ${{ github.workspace }}",
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",

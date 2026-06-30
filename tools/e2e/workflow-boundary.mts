@@ -4046,10 +4046,12 @@ function validateChannelLifecycleJob(
   }
 
   const jobEnv = asRecord(job.env);
+  if ("DOCKER_CONFIG" in jobEnv) {
+    errors.push(`${jobName} job must not set DOCKER_CONFIG at job level`);
+  }
   const expectedEnv: Record<string, string> = {
     E2E_JOB: "1",
     E2E_TARGET_ID: jobName,
-    DOCKER_CONFIG: `\${{ github.workspace }}/.docker-config-${jobName}`,
     E2E_ARTIFACT_DIR: `\${{ github.workspace }}/e2e-artifacts/live/${jobName}`,
     NEMOCLAW_CLI_BIN: "${{ github.workspace }}/bin/nemoclaw.js",
     NEMOCLAW_RUN_LIVE_E2E: "1",
@@ -4114,6 +4116,20 @@ function validateChannelLifecycleJob(
   if (asRecord(checkout?.with)["persist-credentials"] !== false) {
     errors.push(`${jobName} checkout step must set persist-credentials=false`);
   }
+
+  const configureDockerAuth = requireJobStep(
+    errors,
+    jobName,
+    steps,
+    "Configure isolated Docker auth directory",
+  );
+  requireRunContains(
+    errors,
+    configureDockerAuth,
+    `echo "DOCKER_CONFIG=\${RUNNER_TEMP}/docker-config-${jobName}" >> "$GITHUB_ENV"`,
+  );
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ runner.temp }}");
+  requireRunDoesNotContain(errors, configureDockerAuth, "${{ github.workspace }}");
 
   const dockerHubAuth = requireJobStep(errors, jobName, steps, "Authenticate to Docker Hub");
   const dockerHubEnv = asRecord(dockerHubAuth?.env);
