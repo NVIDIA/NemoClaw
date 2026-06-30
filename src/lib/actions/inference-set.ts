@@ -25,7 +25,7 @@ import {
 } from "../sandbox/config";
 import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import { isConfigObject, isConfigValue } from "../security/credential-filter";
-import { redact } from "../security/redact";
+import { redactFull } from "../security/redact";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
@@ -364,7 +364,25 @@ function openshellInferenceSetArgs(options: {
 }
 
 function openshellFailureDetail(stderr: string, stdout: string): string {
-  return compactText(redact(`${stderr}\n${stdout}`)).slice(0, 500);
+  return compactText(redactFull(`${stderr}\n${stdout}`)).slice(0, 500);
+}
+
+const OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS = [
+  /\bprovider\s+["'`]([^"'`\r\n]+)["'`]\s+(?:was\s+)?not found\b/iu,
+  /\bnot found\b[^\r\n]*\bprovider\s+["'`]([^"'`\r\n]+)["'`]/iu,
+];
+
+/**
+ * OpenShell 0.0.71 exposes provider lookup failures only as subprocess text.
+ * Parse the reviewed quoted-provider shape and keep unknown or drifted output
+ * generic. Remove this compatibility parser when OpenShell returns a structured
+ * provider-not-found error with the missing provider as a field.
+ */
+function openshellReportsProviderNotFound(output: string, requestedProvider: string): boolean {
+  const missingProvider = OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS.map(
+    (pattern) => output.match(pattern)?.[1]?.trim() ?? null,
+  ).find((candidate): candidate is string => candidate !== null);
+  return missingProvider === requestedProvider;
 }
 
 function getPreferredInferenceApi(config: ConfigObject): string | null {
@@ -627,7 +645,7 @@ export async function runInferenceSet(
     const combined = `${stderr}\n${stdout}`;
     const failureDetail = openshellFailureDetail(stderr, stdout);
     const failureDetailLine = failureDetail ? `OpenShell detail: ${failureDetail}\n` : "";
-    if (/provider.*not found/i.test(combined) || /not found.*provider/i.test(combined)) {
+    if (openshellReportsProviderNotFound(combined, provider)) {
       let providerList: string | null = null;
       try {
         const registeredProviders = [
