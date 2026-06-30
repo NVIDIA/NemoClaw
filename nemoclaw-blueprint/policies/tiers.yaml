@@ -14,7 +14,7 @@
 tiers:
   - name: restricted
     label: Restricted
-    description: Base sandbox only. No third-party network access beyond inference and core agent tooling.
+    description: Base sandbox only. No third-party network access beyond inference and core agent tooling. Restricted mode suppresses agent-required preset additions, such as OpenClaw pricing fetches; reapply them later with policy-add if cost recording or other agent-side features are needed.
     presets: []
 
   - name: balanced

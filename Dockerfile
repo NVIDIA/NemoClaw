@@ -613,9 +613,9 @@ ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=W10=
 # since terminal-based pairing is impossible in those contexts.
 # Default: "0" (device auth enabled for local deployments — secure by default).
 ARG NEMOCLAW_DISABLE_DEVICE_AUTH=0
-# Unique per build — busts the Docker cache for the token-injection layer
-# so each image gets a fresh gateway auth token.
-# Pass --build-arg NEMOCLAW_BUILD_ID=$(date +%s) to bust the cache.
+# Compatibility build arg for older custom Dockerfiles and rebuild tooling.
+# NemoClaw-managed images intentionally do not consume it; gateway auth tokens
+# are generated at container startup and are never baked into image layers.
 ARG NEMOCLAW_BUILD_ID=default
 # macOS OpenShell VM backend imports the Docker image into a virtiofs rootfs
 # where image uid/gid ownership is presented as the host user. The VM also

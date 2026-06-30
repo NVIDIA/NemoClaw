@@ -4571,8 +4571,8 @@ async function setupPoliciesWithSelection(
       waitForSandboxReady,
       syncPresetSelection,
       selectPolicyTier,
-      setPolicyTier: (sandbox, tierName) =>
-        registry.updateSandbox(sandbox, { policyTier: tierName }),
+      setPolicyTier: (s, t) => registry.updateSandbox(s, { policyTier: t }),
+      getRecordedPolicyTier: (s) => registry.getSandbox(s)?.policyTier ?? null,
       selectTierPresetsAndAccess,
       parsePolicyPresetEnv,
       env: process.env,
