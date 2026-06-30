@@ -140,6 +140,9 @@ navigation:
               - page: "OpenShell 0.0.72 Compatibility Review"
                 path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.openclaw.generated.mdx
                 slug: openshell-0.0.72-compatibility-review
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.openclaw.generated.mdx
+                slug: trusted-computing-base
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.openclaw.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review
@@ -292,6 +295,9 @@ navigation:
               - page: "OpenShell 0.0.72 Compatibility Review"
                 path: _build/agent-variants/security/openshell-0.0.72-compatibility-review.hermes.generated.mdx
                 slug: openshell-0.0.72-compatibility-review
+              - page: "Trusted Computing Base"
+                path: _build/agent-variants/security/tcb-boundary.hermes.generated.mdx
+                slug: trusted-computing-base
               - page: "OpenShell 0.0.71 Review"
                 path: _build/agent-variants/security/openshell-0.0.71-gateway-auth-review.hermes.generated.mdx
                 slug: openshell-0.0.71-gateway-auth-review

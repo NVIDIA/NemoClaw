@@ -2205,6 +2205,7 @@ jobs:
         # OpenClaw balanced/open and Hermes open common-egress agent-turn
         # coverage against real sandbox policy and live hosted inference.
         env:
+          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
         run: |
           set -euo pipefail

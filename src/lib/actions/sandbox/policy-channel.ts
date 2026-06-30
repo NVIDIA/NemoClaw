@@ -37,6 +37,7 @@ const onboardProviders = require("../../onboard/providers");
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
+import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 
 const onboardSession =
   require("../../state/onboard-session") as typeof import("../../state/onboard-session");
@@ -269,30 +270,25 @@ export function listSandboxPolicies(sandboxName: string) {
   // array of matched preset names when reachable (possibly empty).
   const gatewayPresets = policies.getGatewayPresets(sandboxName);
 
+  const sandboxEntry = registry.getSandbox(sandboxName);
+  const provenanceContext = {
+    tierName: sandboxEntry?.policyTier ?? null,
+    agentName: sandboxEntry?.agent ?? null,
+  };
+
   console.log("");
   console.log(`  Policy presets for sandbox '${sandboxName}':`);
   allPresets.forEach((p: { name: string; description: string }) => {
     const inRegistry = registryPresets.includes(p.name);
     const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
-
-    let marker;
-    let suffix = "";
-    if (inGateway === null) {
-      // Gateway unreachable — fall back to registry-only display
-      marker = inRegistry ? "●" : "○";
-    } else if (inRegistry && inGateway) {
-      marker = "●";
-    } else if (!inRegistry && !inGateway) {
-      marker = "○";
-    } else if (inGateway && !inRegistry) {
-      marker = "●";
-      suffix = " (active on gateway, missing from local state)";
-    } else {
-      // inRegistry && !inGateway
-      marker = "○";
-      suffix = " (recorded locally, not active on gateway)";
-    }
-    console.log(`    ${marker} ${p.name} — ${p.description}${suffix}`);
+    console.log(
+      formatPolicyListPresetRow({
+        preset: p,
+        provenanceContext,
+        inRegistry,
+        inGateway,
+      }),
+    );
   });
 
   if (gatewayPresets === null) {

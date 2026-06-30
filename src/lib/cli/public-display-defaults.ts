@@ -280,6 +280,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       flags: "[--quiet|-q]",
     },
   ],
+  "sandbox:gateway:restart": [
+    {
+      group: "Sandbox Management",
+      order: 14.1,
+      flags: "[--quiet|-q]",
+    },
+  ],
   "sandbox:hosts:add": [
     {
       group: "Policy Presets",
