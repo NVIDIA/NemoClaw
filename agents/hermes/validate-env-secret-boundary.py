@@ -188,12 +188,14 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
 
 # Scope: this masker is keyed off recognised credential-shaped FIELD NAMES in
 # structured config output (Python dict, JSON, YAML key:value, env-style
-# key=value). It is not a free-text token scanner — it does not attempt to
-# detect arbitrary `sk-...` / `xoxb-...` shapes embedded in prose diagnostics,
-# stack traces, or error messages that lack a key:value form. The wrapper's
+# key=value). As a defence-in-depth catch-all, free-form `sk-` prefixed tokens
+# (length >= 8 to avoid false-positives on legitimate short identifiers) are
+# also redacted on every line so the `buildHermesConfig` placeholder and any
+# real `sk-` value that escapes into a diagnostic cannot leak. Non-`sk-` token
+# families (e.g. `xoxb-`, `nvapi-`) in prose are not scanned — the wrapper's
 # threat model is the `hermes config show` resolved-config rendering, which
-# always emits secrets via labelled fields; broader diagnostic redaction is
-# the upstream Hermes CLI's responsibility.
+# emits secrets via labelled fields; broader prose redaction is the upstream
+# Hermes CLI's responsibility.
 _SECRET_FIELD_RE = re.compile(
     r"(?i)\b(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|"
     r"client[_-]?secret|secret[_-]?key|"
@@ -216,6 +218,11 @@ _UNQUOTED_RE = re.compile(
 _MULTILINE_HEADER_RE = re.compile(
     r"(?P<indent>[ \t]*)(?P<key>[A-Za-z_][A-Za-z0-9_-]*)[ \t]*:[ \t]*[|>][-+]?\d?[ \t]*$"
 )
+# Free-form catch-all: any `sk-` prefix followed by 8+ identifier-safe chars.
+# The 8-char floor prevents collisions with short legitimate identifiers while
+# still catching every realistic OpenAI-style key (sk-... typically >= 32) and
+# the `sk-OPENSHELL-PROXY-REWRITE` placeholder this wrapper exists to redact.
+_FREEFORM_SK_RE = re.compile(r"sk-[A-Za-z0-9_-]{8,}")
 
 
 def _is_secret_field(name: str) -> bool:
@@ -292,6 +299,7 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
         masked = _PY_DICT_RE.sub(_mask_pyjson, line)
         masked = _JSON_RE.sub(_mask_pyjson, masked)
         masked = _UNQUOTED_RE.sub(_mask_unquoted, masked)
+        masked = _FREEFORM_SK_RE.sub(_MASK_PY, masked)
         masked_chunks.append(masked)
     stream_out.write("".join(masked_chunks))
     return 0

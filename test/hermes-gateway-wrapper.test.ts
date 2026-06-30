@@ -294,17 +294,17 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("bearer: sk-****");
   });
 
-  it("leaves non-secret fields untouched even when their values look credential-shaped", () => {
+  it("leaves non-secret fields untouched when their values do not match a secret token shape", () => {
     const fixture = [
-      "{'provider': 'sk-could-be-mistaken'}",
-      '{"base_url": "https://api.example.com/sk-not-a-secret"}',
+      "{'provider': 'custom-inference'}",
+      '{"base_url": "https://api.example.com/v1/chat"}',
       "default: meta/llama-3.1-8b-instruct",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("sk-could-be-mistaken");
-    expect(run.stdout).toContain("https://api.example.com/sk-not-a-secret");
+    expect(run.stdout).toContain("custom-inference");
+    expect(run.stdout).toContain("https://api.example.com/v1/chat");
     expect(run.stdout).toContain("default: meta/llama-3.1-8b-instruct");
   });
 
@@ -723,18 +723,21 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stderr).toContain("api_key: sk-****");
   });
 
-  it("documents the narrower contract: unlabelled free-form credential diagnostics pass through unmasked (out of scope)", () => {
+  it("redacts free-form sk- tokens in prose diagnostics while leaving non-sk token families unscanned", () => {
     const fixture = [
       "Warning: using sk-freeform-leak-12345 for connection",
       "Traceback at line 42 with token bearer-freeform-67890 in stack",
       "Plain prose with no field structure 'sk-prose-only-leak' here",
+      "nvapi-no-prefix-token-stays-12345 in diagnostic",
     ].join("\n");
     const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
 
     expect(run.status).toBe(0);
-    expect(run.stdout).toContain("sk-freeform-leak-12345");
+    expect(run.stdout).not.toContain("sk-freeform-leak-12345");
+    expect(run.stdout).not.toContain("sk-prose-only-leak");
+    expect(run.stdout).toContain("sk-****");
     expect(run.stdout).toContain("bearer-freeform-67890");
-    expect(run.stdout).toContain("sk-prose-only-leak");
+    expect(run.stdout).toContain("nvapi-no-prefix-token-stays-12345");
   });
 
   it("uses the installed-layout paths (/usr/local/bin/hermes.real, /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py) before the dev fallback", () => {
