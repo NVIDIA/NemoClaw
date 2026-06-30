@@ -71,6 +71,10 @@ export const CONTEXT_PATTERNS: RegExp[] = [
   /(?<=(?:_KEY|API_KEY|SECRET|TOKEN|PASSWORD|CREDENTIAL)[=: ]['"]?)[A-Za-z0-9_.+/=-]{10,}/gi,
 ];
 
+export const SECRET_BLOCK_PATTERNS: RegExp[] = [
+  /-----BEGIN (?:[A-Z0-9]+ )?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z0-9]+ )?PRIVATE KEY-----/g,
+];
+
 /**
  * Replace every secret-shaped token in `text` with `<REDACTED>`. Uses
  * the canonical TOKEN_PREFIX_PATTERNS + CONTEXT_PATTERNS sets.
@@ -104,6 +108,10 @@ export function redactString(text: string, explicitValues?: Iterable<string>): s
     out = out.replace(p, REDACTED);
   }
   for (const p of CONTEXT_PATTERNS) {
+    p.lastIndex = 0;
+    out = out.replace(p, REDACTED);
+  }
+  for (const p of SECRET_BLOCK_PATTERNS) {
     p.lastIndex = 0;
     out = out.replace(p, REDACTED);
   }

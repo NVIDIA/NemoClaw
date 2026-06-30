@@ -22,6 +22,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import { redactString } from "../fixtures/redaction.ts";
 import {
+  projectRawOutputForArtifact,
+  type RawArtifactOutputMode,
+  summarizeSandboxSnapshot,
+} from "./bedrock-runtime-compatible-anthropic-artifacts.ts";
+import {
   BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_INVALID_STATE,
   BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_REMOVAL_CONDITION,
   BEDROCK_PRE_CONTRACT_ENDPOINT_VALIDATION_SKIP_REASON,
@@ -78,6 +83,7 @@ interface RawRunResult {
 interface RawRunOptions {
   readonly artifactName: string;
   readonly artifacts: ArtifactSink;
+  readonly artifactOutputMode?: RawArtifactOutputMode;
   readonly cwd?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly redactionValues?: readonly string[];
@@ -219,15 +225,18 @@ async function runRawCommand(
 
   const redactedStdout = redactString(stdout, redactionValues);
   const redactedStderr = redactString(stderr, redactionValues);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, redactedStdout);
-  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, redactedStderr);
+  const artifactOutputMode = options.artifactOutputMode ?? "content";
+  const artifactStdout = projectRawOutputForArtifact(redactedStdout, "stdout", artifactOutputMode);
+  const artifactStderr = projectRawOutputForArtifact(redactedStderr, "stderr", artifactOutputMode);
+  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stdout.txt`, artifactStdout);
+  await options.artifacts.writeText(`raw-shell/${options.artifactName}.stderr.txt`, artifactStderr);
   await options.artifacts.writeJson(`raw-shell/${options.artifactName}.result.json`, {
     command: redactedCommand(fullCommand, redactionValues),
     exitCode,
     signal,
     timedOut,
-    stdout: redactedStdout,
-    stderr: redactedStderr,
+    stdout: artifactStdout,
+    stderr: artifactStderr,
   });
 
   return {
@@ -1173,6 +1182,7 @@ async function assertNoBedrockLeaks(options: {
     {
       artifactName: "sandbox-snapshot-bedrock-runtime",
       artifacts: options.artifacts,
+      artifactOutputMode: "metadata-only",
       env: testEnv(options.home),
       redactionValues: [COMPATIBLE_KEY, adapterToken],
       timeoutMs: 180_000,
@@ -1200,6 +1210,11 @@ async function assertNoBedrockLeaks(options: {
     ...findForbiddenLeaks(snapshot.stdout, "sandbox snapshot", patterns),
     ...findForbiddenLeaks(hostLogs, "host logs", patterns),
   ];
+  await options.artifacts.writeJson("sandbox-snapshot-bedrock-runtime-summary.json", {
+    ...summarizeSandboxSnapshot(snapshot.stdout),
+    forbiddenLeakCount: leaks.length,
+    rawContentPublished: false,
+  });
   expect(leaks).toEqual([]);
 }
 

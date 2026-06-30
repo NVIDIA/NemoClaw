@@ -20,15 +20,16 @@
  */
 
 import { describe, expect, it } from "vitest";
-
-import {
-  CONTEXT_PATTERNS as FIXTURE_CONTEXT_PATTERNS,
-  TOKEN_PREFIX_PATTERNS as FIXTURE_TOKEN_PREFIX_PATTERNS,
-} from "../fixtures/redaction.ts";
 import {
   CONTEXT_PATTERNS as PRODUCT_CONTEXT_PATTERNS,
+  SECRET_BLOCK_PATTERNS as PRODUCT_SECRET_BLOCK_PATTERNS,
   TOKEN_PREFIX_PATTERNS as PRODUCT_TOKEN_PREFIX_PATTERNS,
 } from "../../../src/lib/security/secret-patterns.ts";
+import {
+  CONTEXT_PATTERNS as FIXTURE_CONTEXT_PATTERNS,
+  SECRET_BLOCK_PATTERNS as FIXTURE_SECRET_BLOCK_PATTERNS,
+  TOKEN_PREFIX_PATTERNS as FIXTURE_TOKEN_PREFIX_PATTERNS,
+} from "../fixtures/redaction.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -49,5 +50,11 @@ describe("fixture redaction parity with product source-of-truth", () => {
     expect(fixture.length).toBeGreaterThan(0);
     expect(product.length).toBeGreaterThan(0);
     expect(fixture).toEqual(product);
+  });
+
+  it("fixture secret block patterns match product secret block patterns", () => {
+    expect(fingerprint(FIXTURE_SECRET_BLOCK_PATTERNS)).toEqual(
+      fingerprint(PRODUCT_SECRET_BLOCK_PATTERNS),
+    );
   });
 });

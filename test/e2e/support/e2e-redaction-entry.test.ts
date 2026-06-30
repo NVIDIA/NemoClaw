@@ -67,6 +67,20 @@ describe("fixture redaction entry point", () => {
     expect(redactString("", ["anything"])).toBe("");
   });
 
+  it("redacts generated private-key blocks without preregistration", () => {
+    const privateKey = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      "unknown-generated-private-key-material",
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join("\\n");
+
+    const out = redactString(JSON.stringify({ privateKey }));
+
+    expect(out).toContain("<REDACTED>");
+    expect(out).not.toContain("unknown-generated-private-key-material");
+    expect(out).not.toContain("PRIVATE KEY");
+  });
+
   it("SecretStore.redact routes through the same entry and unions env-derived and caller-supplied values", () => {
     const envSecret = "env-secret-value";
     const extraSecret = "extra-secret-value";
@@ -99,6 +113,11 @@ describe("fixture redaction entry point", () => {
     const generatedGatewayToken = "generated-gateway-token-for-artifact-scan";
     const fakeGitHubToken = `ghp_${"g".repeat(36)}`;
     const fakeMessagingToken = ["xox", "b-1234567890-abcdefghij"].join("");
+    const generatedPrivateKey = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      "unknown-generated-artifact-private-key-material",
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join("\\n");
     const rootDir = await fs.mkdtemp(path.join(os.tmpdir(), "nemoclaw-e2e-artifact-redaction-"));
     const artifacts = new ArtifactSink(path.join(rootDir, "e2e-artifacts/live/redaction-smoke"), [
       fakeHostedKey,
@@ -128,6 +147,7 @@ describe("fixture redaction entry point", () => {
         id: "redaction-smoke",
         output: `result saw ${fakeDockerToken}`,
         messagingToken: fakeMessagingToken,
+        generatedPrivateKey,
       }),
       artifacts.writeText("actions/redacted-action.log", `action saw ${fakeHostedKey}`),
       artifacts.writeText("logs/redacted-live.log", `log saw ${generatedGatewayToken}`),
@@ -161,11 +181,13 @@ describe("fixture redaction entry point", () => {
       generatedGatewayToken,
       fakeGitHubToken,
       fakeMessagingToken,
+      generatedPrivateKey,
     ]) {
       expect(uploadedText).not.toContain(secret);
     }
     expect(uploadedText).toContain("[REDACTED]");
     expect(uploadedText).toContain("<REDACTED>");
+    expect(uploadedText).not.toContain("PRIVATE KEY");
     expect(
       uploadedPaths.map((artifactPath) => path.relative(artifacts.rootDir, artifactPath)),
     ).toEqual(
