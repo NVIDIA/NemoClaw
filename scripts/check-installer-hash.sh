@@ -28,24 +28,32 @@ esac
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-fetch_hash() {
-  local url="$1" tmpfile
-  tmpfile=$(mktemp)
-  trap 'rm -f "$tmpfile"' RETURN
-
+fetch_file() {
+  local url="$1" destination="$2"
   curl --proto '=https' --tlsv1.2 -fsSL \
     --connect-timeout 10 --max-time 30 \
     --retry 3 --retry-delay 1 --retry-all-errors \
-    -o "$tmpfile" "$url"
+    -o "$destination" "$url"
+}
 
+sha256_file() {
+  local file="$1"
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$tmpfile" | awk '{print $1}'
+    sha256sum "$file" | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$tmpfile" | awk '{print $1}'
+    shasum -a 256 "$file" | awk '{print $1}'
   else
     echo "ERROR: No SHA-256 tool available (sha256sum/shasum)." >&2
     return 1
   fi
+}
+
+fetch_hash() {
+  local url="$1" tmpfile
+  tmpfile=$(mktemp)
+  trap 'rm -f "$tmpfile"' RETURN
+  fetch_file "$url" "$tmpfile"
+  sha256_file "$tmpfile"
 }
 
 extract_pinned() {
@@ -80,57 +88,59 @@ register "Ollama installer" \
   "https://ollama.com/install.sh"
 
 # invalidState: CI reports trusted OpenShell pins without comparing every
-# consumed archive with the immutable v0.0.72 GitHub release metadata.
+# consumed archive with the immutable v0.0.72 checksum release assets.
 # sourceBoundary: NVIDIA/OpenShell owns the release assets and their published
 # digests; NemoClaw owns this independent verification of its local pin table.
 # whyNotSourceFix: an upstream release cannot validate which artifacts a
 # downstream installer consumes, so this comparison must remain in NemoClaw.
-# regressionTest: test/installer-hash-check.test.ts proves API failures and
-# incomplete release metadata fail closed; the workflow also runs this live.
+# regressionTest: test/installer-hash-check.test.ts proves download failures and
+# altered checksum manifests fail closed; the workflow also runs this live.
 # removalCondition: remove this check only when the installer no longer embeds
 # release-asset digests or an equivalent independent verifier replaces it.
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
-  local release_api="https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72"
-  local response asset pinned upstream github_token count=0 published_count=0
-  local -a curl_args
-  response=$(mktemp)
-  trap 'rm -f "$response"' RETURN
+  local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72"
+  local workspace manifests spec manifest expected actual asset pinned upstream matches
+  local count=0 published_count=0
+  local -a manifest_specs=(
+    "openshell-checksums-sha256.txt:0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
+    "openshell-gateway-checksums-sha256.txt:3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
+    "openshell-sandbox-checksums-sha256.txt:d38507501338576437cf3e554df71fefe927dc0d72758f88e260069527ed9ccc"
+  )
+  workspace=$(mktemp -d)
+  manifests="${workspace}/published-sha256.txt"
+  : >"$manifests"
+  trap 'rm -rf "$workspace"' RETURN
 
   echo "Checking OpenShell v0.0.72 release assets..."
-  curl_args=(
-    --proto '=https'
-    --tlsv1.2
-    -fsSL
-    --connect-timeout 10
-    --max-time 30
-    --retry 3
-    --retry-delay 1
-    --retry-all-errors
-    -H "Accept: application/vnd.github+json"
-    -H "X-GitHub-Api-Version: 2022-11-28"
-  )
-  github_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
-  if [[ -z "$github_token" ]] && command -v gh >/dev/null 2>&1; then
-    github_token=$(gh auth token 2>/dev/null || true)
-  fi
-  if [[ -n "$github_token" ]]; then
-    curl_args+=(-H "Authorization: Bearer ${github_token}")
-  fi
-  curl "${curl_args[@]}" -o "$response" "$release_api"
+  for spec in "${manifest_specs[@]}"; do
+    manifest="${spec%%:*}"
+    expected="${spec#*:}"
+    fetch_file "${release_base}/${manifest}" "${workspace}/${manifest}"
+    actual=$(sha256_file "${workspace}/${manifest}")
+    if [[ "$actual" != "$expected" ]]; then
+      echo "  STALE: ${manifest} digest does not match the pinned v0.0.72 release asset."
+      echo "    pinned:   ${expected}"
+      echo "    upstream: ${actual}"
+      failures=$((failures + 1))
+      continue
+    fi
+    echo "  OK: ${manifest} (${actual})"
+    cat "${workspace}/${manifest}" >>"$manifests"
+  done
 
   while IFS=$'\t' read -r asset pinned; do
     count=$((count + 1))
-    upstream=$(jq -r --arg asset "$asset" \
-      '.assets[] | select(.name == $asset) | .digest // empty' "$response")
-    upstream="${upstream#sha256:}"
-    if [[ "$pinned" == "$upstream" ]]; then
+    matches=$(awk -v asset="$asset" '$2 == asset { count++ } END { print count + 0 }' "$manifests")
+    upstream=$(awk -v asset="$asset" '$2 == asset { print $1; exit }' "$manifests")
+    if [[ "$matches" -eq 1 && "$pinned" == "$upstream" ]]; then
       published_count=$((published_count + 1))
       echo "  OK: ${asset} (${pinned})"
     else
-      echo "  STALE: ${asset} does not match the v0.0.72 GitHub release."
+      echo "  STALE: ${asset} does not match exactly one v0.0.72 checksum entry."
       echo "    pinned:   ${pinned}"
       echo "    upstream: ${upstream:-missing}"
+      echo "    matches:  ${matches}"
       failures=$((failures + 1))
     fi
   done < <(
@@ -155,7 +165,7 @@ check_openshell_release_assets() {
     failures=$((failures + 1))
   fi
   if [[ "$published_count" -ne 8 ]]; then
-    echo "  STALE: expected all 8 pinned assets in the v0.0.72 GitHub release, matched ${published_count}."
+    echo "  STALE: expected all 8 pinned assets in the v0.0.72 checksum manifests, matched ${published_count}."
     failures=$((failures + 1))
   fi
 }

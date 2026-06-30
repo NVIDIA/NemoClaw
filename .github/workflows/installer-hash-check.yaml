@@ -31,12 +31,5 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify installer hashes are current (pull request)
-        if: github.event_name == 'pull_request'
-        run: bash scripts/check-installer-hash.sh
-
-      - name: Verify installer hashes are current (trusted events)
-        if: github.event_name != 'pull_request'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Verify installer hashes are current
         run: bash scripts/check-installer-hash.sh

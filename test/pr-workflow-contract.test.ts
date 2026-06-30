@@ -156,25 +156,14 @@ describe("pull request and main workflow contracts", () => {
     ".github/actions/resolve-hermes-base-image/action.yaml",
   );
 
-  it("keeps pull-request installer hash verification credential-free", () => {
+  it("keeps installer hash verification credential-free", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
     const checkout = requiredWorkflowStep(job, "Checkout");
-    const pullRequestCheck = requiredWorkflowStep(
-      job,
-      "Verify installer hashes are current (pull request)",
-    );
-    const trustedCheck = requiredWorkflowStep(
-      job,
-      "Verify installer hashes are current (trusted events)",
-    );
+    const hashCheck = requiredWorkflowStep(job, "Verify installer hashes are current");
 
     expect(checkout.with?.["persist-credentials"]).toBe(false);
-    expect(pullRequestCheck.if).toBe("github.event_name == 'pull_request'");
-    expect(pullRequestCheck.env).toBeUndefined();
-    expect(pullRequestCheck.run).toBe("bash scripts/check-installer-hash.sh");
-    expect(trustedCheck.if).toBe("github.event_name != 'pull_request'");
-    expect(trustedCheck.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
-    expect(trustedCheck.run).toBe("bash scripts/check-installer-hash.sh");
+    expect(hashCheck.env).toBeUndefined();
+    expect(hashCheck.run).toBe("bash scripts/check-installer-hash.sh");
   });
 
   it("routes only code-changing PRs through the code-check path", () => {
