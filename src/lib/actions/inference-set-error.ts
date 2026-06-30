@@ -5,15 +5,73 @@ import { CLI_NAME } from "../cli/branding";
 import { compactText } from "../core/url-utils";
 import { redact, redactFull } from "../security/redact";
 
-const OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS = [
-  /\bprovider\s+["'`]([^"'`\r\n]+)["'`]\s+(?:was\s+)?not found\b/iu,
-  /\bnot found\b[^\r\n]*\bprovider\s+["'`]([^"'`\r\n]+)["'`]/iu,
-];
+const FAILURE_DETAIL_LIMIT = 2_000;
+const PROVIDER_ERROR_SCAN_LIMIT = 64 * 1024;
+const PROVIDER_QUOTES = ["'", '"', "`"] as const;
 
-const FAILURE_DETAIL_LIMIT = 500;
+function isWordCharacter(value: string | undefined): boolean {
+  if (!value) return false;
+  const code = value.charCodeAt(0);
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    code === 95 ||
+    (code >= 97 && code <= 122)
+  );
+}
+
+function containsNotFoundPhrase(value: string): boolean {
+  const phrase = "not found";
+  let offset = 0;
+  while (offset < value.length) {
+    const index = value.indexOf(phrase, offset);
+    if (index === -1) return false;
+    const before = value[index - 1];
+    const after = value[index + phrase.length];
+    if (!isWordCharacter(before) && !isWordCharacter(after)) return true;
+    offset = index + phrase.length;
+  }
+  return false;
+}
+
+function startsWithNotFoundPhrase(value: string): boolean {
+  let remainder = value.trimStart();
+  if (remainder.startsWith("was") && !isWordCharacter(remainder["was".length])) {
+    remainder = remainder.slice("was".length).trimStart();
+  }
+  if (!remainder.startsWith("not") || isWordCharacter(remainder["not".length])) return false;
+  remainder = remainder.slice("not".length).trimStart();
+  return remainder.startsWith("found") && !isWordCharacter(remainder["found".length]);
+}
+
+function lineReportsProviderNotFound(line: string, requestedProvider: string): boolean {
+  for (const quote of PROVIDER_QUOTES) {
+    const quotedProvider = `${quote}${requestedProvider}${quote}`;
+    let offset = 0;
+    while (offset < line.length) {
+      const quotedIndex = line.indexOf(quotedProvider, offset);
+      if (quotedIndex === -1) break;
+      const prefix = line.slice(0, quotedIndex).trimEnd();
+      const providerIndex = prefix.length - "provider".length;
+      const hasProviderLabel =
+        providerIndex >= 0 &&
+        prefix.slice(providerIndex) === "provider" &&
+        !isWordCharacter(prefix[providerIndex - 1]);
+      if (hasProviderLabel) {
+        const beforeProvider = prefix.slice(0, providerIndex);
+        const afterProvider = line.slice(quotedIndex + quotedProvider.length).trimStart();
+        if (containsNotFoundPhrase(beforeProvider) || startsWithNotFoundPhrase(afterProvider)) {
+          return true;
+        }
+      }
+      offset = quotedIndex + quotedProvider.length;
+    }
+  }
+  return false;
+}
 
 /**
- * OpenShell 0.0.71 exposes provider lookup failures only as subprocess text.
+ * OpenShell 0.0.71 exposes provider lookup failures only as subprocess text (#5924).
  * Parse the reviewed quoted-provider shape and keep unknown or drifted output
  * generic. Remove this compatibility parser when OpenShell returns a structured
  * provider-not-found error with the missing provider as a field.
@@ -22,10 +80,13 @@ export function openshellReportsProviderNotFound(
   output: string,
   requestedProvider: string,
 ): boolean {
-  const missingProvider = OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS.map(
-    (pattern) => output.match(pattern)?.[1]?.trim() ?? null,
-  ).find((candidate): candidate is string => candidate !== null);
-  return missingProvider === requestedProvider;
+  const normalizedProvider = requestedProvider.trim().toLowerCase();
+  if (!normalizedProvider) return false;
+  return output
+    .slice(0, PROVIDER_ERROR_SCAN_LIMIT)
+    .toLowerCase()
+    .split("\n")
+    .some((line) => lineReportsProviderNotFound(line, normalizedProvider));
 }
 
 export function buildOpenshellInferenceSetFailureMessage(args: {

@@ -46,13 +46,13 @@ describe("inference set OpenShell failure diagnostics", () => {
         `OPENAI_API_KEY=${envSecret}`,
         `Authorization: Bearer ${bearerSecret}`,
         `https://gateway.example.test/fail?token=${querySecret}`,
-        "x".repeat(1_000),
+        "x".repeat(3_000),
       ].join(" "),
       stdout: "",
     });
     const detail = message.match(/^OpenShell detail: (.*)$/mu)?.[1];
 
-    expect(detail).toHaveLength(500);
+    expect(detail).toHaveLength(2_000);
     expect(message).toContain("Registered providers: nvidia-prod");
     expect(message).toContain("Tip: register a new provider with `nemoclaw onboard`");
     expect(message).not.toContain(envSecret);
@@ -79,8 +79,10 @@ describe("inference set OpenShell failure diagnostics", () => {
   });
 
   it("keeps malformed and mismatched diagnostics on the generic path (#5924)", () => {
-    const malformed = `error: provider '${"a".repeat(10_000)}`;
+    const malformed = `error: provider '${"a".repeat(100_000)}`;
+    const startedAt = performance.now();
     expect(openshellReportsProviderNotFound(malformed, "openai-api")).toBe(false);
+    expect(performance.now() - startedAt).toBeLessThan(100);
 
     const message = buildOpenshellInferenceSetFailureMessage({
       exitCode: 42,
@@ -90,5 +92,11 @@ describe("inference set OpenShell failure diagnostics", () => {
     });
     expect(message).toContain("OpenShell detail: error: network timeout connecting to gateway");
     expect(message).not.toMatch(/Registered providers|No providers registered|onboard/);
+  });
+
+  it("classifies the full bounded capture before display truncation (#5924)", () => {
+    const output = `${"x".repeat(2_500)} error: provider 'openai-api' was not found`;
+
+    expect(openshellReportsProviderNotFound(output, "openai-api")).toBe(true);
   });
 });

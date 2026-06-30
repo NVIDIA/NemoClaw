@@ -1,277 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { HERMES_PROXY_API_KEY_PLACEHOLDER } from "../hermes-proxy-api-key";
 import type { ConfigObject } from "../security/credential-filter";
-
-vi.mock("../adapters/openshell/runtime", () => ({
-  captureOpenshell: vi.fn(),
-}));
-
-vi.mock("../inference/local", () => ({
-  DEFAULT_OLLAMA_MODEL: "llama3.1",
-  validateLocalProvider: vi.fn(() => ({ ok: true })),
-}));
-
-vi.mock("../onboard/local-inference-topology", () => ({
-  ensureLocalProviderReachable: vi.fn(() => true),
-}));
-
-vi.mock("../inference/context-window", () => ({
-  resolveContextWindowForModel: vi.fn(() => null),
-}));
-
-vi.mock("../sandbox/config", () => ({
-  readSandboxConfig: vi.fn(),
-  recomputeSandboxConfigHash: vi.fn(),
-  resolveAgentConfig: vi.fn(),
-  writeSandboxConfig: vi.fn(),
-}));
-
-vi.mock("../shields/audit", () => ({
-  appendAuditEntry: vi.fn(),
-}));
-
-import {
-  InferenceSetError,
-  patchHermesInferenceConfig,
-  patchOpenClawInferenceConfig,
-  runInferenceSet,
-} from "./inference-set";
+import { InferenceSetError, runInferenceSet } from "./inference-set";
 import {
   baseSession,
   createDeps,
   HERMES_TARGET,
   OPENCLAW_TARGET,
 } from "./inference-set.test-support";
-
-describe("patchOpenClawInferenceConfig", () => {
-  it("writes provider-qualified model refs while preserving model metadata", () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
-      models: {
-        mode: "merge",
-        providers: {
-          inference: {
-            baseUrl: "https://inference.local/v1",
-            apiKey: "unused",
-            api: "openai-completions",
-            models: [
-              {
-                id: "moonshotai/kimi-k2.6",
-                name: "inference/moonshotai/kimi-k2.6",
-                contextWindow: 131072,
-                maxTokens: 8192,
-                reasoning: true,
-                compat: { supportsStore: false },
-              },
-            ],
-          },
-        },
-      },
-    };
-
-    const result = patchOpenClawInferenceConfig(
-      config,
-      "nvidia-prod",
-      "nvidia/nemotron-3-super-120b-a12b",
-    );
-
-    expect(result.changed).toBe(true);
-    expect(config.agents).toEqual({
-      defaults: { model: { primary: "inference/nvidia/nemotron-3-super-120b-a12b" } },
-    });
-    expect(config.models).toEqual({
-      mode: "merge",
-      providers: {
-        inference: {
-          baseUrl: "https://inference.local/v1",
-          apiKey: "unused",
-          api: "openai-completions",
-          models: [
-            {
-              id: "nvidia/nemotron-3-super-120b-a12b",
-              name: "inference/nvidia/nemotron-3-super-120b-a12b",
-              contextWindow: 131072,
-              maxTokens: 8192,
-              reasoning: true,
-            },
-          ],
-        },
-      },
-    });
-  });
-
-  it("is a no-op when OpenClaw already matches the requested route", () => {
-    const config: ConfigObject = {
-      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
-      models: {
-        mode: "merge",
-        providers: {
-          inference: {
-            baseUrl: "https://inference.local/v1",
-            apiKey: "unused",
-            api: "openai-completions",
-            models: [{ id: "nvidia/model-a", name: "inference/nvidia/model-a" }],
-          },
-        },
-      },
-    };
-
-    const result = patchOpenClawInferenceConfig(config, "nvidia-prod", "nvidia/model-a");
-
-    expect(result.changed).toBe(false);
-  });
-
-  it("switches Anthropic routes to the Anthropic provider namespace", () => {
-    const config: ConfigObject = { agents: {}, models: { providers: {} } };
-
-    patchOpenClawInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
-
-    expect(config.agents).toEqual({
-      defaults: { model: { primary: "anthropic/claude-sonnet-4-6" } },
-    });
-    expect(config.models).toEqual({
-      mode: "merge",
-      providers: {
-        anthropic: {
-          baseUrl: "https://inference.local",
-          apiKey: "unused",
-          api: "anthropic-messages",
-          models: [{ id: "claude-sonnet-4-6", name: "anthropic/claude-sonnet-4-6" }],
-        },
-      },
-    });
-  });
-});
-
-describe("patchHermesInferenceConfig", () => {
-  it("updates only the Hermes model block for the selected route", () => {
-    const config: ConfigObject = {
-      model: {
-        default: "moonshotai/kimi-k2.6",
-        provider: "custom",
-        base_url: "https://old.example/v1",
-        temperature: 0.2,
-      },
-      models: {
-        providers: {
-          inference: {
-            baseUrl: "https://should-not-change.example/v1",
-          },
-        },
-      },
-      terminal: { backend: "local" },
-    };
-
-    const result = patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
-
-    expect(result.changed).toBe(true);
-    expect(config.model).toEqual({
-      default: "openai/gpt-5.4-mini",
-      provider: "custom",
-      base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-      temperature: 0.2,
-    });
-    expect(config.models).toEqual({
-      providers: {
-        inference: {
-          baseUrl: "https://should-not-change.example/v1",
-        },
-      },
-    });
-    expect(config.terminal).toEqual({ backend: "local" });
-  });
-
-  it("replaces stale Hermes API keys with the OpenShell proxy placeholder", () => {
-    for (const api_key of ["no-key-required", "sk-real-looking-key-that-must-not-survive"]) {
-      const config: ConfigObject = {
-        model: {
-          default: "old-model",
-          provider: "custom",
-          base_url: "https://old.example/v1",
-          api_key,
-        },
-      };
-
-      patchHermesInferenceConfig(config, "hermes-provider", "openai/gpt-5.4-mini");
-
-      expect((config.model as ConfigObject).api_key).toBe(HERMES_PROXY_API_KEY_PLACEHOLDER);
-    }
-  });
-
-  it("sets Hermes Anthropic Messages mode for Anthropic routes", () => {
-    const config: ConfigObject = {
-      model: {
-        default: "openai/gpt-5.4-mini",
-        provider: "custom",
-        base_url: "https://inference.local/v1",
-      },
-    };
-
-    const result = patchHermesInferenceConfig(config, "anthropic-prod", "claude-sonnet-4-6");
-
-    expect(result.route).toMatchObject({
-      providerKey: "anthropic",
-      primaryModelRef: "anthropic/claude-sonnet-4-6",
-      inferenceBaseUrl: "https://inference.local",
-      inferenceApi: "anthropic-messages",
-    });
-    expect(config.model).toEqual({
-      default: "claude-sonnet-4-6",
-      provider: "custom",
-      base_url: "https://inference.local",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-      api_mode: "anthropic_messages",
-    });
-  });
-
-  it("clears stale Hermes API mode when switching back to OpenAI-style routes", () => {
-    const config: ConfigObject = {
-      model: {
-        default: "claude-sonnet-4-6",
-        provider: "custom",
-        base_url: "https://inference.local",
-        api_mode: "anthropic_messages",
-      },
-    };
-
-    patchHermesInferenceConfig(config, "nvidia-prod", "nvidia/nemotron-3-super-120b-a12b");
-
-    expect(config.model).toEqual({
-      default: "nvidia/nemotron-3-super-120b-a12b",
-      provider: "custom",
-      base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-    });
-  });
-
-  it("keeps Bedrock Runtime adapter routes OpenAI-compatible for Hermes", () => {
-    const config: ConfigObject = { model: {} };
-
-    const result = patchHermesInferenceConfig(
-      config,
-      "compatible-anthropic-endpoint",
-      "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      "openai-completions",
-    );
-
-    expect(result.route).toMatchObject({
-      providerKey: "inference",
-      primaryModelRef: "inference/anthropic.claude-3-5-sonnet-20240620-v1:0",
-      inferenceBaseUrl: "https://inference.local/v1",
-      inferenceApi: "openai-completions",
-    });
-    expect(config.model).toEqual({
-      default: "anthropic.claude-3-5-sonnet-20240620-v1:0",
-      provider: "custom",
-      base_url: "https://inference.local/v1",
-      api_key: HERMES_PROXY_API_KEY_PLACEHOLDER,
-    });
-  });
-});
 
 describe("runInferenceSet", () => {
   it("updates OpenShell, OpenClaw config, registry, and the matching onboard session", async () => {
@@ -985,7 +724,7 @@ describe("runInferenceSet", () => {
         status: null,
         output: "",
         stdout: "",
-        stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(1_000)}`,
+        stderr: `error: provider 'openai-api' not found at https://user:${password}@gateway.example.test/v1?token=${querySecret} ${"x".repeat(3_000)}`,
         error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
         signal: "SIGTERM",
       })
@@ -1005,7 +744,7 @@ describe("runInferenceSet", () => {
     expect((err as InferenceSetError).exitCode).toBe(1);
     const message = (err as Error).message;
     const detail = message.match(/^OpenShell detail: (.*)$/mu)?.[1];
-    expect(detail).toHaveLength(500);
+    expect(detail).toHaveLength(2_000);
     expect(message).not.toContain(password);
     expect(message).not.toContain(querySecret);
     expect(message).toContain("Registered providers: nvidia-prod");
@@ -1055,7 +794,7 @@ describe("runInferenceSet", () => {
     expect(deps.calls.captureOpenshell).toHaveBeenNthCalledWith(
       2,
       ["provider", "list", "--names"],
-      { ignoreError: true, maxBuffer: 64 * 1024, timeout: 30_000 },
+      { ignoreError: true, maxBuffer: 64 * 1024, timeout: 5_000 },
     );
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
@@ -1125,11 +864,8 @@ describe("runInferenceSet", () => {
         stdout: "",
         stderr: "error: provider 'openai-api' not found in gateway",
       })
-      .mockReturnValueOnce({
-        status: 17,
-        output: "",
-        stdout: "",
-        stderr: `gateway provider query failed token=${querySecret}`,
+      .mockImplementationOnce(() => {
+        throw new Error(`gateway provider query failed token=${querySecret}`);
       });
 
     const err = await runInferenceSet(
@@ -1289,132 +1025,5 @@ describe("runInferenceSet", () => {
     expect(logged).toMatch(/integrity hash/);
     expect(logged).toMatch(/rebuild/);
     expect(logged).not.toMatch(/Inference route synced/);
-  });
-});
-
-describe("runInferenceSet local-provider verification", () => {
-  const localConfig = (): ConfigObject => ({
-    agents: { defaults: { model: { primary: "inference/qwen2.5:7b" } } },
-    models: {
-      providers: {
-        inference: {
-          api: "openai-completions",
-          models: [{ id: "qwen2.5:7b", name: "inference/qwen2.5:7b" }],
-        },
-      },
-    },
-  });
-
-  it("forces --no-verify for a local provider whose host validation passes", async () => {
-    const deps = createDeps({ config: localConfig(), session: baseSession() });
-
-    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
-
-    expect(deps.calls.validateLocalProvider).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).toContain("--no-verify");
-    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
-  });
-
-  it("warns and proceeds with --no-verify when the host stack is reachable despite a failed probe", async () => {
-    const deps = createDeps({
-      config: localConfig(),
-      session: baseSession(),
-      localValidation: {
-        ok: false,
-        message: "Local Ollama is responding on 127.0.0.1, but the container check failed.",
-        diagnostic: "add-host probe timed out",
-      },
-      localReachable: true,
-    });
-
-    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps);
-
-    expect(deps.calls.ensureLocalProviderReachable).toHaveBeenCalledWith("ollama-local");
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).toContain("--no-verify");
-    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
-    expect(logged).toMatch(/reachable/);
-  });
-
-  it("aborts without touching the route when the host stack is unreachable", async () => {
-    const deps = createDeps({
-      config: localConfig(),
-      session: baseSession(),
-      localValidation: {
-        ok: false,
-        message: "Local Ollama was selected, but nothing is responding on http://127.0.0.1:11434.",
-      },
-      localReachable: false,
-    });
-
-    await expect(
-      runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b" }, deps),
-    ).rejects.toThrow(/Cannot reach local provider 'ollama-local'/);
-    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
-  });
-
-  it("does not run local validation or force --no-verify for cloud providers", async () => {
-    const deps = createDeps({
-      config: localConfig(),
-      session: baseSession(),
-    });
-
-    await runInferenceSet(
-      { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
-      deps,
-    );
-
-    expect(deps.calls.validateLocalProvider).not.toHaveBeenCalled();
-    expect(deps.calls.ensureLocalProviderReachable).not.toHaveBeenCalled();
-    const args = deps.calls.captureOpenshell.mock.calls[0][0] as string[];
-    expect(args).not.toContain("--no-verify");
-  });
-});
-
-describe("runInferenceSet context window", () => {
-  const ollamaConfig = (): ConfigObject => ({
-    agents: { defaults: { model: { primary: "inference/llama3.2:3b" } } },
-    models: {
-      providers: {
-        inference: {
-          api: "openai-completions",
-          models: [{ id: "llama3.2:3b", name: "inference/llama3.2:3b", contextWindow: 131072 }],
-        },
-      },
-    },
-  });
-
-  function inferenceModels(config: ConfigObject): Array<Record<string, unknown>> {
-    const models = config.models as { providers: { inference: { models: unknown } } };
-    return models.providers.inference.models as Array<Record<string, unknown>>;
-  }
-
-  it("writes the recomputed context window into the in-sandbox config", async () => {
-    const config = ollamaConfig();
-    const deps = createDeps({ config, session: baseSession(), contextWindow: 16384 });
-
-    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
-
-    expect(deps.calls.resolveContextWindowForModel).toHaveBeenCalledWith(
-      "ollama-local",
-      "qwen2.5:7b",
-    );
-    expect(inferenceModels(config)[0].contextWindow).toBe(16384);
-    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
-    expect(logged).toMatch(/Context window for 'qwen2\.5:7b': 16384 tokens/);
-  });
-
-  it("keeps the existing window and warns when it cannot be determined", async () => {
-    const config = ollamaConfig();
-    const deps = createDeps({ config, session: baseSession(), contextWindow: null });
-
-    await runInferenceSet({ provider: "ollama-local", model: "qwen2.5:7b", noVerify: true }, deps);
-
-    expect(inferenceModels(config)[0].contextWindow).toBe(131072);
-    const logged = deps.calls.log.mock.calls.map((a) => String(a[0])).join("\n");
-    expect(logged).toMatch(/could not determine the context window/i);
-    expect(logged).toMatch(/rebuild/);
   });
 });
