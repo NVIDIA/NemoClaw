@@ -67,7 +67,7 @@ const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inferen
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
-const { reapHostGatewayBeforeLaunch } =
+const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExcept } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
 const {
   findReadableNvidiaCdiSpecFiles,
@@ -2248,6 +2248,9 @@ async function startDockerDriverGateway({
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
+        // Enforce a single host gateway before reporting reuse (#5968): reap a
+        // known stale recorded pid that differs from the adopted port listener.
+        reapDuplicateHostGatewaysExcept(portListenerPid, identityGatewayBin, [pidFileGatewayPid]);
         await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
           skip: skipSandboxBridgeReachability,
         });
@@ -2265,15 +2268,14 @@ async function startDockerDriverGateway({
     throw new Error("OpenShell gateway binary not found");
   }
 
-  // Reap any existing host openshell-gateway bound to this port (TERM→KILL +
-  // wait-for-exit, cmdline-gated, scoped to this port's candidates) before
-  // spawning a fresh one, so onboard never leaves two host-process gateways for
-  // the same port (#5968 "got host-process=2"). Confirmed gone before respawn.
-  reapHostGatewayBeforeLaunch({
+  // Reap the existing host openshell-gateway for this port and fail closed if a
+  // matched one resists, so onboard never spawns a second (#5968 host-process=2).
+  reapHostGatewayBeforeLaunchOrFail({
     pidFile: path.join(stateDir, "openshell-gateway.pid"),
     stateDir,
     gatewayBin: identityGatewayBin,
     extraPids: [getDockerDriverGatewayPid(), portListenerPid],
+    exitOnFailure,
   });
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
