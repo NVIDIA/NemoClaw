@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -35,13 +36,45 @@ function pathEntryExists(candidate: string): boolean {
   }
 }
 
-function componentBuildVersion(candidate: string): string | null {
+const PINNED_SANDBOX_BUILD_VERSIONS = new Map<string, string>([
+  // OpenShell v0.0.72 standalone sandbox binaries. The Docker driver only
+  // bind-mounts these into the supervisor container, so the host may be too
+  // old to execute `--version` (the release requires GLIBC_2.39).
+  ["f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198", "0.0.72"],
+  ["32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f", "0.0.72"],
+]);
+
+export function pinnedOpenShellSandboxBuildVersion(sha256: string): string | null {
+  return PINNED_SANDBOX_BUILD_VERSIONS.get(sha256.toLowerCase()) ?? null;
+}
+
+function executableSha256(candidate: string): string | null {
+  try {
+    return createHash("sha256").update(fs.readFileSync(candidate)).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+export function resolveOpenShellComponentBuildVersion(
+  candidate: string,
+  componentRole: "cli" | "gateway" | "sandbox",
+  digestFile: (path: string) => string | null = executableSha256,
+): string | null {
   const result = spawnSync(candidate, ["--version"], {
     encoding: "utf8",
     timeout: 5_000,
   });
-  if (result.status !== 0 || result.error) return null;
-  return `${result.stdout}${result.stderr}`.match(/\d+\.\d+\.\d+\S*/)?.[0] ?? null;
+  if (result.status === 0 && !result.error) {
+    const version = `${result.stdout}${result.stderr}`.match(/\d+\.\d+\.\d+\S*/)?.[0];
+    if (version) return version;
+  }
+
+  // Never synthesize coherence from arbitrary version-like strings embedded
+  // in a binary. The fallback is sandbox-only and exact-digest pinned.
+  if (componentRole !== "sandbox") return null;
+  const digest = digestFile(candidate);
+  return digest ? pinnedOpenShellSandboxBuildVersion(digest) : null;
 }
 
 function componentBuildVersionsMatch(left: string, right: string): boolean {
@@ -101,11 +134,14 @@ export function hasRequiredOpenshellMessagingFeatures(options: {
   if (sandboxBin && path.dirname(sandboxBin) !== openshellDir && !options.allowExternalSandboxBin) {
     return false;
   }
-  const openshellVersion = componentBuildVersion(openshellBin);
+  const openshellVersion = resolveOpenShellComponentBuildVersion(openshellBin, "cli");
   if (!openshellVersion) return false;
-  for (const componentBin of [gatewayBin, sandboxBin]) {
+  for (const [componentBin, componentRole] of [
+    [gatewayBin, "gateway"],
+    [sandboxBin, "sandbox"],
+  ] as const) {
     if (!componentBin) continue;
-    const componentVersion = componentBuildVersion(componentBin);
+    const componentVersion = resolveOpenShellComponentBuildVersion(componentBin, componentRole);
     if (!componentVersion || !componentBuildVersionsMatch(openshellVersion, componentVersion)) {
       return false;
     }

@@ -8,8 +8,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasRequiredOpenshellMessagingFeatures,
+  pinnedOpenShellSandboxBuildVersion,
   REQUIRED_OPENSHELL_MCP_FEATURES,
   REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE,
+  resolveOpenShellComponentBuildVersion,
 } from "./openshell-feature-gate";
 
 function writeExecutable(target: string, contents: string, version = "0.0.72") {
@@ -25,6 +27,37 @@ exit 0
 }
 
 describe("OpenShell MCP feature gate", () => {
+  it("identifies the pinned v0.0.72 sandbox artifacts without executing them", () => {
+    const sandbox = path.join(
+      fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-")),
+      "openshell-sandbox",
+    );
+    try {
+      writeExecutable(sandbox, "non-host-runnable sandbox");
+      fs.writeFileSync(
+        sandbox,
+        `#!/bin/sh\nexit 127\n# ${REQUIRED_OPENSHELL_SANDBOX_MCP_FEATURE}\n`,
+        { mode: 0o755 },
+      );
+      const digest = "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198";
+      const arm64Digest =
+        "32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f";
+
+      expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.72");
+      expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.72");
+      expect(pinnedOpenShellSandboxBuildVersion("0".repeat(64))).toBeNull();
+      expect(resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => digest)).toBe(
+        "0.0.72",
+      );
+      expect(resolveOpenShellComponentBuildVersion(sandbox, "gateway", () => digest)).toBeNull();
+      expect(
+        resolveOpenShellComponentBuildVersion(sandbox, "sandbox", () => "0".repeat(64)),
+      ).toBeNull();
+    } finally {
+      fs.rmSync(path.dirname(sandbox), { recursive: true, force: true });
+    }
+  });
+
   it("finds provider rewrite and MCP L7 markers across OpenShell binaries", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-features-"));
     try {

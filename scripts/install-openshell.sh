@@ -223,13 +223,53 @@ component_shares_install_root() {
   [ "$(dirname "$canonical_openshell")" = "$(dirname "$canonical_component")" ]
 }
 
+file_sha256() {
+  local component_bin="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$component_bin" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$component_bin" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+pinned_sandbox_build_version() {
+  local digest="$1"
+  case "$digest" in
+    # OpenShell v0.0.72 standalone sandbox binaries. These are bind-mounted
+    # into the supervisor container and can require a newer glibc than the
+    # host that runs the CLI/gateway, so `--version` is not always runnable.
+    f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198 | \
+    32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
+      printf '%s\n' "0.0.72"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 component_build_version() {
   local component_bin="$1"
-  local version_output
-  version_output="$("$component_bin" --version 2>/dev/null)" || return 1
-  printf '%s\n' "$version_output" \
-    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' \
-    | head -1
+  local component_role="${2:-component}"
+  local version_output version digest
+  if version_output="$("$component_bin" --version 2>/dev/null)"; then
+    version="$(printf '%s\n' "$version_output" \
+      | grep -oE '[0-9]+\.[0-9]+\.[0-9]+[^[:space:]]*' \
+      | head -1)"
+    if [ -n "$version" ]; then
+      printf '%s\n' "$version"
+      return 0
+    fi
+  fi
+
+  # Do not infer an identity from arbitrary embedded version strings. Only the
+  # exact pinned sandbox release artifacts may fall back when the host loader
+  # cannot execute their version probe (for example, GLIBC_2.39 on Brev).
+  [ "$component_role" = "sandbox" ] || return 1
+  digest="$(file_sha256 "$component_bin")" || return 1
+  pinned_sandbox_build_version "$digest"
 }
 
 component_build_versions_match() {
@@ -256,9 +296,10 @@ component_build_versions_match() {
 component_matches_cli_build() {
   local openshell_bin="$1"
   local component_bin="$2"
+  local component_role="${3:-component}"
   local openshell_version component_version
-  openshell_version="$(component_build_version "$openshell_bin")"
-  component_version="$(component_build_version "$component_bin")"
+  openshell_version="$(component_build_version "$openshell_bin" cli)"
+  component_version="$(component_build_version "$component_bin" "$component_role")"
   [ -n "$openshell_version" ] && [ -n "$component_version" ] \
     && component_build_versions_match "$openshell_version" "$component_version"
 }
@@ -380,11 +421,11 @@ openshell_has_required_messaging_features() {
     OPENSHELL_FEATURE_CHECK_ERROR="The selected OpenShell sandbox resolves outside the active CLI install root. Use an explicit component override for a deliberate cross-prefix layout."
     return 1
   fi
-  if [ -f "$gateway_bin" ] && ! component_matches_cli_build "$openshell_bin" "$gateway_bin"; then
+  if [ -f "$gateway_bin" ] && ! component_matches_cli_build "$openshell_bin" "$gateway_bin" gateway; then
     OPENSHELL_FEATURE_CHECK_ERROR="The selected OpenShell gateway does not match the active CLI build. Install one coherent OpenShell release."
     return 1
   fi
-  if [ -f "$sandbox_bin" ] && ! component_matches_cli_build "$openshell_bin" "$sandbox_bin"; then
+  if [ -f "$sandbox_bin" ] && ! component_matches_cli_build "$openshell_bin" "$sandbox_bin" sandbox; then
     OPENSHELL_FEATURE_CHECK_ERROR="The selected OpenShell sandbox does not match the active CLI build. Install one coherent OpenShell release."
     return 1
   fi

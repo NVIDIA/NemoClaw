@@ -16,6 +16,7 @@ const PINNED_OPEN_SHELL_SHA256 = {
   gatewayDarwinArm64: "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
   gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
   sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
+  sandboxBinaryLinuxX64: "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198",
 };
 const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
 const REQUIRED_OPENSHELL_VERSION = "0.0.72";
@@ -46,6 +47,8 @@ function runWithInstalledVersion(
     driverLocation?: "path" | "explicit" | "symlink";
     driverVersion?: string;
     sandboxVersion?: string;
+    sandboxVersionExit?: number;
+    sandboxBinaryDigest?: string;
     driverVersionExit?: number;
     driverReadable?: boolean;
     os?: string;
@@ -116,7 +119,7 @@ exit 99`,
       writeExecutable(
         path.join(driverBin, fixture.name),
         `#!/usr/bin/env bash
-if [ "\${1:-}" = "--version" ]; then echo "${fixture.name} ${fixture.name === "openshell-sandbox" ? (options.sandboxVersion ?? options.driverVersion ?? version) : (options.driverVersion ?? version)}"; exit ${options.driverVersionExit ?? 0}; fi
+if [ "\${1:-}" = "--version" ]; then echo "${fixture.name} ${fixture.name === "openshell-sandbox" ? (options.sandboxVersion ?? options.driverVersion ?? version) : (options.driverVersion ?? version)}"; exit ${fixture.name === "openshell-sandbox" ? (options.sandboxVersionExit ?? options.driverVersionExit ?? 0) : (options.driverVersionExit ?? 0)}; fi
 # ${fixture.markers}
 exit 0`,
       );
@@ -124,6 +127,23 @@ exit 0`,
       if (options.driverLocation === "symlink") {
         fs.symlinkSync(path.join(driverBin, fixture.name), path.join(fakeBin, fixture.name));
       }
+    }
+
+    switch (options.sandboxBinaryDigest) {
+      case undefined:
+        break;
+      default:
+        writeExecutable(
+          path.join(fakeBin, "sha256sum"),
+          `#!/usr/bin/env bash
+case "\${1:-}" in
+  */openshell-sandbox)
+    printf '%s  %s\\n' '${options.sandboxBinaryDigest}' "$1"
+    exit 0
+    ;;
+esac
+exit 1`,
+        );
     }
 
     // Stub curl to fail so the install path exits without doing real network I/O
@@ -252,6 +272,29 @@ describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
     );
     expect(result.status).toBe(1);
     expect(result.stderr).toMatch(/gateway does not match the active CLI build/);
+  });
+
+  it("accepts the exact pinned sandbox when its host-side version probe cannot load", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      {
+        sandboxVersionExit: 127,
+        sandboxBinaryDigest: PINNED_OPEN_SHELL_SHA256.sandboxBinaryLinuxX64,
+      },
+    );
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain(`already installed: ${REQUIRED_OPENSHELL_VERSION}`);
+  });
+
+  it("rejects a non-runnable sandbox whose digest is not a pinned release artifact", () => {
+    const result = runWithInstalledVersion(
+      REQUIRED_OPENSHELL_VERSION,
+      {},
+      { sandboxVersionExit: 127, sandboxBinaryDigest: ZERO_SHA256 },
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/sandbox does not match the active CLI build/);
   });
 
   it("rejects a selected component that cannot be scanned", () => {
