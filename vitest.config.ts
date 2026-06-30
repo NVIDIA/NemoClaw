@@ -52,7 +52,11 @@ export default defineConfig({
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
-          env: { NODE_OPTIONS: sourceNodeOptions },
+          // Clearing NODE_V8_COVERAGE for the spawned children stops V8 from
+          // accumulating per-child coverage maps on top of the require-hook
+          // transpile cache, which on CI cumulatively exhausted the 7 GiB
+          // ubuntu runner when several short-lived children ran in parallel.
+          env: { NODE_OPTIONS: sourceNodeOptions, NODE_V8_COVERAGE: "" },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
             "**/node_modules/**",
