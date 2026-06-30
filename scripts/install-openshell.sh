@@ -241,7 +241,7 @@ pinned_sandbox_build_version() {
     # into the supervisor container and can require a newer glibc than the
     # host that runs the CLI/gateway, so `--version` is not always runnable.
     f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198 | \
-    32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
+      32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f)
       printf '%s\n' "0.0.72"
       ;;
     *)

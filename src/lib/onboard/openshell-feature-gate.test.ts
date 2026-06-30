@@ -40,8 +40,7 @@ describe("OpenShell MCP feature gate", () => {
         { mode: 0o755 },
       );
       const digest = "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198";
-      const arm64Digest =
-        "32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f";
+      const arm64Digest = "32ca44fe7d9e6d332f2a753c6b8a1a6117b7388281dad9b5274d23ffc67e216f";
 
       expect(pinnedOpenShellSandboxBuildVersion(digest)).toBe("0.0.72");
       expect(pinnedOpenShellSandboxBuildVersion(arm64Digest)).toBe("0.0.72");
