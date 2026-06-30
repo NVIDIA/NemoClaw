@@ -218,34 +218,6 @@ export const teamsManifest = {
       required: true,
     },
   ],
-  state: {
-    persist: {
-      teamsConfig: ["appId", "tenantId", "webhookPort", "requireMention"],
-      allowedIds: ["allowedUsers"],
-    },
-    rebuildHydration: [
-      {
-        statePath: "teamsConfig.appId",
-        env: "MSTEAMS_APP_ID",
-      },
-      {
-        statePath: "teamsConfig.tenantId",
-        env: "MSTEAMS_TENANT_ID",
-      },
-      {
-        statePath: "allowedIds.teams",
-        env: "TEAMS_ALLOWED_USERS",
-      },
-      {
-        statePath: "teamsConfig.webhookPort",
-        env: "MSTEAMS_PORT",
-      },
-      {
-        statePath: "teamsConfig.requireMention",
-        env: "TEAMS_REQUIRE_MENTION",
-      },
-    ],
-  },
   hooks: [
     {
       id: "teams-host-forward-port-conflict",

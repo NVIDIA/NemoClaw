@@ -296,7 +296,6 @@ function manifestWithPreset(id: string, preset: ChannelPolicyPresetReference): C
     credentials: [],
     policyPresets: [preset],
     render: [],
-    state: {},
     hooks: [],
   };
 }
