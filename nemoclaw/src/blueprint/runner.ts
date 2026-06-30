@@ -327,7 +327,11 @@ const DEFAULT_ROUTER_PORT = 4000;
 function parseCurrentPolicy(raw: string): UnknownRecord {
   const sepIndex = raw.indexOf("---");
   const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
-  if (!yaml) return {};
+  if (!yaml) {
+    throw new Error(
+      "Current policy from openshell policy get --base does not contain a policy YAML document",
+    );
+  }
 
   let parsed: unknown;
   try {

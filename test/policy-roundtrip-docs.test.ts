@@ -41,6 +41,7 @@ describe("policy round-trip documentation examples", () => {
       expect(text, docPath).not.toMatch(
         /openshell policy get (?:my-assistant|<sandbox-name>) --base/,
       );
+      expect(text, docPath).not.toMatch(/openshell policy get --full/);
       expect(text, docPath).not.toMatch(
         /openshell policy set (?:my-assistant|<sandbox-name>) --policy/,
       );

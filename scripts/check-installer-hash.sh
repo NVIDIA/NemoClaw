@@ -7,6 +7,7 @@
 #
 # Checked installers:
 #   1. Ollama installer    — scripts/install.sh      (OLLAMA_INSTALL_SHA256)
+#   2. OpenShell v0.0.72   — scripts/install-openshell.sh release-asset table
 #
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
@@ -78,6 +79,72 @@ register "Ollama installer" \
   "OLLAMA_INSTALL_SHA256" \
   "https://ollama.com/install.sh"
 
+check_openshell_release_assets() {
+  local installer="${REPO_ROOT}/scripts/install-openshell.sh"
+  local release_api="https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72"
+  local response asset pinned upstream github_token count=0
+  local -a curl_args
+  response=$(mktemp)
+  trap 'rm -f "$response"' RETURN
+
+  echo "Checking OpenShell v0.0.72 release assets..."
+  curl_args=(
+    --proto '=https'
+    --tlsv1.2
+    -fsSL
+    --connect-timeout 10
+    --max-time 30
+    --retry 3
+    --retry-delay 1
+    --retry-all-errors
+    -H "Accept: application/vnd.github+json"
+    -H "X-GitHub-Api-Version: 2022-11-28"
+  )
+  github_token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+  if [[ -z "$github_token" ]] && command -v gh >/dev/null 2>&1; then
+    github_token=$(gh auth token 2>/dev/null || true)
+  fi
+  if [[ -n "$github_token" ]]; then
+    curl_args+=(-H "Authorization: Bearer ${github_token}")
+  fi
+  curl "${curl_args[@]}" -o "$response" "$release_api"
+
+  while IFS=$'\t' read -r asset pinned; do
+    count=$((count + 1))
+    upstream=$(jq -r --arg asset "$asset" \
+      '.assets[] | select(.name == $asset) | .digest // empty' "$response")
+    upstream="${upstream#sha256:}"
+    if [[ "$pinned" == "$upstream" ]]; then
+      echo "  OK: ${asset} (${pinned})"
+    else
+      echo "  STALE: ${asset} does not match the v0.0.72 GitHub release."
+      echo "    pinned:   ${pinned}"
+      echo "    upstream: ${upstream:-missing}"
+      failures=$((failures + 1))
+    fi
+  done < <(
+    awk '
+      /^openshell_pinned_sha256\(\)/ { in_function = 1; next }
+      in_function && /^}/ { exit }
+      in_function && /v0\.0\.72:/ {
+        asset = $0
+        sub(/^.*v0\.0\.72:/, "", asset)
+        sub(/\).*$/, "", asset)
+        next
+      }
+      in_function && /printf .*"[a-f0-9]+"/ {
+        split($0, fields, "\"")
+        print asset "\t" fields[2]
+      }
+    ' "$installer"
+  )
+
+  if [[ "$count" -ne 8 ]]; then
+    echo "  STALE: expected 8 pinned OpenShell v0.0.72 assets, found ${count}."
+    failures=$((failures + 1))
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -117,6 +184,8 @@ for i in "${!LABELS[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+check_openshell_release_assets
 
 if ((failures > 0)); then
   echo ""

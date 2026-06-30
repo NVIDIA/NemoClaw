@@ -320,6 +320,7 @@ exit 0`,
     try {
       const fakeBin = path.join(tmp, "bin");
       const downloadLog = path.join(tmp, "downloads.log");
+      const checksumLog = path.join(tmp, "checksums.log");
       fs.mkdirSync(fakeBin);
 
       writeExecutable(
@@ -356,7 +357,17 @@ exit 0`,
       );
       writeExecutable(
         path.join(fakeBin, "sha256sum"),
-        "#!/usr/bin/env bash\ncat >/dev/null\necho 'checksum OK'\n",
+        `#!/usr/bin/env bash
+[ "$#" -eq 2 ] && [ "$1" = "-c" ] && [ "$2" = "-" ] || exit 9
+line="$(cat)"
+case "$line" in
+'${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz'|\
+'${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz') ;;
+*) exit 10 ;;
+esac
+printf '%s\n' "$line" >> ${JSON.stringify(checksumLog)}
+printf '%s\n' 'checksum OK'`,
       );
       writeExecutable(
         path.join(fakeBin, "tar"),
@@ -404,6 +415,11 @@ chmod 755 "$dest"`,
       expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
       expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
       expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
+      expect(fs.readFileSync(checksumLog, "utf8").trim().split("\n")).toEqual([
+        `${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz`,
+        `${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz`,
+      ]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
