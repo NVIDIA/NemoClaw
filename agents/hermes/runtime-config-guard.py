@@ -23,20 +23,11 @@ from dataclasses import dataclass
 API_SERVER_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 SCOPED_PLACEHOLDER_PREFIX = "openshell:resolve:env:"
-SLACK_SCOPED_PLACEHOLDER_MARKER = "-OPENSHELL-RESOLVE-ENV-"
-# Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
-SLACK_SCOPED_PLACEHOLDER_RE = re.compile(r"^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$")
-PLACEHOLDER_CONTROL_CHARS = "\x00\r\n\t"
 BOUNDARY_VALIDATOR_TIMEOUT_SECONDS = 5
-LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_CONDITION = (
-    "all-supported-hermes-sandboxes-include-runtime-plan-credentialBindings"
-)
 # Restrictive compatibility fallback for provider placeholders persisted before
 # Hermes messaging runtime-plan metadata existed. New channels must flow through
-# runtime-plan credentialBindings; do not broaden this set without a
+# runtime-plan credentialBindings/envAliases; do not broaden this set without a
 # migration plan and source-of-truth review.
-# TODO: Remove manually when LEGACY_PROVIDER_PLACEHOLDER_REMOVAL_CONDITION is
-# satisfied across supported Hermes sandbox images.
 LEGACY_PROVIDER_PLACEHOLDER_KEYS = frozenset(
     {
         "TELEGRAM_BOT_TOKEN",
@@ -431,39 +422,17 @@ def _placeholder_suffix_matches_env_key(suffix: str, env_key: str) -> bool:
     return revision_match is not None and revision_match.group(1) == env_key
 
 
-def _normalize_provider_placeholder_for_env_key(
-    value: object,
-    env_key: str,
-    *,
-    reject_malformed: bool = False,
-    label: str = "provider placeholder",
-) -> str | None:
-    def reject(message: str) -> None:
-        if reject_malformed:
-            raise UnsafePathError(f"messaging runtime plan {label} {message}")
-
-    if not isinstance(value, str):
-        if value is not None:
-            reject("must be a string")
+def _normalize_provider_placeholder_for_env_key(value: str, env_key: str) -> str | None:
+    if not value.startswith(SCOPED_PLACEHOLDER_PREFIX):
         return None
-    if any(ch in value for ch in PLACEHOLDER_CONTROL_CHARS):
-        reject("contains a control character")
-        return None
-    if value.startswith(SCOPED_PLACEHOLDER_PREFIX):
-        suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
-        if not _placeholder_suffix_matches_env_key(suffix, env_key):
-            reject(f"is not a provider placeholder for {env_key}")
-            return None
-        return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
-    scoped_match = SLACK_SCOPED_PLACEHOLDER_RE.fullmatch(value)
-    if scoped_match is None:
-        reject(f"is not a provider placeholder for {env_key}")
-        return None
-    suffix = scoped_match.group(2)
+    suffix = value[len(SCOPED_PLACEHOLDER_PREFIX) :]
     if not _placeholder_suffix_matches_env_key(suffix, env_key):
-        reject(f"is not a provider placeholder for {env_key}")
         return None
-    return f"{scoped_match.group(1)}{SLACK_SCOPED_PLACEHOLDER_MARKER}{env_key}"
+    return f"{SCOPED_PLACEHOLDER_PREFIX}{env_key}"
+
+
+def _has_env_control_chars(value: str) -> bool:
+    return "\x00" in value or "\r" in value or "\n" in value
 
 
 def _validate_runtime_plan_env_key(value: object, label: str) -> str:
@@ -539,7 +508,6 @@ def _runtime_plan_replacements_and_provider_keys(
             active_channel_ids.add(channel_id)
 
     provider_env_keys: set[str] = set()
-    replacements: dict[str, tuple[str, str]] = {}
     bindings = plan.get("credentialBindings", [])
     if not isinstance(bindings, list):
         raise UnsafePathError("messaging runtime plan credentialBindings must be a list")
@@ -547,33 +515,45 @@ def _runtime_plan_replacements_and_provider_keys(
         if not isinstance(binding, dict):
             raise UnsafePathError("messaging runtime plan credentialBindings entries must be objects")
         channel_id = binding.get("channelId")
+        provider_env_key = binding.get("providerEnvKey")
+        if isinstance(channel_id, str) and channel_id in active_channel_ids:
+            provider_env_keys.add(
+                _validate_runtime_plan_env_key(provider_env_key, "credentialBindings.providerEnvKey")
+            )
+
+    runtime_setup = plan.get("runtimeSetup") or {}
+    if not isinstance(runtime_setup, dict):
+        raise UnsafePathError("messaging runtime plan runtimeSetup must be an object")
+    aliases = runtime_setup.get("envAliases", [])
+    if not isinstance(aliases, list):
+        raise UnsafePathError("messaging runtime plan runtimeSetup.envAliases must be a list")
+
+    replacements: dict[str, tuple[str, str]] = {}
+    for alias in aliases:
+        if not isinstance(alias, dict):
+            raise UnsafePathError("messaging runtime plan envAliases entries must be objects")
+        channel_id = alias.get("channelId")
         if not isinstance(channel_id, str) or channel_id not in active_channel_ids:
             continue
-        provider_env_key = _validate_runtime_plan_env_key(
-            binding.get("providerEnvKey"), "credentialBindings.providerEnvKey"
-        )
-        provider_env_keys.add(provider_env_key)
-        placeholder_value = binding.get("placeholder")
-        placeholder = None
-        if placeholder_value is not None:
-            placeholder = _normalize_provider_placeholder_for_env_key(
-                placeholder_value,
-                provider_env_key,
-                reject_malformed=True,
-                label="credentialBindings.placeholder",
-            )
-        runtime_placeholder = _normalize_provider_placeholder_for_env_key(
-            os.environ.get(provider_env_key, ""), provider_env_key
-        )
-        if placeholder and runtime_placeholder:
-            existing = replacements.get(provider_env_key)
-            if existing is None:
-                replacements[provider_env_key] = (placeholder, "")
-            elif existing[0] != placeholder:
-                raise UnsafePathError(
-                    f"messaging runtime plan has conflicting placeholders for {provider_env_key}"
-                )
+        env_key = alias.get("envKey")
+        pattern = alias.get("match")
+        value = alias.get("value")
+        message = alias.get("message") or ""
+        if not isinstance(pattern, str) or not isinstance(value, str) or not isinstance(message, str):
+            continue
+        env_key = _validate_runtime_plan_env_key(env_key, "runtimeSetup.envAliases.envKey")
+        if env_key in replacements:
+            continue
+        if _has_env_control_chars(value) or _has_env_control_chars(message):
+            raise UnsafePathError("messaging runtime plan env alias contains unsafe characters")
+        try:
+            compiled = re.compile(pattern)
+        except re.error as exc:
+            raise UnsafePathError(f"messaging runtime plan env alias regex is invalid: {exc}") from exc
+        if compiled.search(os.environ.get(env_key, "")):
+            replacements[env_key] = (value, message)
     return replacements, provider_env_keys, True
+
 
 def ensure_api_key(hermes_dir: str, hash_file: str, mode: str) -> None:
     env_path = os.path.join(hermes_dir, ".env")

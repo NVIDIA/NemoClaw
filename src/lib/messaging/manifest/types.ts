@@ -167,6 +167,7 @@ export interface ChannelOpenClawRuntimeSpec extends ChannelRuntimeSpec {
 export interface ChannelRuntimeSpec {
   readonly visibility?: ChannelRuntimeVisibilitySpec;
   readonly nodePreloads?: readonly ChannelRuntimeNodePreloadSpec[];
+  readonly envAliases?: readonly ChannelRuntimeEnvAliasSpec[];
   readonly secretScans?: readonly ChannelRuntimeSecretScanSpec[];
 }
 
@@ -185,6 +186,13 @@ export interface ChannelRuntimeNodePreloadSpec {
   readonly optional?: boolean;
   readonly installMessage?: string;
   readonly installedMessage?: string;
+}
+
+export interface ChannelRuntimeEnvAliasSpec {
+  readonly envKey: string;
+  readonly match: string;
+  readonly value: string;
+  readonly message?: string;
 }
 
 export interface ChannelRuntimeSecretScanSpec {
@@ -424,6 +432,7 @@ export interface SandboxMessagingPackageInstallStepPlan {
 
 export interface SandboxMessagingRuntimeSetupPlan {
   readonly nodePreloads: readonly SandboxMessagingRuntimeNodePreloadPlan[];
+  readonly envAliases: readonly SandboxMessagingRuntimeEnvAliasPlan[];
   readonly secretScans: readonly SandboxMessagingRuntimeSecretScanPlan[];
 }
 
@@ -431,6 +440,10 @@ export interface SandboxMessagingRuntimeNodePreloadPlan extends ChannelRuntimeNo
   readonly channelId: MessagingChannelId;
   readonly source: string;
   readonly target: string;
+}
+
+export interface SandboxMessagingRuntimeEnvAliasPlan extends ChannelRuntimeEnvAliasSpec {
+  readonly channelId: MessagingChannelId;
 }
 
 export interface SandboxMessagingRuntimeSecretScanPlan extends ChannelRuntimeSecretScanSpec {

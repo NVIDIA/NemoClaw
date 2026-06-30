@@ -67,6 +67,12 @@ function mixedChannelPlan(): SandboxMessagingPlan {
         source: "manifest",
         target: "agent",
       })),
+      envAliases: channelIds.map((channelId) => ({
+        channelId,
+        envKey: `${channelId.toUpperCase()}_TOKEN`,
+        match: "source",
+        value: "target",
+      })),
       secretScans: channelIds.map((channelId) => ({
         channelId,
         path: `/sandbox/${channelId}`,
@@ -114,6 +120,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       agentRender: channelIdsFrom(filtered?.agentRender ?? []),
       buildSteps: channelIdsFrom(filtered?.buildSteps ?? []),
       nodePreloads: channelIdsFrom(filtered?.runtimeSetup?.nodePreloads ?? []),
+      envAliases: channelIdsFrom(filtered?.runtimeSetup?.envAliases ?? []),
       secretScans: channelIdsFrom(filtered?.runtimeSetup?.secretScans ?? []),
       stateUpdates: channelIdsFrom(filtered?.stateUpdates ?? []),
       healthChecks: channelIdsFrom(filtered?.healthChecks ?? []),
@@ -126,6 +133,7 @@ describe("reconcileReusedSandboxMessaging", () => {
       agentRender: ["telegram"],
       buildSteps: ["telegram"],
       nodePreloads: ["telegram"],
+      envAliases: ["telegram"],
       secretScans: ["telegram"],
       stateUpdates: ["telegram"],
       healthChecks: ["telegram"],

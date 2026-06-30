@@ -2,15 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 const OPENSHELL_ENV_PLACEHOLDER_PREFIX = "openshell:resolve:env:";
-// Slack SDK token-shape checks require placeholders to retain xoxb-/xapp- prefixes.
-const SLACK_SCOPED_PLACEHOLDER_RE = /^(xoxb|xapp)-OPENSHELL-RESOLVE-ENV-(.+)$/;
-const PLACEHOLDER_CONTROL_CHAR_RE = /[\u0000\r\n\t]/;
+const OPENSHELL_ALIAS_PLACEHOLDER_RE = /^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/;
 
 export function normalizeProviderPlaceholderForEnvKey(
   value: string,
   envKey: string,
 ): string | null {
-  if (PLACEHOLDER_CONTROL_CHAR_RE.test(value)) return null;
   if (value.startsWith(OPENSHELL_ENV_PLACEHOLDER_PREFIX)) {
     return placeholderSuffixMatchesEnvKey(
       value.slice(OPENSHELL_ENV_PLACEHOLDER_PREFIX.length),
@@ -19,13 +16,11 @@ export function normalizeProviderPlaceholderForEnvKey(
       ? `${OPENSHELL_ENV_PLACEHOLDER_PREFIX}${envKey}`
       : null;
   }
-  const scopedMatch = value.match(SLACK_SCOPED_PLACEHOLDER_RE);
-  const scopedPrefix = scopedMatch?.[1];
-  const scopedSuffix = scopedMatch?.[2];
-  if (!scopedPrefix || !scopedSuffix || !placeholderSuffixMatchesEnvKey(scopedSuffix, envKey)) {
+  const aliasMatch = value.match(OPENSHELL_ALIAS_PLACEHOLDER_RE);
+  if (!aliasMatch || !placeholderSuffixMatchesEnvKey(aliasMatch[1] as string, envKey)) {
     return null;
   }
-  return `${scopedPrefix}-OPENSHELL-RESOLVE-ENV-${envKey}`;
+  return value.replace(/-OPENSHELL-RESOLVE-ENV-.+$/, `-OPENSHELL-RESOLVE-ENV-${envKey}`);
 }
 
 export function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {

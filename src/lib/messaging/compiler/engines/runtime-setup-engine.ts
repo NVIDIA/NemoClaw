@@ -6,6 +6,7 @@ import type {
   ChannelRuntimeNodePreloadSpec,
   MessagingAgentId,
   SandboxMessagingChannelPlan,
+  SandboxMessagingRuntimeEnvAliasPlan,
   SandboxMessagingRuntimeNodePreloadPlan,
   SandboxMessagingRuntimeSecretScanPlan,
   SandboxMessagingRuntimeSetupPlan,
@@ -26,6 +27,7 @@ export function planRuntimeSetup(
       .map((channel) => channel.channelId),
   );
   const nodePreloads: SandboxMessagingRuntimeNodePreloadPlan[] = [];
+  const envAliases: SandboxMessagingRuntimeEnvAliasPlan[] = [];
   const secretScans: SandboxMessagingRuntimeSecretScanPlan[] = [];
 
   for (const manifest of manifests) {
@@ -35,6 +37,12 @@ export function planRuntimeSetup(
     nodePreloads.push(
       ...(runtime.nodePreloads ?? []).map((entry) => resolveNodePreload(manifest, entry)),
     );
+    envAliases.push(
+      ...(runtime.envAliases ?? []).map((entry) => ({
+        channelId: manifest.id,
+        ...entry,
+      })),
+    );
     secretScans.push(
       ...(runtime.secretScans ?? []).map((entry) => ({
         channelId: manifest.id,
@@ -43,7 +51,7 @@ export function planRuntimeSetup(
     );
   }
 
-  return { nodePreloads, secretScans };
+  return { nodePreloads, envAliases, secretScans };
 }
 
 function resolveNodePreload(

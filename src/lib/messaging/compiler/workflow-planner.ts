@@ -435,6 +435,7 @@ function mergeRuntimeSetup(
       existing?.nodePreloads ?? [],
       incoming?.nodePreloads ?? [],
     ),
+    envAliases: mergePlanEntriesByChannel(existing?.envAliases ?? [], incoming?.envAliases ?? []),
     secretScans: mergePlanEntriesByChannel(
       existing?.secretScans ?? [],
       incoming?.secretScans ?? [],
@@ -448,6 +449,7 @@ function filterRuntimeSetup(
 ): SandboxMessagingRuntimeSetupPlan {
   return {
     nodePreloads: (setup?.nodePreloads ?? []).filter(keepEntry),
+    envAliases: (setup?.envAliases ?? []).filter(keepEntry),
     secretScans: (setup?.secretScans ?? []).filter(keepEntry),
   };
 }

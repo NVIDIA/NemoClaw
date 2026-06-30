@@ -6,8 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { ChannelManifest, ChannelPolicyPresetReference } from "../manifest";
 import {
   getMessagingChannelForCredentialEnvKey,
-  getMessagingConfigCompatEnvKeyRemovalPolicy,
-  getMessagingConfigCompatEnvKeys,
+  getMessagingConfigEnvAliases,
   getMessagingCredentialEnvKeysByChannel,
   getMessagingPolicyKeyAliases,
   getMessagingPolicyKeysByChannel,
@@ -68,7 +67,7 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingChannelsWithoutCredentials()).toEqual(["whatsapp"]);
   });
 
-  it("resolves config env keys and compatibility env keys", () => {
+  it("resolves config env keys from manifests and compatibility aliases from metadata", () => {
     expect(listMessagingConfigEnvKeys()).toEqual([
       "TELEGRAM_ALLOWED_IDS",
       "TELEGRAM_REQUIRE_MENTION",
@@ -89,39 +88,13 @@ describe("built-in messaging channel metadata", () => {
       "MSTEAMS_PORT",
       "TEAMS_REQUIRE_MENTION",
     ]);
-    expect(getMessagingConfigCompatEnvKeys()).toEqual({
-      TELEGRAM_ALLOWED_IDS: ["TELEGRAM_AUTHORIZED_CHAT_IDS", "TELEGRAM_CHAT_ID"],
+    expect(getMessagingConfigEnvAliases()).toEqual({
       DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
       DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
       MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
       MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
       TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
       MSTEAMS_PORT: ["TEAMS_PORT"],
-    });
-    expect(getMessagingConfigCompatEnvKeyRemovalPolicy()).toEqual({
-      enforcement: "manual",
-      reviewCadence: "release",
-      releaseWindow: "one-full-release-after-sources-clear",
-      sourceBoundaries: [
-        "test/e2e/live/messaging-providers-helpers.ts",
-        "test/e2e/live/hermes-discord.test.ts",
-        "test/e2e/live/channels-stop-start-helpers.ts",
-        ".github/workflows/e2e.yaml",
-        "docs/manage-sandboxes/messaging-channels.mdx",
-        "docs/reference/troubleshooting.mdx",
-        "NVIDIA internal QA automation that exports legacy messaging env names",
-      ],
-      removalCondition:
-        "Remove manually after every source boundary stops exporting these legacy names for at least one full release.",
-      canonicalKeys: [
-        "TELEGRAM_ALLOWED_IDS",
-        "DISCORD_SERVER_ID",
-        "DISCORD_USER_ID",
-        "MSTEAMS_APP_ID",
-        "MSTEAMS_TENANT_ID",
-        "TEAMS_ALLOWED_USERS",
-        "MSTEAMS_PORT",
-      ],
     });
   });
 

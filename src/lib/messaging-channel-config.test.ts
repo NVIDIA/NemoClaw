@@ -1,13 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   hydrateMessagingChannelConfig,
   MESSAGING_CHANNEL_CONFIG_ENV_KEYS,
   readMessagingChannelConfigFromEnv,
-  resolveMessagingChannelConfigEnvValue,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
 
@@ -68,18 +67,18 @@ describe("messaging channel config", () => {
     });
   });
 
-  it("normalizes Telegram compatibility aliases to canonical channel config", () => {
+  it("leaves Telegram compatibility aliases to Telegram enrollment hooks", () => {
     expect(
       sanitizeMessagingChannelConfig({
         TELEGRAM_AUTHORIZED_CHAT_IDS: "  123, 456  ",
       }),
-    ).toEqual({ TELEGRAM_ALLOWED_IDS: "123, 456" });
+    ).toBeNull();
 
     expect(
       readMessagingChannelConfigFromEnv({
         TELEGRAM_CHAT_ID: "8388960805",
       }),
-    ).toEqual({ TELEGRAM_ALLOWED_IDS: "8388960805" });
+    ).toBeNull();
   });
 
   it("normalizes Discord compatibility aliases to canonical channel config", () => {
@@ -101,50 +100,6 @@ describe("messaging channel config", () => {
     });
     expect(env.DISCORD_SERVER_ID).toBe("1491590992753590594");
     expect(env.DISCORD_USER_ID).toBe("1005536447329222676");
-  });
-
-  it.each([
-    ["TELEGRAM_ALLOWED_IDS", "TELEGRAM_AUTHORIZED_CHAT_IDS"],
-    ["TELEGRAM_ALLOWED_IDS", "TELEGRAM_CHAT_ID"],
-    ["DISCORD_SERVER_ID", "DISCORD_SERVER_IDS"],
-    ["DISCORD_USER_ID", "DISCORD_ALLOWED_IDS"],
-    ["MSTEAMS_APP_ID", "TEAMS_CLIENT_ID"],
-    ["MSTEAMS_TENANT_ID", "TEAMS_TENANT_ID"],
-    ["TEAMS_ALLOWED_USERS", "MSTEAMS_ALLOWED_USERS"],
-    ["MSTEAMS_PORT", "TEAMS_PORT"],
-  ])("prefers canonical %s values over compatibility alias %s", (canonical, compat) => {
-    const env: NodeJS.ProcessEnv = {
-      [canonical]: `canonical-${canonical}`,
-      [compat]: `compat-${compat}`,
-    };
-
-    expect(resolveMessagingChannelConfigEnvValue(compat, env)).toEqual({
-      canonicalKey: canonical,
-      sourceKey: canonical,
-      value: `canonical-${canonical}`,
-    });
-    expect(readMessagingChannelConfigFromEnv(env)).toMatchObject({
-      [canonical]: `canonical-${canonical}`,
-    });
-  });
-
-  it("warns when a compatibility alias provides the effective config value", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-
-    try {
-      expect(
-        resolveMessagingChannelConfigEnvValue("TEAMS_CLIENT_ID", { TEAMS_CLIENT_ID: "app" }),
-      ).toEqual({
-        canonicalKey: "MSTEAMS_APP_ID",
-        sourceKey: "TEAMS_CLIENT_ID",
-        value: "app",
-      });
-      expect(warn).toHaveBeenCalledWith(
-        "[channels] TEAMS_CLIENT_ID is a legacy messaging channel config environment variable; use MSTEAMS_APP_ID instead.",
-      );
-    } finally {
-      warn.mockRestore();
-    }
   });
 
   it("normalizes Teams port compatibility aliases to canonical channel config", () => {
@@ -182,15 +137,13 @@ describe("messaging channel config", () => {
     expect(env.DISCORD_REQUIRE_MENTION).toBeUndefined();
   });
 
-  it("hydrates Telegram aliases through the shared compatibility table", () => {
+  it("does not hydrate Telegram aliases outside the enrollment hook", () => {
     const env: NodeJS.ProcessEnv = {
       TELEGRAM_AUTHORIZED_CHAT_IDS: "alias-user",
     };
 
-    expect(hydrateMessagingChannelConfig(null, env)).toEqual({
-      TELEGRAM_ALLOWED_IDS: "alias-user",
-    });
-    expect(env.TELEGRAM_ALLOWED_IDS).toBe("alias-user");
+    expect(hydrateMessagingChannelConfig(null, env)).toBeNull();
+    expect(env.TELEGRAM_ALLOWED_IDS).toBeUndefined();
   });
 
   it("reads effective config from env", () => {

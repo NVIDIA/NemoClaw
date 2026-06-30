@@ -182,6 +182,7 @@ describe("parseSandboxMessagingPlan", () => {
       ],
       runtimeSetup: {
         nodePreloads: [],
+        envAliases: [],
         secretScans: [
           {
             channelId: "telegram",
@@ -320,6 +321,7 @@ describe("parseSandboxMessagingPlan", () => {
     const runtimeSetupPlan = makePlan() as unknown as Record<string, unknown>;
     runtimeSetupPlan.runtimeSetup = {
       nodePreloads: [null],
+      envAliases: [],
       secretScans: [],
     };
     expect(parseSandboxMessagingPlan(runtimeSetupPlan), "runtimeSetup.nodePreloads").toBeNull();

@@ -9,11 +9,15 @@ import type {
   MessagingAgentId,
 } from "../manifest";
 import { BUILT_IN_CHANNEL_MANIFESTS } from "./built-ins";
-import {
-  createMessagingConfigCompatEnvKeyRemovalPolicy,
-  type MessagingConfigCompatEnvKeyRemovalPolicy,
-  selectMessagingConfigCompatEnvKeys,
-} from "./compat-removal-policy";
+
+const CONFIG_ENV_ALIASES_BY_ENV_KEY: Readonly<Record<string, readonly string[]>> = {
+  DISCORD_SERVER_ID: ["DISCORD_SERVER_IDS"],
+  DISCORD_USER_ID: ["DISCORD_ALLOWED_IDS"],
+  MSTEAMS_APP_ID: ["TEAMS_CLIENT_ID"],
+  MSTEAMS_TENANT_ID: ["TEAMS_TENANT_ID"],
+  TEAMS_ALLOWED_USERS: ["MSTEAMS_ALLOWED_USERS"],
+  MSTEAMS_PORT: ["TEAMS_PORT"],
+};
 
 export interface MessagingManifestMetadataOptions {
   readonly agent?: MessagingAgentId;
@@ -180,16 +184,13 @@ export function listMessagingConfigEnvKeys(
   return uniqueStrings(listMessagingConfigEnvMetadata(options).map((input) => input.envKey));
 }
 
-export function getMessagingConfigCompatEnvKeys(
+export function getMessagingConfigEnvAliases(
   options: MessagingManifestMetadataOptions = {},
 ): Readonly<Record<string, readonly string[]>> {
-  return selectMessagingConfigCompatEnvKeys(listMessagingConfigEnvKeys(options));
-}
-
-export function getMessagingConfigCompatEnvKeyRemovalPolicy(
-  options: MessagingManifestMetadataOptions = {},
-): MessagingConfigCompatEnvKeyRemovalPolicy {
-  return createMessagingConfigCompatEnvKeyRemovalPolicy(getMessagingConfigCompatEnvKeys(options));
+  const envKeys = new Set(listMessagingConfigEnvKeys(options));
+  return Object.fromEntries(
+    Object.entries(CONFIG_ENV_ALIASES_BY_ENV_KEY).filter(([envKey]) => envKeys.has(envKey)),
+  );
 }
 
 export function listMessagingPolicyPresetMetadata(
@@ -292,10 +293,9 @@ export function listOpenClawManagedChannelNames(
   options: MessagingManifestMetadataOptions = {},
 ): string[] {
   return uniqueStrings(
-    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
-      const runtime = manifest.runtime?.openclaw;
-      return runtime ? [runtime.channelName ?? manifest.id] : [];
-    }),
+    selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) =>
+      manifest.runtime?.openclaw?.channelName ? [manifest.runtime.openclaw.channelName] : [],
+    ),
   );
 }
 
@@ -303,7 +303,7 @@ export function listOpenClawRuntimeChannelMetadata(
   options: MessagingManifestMetadataOptions = {},
 ): OpenClawRuntimeChannelMetadata[] {
   return selectManifests({ ...options, agent: "openclaw" }).flatMap((manifest) => {
-    const visibility = openClawRuntimeVisibility(manifest);
+    const visibility = manifest.runtime?.openclaw?.visibility;
     if (!visibility) return [];
     if (visibility.configKeys.length === 0 || visibility.logPatterns.length === 0) return [];
     return [
@@ -332,19 +332,6 @@ export function listMessagingPackageInstallSpecs(
       ];
     }),
   );
-}
-
-function openClawRuntimeVisibility(
-  manifest: ChannelManifest,
-): { readonly configKeys: readonly string[]; readonly logPatterns: readonly string[] } | undefined {
-  const runtime = manifest.runtime?.openclaw;
-  if (!runtime) return undefined;
-  if (runtime.visibility) return runtime.visibility;
-  const channelName = runtime.channelName ?? manifest.id;
-  return {
-    configKeys: [channelName],
-    logPatterns: [channelName],
-  };
 }
 
 function selectManifests(options: MessagingManifestMetadataOptions): ChannelManifest[] {

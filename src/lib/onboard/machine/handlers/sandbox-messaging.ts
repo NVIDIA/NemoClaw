@@ -126,6 +126,7 @@ export function filterMessagingPlanForCurrentAgent(
     runtimeSetup: plan.runtimeSetup
       ? {
           nodePreloads: filterRuntimeSetup(plan.runtimeSetup.nodePreloads),
+          envAliases: filterRuntimeSetup(plan.runtimeSetup.envAliases),
           secretScans: filterRuntimeSetup(plan.runtimeSetup.secretScans),
         }
       : undefined,

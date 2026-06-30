@@ -179,7 +179,13 @@ export const discordManifest = {
     },
   ],
   runtime: {
-    openclaw: {},
+    openclaw: {
+      channelName: "discord",
+      visibility: {
+        configKeys: ["discord"],
+        logPatterns: ["discord"],
+      },
+    },
   },
   agentPackages: [
     {
@@ -191,7 +197,25 @@ export const discordManifest = {
       required: true,
     },
   ],
-  state: {},
+  state: {
+    persist: {
+      discordGuilds: ["serverId", "requireMention", "userId"],
+    },
+    rebuildHydration: [
+      {
+        statePath: "discordGuilds.serverId",
+        env: "DISCORD_SERVER_ID",
+      },
+      {
+        statePath: "discordGuilds.requireMention",
+        env: "DISCORD_REQUIRE_MENTION",
+      },
+      {
+        statePath: "discordGuilds.userIds",
+        env: "DISCORD_USER_ID",
+      },
+    ],
+  },
   hooks: [
     {
       id: "discord-openclaw-bridge-health",

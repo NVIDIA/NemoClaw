@@ -281,6 +281,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
             installedMessage: "[channels] installed telegram diagnostics",
           },
         ],
+        envAliases: [],
         secretScans: [],
       },
     };
@@ -320,13 +321,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
           { channelId: "slack", active: false, disabled: true },
         ],
         disabledChannels: ["slack"],
-        credentialBindings: [
-          {
-            channelId: "telegram",
-            providerEnvKey: "TELEGRAM_BOT_TOKEN",
-            placeholder: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-          },
-        ],
+        credentialBindings: [{ channelId: "telegram", providerEnvKey: "TELEGRAM_BOT_TOKEN" }],
         runtimeSetup: {
           nodePreloads: [
             {
@@ -337,10 +332,12 @@ describe("messaging-build-applier.mts: agent-install", () => {
               optional: false,
             },
           ],
+          envAliases: [],
           secretScans: [],
         },
       });
       expect(JSON.stringify(artifact)).not.toContain("do-not-persist");
+      expect(JSON.stringify(artifact)).not.toContain("openshell:resolve:env");
       expect(artifact.runtimeSetup.nodePreloads[0]).not.toHaveProperty("module");
       expect((fs.statSync(artifactPath).mode & 0o777).toString(8)).toBe("644");
     } finally {
@@ -381,7 +378,7 @@ describe("messaging-build-applier.mts: agent-install", () => {
     }
   });
 
-  it("preserves credential binding placeholders in the reduced runtime plan artifact", () => {
+  it("preserves Hermes runtime env aliases in the reduced runtime plan artifact", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-plan-artifact-"));
     const artifactPath = path.join(tmp, "runtime", "messaging-runtime-plan.json");
     const plan = {
@@ -402,6 +399,24 @@ describe("messaging-build-applier.mts: agent-install", () => {
       buildSteps: [],
       runtimeSetup: {
         nodePreloads: [],
+        envAliases: [
+          {
+            channelId: "slack",
+            envKey: "SLACK_BOT_TOKEN",
+            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+            value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+            message:
+              "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+          },
+          {
+            channelId: "slack",
+            envKey: "SLACK_APP_TOKEN",
+            match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+            value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+            message:
+              "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+          },
+        ],
         secretScans: [],
       },
     };
@@ -437,19 +452,11 @@ describe("messaging-build-applier.mts: agent-install", () => {
         agent: "hermes",
         workflow: "rebuild",
         channels: [{ channelId: "slack", active: true, disabled: false }],
-        credentialBindings: [
-          {
-            channelId: "slack",
-            providerEnvKey: "SLACK_BOT_TOKEN",
-            placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          },
-        ],
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
         runtimeSetup: {
-          nodePreloads: [],
-          secretScans: [],
+          envAliases: plan.runtimeSetup.envAliases,
         },
       });
-      expect(Object.keys(artifact.runtimeSetup).sort()).toEqual(["nodePreloads", "secretScans"]);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -910,77 +917,6 @@ describe("messaging-build-applier.mts: agent-install", () => {
       expect(config.plugins?.entries?.slack).toEqual({ enabled: true });
       expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({ enabled: true });
       expect(config.channels?.wechat).toBeUndefined();
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("does not preserve non-allowlisted scoped Slack placeholders during render", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-slack-placeholder-"));
-    const fakeOpenclaw = path.join(tmp, "openclaw");
-
-    fs.writeFileSync(fakeOpenclaw, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-
-    try {
-      const generatorEnv = withLegacyMessagingPlanEnv(
-        {
-          PATH: `${tmp}:${TEST_PATH}`,
-          HOME: tmp,
-          ...BASE_GENERATOR_ENV,
-          NEMOCLAW_MESSAGING_CHANNELS_B64: channelsB64(["slack"]),
-          NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
-        },
-        "openclaw",
-      );
-      const generatorResult = spawnSync("node", ["--experimental-strip-types", GENERATOR_PATH], {
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        env: generatorEnv,
-        timeout: 10_000,
-      });
-      expect(generatorResult.status, generatorResult.stderr).toBe(0);
-
-      const configPath = path.join(tmp, ".openclaw", "openclaw.json");
-      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      config.channels = {
-        ...config.channels,
-        slack: {
-          accounts: {
-            default: {
-              botToken: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-            },
-          },
-        },
-      };
-      fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
-
-      const postInstallResult = spawnSync(
-        "node",
-        [
-          "--experimental-strip-types",
-          SCRIPT_PATH,
-          "--agent",
-          "openclaw",
-          "--phase",
-          "post-agent-install",
-        ],
-        {
-          encoding: "utf-8",
-          stdio: ["pipe", "pipe", "pipe"],
-          env: {
-            PATH: `${tmp}:${TEST_PATH}`,
-            HOME: tmp,
-            NEMOCLAW_MESSAGING_PLAN_B64: generatorEnv.NEMOCLAW_MESSAGING_PLAN_B64,
-          },
-          timeout: 10_000,
-        },
-      );
-      expect(postInstallResult.status, postInstallResult.stderr).toBe(0);
-
-      const rendered = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      expect(rendered.channels.slack.accounts.default.botToken).toBe(
-        "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

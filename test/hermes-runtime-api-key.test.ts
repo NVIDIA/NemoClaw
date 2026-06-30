@@ -12,16 +12,6 @@ import { dockerRunCommandBetween } from "./helpers/hermes-dockerfile-run";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
 const HERMES_DOCKERFILE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile");
-const VALIDATE_RUNTIME_PLAN = path.join(
-  import.meta.dirname,
-  "..",
-  "src",
-  "lib",
-  "messaging",
-  "applier",
-  "build",
-  "validate-runtime-plan.mts",
-);
 const RUNTIME_CONFIG_GUARD = path.join(
   import.meta.dirname,
   "..",
@@ -62,23 +52,15 @@ function parseApiServerKey(envFileContent: string): string | null {
   return match?.[1] ?? null;
 }
 
-function slackBotCredentialBinding() {
+function slackBotAlias() {
   return {
     channelId: "slack",
-    providerEnvKey: "SLACK_BOT_TOKEN",
-    placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    envKey: "SLACK_BOT_TOKEN",
+    match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+    value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+    message:
+      "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
   };
-}
-
-function slackCredentialBindings() {
-  return [
-    slackBotCredentialBinding(),
-    {
-      channelId: "slack",
-      providerEnvKey: "SLACK_APP_TOKEN",
-      placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
-    },
-  ];
 }
 
 function runHermesRuntimeApiServerKeyMint(
@@ -184,8 +166,8 @@ function baseMessagingRuntimePlan(overrides: Record<string, unknown> = {}) {
     agent: "hermes",
     channels: [{ channelId: "slack", active: true, disabled: false }],
     disabledChannels: [],
-    credentialBindings: [slackBotCredentialBinding()],
-    runtimeSetup: { nodePreloads: [], secretScans: [] },
+    credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+    runtimeSetup: { nodePreloads: [], envAliases: [slackBotAlias()], secretScans: [] },
     ...overrides,
   };
 }
@@ -275,11 +257,10 @@ function runHermesDockerfileRuntimePlanGuard(runtimePlan: unknown) {
       "node --experimental-strip-types /src/lib/messaging/applier/build/messaging-build-applier.mts --agent hermes --phase runtime-setup",
       `node --experimental-strip-types ${shellQuote(applierPath)}`,
     )
-    .replace(
-      'node --experimental-strip-types /src/lib/messaging/applier/build/validate-runtime-plan.mts "$runtime_plan"',
-      `node --experimental-strip-types ${shellQuote(VALIDATE_RUNTIME_PLAN)} --allow-current-user-owner "$runtime_plan"`,
-    )
-    .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath);
+    .replaceAll("/usr/local/share/nemoclaw/messaging-runtime-plan.json", runtimePlanPath)
+    // Unit fixtures run as the invoking user, not Docker root; keep the
+    // executable reduced-shape guard intact while bypassing only image-owner metadata.
+    .replace("st.uid !== 0 || st.gid !== 0 || ", "");
 
   try {
     fs.mkdirSync(runtimeDir, { recursive: true });
@@ -511,43 +492,6 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("refreshes existing legacy provider placeholders when no runtime plan is available", () => {
-    const envFile = [
-      "TELEGRAM_BOT_TOKEN=",
-      "DISCORD_BOT_TOKEN=",
-      "SLACK_BOT_TOKEN=",
-      "SLACK_APP_TOKEN=",
-      "WECHAT_BOT_TOKEN=",
-      "MSTEAMS_APP_PASSWORD=",
-      "",
-    ].join("\n");
-    const run = runHermesRuntimeProviderPlaceholderRefresh({
-      envFile,
-      envOverrides: {
-        TELEGRAM_BOT_TOKEN: "openshell:resolve:env:v222_TELEGRAM_BOT_TOKEN",
-        DISCORD_BOT_TOKEN: "openshell:resolve:env:v222_DISCORD_BOT_TOKEN",
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
-        SLACK_APP_TOKEN: "openshell:resolve:env:v222_SLACK_APP_TOKEN",
-        WECHAT_BOT_TOKEN: "openshell:resolve:env:v222_WECHAT_BOT_TOKEN",
-        MSTEAMS_APP_PASSWORD: "openshell:resolve:env:v222_MSTEAMS_APP_PASSWORD",
-      },
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.envFileContent).toBe(
-      [
-        "TELEGRAM_BOT_TOKEN=openshell:resolve:env:TELEGRAM_BOT_TOKEN",
-        "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
-        "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
-        "SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN",
-        "WECHAT_BOT_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
-        "MSTEAMS_APP_PASSWORD=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
-        "",
-      ].join("\n"),
-    );
-    expect(run.strictHashValid).toBe(true);
-  });
-
   it("does not normalize new-channel ambient placeholders without a runtime plan", () => {
     const originalEnv = "WECOM_BOT_TOKEN=openshell:resolve:env:v1_WECOM_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
@@ -605,7 +549,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -635,7 +579,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -670,7 +614,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
     });
 
@@ -699,7 +643,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         channels: [{ channelId: "discord", active: true, disabled: false }],
         disabledChannels: [],
         credentialBindings: [{ channelId: "discord", providerEnvKey: "DISCORD_BOT_TOKEN" }],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        runtimeSetup: { nodePreloads: [], envAliases: [], secretScans: [] },
       },
       hashFileContent,
     });
@@ -709,23 +653,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashContent).toBe(hashFileContent);
   });
 
-  it("does not use legacy provider fallback when runtime plan credential bindings are empty", () => {
-    const originalEnv = "API_SERVER_PORT=18642\n";
-    const run = runHermesRuntimeProviderPlaceholderRefresh({
-      envFile: originalEnv,
-      envOverrides: {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
-        SLACK_APP_TOKEN: "openshell:resolve:env:v222_SLACK_APP_TOKEN",
-      },
-      runtimePlan: baseMessagingRuntimePlan({ credentialBindings: [] }),
-    });
-
-    expect(run.result.status, run.result.stderr).toBe(0);
-    expect(run.envFileContent).toBe(originalEnv);
-    expect(run.strictHashValid).toBe(true);
-  });
-
-  it("uses credential binding placeholders for Hermes Slack provider placeholders", () => {
+  it("uses manifest runtime aliases for Hermes Slack provider placeholders", () => {
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: [
         "SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN",
@@ -742,8 +670,29 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         agent: "hermes",
         channels: [{ channelId: "slack", active: true, disabled: false }],
         disabledChannels: [],
-        credentialBindings: slackCredentialBindings(),
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        credentialBindings: [],
+        runtimeSetup: {
+          nodePreloads: [],
+          envAliases: [
+            {
+              channelId: "slack",
+              envKey: "SLACK_BOT_TOKEN",
+              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+              value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+              message:
+                "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+            },
+            {
+              channelId: "slack",
+              envKey: "SLACK_APP_TOKEN",
+              match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+              value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+              message:
+                "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+            },
+          ],
+          secretScans: [],
+        },
       },
     });
 
@@ -755,76 +704,8 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       "SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN\n",
     );
     expect(run.envFileContent).not.toContain("openshell:resolve:env");
-    expect(run.strictHashValid).toBe(true);
-  });
-
-  it.each([
-    {
-      name: "control characters",
-      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\nFORGED=1",
-      error: "credentialBindings.placeholder contains a control character",
-    },
-    {
-      name: "non-Slack scoped prefixes",
-      placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      error: "credentialBindings.placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
-    },
-    {
-      name: "crafted dual-marker strings",
-      placeholder: "xoxb-OPENSHELL-RESOLVE-ENV-FAKE-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-      error: "credentialBindings.placeholder is not a provider placeholder for SLACK_BOT_TOKEN",
-    },
-  ])("rejects runtime plan placeholders with $name before refreshing .env", ({
-    placeholder,
-    error,
-  }) => {
-    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
-    const run = runHermesRuntimeProviderPlaceholderRefresh({
-      envFile: originalEnv,
-      envOverrides: {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
-      },
-      runtimePlan: baseMessagingRuntimePlan({
-        credentialBindings: [
-          {
-            channelId: "slack",
-            providerEnvKey: "SLACK_BOT_TOKEN",
-            placeholder,
-          },
-        ],
-      }),
-    });
-
-    expect(run.result.status).toBe(1);
-    expect(run.result.stderr).toContain(error);
-    expect(run.envFileContent).toBe(originalEnv);
-    expect(run.strictHashValid).toBe(true);
-  });
-
-  it("rejects conflicting runtime plan placeholders for one provider env key", () => {
-    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
-    const run = runHermesRuntimeProviderPlaceholderRefresh({
-      envFile: originalEnv,
-      envOverrides: {
-        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
-      },
-      runtimePlan: baseMessagingRuntimePlan({
-        credentialBindings: [
-          slackBotCredentialBinding(),
-          {
-            channelId: "slack",
-            providerEnvKey: "SLACK_BOT_TOKEN",
-            placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-          },
-        ],
-      }),
-    });
-
-    expect(run.result.status).toBe(1);
-    expect(run.result.stderr).toContain(
-      "messaging runtime plan has conflicting placeholders for SLACK_BOT_TOKEN",
-    );
-    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.result.stderr).toContain("Normalized SLACK_BOT_TOKEN");
+    expect(run.result.stderr).toContain("Normalized SLACK_APP_TOKEN");
     expect(run.strictHashValid).toBe(true);
   });
 
@@ -907,62 +788,6 @@ describe("agents/hermes/start.sh runtime API server key", () => {
 
   it.each([
     {
-      name: "non-array credential bindings",
-      credentialBindings: {},
-      error: "runtime plan missing reduced credentialBindings shape",
-    },
-    {
-      name: "non-object credential binding entries",
-      credentialBindings: ["not-an-object"],
-      error: "runtime plan credentialBindings[0] has invalid reduced shape",
-    },
-    {
-      name: "missing provider env keys",
-      credentialBindings: [{ channelId: "slack" }],
-      error: "runtime plan credentialBindings[0] has invalid reduced shape",
-    },
-    {
-      name: "non-string placeholders",
-      credentialBindings: [
-        { channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN", placeholder: 123 },
-      ],
-      error: "runtime plan credentialBindings[0] has invalid placeholder",
-    },
-    {
-      name: "malformed scoped placeholders",
-      credentialBindings: [
-        {
-          channelId: "slack",
-          providerEnvKey: "SLACK_BOT_TOKEN",
-          placeholder: "fake-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        },
-      ],
-      error: "runtime plan credentialBindings[0] has invalid placeholder",
-    },
-    {
-      name: "conflicting duplicate placeholders",
-      credentialBindings: [
-        slackBotCredentialBinding(),
-        {
-          channelId: "slack",
-          providerEnvKey: "SLACK_BOT_TOKEN",
-          placeholder: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
-        },
-      ],
-      error:
-        "runtime plan credentialBindings[1] conflicts with an earlier placeholder for SLACK_BOT_TOKEN",
-    },
-  ])("Hermes Dockerfile runtime-plan guard rejects $name", ({ credentialBindings, error }) => {
-    const rejected = runHermesDockerfileRuntimePlanGuard(
-      baseMessagingRuntimePlan({ credentialBindings }),
-    );
-
-    expect(rejected.status).toBe(1);
-    expect(rejected.stderr).toContain(error);
-  });
-
-  it.each([
-    {
       name: "inactive",
       channels: [{ channelId: "slack", active: false, disabled: false }],
       disabledChannels: [],
@@ -977,10 +802,7 @@ describe("agents/hermes/start.sh runtime API server key", () => {
       channels: [{ channelId: "slack", active: true, disabled: false }],
       disabledChannels: ["slack"],
     },
-  ])("ignores Slack credential placeholders when Slack is $name", ({
-    channels,
-    disabledChannels,
-  }) => {
+  ])("ignores Slack runtime aliases when Slack is $name", ({ channels, disabledChannels }) => {
     const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
@@ -993,8 +815,8 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         agent: "hermes",
         channels,
         disabledChannels,
-        credentialBindings: [slackBotCredentialBinding()],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases: [slackBotAlias()], secretScans: [] },
       },
     });
 
@@ -1003,7 +825,29 @@ describe("agents/hermes/start.sh runtime API server key", () => {
     expect(run.strictHashValid).toBe(true);
   });
 
-  it("rejects malformed credential provider keys before refreshing .env", () => {
+  it.each([
+    {
+      name: "malformed providerEnvKey with newline",
+      runtimePlanPatch: {
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "BAD\nFORGED=1" }],
+      },
+      expectedError: "credentialBindings.providerEnvKey is invalid",
+    },
+    {
+      name: "malformed alias envKey with whitespace",
+      runtimePlanPatch: {
+        runtimeSetup: { envAliases: [{ ...slackBotAlias(), envKey: "BAD KEY" }] },
+      },
+      expectedError: "runtimeSetup.envAliases.envKey is invalid",
+    },
+    {
+      name: "malformed alias envKey with equals",
+      runtimePlanPatch: {
+        runtimeSetup: { envAliases: [{ ...slackBotAlias(), envKey: "BAD=KEY" }] },
+      },
+      expectedError: "runtimeSetup.envAliases.envKey is invalid",
+    },
+  ])("rejects runtime-plan $name before rewriting .env", ({ runtimePlanPatch, expectedError }) => {
     const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
     const run = runHermesRuntimeProviderPlaceholderRefresh({
       envFile: originalEnv,
@@ -1016,13 +860,61 @@ describe("agents/hermes/start.sh runtime API server key", () => {
         agent: "hermes",
         channels: [{ channelId: "slack", active: true, disabled: false }],
         disabledChannels: [],
-        credentialBindings: [{ channelId: "slack", providerEnvKey: "BAD\nFORGED=1" }],
-        runtimeSetup: { nodePreloads: [], secretScans: [] },
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases: [slackBotAlias()], secretScans: [] },
+        ...runtimePlanPatch,
       },
     });
 
     expect(run.result.status).toBe(1);
-    expect(run.result.stderr).toContain("credentialBindings.providerEnvKey is invalid");
+    expect(run.result.stderr).toContain(expectedError);
+    expect(run.envFileContent).toBe(originalEnv);
+    expect(run.strictHashValid).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "raw secret values",
+      envAliases: [{ ...slackBotAlias(), value: "xoxb-raw-secret-token" }],
+      expectedError: "would violate the secret boundary",
+    },
+    {
+      name: "control characters in values",
+      envAliases: [
+        { ...slackBotAlias(), value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN\nFORGED=1" },
+      ],
+      expectedError: "contains unsafe characters",
+    },
+    {
+      name: "control characters in messages",
+      envAliases: [{ ...slackBotAlias(), message: "normalized\nFORGED=1" }],
+      expectedError: "contains unsafe characters",
+    },
+    {
+      name: "invalid regexes",
+      envAliases: [{ ...slackBotAlias(), match: "(" }],
+      expectedError: "regex is invalid",
+    },
+  ])("rejects runtime-plan alias $name before rewriting .env", ({ envAliases, expectedError }) => {
+    const originalEnv = "SLACK_BOT_TOKEN=openshell:resolve:env:v1_SLACK_BOT_TOKEN\n";
+    const run = runHermesRuntimeProviderPlaceholderRefresh({
+      envFile: originalEnv,
+      envOverrides: {
+        SLACK_BOT_TOKEN: "openshell:resolve:env:v222_SLACK_BOT_TOKEN",
+      },
+      runtimePlan: {
+        schemaVersion: 1,
+        sandboxName: "test-sandbox",
+        agent: "hermes",
+        channels: [{ channelId: "slack", active: true, disabled: false }],
+        disabledChannels: [],
+        credentialBindings: [{ channelId: "slack", providerEnvKey: "SLACK_BOT_TOKEN" }],
+        runtimeSetup: { nodePreloads: [], envAliases, secretScans: [] },
+      },
+    });
+
+    expect(run.result.status).toBe(1);
+    expect(run.result.stderr).toContain(expectedError);
     expect(run.envFileContent).toBe(originalEnv);
     expect(run.strictHashValid).toBe(true);
   });

@@ -184,7 +184,12 @@ function isSerializableChannelPlan(value: unknown): boolean {
 
 function isRuntimeSetup(value: unknown): boolean {
   if (value === undefined) return true;
-  return isObject(value) && Array.isArray(value.nodePreloads) && Array.isArray(value.secretScans);
+  return (
+    isObject(value) &&
+    Array.isArray(value.nodePreloads) &&
+    Array.isArray(value.envAliases) &&
+    Array.isArray(value.secretScans)
+  );
 }
 
 function assertJsonSerializable(

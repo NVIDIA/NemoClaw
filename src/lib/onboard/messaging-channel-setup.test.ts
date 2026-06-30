@@ -152,9 +152,11 @@ describe("setupSelectedMessagingChannels", () => {
       manifests("telegram"),
     );
 
-    expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("8388960805");
+    expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("8388960805,8388960806,8388960807");
     expect(prompt).not.toHaveBeenCalledWith("  Telegram User ID (for DM access): ");
-    expect(logs.join("\n")).toContain("telegram — allowed IDs already set: 8388960805");
+    expect(logs.join("\n")).toContain(
+      "telegram — allowed IDs already set: 8388960805,8388960806,8388960807",
+    );
   });
 
   it("uses manifest token validation for Slack dual-token enrollment", async () => {

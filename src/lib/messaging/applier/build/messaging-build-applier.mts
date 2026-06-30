@@ -14,13 +14,12 @@ import { telegramManifest } from "../../channels/telegram/manifest.ts";
 import { wechatManifest } from "../../channels/wechat/manifest.ts";
 import { whatsappManifest } from "../../channels/whatsapp/manifest.ts";
 import type { ChannelManifest } from "../../manifest/types.ts";
-import { isProviderPlaceholderForEnvKey } from "../../provider-placeholders.ts";
 
 type Env = Record<string, string | undefined>;
 type JsonObject = Record<string, any>;
 type MessagingAgentId = "openclaw" | "hermes";
 type MessagingHookPhase = "agent-install" | "post-agent-install";
-type MessagingRuntimeSetupKey = "nodePreloads" | "secretScans";
+type MessagingRuntimeSetupKey = "nodePreloads" | "envAliases" | "secretScans";
 type MessagingSerializableValue =
   | string
   | number
@@ -320,9 +319,8 @@ function sanitizeRuntimeArtifactCredentialBindings(
   return bindings.flatMap((binding): JsonObject[] => {
     const channelId = sanitizeOptionalString(binding.channelId);
     const providerEnvKey = sanitizeOptionalString(binding.providerEnvKey);
-    const placeholder = sanitizeOptionalString(binding.placeholder);
     if (!channelId || !providerEnvKey) return [];
-    return [{ channelId, providerEnvKey, ...(placeholder ? { placeholder } : {}) }];
+    return [{ channelId, providerEnvKey }];
   });
 }
 
@@ -338,6 +336,13 @@ function sanitizeRuntimeSetup(
       "optional",
       "installMessage",
       "installedMessage",
+    ]),
+    envAliases: sanitizeRuntimeSetupEntries(setup?.envAliases, [
+      "channelId",
+      "envKey",
+      "match",
+      "value",
+      "message",
     ]),
     secretScans: sanitizeRuntimeSetupEntries(setup?.secretScans, [
       "channelId",
@@ -1038,6 +1043,21 @@ function getJsonPath(root: JsonObject, pathValue: string): unknown {
     cursor = cursor[segment];
   }
   return cursor;
+}
+
+function isProviderPlaceholderForEnvKey(value: string, envKey: string): boolean {
+  const openShellPrefix = "openshell:resolve:env:";
+  if (value.startsWith(openShellPrefix)) {
+    return placeholderSuffixMatchesEnvKey(value.slice(openShellPrefix.length), envKey);
+  }
+  const aliasMatch = value.match(/^[A-Za-z0-9]+-OPENSHELL-RESOLVE-ENV-(.+)$/);
+  return aliasMatch ? placeholderSuffixMatchesEnvKey(aliasMatch[1] as string, envKey) : false;
+}
+
+function placeholderSuffixMatchesEnvKey(suffix: string, envKey: string): boolean {
+  if (suffix === envKey) return true;
+  const revisionMatch = suffix.match(/^v[0-9]+_(.+)$/);
+  return revisionMatch?.[1] === envKey;
 }
 
 function setJsonPath(root: JsonObject, pathValue: string, value: MessagingSerializableValue): void {

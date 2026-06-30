@@ -423,6 +423,24 @@ describe("ManifestCompiler", () => {
     expect(JSON.stringify(plan.agentRender)).toContain(
       "TEAMS_CLIENT_SECRET=openshell:resolve:env:MSTEAMS_APP_PASSWORD",
     );
+    expect(plan.runtimeSetup?.envAliases).toEqual([
+      {
+        channelId: "slack",
+        envKey: "SLACK_BOT_TOKEN",
+        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_BOT_TOKEN$",
+        value: "xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN",
+        message:
+          "[channels] Normalized SLACK_BOT_TOKEN runtime placeholder to the Bolt-compatible alias",
+      },
+      {
+        channelId: "slack",
+        envKey: "SLACK_APP_TOKEN",
+        match: "^openshell:resolve:env:(v[0-9]+_)?SLACK_APP_TOKEN$",
+        value: "xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN",
+        message:
+          "[channels] Normalized SLACK_APP_TOKEN runtime placeholder to the Bolt-compatible alias",
+      },
+    ]);
     expect(plan.buildSteps).toEqual([
       {
         channelId: "teams",
@@ -806,7 +824,7 @@ describe("ManifestCompiler", () => {
       "telegram-openclaw-bridge-health",
       "telegram-gateway-conflict-status",
     ]);
-    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], secretScans: [] });
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
     expect(plan.credentialBindings.map((binding) => binding.channelId)).toEqual(["telegram"]);
     expect(plan.networkPolicy.entries.map((entry) => entry.channelId)).toEqual(["telegram"]);
     expect(plan.agentRender).toEqual([]);
@@ -1265,7 +1283,7 @@ describe("ManifestCompiler", () => {
       "telegram-openclaw-bridge-health",
       "telegram-gateway-conflict-status",
     ]);
-    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], secretScans: [] });
+    expect(plan.runtimeSetup).toEqual({ nodePreloads: [], envAliases: [], secretScans: [] });
   });
 
   it("compiles a non-built-in channel manifest through the same generic path", async () => {
