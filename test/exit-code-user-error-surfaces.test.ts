@@ -37,12 +37,15 @@
  * Issue instance 5 (Model Router Python preflight) is the one surface left to
  * unit tests: `reconcileModelRouter` runs only deep in `onboard`, behind live
  * gateway + provider + sandbox provisioning that cannot be faked hermetically
- * here. It throws a plain Error (no `oclif.exit`, so again unaffected by this
- * PR) that propagates through `onboard`'s try/finally with no swallowing catch.
- * That throw is locked by `src/lib/onboard/model-router-python.test.ts` (the
- * "above supported ceiling" reason and the "No usable host Python interpreter
- * found" message), and the thrown-error → non-zero process-exit composition is
- * locked by `src/lib/cli/oclif-runner.test.ts`.
+ * here. Its Python preflight (`prepareModelRouterVenv`) throws a plain Error
+ * (no `oclif.exit`, so unaffected by this PR's oclif hardening); the routed
+ * branch of the provider/inference handler catches that throw and exits
+ * non-zero via `exitProcess(1)` instead of letting it ride the oclif runner.
+ * The error reasons are locked by `src/lib/onboard/model-router-python.test.ts`
+ * (the "above supported ceiling" reason and the "No usable host Python
+ * interpreter found" message), and the caught-throw → non-zero exit composition
+ * is locked by `src/lib/onboard/machine/handlers/provider-inference.test.ts`
+ * ("exits non-zero when model router reconciliation throws").
  */
 
 import { spawnSync } from "node:child_process";
