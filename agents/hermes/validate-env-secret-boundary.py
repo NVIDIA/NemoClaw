@@ -186,6 +186,14 @@ def validate_runtime_env(env: dict[str, str] | None = None) -> int:
     return 1
 
 
+# Scope: this masker is keyed off recognised credential-shaped FIELD NAMES in
+# structured config output (Python dict, JSON, YAML key:value, env-style
+# key=value). It is not a free-text token scanner — it does not attempt to
+# detect arbitrary `sk-...` / `xoxb-...` shapes embedded in prose diagnostics,
+# stack traces, or error messages that lack a key:value form. The wrapper's
+# threat model is the `hermes config show` resolved-config rendering, which
+# always emits secrets via labelled fields; broader diagnostic redaction is
+# the upstream Hermes CLI's responsibility.
 _SECRET_FIELD_RE = re.compile(
     r"(?i)\b(?:api[_-]?key|api[_-]?secret|access[_-]?token|auth[_-]?token|"
     r"client[_-]?secret|secret[_-]?key|"

@@ -629,4 +629,59 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain('"default": "meta/llama-3.1-8b-instruct"');
     expect(run.stdout).toContain('"base_url": "https://inference.local/v1"');
   });
+
+  it("masks api_key on the installed `/usr/local/bin/hermes` layout (REAL_HERMES and GUARD resolved from absolute install paths)", () => {
+    const prefix = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-install-"));
+    try {
+      const binDir = path.join(prefix, "usr", "local", "bin");
+      const libDir = path.join(prefix, "usr", "local", "lib", "nemoclaw");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(libDir, { recursive: true });
+      const installedReal = path.join(binDir, "hermes.real");
+      const installedGuard = path.join(libDir, "validate-hermes-env-secret-boundary.py");
+      const wrapperContent = fs
+        .readFileSync(WRAPPER, "utf-8")
+        .replace('REAL_HERMES="/usr/local/bin/hermes.real"', `REAL_HERMES=${JSON.stringify(installedReal)}`)
+        .replace(
+          'GUARD="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"',
+          `GUARD=${JSON.stringify(installedGuard)}`,
+        );
+      const installedWrapper = path.join(binDir, "hermes");
+      fs.writeFileSync(installedWrapper, wrapperContent, { mode: 0o755 });
+      fs.copyFileSync(VALIDATOR, installedGuard);
+      fs.chmodSync(installedGuard, 0o755);
+
+      const settings = {
+        model: "meta/llama-3.1-8b-instruct",
+        baseUrl: "https://inference.local/v1",
+        providerKey: "custom",
+        upstreamProvider: "nemoclaw-inference",
+        inferenceApi: "",
+        messagingCredentialPlaceholders: [],
+        managedToolGateways: { brokerEnabled: false, presets: [] },
+      };
+      const generated = buildHermesConfig(settings);
+      const fixture = JSON.stringify(generated, null, 2);
+      const stubScript = [
+        "#!/usr/bin/env bash",
+        `cat <<'__NEMOCLAW_STUB_EOF__'\n${fixture}\n__NEMOCLAW_STUB_EOF__`,
+        "exit 0",
+        "",
+      ].join("\n");
+      fs.writeFileSync(installedReal, stubScript, { mode: 0o755 });
+
+      const result = spawnSync("bash", [installedWrapper, "config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: prefix },
+      });
+
+      expect(result.status).toBe(0);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(combined).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+      expect(result.stdout).toContain('"api_key": "sk-****"');
+    } finally {
+      fs.rmSync(prefix, { recursive: true, force: true });
+    }
+  });
 });

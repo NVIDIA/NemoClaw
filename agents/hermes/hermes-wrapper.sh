@@ -65,6 +65,15 @@
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
 
+# This wrapper relies on Bash features that landed in 4.0+ (coproc, named FD
+# allocation, BASH_VERSINFO), and on the PIPESTATUS semantics shipped in
+# Bash 3.0. The NemoClaw sandbox image pins Bash 5+, but assert the floor so a
+# downgraded interpreter cannot silently bypass the masker.
+if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
+  echo "[SECURITY] Refusing hermes: requires bash 4 or newer (found ${BASH_VERSION:-unknown})" >&2
+  exit 127
+fi
+
 _self_src="${BASH_SOURCE[0]:-$0}"
 _self_parent="${_self_src%/*}"
 if [ "$_self_parent" = "$_self_src" ]; then
