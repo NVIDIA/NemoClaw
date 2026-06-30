@@ -79,10 +79,20 @@ register "Ollama installer" \
   "OLLAMA_INSTALL_SHA256" \
   "https://ollama.com/install.sh"
 
+# invalidState: CI reports trusted OpenShell pins without comparing every
+# consumed archive with the immutable v0.0.72 GitHub release metadata.
+# sourceBoundary: NVIDIA/OpenShell owns the release assets and their published
+# digests; NemoClaw owns this independent verification of its local pin table.
+# whyNotSourceFix: an upstream release cannot validate which artifacts a
+# downstream installer consumes, so this comparison must remain in NemoClaw.
+# regressionTest: test/installer-hash-check.test.ts proves API failures and
+# incomplete release metadata fail closed; the workflow also runs this live.
+# removalCondition: remove this check only when the installer no longer embeds
+# release-asset digests or an equivalent independent verifier replaces it.
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local release_api="https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72"
-  local response asset pinned upstream github_token count=0
+  local response asset pinned upstream github_token count=0 published_count=0
   local -a curl_args
   response=$(mktemp)
   trap 'rm -f "$response"' RETURN
@@ -115,6 +125,7 @@ check_openshell_release_assets() {
       '.assets[] | select(.name == $asset) | .digest // empty' "$response")
     upstream="${upstream#sha256:}"
     if [[ "$pinned" == "$upstream" ]]; then
+      published_count=$((published_count + 1))
       echo "  OK: ${asset} (${pinned})"
     else
       echo "  STALE: ${asset} does not match the v0.0.72 GitHub release."
@@ -141,6 +152,10 @@ check_openshell_release_assets() {
 
   if [[ "$count" -ne 8 ]]; then
     echo "  STALE: expected 8 pinned OpenShell v0.0.72 assets, found ${count}."
+    failures=$((failures + 1))
+  fi
+  if [[ "$published_count" -ne 8 ]]; then
+    echo "  STALE: expected all 8 pinned assets in the v0.0.72 GitHub release, matched ${published_count}."
     failures=$((failures + 1))
   fi
 }
