@@ -79,6 +79,36 @@ function expectBuildPushGuard(job: WorkflowJob, guardStepName: string): void {
   expect(requiredStep(job, guardStepName).run).toContain("scripts/check-production-build-args.sh");
 }
 
+function findProductionBuildGuardCoverage(
+  workflowName: string,
+  workflow: Workflow,
+): Array<{ label: string; guarded: boolean }> {
+  return Object.entries(workflow.jobs).flatMap(([jobName, job]) => {
+    const steps = job.steps ?? [];
+    return steps
+      .map((step, index) => ({ step, index, run: step.run ?? "" }))
+      .filter(
+        ({ step, run }) =>
+          (/\bdocker build\b/.test(run) &&
+            /(?:^|\s)-t\s+["']?nemoclaw-(?:hermes-)?production(?:-arm64)?["']?(?:\s|$)/.test(
+              run,
+            )) ||
+          String(step.uses ?? "").startsWith("docker/build-push-action@"),
+      )
+      .map(({ step, index, run }) => ({
+        label: `${workflowName}:${jobName}:${step.name ?? step.uses}`,
+        guarded:
+          (run.indexOf("scripts/check-production-build-args.sh") >= 0 &&
+            run.indexOf("scripts/check-production-build-args.sh") < run.indexOf("docker build")) ||
+          steps
+            .slice(0, index)
+            .some((candidate) =>
+              (candidate.run ?? "").includes("scripts/check-production-build-args.sh"),
+            ),
+      }));
+  });
+}
+
 describe("OpenClaw 2026.6.9 dependency review contract", () => {
   it("keeps advisor disposition evidence in the dependency review note", () => {
     const review = readFileSync(DEPENDENCY_REVIEW, "utf-8");
@@ -150,6 +180,7 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("Release Checklist for Accepted Residual Risk");
     expect(review).toContain("test/openclaw-real-patched-dist-harness.test.ts");
     expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
+    expect(review).toContain("dedicated PR and main CI jobs");
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
@@ -198,6 +229,12 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("test/onboard-resume-provider-recovery.test.ts");
     expect(review).toContain("machine.state='openclaw'");
     expect(review).toContain("scripts/check-production-build-args.sh");
+    expect(review).toContain("Recovered Gateway Credential Boundary");
+    expect(review).toContain("src/lib/onboard/recovered-provider-reuse.ts");
+    expect(review).toContain("test/onboard-remote-recreate-credential-reuse.test.ts");
+    expect(review).toContain("Image-Managed OpenClaw Extension Restore Boundary");
+    expect(review).toContain("src/lib/state/openclaw-managed-extensions.ts");
+    expect(review).toContain("issue #5896");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
@@ -323,5 +360,68 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       baseImages.jobs["build-and-push-hermes"] as WorkflowJob,
       "Validate Hermes production Docker build args",
     );
+
+    const discoveredBuilds = [
+      ...findProductionBuildGuardCoverage("pr-self-hosted", prSelfHosted),
+      ...findProductionBuildGuardCoverage("sandbox-images-and-e2e", sandboxImages),
+      ...findProductionBuildGuardCoverage("base-image", baseImages),
+    ];
+    expect(discoveredBuilds.map(({ label }) => label)).toHaveLength(7);
+    expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
+  });
+
+  it("runs and gates the real patched-distribution harness in PR and main CI", () => {
+    const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
+    const main = readYaml<Workflow>(".github/workflows/main.yaml");
+    const prJob = pr.jobs["real-openclaw-dist-harness"];
+    const mainJob = main.jobs["real-openclaw-dist-harness"];
+    const prChecks = pr.jobs.checks;
+    const mainChecks = main.jobs.checks;
+
+    expect(prJob?.["timeout-minutes"]).toBe(12);
+    expect(mainJob?.["timeout-minutes"]).toBe(12);
+    expect(requiredStep(prJob, "Audit the real patched OpenClaw distribution").env).toMatchObject({
+      NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
+    });
+    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
+      {
+        NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
+      },
+    );
+    expect(requiredStep(prJob, "Audit the real patched OpenClaw distribution").run).toContain(
+      "test/openclaw-real-patched-dist-harness.test.ts",
+    );
+    expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
+      "test/openclaw-real-patched-dist-harness.test.ts",
+    );
+
+    expect(prChecks.needs).toContain("real-openclaw-dist-harness");
+    expect(mainChecks.needs).toContain("real-openclaw-dist-harness");
+    const prGate = requiredStep(prChecks, "Verify required PR checks");
+    const mainGate = requiredStep(mainChecks, "Verify required main checks");
+    expect(prGate.env).toMatchObject({
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
+    });
+    expect(mainGate.env).toMatchObject({
+      REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
+    });
+
+    const prGateRun = prGate.run ?? "";
+    const codeBranchStart = prGateRun.indexOf('if [ "$CODE_CHANGED" = "true" ]; then');
+    const docsOnlyBranchStart = prGateRun.indexOf("else", codeBranchStart);
+    const codeBranch = prGateRun.slice(codeBranchStart, docsOnlyBranchStart);
+    const docsOnlyBranch = prGateRun.slice(docsOnlyBranchStart);
+    expect(codeBranch).toContain(
+      'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
+    );
+    expect(codeBranch).not.toContain('allow_success_or_skipped "real-openclaw-dist-harness"');
+    expect(docsOnlyBranch).toContain(
+      'allow_success_or_skipped "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
+    );
+    expect(docsOnlyBranch).not.toContain('require_success "real-openclaw-dist-harness"');
+    expect(mainGate.run).toContain(
+      'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
+    );
+    expect(mainGate.run).not.toContain('allow_success_or_skipped "real-openclaw-dist-harness"');
   });
 });

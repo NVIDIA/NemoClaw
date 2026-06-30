@@ -15,6 +15,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   nimContainer: string | null;
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
+  reuseGatewayCredentialWithoutLocalKey?: boolean;
 };
 
 export type CloudFallbackConfig = {
@@ -39,6 +40,7 @@ export function applyCloudFallbackSelection(
   state.nimContainer = null;
   state.allowToolsIncompatible = false;
   state.skipHostInferenceSmoke = false;
+  state.reuseGatewayCredentialWithoutLocalKey = false;
 }
 
 export function clearNimContainerBeforeRetry(state: SetupNimSelectionState): void {

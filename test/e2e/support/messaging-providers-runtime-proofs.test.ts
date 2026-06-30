@@ -8,6 +8,11 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import {
+  buildSandboxNodeInvocation,
+  OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES,
+  parseRuntimeProofPort,
+} from "../live/messaging-providers-helpers.ts";
 import { SLACK_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-slack-runtime-proof.ts";
 import { TELEGRAM_INSTALLED_RUNTIME_PROOF_SOURCE } from "../live/messaging-providers-telegram-runtime-proof.ts";
 
@@ -32,6 +37,55 @@ async function waitFor(predicate: () => boolean, message: string): Promise<void>
 }
 
 describe("messaging provider installed-runtime proofs", () => {
+  it("reconstructs multi-argument Node source byte-for-byte below the OpenShell limit", () => {
+    const source = [
+      'import fs from "node:fs";',
+      "const scriptUrl = new URL(import.meta.url);",
+      'if (process.env.RUNTIME_PROOF_MARKER !== "marker value") throw new Error("missing marker");',
+      'const reconstructed = fs.readFileSync(scriptUrl, "utf8");',
+      "fs.unlinkSync(scriptUrl);",
+      "process.stdout.write(reconstructed);",
+      `/* ${"x".repeat(OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES * 2)} */`,
+    ].join("\n");
+    const invocation = buildSandboxNodeInvocation(source, {
+      artifactName: `runtime-proof-round-trip-${process.pid}`,
+      env: { RUNTIME_PROOF_MARKER: "marker value" },
+    });
+
+    expect(invocation.length).toBeGreaterThan(8);
+    expect(
+      Math.max(...invocation.map((argument) => Buffer.byteLength(argument, "utf8"))),
+    ).toBeLessThan(OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES);
+    const [command, ...args] = invocation;
+    const result = spawnSync(command, args, { encoding: "utf8" });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(source);
+  });
+
+  it.each([
+    ["1", 1],
+    ["443", 443],
+    ["65535", 65_535],
+    ["00080", 80],
+  ])("accepts bounded decimal runtime-proof port %s", (rawPort, expected) => {
+    expect(parseRuntimeProofPort(rawPort)).toBe(expected);
+  });
+
+  it.each([
+    "",
+    "0",
+    "65536",
+    "-1",
+    "+1",
+    "1.5",
+    "1e3",
+    " 443",
+    "443 ",
+    "abc",
+  ])("rejects invalid runtime-proof port %j", (rawPort) => {
+    expect(() => parseRuntimeProofPort(rawPort)).toThrow(/runtime proof port/u);
+  });
+
   it("keeps the Slack allow, deny, feedback, and send contract on installed exports", () => {
     expectValidModuleSource(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE);
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("prepareSlackMessage");
@@ -76,8 +130,12 @@ describe("messaging provider installed-runtime proofs", () => {
 
     try {
       await waitFor(() => fs.existsSync(portFile), `fake Telegram API did not start: ${stderr}`);
-      const port = fs.readFileSync(portFile, "utf8").trim();
-      const response = await fetch(`http://127.0.0.1:${port}/bot${token}/sendMessage`, {
+      const port = parseRuntimeProofPort(fs.readFileSync(portFile, "utf8").trim());
+      const endpoint = new URL(
+        "http://127.0.0.1/bot123456:SUPER-SECRET-TELEGRAM-TOKEN/sendMessage",
+      );
+      endpoint.port = String(port);
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ chat_id: "42424242", text: "redaction proof" }),

@@ -92,7 +92,9 @@ The OpenClaw 2026.6.9 compiled-dist patches are localized compatibility patches 
 
 Invalid state: a real installed `openclaw@2026.6.9` dist changes semantics while fixture-compatible recognizers still pass. Source boundary: the installed OpenClaw generated `dist` files, the Dockerfile fetch-guard patch block, `scripts/patch-openclaw-chat-send.js`, and `scripts/patch-openclaw-issue-4434-diagnostics.ts`. Source-fix constraint: upstream OpenClaw should own permanent fixes; NemoClaw patches must stay version-scoped, fail closed on unknown shapes, and be removed when upstream ships reviewed behavior. Regression tests: `test/fetch-guard-patch-regression.test.ts`, `test/openclaw-chat-send-patch.test.ts`, and `test/openclaw-issue-4434-diagnostics-patch.test.ts` execute patched fixtures for the reviewed shapes. `test/openclaw-real-patched-dist-harness.test.ts` is the checked-in real-package harness: when run with `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1`, it downloads the reviewed tarball URL, verifies the committed SRI, extracts the actual `openclaw@2026.6.9` dist, applies the Dockerfile patch block, runs `scripts/patch-openclaw-chat-send.js`, runs `scripts/patch-openclaw-issue-4434-diagnostics.ts`, and audits the mutated dist for Patch 2, Patch 2b, Patch 4, Patch 6, Patch 7, chat-send/get-reply/followup-runner markers, and the #4434 assistant-error formatter marker.
 
-Remaining accepted residual risk: the real-package harness is intentionally opt-in because it downloads a large npm tarball and takes roughly a minute on a fast workstation; default PR CI still relies on fixture recognizers plus exact-head image builds. The harness proves the reviewed package can be materialized and mutated by the same Dockerfile patch block, but it is not a substitute for focused nightly E2E proof of the affected runtime workflows, now dispatched through `.github/workflows/e2e.yaml`, or final full E2E proof before merge. Removal condition: delete the localized patches when OpenClaw ships the behavior, or promote this harness to a built-image/default-CI gate if NemoClaw keeps carrying these patches beyond this reviewed bump.
+The harness remains explicit opt-in for local development, while dedicated PR and main CI jobs set `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1` and materialize the reviewed archive automatically with a bounded download retry and a 12-minute job budget.
+This source-package proof is not a substitute for focused nightly E2E proof of affected runtime workflows, exact-head image builds, or final full E2E proof before merge.
+Removal condition: delete the localized patches and harness when OpenClaw ships the reviewed behavior; if NemoClaw keeps carrying the patches beyond this bump, retain both the archive harness and built-image runtime gates.
 
 #### OpenClaw Patch Source-of-Truth Table
 
@@ -115,6 +117,45 @@ The reviewed `@openclaw/diagnostics-otel@2026.6.9` package dist imports `OTLPTra
 The legacy `2026.3.11` and `2026.4.24` OpenClaw pins are retained only for stale-upgrade fixture builds. Production Dockerfile install blocks now reject those versions unless `NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW=1` is set explicitly. The E2E-scoped name is intentionally noisy so production build workflows do not treat it as a general override. Production image workflows run `scripts/check-production-build-args.sh` before production Docker builds so the fixture flag cannot be passed through production build args. The stale-upgrade E2E build contexts pass that flag when they intentionally build an old base image, and `test/openclaw-integrity-pin.test.ts` verifies the default rejection, the explicit fixture opt-in, and the workflow guard.
 
 Invalid state: a production image build overriding `OPENCLAW_VERSION` to an old fixture pin while still passing integrity checks. Source boundary: Dockerfile and Dockerfile.base install blocks. Source-fix constraint: keep stale-upgrade E2Es able to build old images without normalizing those pins as production targets. Regression test: `test/openclaw-integrity-pin.test.ts` rejects legacy pins without the fixture flag. Removal condition: delete the legacy pins and fixture flag after the stale-upgrade/rebuild E2Es no longer need old OpenClaw base images.
+
+### Recovered Gateway Credential Boundary
+
+During rebuild, OpenShell remains the system of record for provider credential bytes.
+NemoClaw does not read, export, or replace a credential that exists only in the gateway, and this recovery path never updates or repoints the registered provider.
+NemoClaw accepts provider, model, preferred API, and custom endpoint metadata only as one complete route from either the current registry row or the matching onboard session; a partial registry row is never completed from older session data.
+The recovery path may omit direct host validation only when the selection was recovered from the target sandbox, provider/model values are complete and bounded, the preferred API is compatible with that provider type, and `openshell provider get` reports the exact provider name, type, credential-binding key, and expected endpoint-config key.
+Custom-endpoint reuse additionally requires the complete route to come from the current registry row, to canonicalize to the same recorded HTTP(S) identity, and every other registry entry using that global provider to record that same endpoint.
+
+OpenShell deliberately reports provider config keys but not config values, so NemoClaw cannot confirm the exact live endpoint value through this interface.
+Credential-only recovery does not run `provider update`.
+It verifies the non-secret provider shape, preserves the gateway's existing credential/config binding unchanged, and re-applies only `inference set` for the recovered provider/model.
+An existing provider may already have been redirected out of band; that endpoint-value drift is the residual this interface cannot detect, while the recovery path itself cannot introduce or change that redirection.
+
+Invalid state: a rebuild with no host key probes a remote endpoint with an empty credential and fails after deleting the old sandbox, mixes partial current metadata with stale session fields, or silently reuses a gateway provider for an explicit, malformed, provider-incompatible, or conflicting-endpoint selection.
+Source boundary: `src/lib/onboard/provider-recovery.ts`, `src/lib/onboard/recovered-provider-reuse.ts`, `src/lib/onboard/inference-providers/remote.ts`, `src/lib/onboard.ts`, and OpenShell's provider registry.
+Source-fix constraint: OpenShell intentionally does not expose stored credential or config values, so NemoClaw can reconcile only non-secret routing metadata and must fail closed if the exact provider shape or one complete recovery identity is unavailable.
+Regression tests: `src/lib/onboard/provider-recovery.test.ts` rejects partial or unbounded live CLI output and mixed-source routes; `src/lib/onboard/recovered-provider-reuse.test.ts` covers provider/API/endpoint compatibility and fail-closed cases; `test/onboard-remote-recreate-credential-reuse.test.ts` proves the route is re-applied without a provider update, credential flag, config replacement, or direct curl probe.
+The `hermes-discord` and `channels-add-remove` live jobs remain the real rebuild gates.
+Removal condition: replace this localized decision boundary when OpenShell provides a typed credential-preserving provider/route reconcile operation that validates through its stored credential without disclosing it.
+
+### Image-Managed OpenClaw Extension Restore Boundary
+
+Fresh OpenClaw images own the executable copies of reviewed archive-installed extensions.
+Snapshot restore may restore user extensions, but it excludes every image-managed extension directory and preserves those directories during cleanup.
+Snapshot symlink validation permits only these extension link shapes:
+
+- The exact `extensions/<id>/node_modules/openclaw` peer link to `/usr/local/lib/node_modules/openclaw`.
+- The reviewed WeChat `qrcode-terminal` executable link with its exact target.
+- Extension-local npm `.bin` links whose relative targets remain inside the same `node_modules` tree.
+
+Before cleanup, NemoClaw rejects any managed extension path that is not a real directory, including a dangling symlink.
+The policy lives in `src/lib/state/openclaw-managed-extensions.ts`; `src/lib/state/sandbox.ts` only orchestrates the policy during validation and restore.
+
+Invalid state: archived executable plugin copies overwrite freshly rebuilt reviewed extensions, cleanup deletes a managed extension, or a broader symlink allowance permits a snapshot link outside the reviewed package-local boundaries.
+Source boundary: NemoClaw snapshot validation/restore plus the reviewed OpenClaw image extension layout.
+Source-fix constraint: upstream OpenClaw does not own NemoClaw snapshot archives, so the restore boundary must enforce image ownership locally.
+Regression tests: `src/lib/state/openclaw-managed-extensions.test.ts` pins the complete managed set, restore exclusions, exact link predicate, target validation, and cleanup preservation; `test/snapshot.test.ts` and `test/security-sandbox-tar-traversal.test.ts` retain integration and traversal coverage.
+Removal condition: retire the helper only when snapshot metadata records extension ownership structurally and the generic restore engine can exclude image-owned paths without an OpenClaw-specific policy.
 
 ### Slack Inbound `app_mention`
 
@@ -150,7 +191,9 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
 
 ### Release Checklist for Accepted Residual Risk
 
-- [x] OpenClaw real patched-dist harness: `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1 npm test -- --run test/openclaw-real-patched-dist-harness.test.ts` materializes the reviewed tarball, verifies SRI, applies the Dockerfile patch block, and audits chat-send/get-reply/followup-runner markers. Before merge, keep exact-head CI image builds plus focused/full E2E workflow proof as the runtime evidence boundary.
+- [x] OpenClaw real patched-dist harness: dedicated PR and main CI jobs run it automatically, while `NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1 npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts` remains the explicit local command.
+  It materializes the reviewed tarball, verifies SRI, applies the Dockerfile patch block, and audits chat-send/get-reply/followup-runner markers.
+  Before merge, keep exact-head CI image builds plus focused/full E2E workflow proof as the runtime evidence boundary.
 - [x] Issue #4434 full live acceptance: `scripts/patch-openclaw-issue-4434-diagnostics.ts` enriches the reviewed OpenClaw formatter for sandbox-only `fetch failed` and `LLM request timed out.` errors, and the migrated `test/e2e/live/issue-4434-tui-unreachable-inference.test.ts` guard requires HTTP/cause, gateway/upstream layer attribution, and a recovery hint.
 - [x] Future #4434 upstream-removal trigger: on the next relevant OpenClaw bump, rerun `test/openclaw-issue-4434-diagnostics-patch.test.ts` and the real patched-dist harness. If upstream emits equivalent fields directly, remove the shim while preserving full live assertions.
 
@@ -162,5 +205,7 @@ No real Microsoft Teams tenant proof is included in this PR. The work remains tr
 - The npm audit result in this note is a manual snapshot for the reviewed lock-only graph. It is not a new CI gate; rerun the command in the Advisory Check section on the next OpenClaw/plugin bump or if npm advisory state changes before merge. Follow-up automation should add a CI job for `npm install --package-lock-only --ignore-scripts && npm audit --omit=dev --json` on the reviewed OpenClaw/plugin graph.
 - The stale nonterminal rebuild-resume repair in `src/lib/actions/sandbox/rebuild-resume-session.ts` remains a migration compatibility shim tracked against #4533's onboard FSM/resume compatibility boundary. Its removal condition is to delete it after a session-version migration proves recreate sessions are always persisted at a resumable pre-sandbox boundary; `src/lib/actions/sandbox/rebuild-resume-session.test.ts` covers the helper directly, `test/onboard-resume-provider-recovery.test.ts` carries the onboard-suite producer-level regression for `machine.state='openclaw'`, and `src/lib/actions/sandbox/rebuild-resume-snapshot.test.ts` owns the rebuild handoff regression.
 - Production OpenClaw image build paths call `scripts/check-production-build-args.sh` before production `docker build` or `docker/build-push-action` use. `test/openclaw-dependency-review.test.ts` keeps that workflow contract documented.
+- The shared archive-installer redesign, legacy-fixture retirement, and broader setup/test refactors remain explicitly deferred to issue #5896.
+  This dependency bump keeps the fail-closed local guards and focused extractions above without widening into those migrations.
 - Each OpenClaw `messaging-build-applier.mts --agent openclaw` Dockerfile phase receives `OPENCLAW_VERSION="${OPENCLAW_VERSION}"` from the Dockerfile build arg before rendering or installing messaging plugins.
 - The integrity pin, messaging render-safety, and provider-recovery follow-ups are covered by `test/openclaw-integrity-pin.test.ts`, `test/messaging-build-applier-render-safety.test.ts`, and `test/onboard-resume-provider-recovery.test.ts`.

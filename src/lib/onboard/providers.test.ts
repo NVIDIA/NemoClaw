@@ -16,7 +16,9 @@ const {
   getRequestedModelHint,
   getRequestedProviderHint,
   isProviderKeyCredentialCandidate,
+  parseGatewayProviderMetadata,
   providerExistsInGateway,
+  readGatewayProviderMetadata,
   stageHostedInferenceSourceSecretEnv,
   upsertProvider,
   upsertMessagingProviders,
@@ -35,7 +37,17 @@ const {
   getRequestedModelHint: (nonInteractive: boolean) => string | null;
   getRequestedProviderHint: (nonInteractive: boolean) => string | null;
   isProviderKeyCredentialCandidate: (value: string | null | undefined) => boolean;
+  parseGatewayProviderMetadata: (output: string) => {
+    name: string;
+    type: string;
+    credentialKeys: string[];
+    configKeys: string[];
+  } | null;
   providerExistsInGateway: (name: string, runOpenshell: RunOpenshell) => boolean;
+  readGatewayProviderMetadata: (
+    name: string,
+    runOpenshell: RunOpenshell,
+  ) => ReturnType<typeof parseGatewayProviderMetadata>;
   stageHostedInferenceSourceSecretEnv: () => boolean;
   upsertProvider: (
     name: string,
@@ -174,6 +186,45 @@ describe("onboard provider helpers", () => {
   it("checks whether providers exist in the gateway", () => {
     expect(providerExistsInGateway("discord-bridge", () => ({ status: 0 }))).toBe(true);
     expect(providerExistsInGateway("missing-bridge", () => ({ status: 1 }))).toBe(false);
+  });
+
+  it("parses the non-secret provider identity reported by OpenShell", () => {
+    const output = [
+      "\u001b[36mProvider:\u001b[0m",
+      "  Name: compatible-endpoint",
+      "  Type: openai",
+      "  Credential keys: COMPATIBLE_API_KEY",
+      "  Config keys: OPENAI_BASE_URL, EXTRA_FLAG",
+    ].join("\n");
+
+    expect(parseGatewayProviderMetadata(output)).toEqual({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialKeys: ["COMPATIBLE_API_KEY"],
+      configKeys: ["OPENAI_BASE_URL", "EXTRA_FLAG"],
+    });
+    expect(
+      readGatewayProviderMetadata("compatible-endpoint", () => ({
+        status: 0,
+        stdout: output,
+      })),
+    ).toEqual(parseGatewayProviderMetadata(output));
+  });
+
+  it("rejects incomplete, duplicate, or differently named provider metadata", () => {
+    expect(parseGatewayProviderMetadata("Name: compatible-endpoint\nType: openai")).toBeNull();
+    expect(
+      parseGatewayProviderMetadata(
+        "Name: compatible-endpoint\nName: attacker\nType: openai\nCredential keys: KEY\nConfig keys: BASE",
+      ),
+    ).toBeNull();
+    expect(
+      readGatewayProviderMetadata("compatible-endpoint", () => ({
+        status: 0,
+        stdout:
+          "Name: other-provider\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL",
+      })),
+    ).toBeNull();
   });
 
   it("creates a new provider and returns ok on success", () => {

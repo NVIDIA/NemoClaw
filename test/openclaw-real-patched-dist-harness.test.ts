@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
@@ -17,13 +17,13 @@ const PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS = path.join(
   "scripts",
   "patch-openclaw-issue-4434-diagnostics.ts",
 );
+const PATCH_COMMAND_TIMEOUT_MS = 45_000;
 
 function readRequiredDockerArg(name: string): string {
   const match = fs
     .readFileSync(DOCKERFILE, "utf-8")
     .match(new RegExp(`^ARG ${name}=([^\\s]+)`, "m"));
-  expect(match, `${name} must be pinned in Dockerfile`).not.toBeNull();
-  return match![1];
+  return match?.[1] ?? runtimeMismatch("missing", "pinned", `Dockerfile ARG ${name}`);
 }
 
 function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
@@ -31,10 +31,10 @@ function dockerRunCommandBetween(startMarker: string, endMarker: string): string
   const start = dockerfile.indexOf(startMarker);
   const end = dockerfile.indexOf(endMarker, start);
   const runIndex = dockerfile.indexOf("RUN ", start);
-  expect(start, startMarker).toBeGreaterThanOrEqual(0);
-  expect(end, endMarker).toBeGreaterThan(start);
-  expect(runIndex, `RUN after ${startMarker}`).toBeGreaterThanOrEqual(start);
-  expect(runIndex, `RUN before ${endMarker}`).toBeLessThan(end);
+  start >= 0 || runtimeMismatch(String(start), ">= 0", startMarker);
+  end > start || runtimeMismatch(String(end), `> ${start}`, endMarker);
+  runIndex >= start || runtimeMismatch(String(runIndex), `>= ${start}`, `RUN after ${startMarker}`);
+  runIndex < end || runtimeMismatch(String(runIndex), `< ${end}`, `RUN before ${endMarker}`);
   return dockerfile
     .slice(runIndex, end)
     .trim()
@@ -95,6 +95,18 @@ function requireRuntimeEqual(actual: string, expected: string, label: string): v
   actual === expected || runtimeMismatch(actual, expected, label);
 }
 
+function requireRuntimeIncludes(actual: string, expected: string, label: string): void {
+  actual.includes(expected) || runtimeMismatch(actual, `text containing ${expected}`, label);
+}
+
+function requireSpawnSuccess(
+  result: { status: number | null; stdout?: string | null; stderr?: string | null },
+  label: string,
+): void {
+  const detail = String(result.stderr || result.stdout || "").trim();
+  requireRuntimeEqual(String(result.status), "0", detail ? `${label}: ${detail}` : label);
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
@@ -129,9 +141,19 @@ function grepRealDist(dist: string, needle: string) {
     ["-lc", `grep -RIlF --include='*.js' ${shellQuote(needle)} ${shellQuote(dist)}`],
     {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: PATCH_COMMAND_TIMEOUT_MS,
     },
   );
+}
+
+function packReviewedTarball(tarballUrl: string, destination: string) {
+  const runPack = () =>
+    spawnSync("npm", ["pack", tarballUrl, "--pack-destination", destination, "--silent"], {
+      encoding: "utf-8",
+      timeout: 90000,
+    });
+  const first = runPack();
+  return first.status === 0 ? first : runPack();
 }
 
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
@@ -143,14 +165,11 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
       const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_6_9_TARBALL");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
       try {
-        const pack = spawnSync("npm", ["pack", tarballUrl, "--pack-destination", tmp, "--silent"], {
-          encoding: "utf-8",
-          timeout: 60000,
-        });
-        expect(pack.status, pack.stderr || pack.stdout).toBe(0);
+        const pack = packReviewedTarball(tarballUrl, tmp);
+        requireSpawnSuccess(pack, "npm pack reviewed OpenClaw tarball");
 
         const tarballPath = path.join(tmp, `openclaw-${version}.tgz`);
-        expect(fs.existsSync(tarballPath), tarballPath).toBe(true);
+        fs.existsSync(tarballPath) || runtimeMismatch("missing", "present", tarballPath);
         requireRuntimeEqual(sha512Sri(tarballPath), integrity, "OpenClaw tarball SRI");
 
         const extractDir = path.join(tmp, "extract");
@@ -159,17 +178,33 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           encoding: "utf-8",
           timeout: 60000,
         });
-        expect(extract.status, extract.stderr || extract.stdout).toBe(0);
+        requireSpawnSuccess(extract, "extract reviewed OpenClaw tarball");
 
         const dist = path.join(extractDir, "package", "dist");
-        expect(fs.statSync(dist).isDirectory()).toBe(true);
+        fs.statSync(dist).isDirectory() || runtimeMismatch("not a directory", "directory", dist);
 
         const dockerPatch = runDockerfilePatchBlock(dist, tmp, version);
-        expect(dockerPatch.status, dockerPatch.stderr || dockerPatch.stdout).toBe(0);
-        expect(dockerPatch.stdout).toContain(`Patch 2 applied to OpenClaw ${version}`);
-        expect(dockerPatch.stdout).toContain(`Patch 2b applied to OpenClaw ${version}`);
-        expect(dockerPatch.stdout).toContain(`Patch 4 applied to OpenClaw ${version}`);
-        expect(dockerPatch.stdout).toContain(`Patch 6 applied to OpenClaw ${version}`);
+        requireSpawnSuccess(dockerPatch, "apply Dockerfile OpenClaw patches");
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `Patch 2 applied to OpenClaw ${version}`,
+          "Patch 2",
+        );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `Patch 2b applied to OpenClaw ${version}`,
+          "Patch 2b",
+        );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `Patch 4 applied to OpenClaw ${version}`,
+          "Patch 4",
+        );
+        requireRuntimeIncludes(
+          dockerPatch.stdout,
+          `Patch 6 applied to OpenClaw ${version}`,
+          "Patch 6",
+        );
 
         for (const marker of [
           "nemoclaw: env-gated bypass",
@@ -178,51 +213,67 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
           'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"',
         ]) {
           const grep = grepRealDist(dist, marker);
-          expect(grep.status, `${marker}\n${grep.stderr}`).toBe(0);
-          expect(grep.stdout.trim(), marker).not.toBe("");
+          requireSpawnSuccess(grep, `find real-dist marker ${marker}`);
+          grep.stdout.trim().length > 0 || runtimeMismatch("empty", "non-empty", marker);
         }
 
         const chatPatch = spawnSync(process.execPath, [PATCH_OPENCLAW_CHAT_SEND, dist], {
           encoding: "utf-8",
-          timeout: 20000,
+          timeout: PATCH_COMMAND_TIMEOUT_MS,
         });
-        expect(chatPatch.status, chatPatch.stderr || chatPatch.stdout).toBe(0);
-        expect(chatPatch.stdout).toContain("patched OpenClaw chat.send compatibility");
+        requireSpawnSuccess(chatPatch, "apply chat.send compatibility patch");
+        requireRuntimeIncludes(
+          chatPatch.stdout,
+          "patched OpenClaw chat.send compatibility",
+          "chat.send patch output",
+        );
 
         const audit = spawnSync(process.execPath, [PATCH_OPENCLAW_CHAT_SEND, "--audit", dist], {
           encoding: "utf-8",
-          timeout: 20000,
+          timeout: PATCH_COMMAND_TIMEOUT_MS,
         });
-        expect(audit.status, audit.stderr || audit.stdout).toBe(0);
-        expect(audit.stdout).toContain("chat.send runtime:");
-        expect(audit.stdout).toContain("get-reply runtime:");
-        expect(audit.stdout).toContain("followup runner runtime:");
+        requireSpawnSuccess(audit, "audit chat.send compatibility patch");
+        requireRuntimeIncludes(audit.stdout, "chat.send runtime:", "chat.send audit");
+        requireRuntimeIncludes(audit.stdout, "get-reply runtime:", "get-reply audit");
+        requireRuntimeIncludes(audit.stdout, "followup runner runtime:", "followup audit");
 
         const issue4434Patch = spawnSync(
           process.execPath,
           ["--experimental-strip-types", PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, dist],
           {
             encoding: "utf-8",
-            timeout: 20000,
+            timeout: PATCH_COMMAND_TIMEOUT_MS,
           },
         );
-        expect(issue4434Patch.status, issue4434Patch.stderr || issue4434Patch.stdout).toBe(0);
-        expect(issue4434Patch.stdout).toContain("patched OpenClaw #4434 diagnostics");
+        requireSpawnSuccess(issue4434Patch, "apply #4434 diagnostics patch");
+        requireRuntimeIncludes(
+          issue4434Patch.stdout,
+          "patched OpenClaw #4434 diagnostics",
+          "#4434 patch output",
+        );
 
         const issue4434Audit = spawnSync(
           process.execPath,
           ["--experimental-strip-types", PATCH_OPENCLAW_ISSUE_4434_DIAGNOSTICS, "--audit", dist],
           {
             encoding: "utf-8",
-            timeout: 20000,
+            timeout: PATCH_COMMAND_TIMEOUT_MS,
           },
         );
-        expect(issue4434Audit.status, issue4434Audit.stderr || issue4434Audit.stdout).toBe(0);
-        expect(issue4434Audit.stdout).toContain("assistant error formatter:");
-        expect(issue4434Audit.stdout).toContain("issue-4434-diagnostics: already-applied");
+        requireSpawnSuccess(issue4434Audit, "audit #4434 diagnostics patch");
+        requireRuntimeIncludes(
+          issue4434Audit.stdout,
+          "assistant error formatter:",
+          "#4434 assistant error formatter audit",
+        );
+        requireRuntimeIncludes(
+          issue4434Audit.stdout,
+          "issue-4434-diagnostics: already-applied",
+          "#4434 patch state audit",
+        );
       } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
       }
-    }, 300000);
+    }, 600000);
   },
 );

@@ -189,6 +189,7 @@ const {
 }: typeof import("./onboard/base-image") = require("./onboard/base-image");
 const { requireValue }: typeof import("./core/require-value") = require("./core/require-value");
 const buildCredentialReuse: typeof import("./onboard/build-credential-reuse") = require("./onboard/build-credential-reuse");
+const recoveredProviderReuse: typeof import("./onboard/recovered-provider-reuse") = require("./onboard/recovered-provider-reuse");
 
 type RunnerOptions = {
   env?: NodeJS.ProcessEnv;
@@ -3266,8 +3267,8 @@ async function createSandbox(
 type ProviderChoice = import("./onboard/provider-menu").ProviderMenuChoice;
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
-const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl } =
-  providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell });
+const { readRecordedProvider, readRecordedNimContainer, readRecordedModel, readRecordedEndpointUrl,
+  readRecordedInferenceRoute, readRecordedProviderEndpoints } = providerRecovery.createProviderRecoveryHelpers({ parseGatewayInference, runCaptureOpenshell });
 
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
@@ -3762,12 +3763,14 @@ async function handleRemoteProviderSelection(
   if (selected.key === "build") {
     providerKeyBridge.stageBuildProviderKeyBridge();
     if (isNonInteractive()) {
-      state.skipHostInferenceSmoke = buildCredentialReuse.resolveNonInteractiveBuildCredential({
+      const reuseGatewayCredential = buildCredentialReuse.resolveNonInteractiveBuildCredential({
         provider: state.provider,
         helpUrl: REMOTE_PROVIDER_CONFIG.build.helpUrl,
         recoveredFromSandbox,
         providerExistsInGateway,
       });
+      state.skipHostInferenceSmoke = reuseGatewayCredential;
+      state.reuseGatewayCredentialWithoutLocalKey = reuseGatewayCredential;
     } else {
       await ensureApiKey();
     }
@@ -3820,15 +3823,11 @@ async function handleRemoteProviderSelection(
       return "selected";
     }
     if (isNonInteractive()) {
-      if (
-        !resolveProviderCredential(selectedCredentialEnv) &&
-        !providerExistsInGateway(state.provider)
-      ) {
-        console.error(
-          `  Provider credential (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
-        );
-        process.exit(1);
-      }
+      // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
+      recoveredProviderReuse.resolveRecoveredProviderCredentialReuse(
+        { selected, remoteConfig, state, selectedCredentialEnv, recoveredFromSandbox, selectedModel: defaultModel, sandboxName },
+        { resolveProviderCredential, readRecordedInferenceRoute, readRecordedProviderEndpoints, readGatewayProviderMetadata: (provider) => onboardProviders.readGatewayProviderMetadata(provider, runOpenshell), note },
+      );
     } else {
       const credentialResult = await ensureNamedCredential(
         selectedCredentialEnv,
@@ -3877,12 +3876,14 @@ async function handleRemoteProviderSelection(
         return "retry-selection";
       }
 
-      const validationResult = await validateSelectedRemoteModel({
-        selected,
-        remoteConfig,
-        state,
-        selectedCredentialEnv,
-      });
+      const validationResult = state.reuseGatewayCredentialWithoutLocalKey
+        ? "selected"
+        : await validateSelectedRemoteModel({
+            selected,
+            remoteConfig,
+            state,
+            selectedCredentialEnv,
+          });
       if (validationResult === "selected") break;
       if (validationResult === "retry-selection") return "retry-selection";
     }
@@ -3937,7 +3938,7 @@ async function setupNim(
   let preferredInferenceApi: string | null = null;
   let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
-  let skipHostInferenceSmoke = false;
+  let reuseGatewayCredential = false;
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4087,7 +4088,7 @@ async function setupNim(
           allowToolsIncompatible,
         } = state);
         compatibleEndpointReasoning = state.compatibleEndpointReasoning ?? null;
-        skipHostInferenceSmoke = state.skipHostInferenceSmoke === true;
+        reuseGatewayCredential = state.reuseGatewayCredentialWithoutLocalKey === true;
         if (result === "retry-selection") continue selectionLoop;
         break;
       } else if (selected.key === "nim-local") {
@@ -4304,7 +4305,8 @@ async function setupNim(
     compatibleEndpointReasoning,
     nimContainer,
     allowToolsIncompatible,
-    skipHostInferenceSmoke,
+    skipHostInferenceSmoke: reuseGatewayCredential,
+    reuseGatewayCredentialWithoutLocalKey: reuseGatewayCredential,
   };
 }
 
@@ -4318,7 +4320,7 @@ async function setupInference(
   credentialEnv: string | null = null,
   hermesAuthMethod: HermesAuthMethod | string | null = null,
   hermesToolGateways: string[] = [],
-  options: { allowToolsIncompatible?: boolean; skipHostInferenceSmoke?: boolean } = {},
+  options: import("./onboard/machine/handlers/provider-inference").ProviderInferenceSetupOptions = {},
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
@@ -4365,8 +4367,9 @@ async function setupInference(
   }
 
   if (inferenceProviders.isRemoteProviderName(provider)) {
+    // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
     const outcome = await inferenceProviders.setupRemoteProviderInference(
-      { sandboxName, model, provider, endpointUrl, credentialEnv },
+      { sandboxName, model, provider, endpointUrl, credentialEnv, reuseGatewayCredentialWithoutLocalKey: options.reuseGatewayCredentialWithoutLocalKey === true },
       {
         ...commonDeps,
         REMOTE_PROVIDER_CONFIG,

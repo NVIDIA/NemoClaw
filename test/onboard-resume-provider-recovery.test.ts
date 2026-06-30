@@ -384,12 +384,15 @@ describe("readRecordedNimContainer", () => {
 });
 
 describe("readRecordedEndpointUrl", () => {
+  const originalGetSandbox = registry.getSandbox;
   const originalLoadSession = onboardSession.loadSession;
   afterEach(() => {
+    registry.getSandbox = originalGetSandbox;
     onboardSession.loadSession = originalLoadSession;
   });
 
   it("returns the endpoint URL from a matching session", () => {
+    registry.getSandbox = () => null;
     onboardSession.loadSession = () =>
       ({
         sandboxName: "spark-1",
@@ -399,6 +402,7 @@ describe("readRecordedEndpointUrl", () => {
   });
 
   it("ignores unrelated or missing session endpoint URLs", () => {
+    registry.getSandbox = () => null;
     onboardSession.loadSession = () =>
       ({
         sandboxName: "other-sandbox",
