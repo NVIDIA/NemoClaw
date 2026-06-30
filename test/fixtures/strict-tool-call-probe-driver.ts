@@ -8,17 +8,16 @@
 // test/fixtures/, which is excluded from the test glob).
 //
 // Mirrors the inline `node -e` block from the retired
-// test/e2e/test-strict-tool-call-probe.sh, retained here so the
 // caller-level behavior under test stays identical to production
 // runtime conditions (subprocess curl probes, real env propagation,
 // no Vitest worker shims). Refs #4537, #4349, #5098, #5119.
 //
-// CWD must be the repo root; cli build artifacts under dist/ are required.
+// CWD must be the repo root; the test source require hook is preloaded.
 //
 // Authored as TypeScript (rather than .cjs) per the codebase-growth
 // guardrail forbidding newly added .js/.cjs/.mjs files. Body is JS-shaped
 // because the embedded `node -e` strings must remain plain CommonJS for
-// the spawned children, and the dist/lib/* targets are CJS modules.
+// the spawned children, and the source targets are loaded as CJS modules.
 // `@ts-nocheck` keeps the surface unchanged from the retired bash heredoc.
 
 import assert from "node:assert/strict";
@@ -38,9 +37,9 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const requireFromHere = createRequire(import.meta.url);
 const { createInferenceSelectionValidationHelpers } = requireFromHere(
-  path.join(REPO_ROOT, "dist", "lib", "onboard", "inference-selection-validation"),
+  path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
 );
-const localInference = requireFromHere(path.join(REPO_ROOT, "dist", "lib", "inference", "local"));
+const localInference = requireFromHere(path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"));
 
 function assertStrictPayload(payload) {
   assert.equal(payload.model, "mock-tool-model");
@@ -237,7 +236,7 @@ process.env.NEMOCLAW_PROVIDER = "ollama";
 process.env.NEMOCLAW_MODEL = "mock-tool-model";
 process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
 
-const runner = require("./dist/lib/runner");
+const runner = require("./src/lib/runner.ts");
 runner.run = () => ({ status: 0 });
 runner.runShell = () => ({ status: 0 });
 runner.runCapture = (command) => {
@@ -263,10 +262,10 @@ runner.runCaptureEx = (command) => {
   return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
 };
 
-require("./dist/lib/onboard/ollama-systemd").ensureOllamaLoopbackSystemdOverride = () => "ready";
-require("./dist/lib/onboard/local-inference-topology").shouldFrontOllamaWithProxy = () => false;
+require("./src/lib/onboard/ollama-systemd.ts").ensureOllamaLoopbackSystemdOverride = () => "ready";
+require("./src/lib/onboard/local-inference-topology.ts").shouldFrontOllamaWithProxy = () => false;
 
-const credentials = require("./dist/lib/credentials/store");
+const credentials = require("./src/lib/credentials/store.ts");
 credentials.prompt = async (message) => {
   throw new Error("Unexpected prompt during non-interactive Ollama onboarding: " + message);
 };
@@ -282,7 +281,7 @@ console.error = (...args) => lines.push(args.join(" "));
 
 (async () => {
   try {
-    const { setupNim } = require("./dist/lib/onboard");
+    const { setupNim } = require("./src/lib/onboard.ts");
     const result = await setupNim(null, null);
     originalLog(JSON.stringify({ result, lines }));
   } catch (error) {

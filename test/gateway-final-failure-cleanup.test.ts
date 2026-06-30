@@ -23,7 +23,7 @@ function isOnboardGatewayFailureInternals(
   );
 }
 
-const loadedOnboardInternals = require("../dist/lib/onboard");
+const loadedOnboardInternals = require("../src/lib/onboard");
 const onboardInternals =
   typeof loadedOnboardInternals === "object" && loadedOnboardInternals !== null
     ? loadedOnboardInternals

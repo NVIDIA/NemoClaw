@@ -78,7 +78,7 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
-On DGX Spark and DGX Station, express install selects managed vLLM; DGX Spark uses `qwen3.6-35b-a3b-nvfp4` by default.
+On DGX Spark and DGX Station, express install selects managed vLLM; DGX Spark uses `qwen3.6-35b-a3b-nvfp4` by default, and DGX Station uses `deepseek-v4-flash` by default.
 Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default.
 That tier uses the base sandbox policy plus supported package, model, web-search, local-inference, and read-only weather presets.
 On DGX Spark, express install uses `my-spark-assistant` as the sandbox name unless `NEMOCLAW_SANDBOX_NAME` is already set.
@@ -264,7 +264,14 @@ Treat the authenticated URL like a password.
 
 ### Chat with the Agent from the Terminal
 
-Connect to the sandbox and use the OpenClaw CLI.
+Use a two-terminal workflow for prompts that may need network access.
+In one terminal, connect to the sandbox and use the OpenClaw CLI.
+Open a second host terminal and run `openshell term` to watch for blocked network egress requests and approve or deny them while the agent runs.
+For remote sandboxes and detailed approval controls, refer to [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests).
+
+```bash
+openshell term
+```
 
 ```bash
 nemoclaw my-assistant connect

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Repo Policy
 
 Configurable defaults that adapt the skill to a specific repository. Edit this file when adopting the skill in a new repo. The skill reads these values to know what to gate on.
@@ -24,8 +27,8 @@ If your repo does NOT enforce CODEOWNERS via branch protection, set this to `fal
 ## Commit compliance policy
 
 NemoClaw default: a DCO sign-off declaration is required in the PR description, and GitHub verified commit signatures are required for every PR commit.
-DCO is enforced by the `dco-check` workflow.
-Verified signatures are enforced by branch protection and maintainer review.
+DCO is enforced by the `dco-check` workflow and checked directly in the PR body by the comparator and merge gate.
+Verified signatures are checked directly for every PR commit by the comparator and merge gate; branch protection remains a separate gate.
 
 ```yaml
 dco_required: true

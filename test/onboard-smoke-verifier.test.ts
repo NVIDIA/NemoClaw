@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { shouldSmokeOpenAiLikeOnboardRoute } from "../dist/lib/inference/onboard-probes";
+import { shouldSmokeOpenAiLikeOnboardRoute } from "../src/lib/inference/onboard-probes";
 import { runVerifyOnboardSmokeHarness } from "./helpers/onboard-smoke-verifier-harness";
 
 describe("Hermes onboard smoke verification", () => {

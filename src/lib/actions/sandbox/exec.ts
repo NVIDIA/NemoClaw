@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import os from "node:os";
+import { spawnExitCode } from "../../core/process-exit";
 
 export type SandboxExecOptions = {
   workdir?: string;
@@ -63,21 +63,7 @@ export function computeExitCode(result: SpawnLikeResult): {
   if (result.error) {
     return { code: 1, errorMessage: result.error.message };
   }
-  if (result.status !== null) return { code: result.status };
-  if (result.signal) {
-    const signalNumber = os.constants.signals[result.signal];
-    return { code: signalNumber ? 128 + signalNumber : 1 };
-  }
-  return { code: 1 };
-}
-
-function exitWithSpawnResult(result: SpawnLikeResult): never {
-  const { code, errorMessage } = computeExitCode(result);
-  if (errorMessage) {
-    console.error(`  Failed to invoke openshell: ${errorMessage}`);
-    console.error("  Ensure 'openshell' is installed and on PATH.");
-  }
-  process.exit(code);
+  return { code: spawnExitCode(result) };
 }
 
 const defaultWorkdirProbeRunner: WorkdirProbeRunner = (binary, args) => {
@@ -118,5 +104,10 @@ export async function execSandbox(
   const result = spawnSync(binary, buildOpenshellExecArgs(sandboxName, command, options), {
     stdio: "inherit",
   });
-  exitWithSpawnResult(result);
+  const { code, errorMessage } = computeExitCode(result);
+  if (errorMessage) {
+    console.error(`  Failed to invoke openshell: ${errorMessage}`);
+    console.error("  Ensure 'openshell' is installed and on PATH.");
+  }
+  process.exit(code);
 }

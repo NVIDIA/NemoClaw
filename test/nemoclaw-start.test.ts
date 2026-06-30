@@ -484,7 +484,7 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).not.toContain("SHOULD_NOT_CONFIGURE");
   });
 
-  it("#3256: only requires early gateway token generation for gateway and OpenClaw commands", () => {
+  it("only requires early gateway token generation for gateway and OpenClaw commands (#3256)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
@@ -507,7 +507,7 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).toContain("no:bash");
   });
 
-  it("#4517: refreshes startup tokens but only ensures direct OpenClaw command tokens", () => {
+  it("refreshes startup tokens but only ensures direct OpenClaw command tokens (#4517)", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [
       "set -euo pipefail",
@@ -752,7 +752,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).not.toContain(".profile");
   });
 
-  it("#3256: writes gateway port and URL into the runtime shell env", () => {
+  it("writes the gateway port and URL into the runtime shell env (#3256)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
       "stale-token",
@@ -766,7 +766,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
   });
 
-  it("#3730: writes OpenClaw state env for connect-shell pairing approval", () => {
+  it("writes OpenClaw state env for connect-shell pairing approval (#3730)", () => {
     const { result, envFile } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: "token" } } }),
     );
@@ -781,7 +781,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     );
   });
 
-  it("#3256: generates a gateway token before writing the runtime shell env", () => {
+  it("generates a gateway token before writing the runtime shell env (#3256)", () => {
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: {} } }),
       "stale-token",
@@ -800,7 +800,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
-  it("#4517: rotates an existing gateway token before writing the runtime shell env", () => {
+  it("rotates an existing gateway token before writing the runtime shell env (#4517)", () => {
     const oldToken = "old-token-before-rebuild";
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       JSON.stringify({ gateway: { auth: { token: oldToken } } }),
@@ -820,7 +820,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
-  it("#4517: rotates an existing gateway token from JSON5 config", () => {
+  it("rotates an existing gateway token from JSON5 config (#4517)", () => {
     const oldToken = "old-json5-token-before-rebuild";
     const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
       [
@@ -1028,7 +1028,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
   });
-  it("#4462: unsets gateway env and recovers constrained replacement state", () => {
+  it("unsets gateway env and recovers constrained replacement state (#4462)", () => {
     const setup = writeProxyEnvWithGuard();
     const stateDir = path.join(setup.tmpDir, "openclaw-state");
     const devicesDir = path.join(stateDir, "devices");
@@ -1103,7 +1103,7 @@ exit 1
   // existing test above only exercises `add slack`. Lock in coverage for every
   // (channel × op) combo so the guard cannot regress for any one of them
   // while passing for another.
-  it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
+  it("blocks every mutating channel-operation combination and surfaces the host-side hint (#2592)", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
@@ -3486,10 +3486,10 @@ describe("provider placeholder refresh (#4251)", () => {
     const distPath = path.join(
       import.meta.dirname,
       "..",
-      "dist",
+      "src",
       "lib",
       "onboard",
-      "extra-placeholder-keys.js",
+      "extra-placeholder-keys.ts",
     );
     const { canonicalPlaceholderKeys } = require(distPath);
     const canonicalKeys: string[] = Array.from(canonicalPlaceholderKeys()).sort();

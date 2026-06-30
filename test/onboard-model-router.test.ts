@@ -45,10 +45,10 @@ describe("onboard Model Router setup", () => {
       const venvBin = path.join(venvDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-router-check.js");
       const routerPort = 44000 + (process.pid % 10000);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -186,16 +186,24 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          ...process.env,
-          HOME: tmpDir,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--require",
+          path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+          scriptPath,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+          },
         },
-      });
+      );
 
       assert.equal(result.status, 0, result.stderr);
       const payload = parseStdoutJson<{
@@ -247,10 +255,10 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
       const setupLog = path.join(tmpDir, "router-setup.log");
       const venvDir = path.join(tmpDir, "model-router-venv");
       const routerPort = 45000 + (process.pid % 10000);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
 
       try {
@@ -432,17 +440,25 @@ const { setupInference } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          env: {
-            HOME: tmpDir,
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-            FAKE_ROUTER_SOURCE: fakeRouterSource,
-            ROUTER_SETUP_LOG: setupLog,
-            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--require",
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+            scriptPath,
+          ],
+          {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              HOME: tmpDir,
+              PATH: `${fakeBin}:/usr/bin:/bin`,
+              FAKE_ROUTER_SOURCE: fakeRouterSource,
+              ROUTER_SETUP_LOG: setupLog,
+              NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+            },
           },
-        });
+        );
 
         assert.equal(result.status, 0, result.stderr);
         const log = fs.readFileSync(setupLog, "utf-8");
@@ -473,9 +489,9 @@ const { setupInference } = require(${onboardPath});
     const setupLog = path.join(tmpDir, "router-managed.log");
     const scriptPath = path.join(tmpDir, "setup-router-managed-check.js");
     const routerPort = 46000 + (process.pid % 10000);
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     try {
       fs.mkdirSync(fakeBin, { recursive: true });
@@ -622,16 +638,24 @@ const { setupInference } = require(${onboardPath});
 `;
       fs.writeFileSync(scriptPath, script);
 
-      const result = spawnSync(process.execPath, [scriptPath], {
-        cwd: repoRoot,
-        encoding: "utf-8",
-        env: {
-          HOME: tmpDir,
-          PATH: `${fakeBin}:/usr/bin:/bin`,
-          ROUTER_SETUP_LOG: setupLog,
-          NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--require",
+          path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+          scriptPath,
+        ],
+        {
+          cwd: repoRoot,
+          encoding: "utf-8",
+          env: {
+            HOME: tmpDir,
+            PATH: `${fakeBin}:/usr/bin:/bin`,
+            ROUTER_SETUP_LOG: setupLog,
+            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+          },
         },
-      });
+      );
 
       assert.equal(result.status, 0, result.stderr);
       const log = fs.readFileSync(setupLog, "utf-8");
@@ -658,10 +682,10 @@ const { setupInference } = require(${onboardPath});
       const setupLog = path.join(tmpDir, "router-refresh.log");
       const scriptPath = path.join(tmpDir, "setup-router-refresh-check.js");
       const routerPort = 47000 + (process.pid % 10000);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
 
       try {
@@ -848,17 +872,25 @@ const { setupInference } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          env: {
-            HOME: tmpDir,
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-            FAKE_ROUTER_SOURCE: fakeRouterSource,
-            ROUTER_SETUP_LOG: setupLog,
-            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--require",
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+            scriptPath,
+          ],
+          {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              HOME: tmpDir,
+              PATH: `${fakeBin}:/usr/bin:/bin`,
+              FAKE_ROUTER_SOURCE: fakeRouterSource,
+              ROUTER_SETUP_LOG: setupLog,
+              NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+            },
           },
-        });
+        );
 
         assert.equal(result.status, 0, result.stderr);
         const log = fs.readFileSync(setupLog, "utf-8");
@@ -893,10 +925,10 @@ const { setupInference } = require(${onboardPath});
       const setupLog = path.join(tmpDir, "router-setup.log");
       const scriptPath = path.join(tmpDir, "setup-router-fallback-fp-check.js");
       const routerPort = 48000 + (process.pid % 10000);
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
 
       try {
@@ -1053,7 +1085,7 @@ const { setupInference } = require(${onboardPath});
   // when sourceFingerprint is null but the install: fingerprint file exists.
   // Import the module and call it directly.
   const modelRouter = require(${JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "model-router.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "model-router.ts"),
   )});
   const isCurrent = modelRouter.isManagedModelRouterCurrent(
     ${JSON.stringify(path.join(tmpDir, "nonexistent-router-dir"))},
@@ -1068,16 +1100,24 @@ const { setupInference } = require(${onboardPath});
 `;
         fs.writeFileSync(scriptPath, script);
 
-        const result = spawnSync(process.execPath, [scriptPath], {
-          cwd: repoRoot,
-          encoding: "utf-8",
-          env: {
-            HOME: tmpDir,
-            PATH: `${fakeBin}:/usr/bin:/bin`,
-            ROUTER_SETUP_LOG: setupLog,
-            NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+        const result = spawnSync(
+          process.execPath,
+          [
+            "--require",
+            path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"),
+            scriptPath,
+          ],
+          {
+            cwd: repoRoot,
+            encoding: "utf-8",
+            env: {
+              HOME: tmpDir,
+              PATH: `${fakeBin}:/usr/bin:/bin`,
+              ROUTER_SETUP_LOG: setupLog,
+              NEMOCLAW_MODEL_ROUTER_VENV: venvDir,
+            },
           },
-        });
+        );
 
         assert.equal(result.status, 0, result.stderr);
         const payload = parseStdoutJson<{

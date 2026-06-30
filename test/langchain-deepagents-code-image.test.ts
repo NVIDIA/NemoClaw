@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
-import { cloudExperimentalChecksForOnboarding } from "./e2e-scenario/live/cloud-experimental-check-list.ts";
+import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -402,7 +402,12 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(pythonEgressCheck).toContain("except urllib.error.URLError as exc:");
     expect(pythonEgressCheck).toContain("ERROR:URLError");
     expect(pythonEgressCheck).toContain("lacked denial evidence");
-    expect(pythonEgressCheck).toContain("${python_bin@Q} - ${url@Q} <<'PY'");
+    expect(pythonEgressCheck).toContain("python_probe_source");
+    expect(pythonEgressCheck).toContain("base64 | tr -d");
+    expect(pythonEgressCheck).not.toContain("mktemp");
+    expect(pythonEgressCheck).toContain("base64 -d");
+    expect(pythonEgressCheck).toContain("${python_bin@Q} -c");
+    expect(pythonEgressCheck).toContain("${url@Q}");
     expect(pythonEgressCheck).toContain(
       'expect_reached "arbitrary Python" "GitHub" "https://api.github.com/"',
     );
@@ -428,6 +433,14 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(secretBoundaryCheck).toContain("Case: Deep Agents Code dcode secret boundary");
     expect(secretBoundaryCheck).toContain("env OPENAI_API_KEY=");
     expect(secretBoundaryCheck).toContain("dcode -n 'Reply with the single word PING'");
+    expect(secretBoundaryCheck).toContain("dcode_secret_probe_runtime_env");
+    expect(secretBoundaryCheck).toContain("dcode_secret_probe_env_file");
+    expect(secretBoundaryCheck).toContain("remote_cmd=");
+    expect(secretBoundaryCheck).toContain("LOG_MARKER_FOUND:%s");
+    expect(secretBoundaryCheck).toContain("OpenShell rejects newline-bearing exec");
+    expect(secretBoundaryCheck).toContain("NEMOCLAW_E2E_SECRET_BOUNDARY_SELF_TEST");
+    expect(secretBoundaryCheck).toContain("NO_NEWLINE_IN_COMMAND");
+    expect(secretBoundaryCheck).toContain("DCODE_EXIT:%s\\\\n");
     expect(secretBoundaryCheck).toContain("DCODE_EXIT:0");
     expect(secretBoundaryCheck).toContain("refusing to start");
     expect(secretBoundaryCheck).toContain("NETWORK_LOG_PATTERN=");
@@ -458,8 +471,29 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tuiStartupCheck).toContain("unable to probe sandbox");
     expect(tuiStartupCheck).toContain("unexpected sandbox probe output");
     expect(tuiStartupCheck).toContain("cd /sandbox; dcode");
-    expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_READY");
-    expect(tuiStartupCheck).toContain("NEMOCLAW_TUI_EXIT_CAPTURED");
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_ONBOARDING_PATTERN="$TUI_ONBOARDING_PATTERN"');
+    expect(tuiStartupCheck).toContain("-nocase -re $onboarding_pattern");
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_ONBOARDING_SKIPPED"');
+    expect(tuiStartupCheck).toContain('send -- "\\033"');
+    expect(tuiStartupCheck).toContain("if {$saw_onboarding}");
+    expect(tuiStartupCheck).toContain('send -- "\\003"\nafter 250\ncatch {send -- "\\003"}');
+    expect(tuiStartupCheck).toContain('append_marker $markers "$expect_out(0,string)"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_READY"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_READY"');
+    expect(tuiStartupCheck).toContain(
+      'append_marker $markers "NEMOCLAW_TUI_EXIT_CAPTURED:$expect_out(1,string)"',
+    );
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EXIT_TIMEOUT"');
+    expect(tuiStartupCheck).toContain('append_marker $markers "NEMOCLAW_TUI_EOF_BEFORE_EXIT"');
+    expect(tuiStartupCheck).toContain('NEMOCLAW_TUI_MARKERS="$marker_capture_file"');
+    expect(tuiStartupCheck).toContain(
+      'cat "$raw_capture_file" "$expect_log_file" "$marker_capture_file"',
+    );
+    expect(tuiStartupCheck.indexOf("local expect_rc")).toBeLessThan(
+      tuiStartupCheck.indexOf('run_tui_expect "$raw_capture_file"'),
+    );
+    expect(tuiStartupCheck).toContain('print_sanitized_capture_excerpt "$plain_capture_file"');
     expect(tuiStartupCheck).toContain("DEEPAGENTS_TUI_TIMEOUT must be a positive integer");
     expect(tuiStartupCheck).toContain("strip_terminal_control_sequences");
     expect(tuiStartupCheck).toContain("is_tui_ready_capture");
@@ -484,11 +518,16 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(tavilyOptInCheck).toContain("policy-add tavily --dry-run");
     expect(tavilyOptInCheck).toContain("policy-add tavily --yes");
     expect(tavilyOptInCheck).toContain("https://api.tavily.com/");
+    expect(tavilyOptInCheck).toContain("python_probe_source");
+    expect(tavilyOptInCheck).toContain("base64 | tr -d");
+    expect(tavilyOptInCheck).toContain("python3 -c");
+    expect(tavilyOptInCheck).toContain("NEMOCLAW_E2E_TAVILY_SELF_TEST");
     expect(tavilyOptInCheck).toContain("/opt/venv/");
     expect(tavilyOptInCheck).toContain("managed Deep Agents Code python can reach Tavily");
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+      "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
@@ -675,8 +714,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      SLACK_BOT_TOKEN: "xoxb-1234567890-abcdefghij",
-      SLACK_APP_TOKEN: "xapp-1-A1B2C3-1234567890-abcdefghij",
+      SLACK_BOT_TOKEN: ["xox", "b-1234567890-abcdefghij"].join(""),
+      SLACK_APP_TOKEN: ["xap", "p-1-A1B2C3-1234567890-abcdefghij"].join(""),
       TELEGRAM_BOT_TOKEN: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
       DISCORD_BOT_TOKEN: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
     });
@@ -869,7 +908,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "SLACK_BOT_TOKEN", sample: "sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
       { name: "TELEGRAM_BOT_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
-      { name: "DISCORD_BOT_TOKEN", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "DISCORD_BOT_TOKEN", sample: ["AK", "IAABCDEFGHIJKLMNOP"].join("") },
     ];
     for (const { name, sample } of cases) {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mgmix-"));
@@ -1180,13 +1219,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "sk_proj", sample: "sk-proj-abcdefghij" },
       { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
       { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
-      { name: "xoxb", sample: "xoxb-1234567890" },
-      { name: "xoxp", sample: "xoxp-1234567890" },
-      { name: "xoxa", sample: "xoxa-1234567890" },
-      { name: "xoxs", sample: "xoxs-1234567890" },
-      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
-      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
-      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
+      { name: "xoxb", sample: ["xox", "b-1234567890"].join("") },
+      { name: "xoxp", sample: ["xox", "p-1234567890"].join("") },
+      { name: "xoxa", sample: ["xox", "a-1234567890"].join("") },
+      { name: "xoxs", sample: ["xox", "s-1234567890"].join("") },
+      { name: "xapp", sample: ["xap", "p-1-A1B2C3-12345-abcde"].join("") },
+      { name: "akia", sample: ["AK", "IAABCDEFGHIJKLMNOP"].join("") },
+      { name: "asia", sample: ["AS", "IAABCDEFGHIJKLMNOP"].join("") },
       { name: "hf", sample: "hf_abcdefghijklmnopq" },
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },

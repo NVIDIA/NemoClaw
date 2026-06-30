@@ -12,7 +12,6 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 
 // Coverage guard for #3253. Onboard must not report installation success until
 // the configured provider/model route has served a real chat completion. This
-// caller-level, mock-driven Vitest test replaces test/e2e/test-onboard-inference-smoke.sh
 // per #5119: direct setupInference() probes belong in test/, not in regression-e2e
 // bash or the scenario framework. Refs #5098, #4349.
 const REPO_ROOT = path.join(import.meta.dirname, "..");
@@ -26,10 +25,10 @@ describe("onboard inference smoke guard (#3253)", () => {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "setup-inference-smoke-check.cjs");
       const curlLogPath = path.join(tmpDir, "curl-probes.log");
-      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(REPO_ROOT, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(REPO_ROOT, "dist", "lib", "state", "registry.js"),
+        path.join(REPO_ROOT, "src", "lib", "state", "registry.ts"),
       );
 
       fs.mkdirSync(fakeBin, { recursive: true });

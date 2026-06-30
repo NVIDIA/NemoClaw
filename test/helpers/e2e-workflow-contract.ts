@@ -9,6 +9,8 @@ import YAML from "yaml";
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 export type WorkflowJob = {
+  if?: string;
+  needs?: string | string[];
   "runs-on"?: string;
   "timeout-minutes"?: number;
   uses?: string;
@@ -23,6 +25,7 @@ export type WorkflowJob = {
 };
 
 export type WorkflowStep = {
+  "continue-on-error"?: boolean;
   id?: string;
   name?: string;
   if?: string;
@@ -32,26 +35,8 @@ export type WorkflowStep = {
   run?: string;
 };
 
-export type NightlyWorkflow = {
+export type Workflow = {
   jobs: Record<string, WorkflowJob>;
-};
-
-export type RunnerWorkflow = {
-  on?: {
-    workflow_call?: {
-      inputs?: Record<string, { default?: unknown }>;
-    };
-  };
-  true?: {
-    workflow_call?: {
-      inputs?: Record<string, { default?: unknown }>;
-    };
-  };
-  jobs: {
-    run: {
-      steps: WorkflowStep[];
-    };
-  };
 };
 
 export type CompositeAction = {
@@ -65,28 +50,24 @@ export function readYaml<T>(path: string): T {
   return YAML.parse(readFileSync(join(REPO_ROOT, path), "utf-8")) as T;
 }
 
-export function loadE2eWorkflowContract(): {
-  runnerWorkflow: RunnerWorkflow;
-  nightlyWorkflow: NightlyWorkflow;
-  action: CompositeAction;
-  cliCoverageShardAction: CompositeAction;
-  installAptAction: CompositeAction;
-} {
-  return {
-    runnerWorkflow: readYaml<RunnerWorkflow>(".github/workflows/e2e-script.yaml"),
-    nightlyWorkflow: readYaml<NightlyWorkflow>(".github/workflows/nightly-e2e.yaml"),
-    action: readYaml<CompositeAction>(".github/actions/run-e2e-script/action.yaml"),
-    cliCoverageShardAction: readYaml<CompositeAction>(
-      ".github/actions/ci-cli-coverage-shard/action.yaml",
-    ),
-    installAptAction: readYaml<CompositeAction>(".github/actions/install-apt-packages/action.yaml"),
-  };
+export function readWorkflow(): Record<string, unknown> {
+  return readYaml(".github/workflows/e2e.yaml");
 }
 
-export function reusableNightlyJobs(
-  nightlyWorkflow: NightlyWorkflow,
-): Array<[string, WorkflowJob]> {
-  return Object.entries(nightlyWorkflow.jobs).filter(
-    ([, job]) => job.uses === "./.github/workflows/e2e-script.yaml",
-  );
+export function removeJobNeed(source: string, ownerJob: string, dependency: string): string {
+  const ownerHeader = `  ${ownerJob}:\n`;
+  const ownerStart = source.indexOf(ownerHeader);
+  if (ownerStart < 0) {
+    throw new Error(`workflow is missing job ${ownerJob}`);
+  }
+  const prefix = source.slice(0, ownerStart);
+  const afterOwnerHeader = ownerStart + ownerHeader.length;
+  const nextJobOffset = source.slice(afterOwnerHeader).search(/^  [\w-]+:\n/mu);
+  const ownerEnd = nextJobOffset < 0 ? source.length : afterOwnerHeader + nextJobOffset;
+  const ownerBlock = source.slice(ownerStart, ownerEnd);
+  const needle = `        ${dependency},\n`;
+  if (!ownerBlock.includes(needle)) {
+    throw new Error(`${ownerJob} does not need ${dependency}`);
+  }
+  return prefix + ownerBlock.replace(needle, "") + source.slice(ownerEnd);
 }

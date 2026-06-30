@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // Internals are reached via require() (matching credential-rotation.test.ts,
 // gemini-probe-auth.test.ts, ssh-known-hosts.test.ts, wsl2-probe-timeout.test.ts):
-// dist/lib/onboard uses bottom-of-file `module.exports = {...}` instead of
+// src/lib/onboard uses bottom-of-file `module.exports = {...}` instead of
 // per-function `export` keywords, and several tests rely on the d.ts staying
 // `unknown`-shaped so their runtime guards type-narrow correctly. Switching to
 // a named ESM import would break those neighbouring tests' narrowing.
@@ -24,7 +24,7 @@ function isOnboardRollbackInternals(value: object | null): value is OnboardRollb
   );
 }
 
-const loadedOnboardInternals = require("../dist/lib/onboard");
+const loadedOnboardInternals = require("../src/lib/onboard");
 const onboardInternals =
   typeof loadedOnboardInternals === "object" && loadedOnboardInternals !== null
     ? loadedOnboardInternals

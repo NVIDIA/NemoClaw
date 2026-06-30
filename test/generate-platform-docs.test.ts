@@ -8,7 +8,7 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { resolveAgentNameAlias } from "../dist/lib/agent/defs";
+import { resolveAgentNameAlias } from "../src/lib/agent/defs";
 
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-platform-docs.py");
 
@@ -271,7 +271,7 @@ print(module.generate_platform_table_full(platforms))
     expect(full).toContain("WSL");
   });
 
-  it("--check exits non-zero on placeholder owner in real matrix", () => {
+  it("exits non-zero for --check on a placeholder owner in the real matrix", () => {
     const tmp = mkdtempSync(path.join(tmpdir(), "genplatform-"));
     const matrixPath = path.join(tmp, "matrix.json");
     writeFileSync(
@@ -426,6 +426,15 @@ print(block)
         `${section} row cites ${file}:${line} but that line is empty`,
       ).not.toBe("");
     }
+  });
+
+  it("Option 3 docs expose reasoning mode for scripted compatible endpoints (#3279)", () => {
+    const body = readFileSync(
+      path.join(import.meta.dirname, "..", "docs", "inference", "inference-options.mdx"),
+      "utf-8",
+    );
+    expect(body).toContain("| `NEMOCLAW_REASONING` |");
+    expect(body).toContain("Set `NEMOCLAW_REASONING=true` when the compatible endpoint");
   });
 
   // PRA-2 on #5712 follow-up: a canonical launch-claims page that lives in the

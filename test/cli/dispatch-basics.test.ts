@@ -18,8 +18,8 @@ import {
 
 describe("CLI dispatch", () => {
   it("config get validates flags and values before dispatch", async () => {
-    const sandboxConfigModule = await import("../../dist/lib/sandbox/config.js");
-    const { parseConfigGetArgs } = (sandboxConfigModule.default ?? sandboxConfigModule) as {
+    const sandboxConfigModule = await import("../../src/lib/sandbox/config.js");
+    const { parseConfigGetArgs } = sandboxConfigModule as {
       parseConfigGetArgs: (
         args: string[],
       ) =>
@@ -169,7 +169,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("langchain-deepagents-code");
   });
 
-  it("--help exits 0", () => {
+  it("exits 0 for --help", () => {
     expect(run("--help").code).toBe(0);
   });
 
@@ -179,7 +179,7 @@ describe("CLI dispatch", () => {
     expect(r.out.trim()).toMatch(/^nemoclaw v/);
   });
 
-  it("-h exits 0", () => {
+  it("exits 0 for -h", () => {
     expect(run("-h").code).toBe(0);
   });
 
@@ -378,5 +378,71 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Sandbox 'hermes' does not exist");
     expect(r.out).toContain("Command order is: nemoclaw <sandbox-name> connect");
     expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
+  });
+
+  it("suggests the closest registered sandbox name for a mistyped sandbox action", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-typo-action-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "my-assistant");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("my-assitant status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Sandbox 'my-assitant' does not exist");
+    expect(r.out).toContain("Did you mean: nemoclaw my-assistant status?");
+    expect(r.out).toContain("Registered sandboxes: my-assistant");
+  });
+
+  it("suggests the closest registered sandbox name when a bare typo lacks a known action", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-typo-bare-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "my-assistant");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("my-assitant unknownaction", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Unknown command: my-assitant");
+    expect(r.out).toContain("Did you mean: nemoclaw my-assistant connect?");
+    expect(r.out).toContain("Registered sandboxes: my-assistant");
+  });
+
+  it("omits the did-you-mean hint when no registered sandbox is within edit-distance threshold", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-typo-miss-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("zulu-quebec status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Sandbox 'zulu-quebec' does not exist");
+    expect(r.out).not.toContain("Did you mean: nemoclaw alpha");
+    expect(r.out).toContain("Registered sandboxes: alpha");
   });
 });

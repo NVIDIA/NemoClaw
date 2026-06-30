@@ -16,7 +16,7 @@ describe("startGateway Docker-unreachable fallback (#2347)", () => {
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "gateway-docker-down.cjs");
     const tracePath = path.join(tmpDir, "openshell.trace");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(tracePath, "");

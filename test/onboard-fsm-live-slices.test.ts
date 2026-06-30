@@ -29,27 +29,27 @@ const requiredDistArtifacts: readonly DistArtifact[] = [
   {
     label: "onboard dispatcher",
     sourcePath: path.join(repoRoot, "src", "lib", "onboard.ts"),
-    distPath: path.join(repoRoot, "dist", "lib", "onboard.js"),
+    distPath: path.join(repoRoot, "src", "lib", "onboard.ts"),
   },
   {
     label: "flow slices",
     sourcePath: path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
-    distPath: path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"),
+    distPath: path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
   },
   {
     label: "state results",
     sourcePath: path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
-    distPath: path.join(repoRoot, "dist", "lib", "onboard", "machine", "result.js"),
+    distPath: path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
   },
   {
     label: "session persistence",
     sourcePath: path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
-    distPath: path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    distPath: path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
   },
   {
     label: "preflight handler",
     sourcePath: path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
-    distPath: path.join(repoRoot, "dist", "lib", "onboard", "machine", "handlers", "preflight.js"),
+    distPath: path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
   },
   {
     label: "provider inference handler",
@@ -64,12 +64,12 @@ const requiredDistArtifacts: readonly DistArtifact[] = [
     ),
     distPath: path.join(
       repoRoot,
-      "dist",
+      "src",
       "lib",
       "onboard",
       "machine",
       "handlers",
-      "provider-inference.js",
+      "provider-inference.ts",
     ),
   },
 ];
@@ -145,21 +145,21 @@ function runSliceProbe(options: ProbeOptions) {
     path.join(os.tmpdir(), `nemoclaw-onboard-fsm-${scenario.mode}-${scenario.slice}-`),
   );
   const scriptPath = path.join(tmpDir, `probe-${scenario.mode}-${scenario.slice}.js`);
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
   const flowSlicesPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "flow-slices.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "flow-slices.ts"),
   );
   const resultPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "result.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "result.ts"),
   );
   const sessionPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    path.join(repoRoot, "src", "lib", "state", "onboard-session.ts"),
   );
   const preflightHandlerPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "handlers", "preflight.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "preflight.ts"),
   );
   const providerHandlerPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "onboard", "machine", "handlers", "provider-inference.js"),
+    path.join(repoRoot, "src", "lib", "onboard", "machine", "handlers", "provider-inference.ts"),
   );
 
   fs.writeFileSync(
@@ -294,12 +294,16 @@ const { onboard } = require(${onboardPath});
 `,
   );
 
-  const result = spawnSync(process.execPath, [scriptPath], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    env: probeEnvironment(tmpDir),
-    timeout: probeTimeoutMs,
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["--require", path.join(repoRoot, "test", "helpers", "onboard-script-mocks.cjs"), scriptPath],
+    {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: probeEnvironment(tmpDir),
+      timeout: probeTimeoutMs,
+    },
+  );
   try {
     assert.equal(result.status, 0, probeFailureMessage(result));
     const lines = result.stdout.trim().split(/\r?\n/).filter(Boolean);

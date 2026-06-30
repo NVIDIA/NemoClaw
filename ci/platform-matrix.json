@@ -64,7 +64,7 @@
       "status": "deferred",
       "prd_priority": "P1",
       "ci_tested": false,
-      "notes": "The PRD marks this platform as P1. Workstation form-factor with NVIDIA GPUs and the same Docker + NVIDIA Container Toolkit + CDI requirements as DGX Spark. Onboard path not yet validated end-to-end on the hardware; vLLM has a placeholder default model defined for this host class (`Qwen/Qwen3.6-27B-FP8`) that will move out of `deferred` once the hardware run is signed off."
+      "notes": "The PRD marks this platform as P1. Workstation form-factor with NVIDIA GPUs and the same Docker + NVIDIA Container Toolkit + CDI requirements as DGX Spark. Onboard path not yet validated end-to-end on the hardware; vLLM defaults to `deepseek-ai/DeepSeek-V4-Flash` for this host class and will move out of `deferred` once the hardware run is signed off."
     },
     {
       "name": "NVIDIA RTX (consumer and Pro workstation GPUs)",
@@ -93,7 +93,7 @@
       "name": "Other OpenAI-compatible endpoint",
       "status": "caveated",
       "endpoint_type": "Custom OpenAI-compatible",
-      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is at `src/lib/onboard.ts:3673`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
+      "notes": "Adapter path validated against OpenRouter as the `compatible-endpoint` provider with `openrouter/auto` (see `src/lib/inference/config.test.ts:119`); the onboarding prompt that surfaces OpenRouter as the worked example is at `src/lib/onboard.ts:3661`. Behavior on other OpenAI-compatible proxies, gateways, and self-hosted implementations may vary; this row claims the adapter, not the universe of compatible endpoints."
     },
     {
       "name": "Anthropic",
@@ -129,7 +129,7 @@
       "name": "Local NVIDIA NIM",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1586`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable NVIDIA GPU. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence with `assertCdiNvidiaGpuSpecPresent`, `src/lib/onboard.ts:1632`). NIM images pull from `nvcr.io` and require NGC registry login. NemoClaw gates this path behind the experimental flag because it does not auto-select a NIM image for the host today. You must explicitly pick from the validated image list. Managed vLLM has host-specific default models and is not gated on the same boxes. Validated images referenced in `src/lib/inference/config.ts` and `nemoclaw/src/index.ts`: `nvidia/nemotron-3-super-120b-a12b` (default cloud model), `nvidia/nemotron-3-nano-30b-a3b`, `nvidia/llama-3.3-nemotron-super-49b-v1.5`."
     },
     {
       "name": "Local vLLM (already running)",
@@ -141,7 +141,7 @@
       "name": "Local vLLM (managed install/start)",
       "status": "caveated",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pulls or starts the stable NGC vLLM container for each host profile. See `src/lib/inference/vllm.ts:55,177` for the pins. DGX Spark and DGX Station use `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use `nvcr.io/nvidia/vllm:26.03.post1-py3`. Validated defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `Qwen/Qwen3.6-27B-FP8`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing."
+      "notes": "Appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. Host must have the NVIDIA Container Toolkit installed and a CDI spec present (`onboard` asserts CDI presence). NemoClaw pulls or starts the stable NGC vLLM container for each host profile. See `src/lib/inference/vllm.ts:55,177` for the pins. DGX Spark and DGX Station use `nvcr.io/nvidia/vllm:26.05.post1-py3`; generic Linux NVIDIA GPU hosts use `nvcr.io/nvidia/vllm:26.03.post1-py3`. Validated defaults are listed in `src/lib/inference/vllm-models.ts`: DGX Spark uses `nvidia/Qwen3.6-35B-A3B-NVFP4`, DGX Station uses `deepseek-ai/DeepSeek-V4-Flash`, and Linux NVIDIA GPU uses `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8`. Image pulls require NGC registry login (`docker login nvcr.io`); onboard prompts for the NGC API key when authentication is missing."
     }
   ],
 
@@ -156,7 +156,7 @@
       "name": "Hermes",
       "status": "caveated",
       "default": false,
-      "notes": "First-class agent with dedicated CLI (`$$nemohermes`), Dockerfile, manifest, docs, and nightly E2E job coverage (`hermes-e2e` job in `.github/workflows/nightly-e2e.yaml` plus the `hermes-*-vitest` jobs in `e2e-vitest-scenarios.yaml`). Onboard with `$$nemohermes onboard` or pass `--agent hermes` to `$$nemoclaw onboard`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
+      "notes": "First-class agent with dedicated CLI (`$$nemohermes`), Dockerfile, manifest, docs, and Hermes E2E coverage in `.github/workflows/e2e.yaml` (`hermes-e2e`, `hermes-*`, and Hermes rebuild/switch jobs). Onboard with `$$nemohermes onboard` or pass `--agent hermes` to `$$nemoclaw onboard`. Unlocks the Hermes Provider inference route. Known structural gaps: model-provider compatibility registry is empty (backfilled after failures, see `nemoclaw-blueprint/model-specific-setup/hermes/README.md`); no Hermes-specific unit tests in `nemoclaw/src/`; macOS and WSL CI suites do not differentiate agents. Suitable for evaluation and the documented onboarding paths; production parity with OpenClaw is not yet asserted."
     },
     {
       "name": "LangChain Deep Agents Code",
@@ -218,7 +218,7 @@
     {
       "name": "Podman / other container runtimes",
       "status": "unsupported",
-      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard.ts:1611` prints the rejection; `src/lib/onboard/preflight.ts:586` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
+      "notes": "Onboard surfaces an explicit unsupported-runtime error for Podman (`src/lib/onboard.ts:1599` prints the rejection; `src/lib/onboard/preflight.ts:586` flags the unsupported runtime upstream). Only Docker Engine, Docker Desktop, and Colima are supported. See issue #420 (closed)."
     },
     {
       "name": "Intel Mac (macOS x86_64)",
@@ -248,7 +248,7 @@
     {
       "name": "Non-NVIDIA GPUs (AMD/ROCm, Intel Arc, Apple Metal)",
       "status": "unsupported",
-      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1586`, called at `:1651`). NemoClaw does not install non-NVIDIA accelerator drivers."
+      "notes": "Local vLLM and NIM paths assert NVIDIA CDI presence with `assertCdiNvidiaGpuSpecPresent` (`src/lib/onboard.ts:1632`). NemoClaw does not install non-NVIDIA accelerator drivers."
     },
     {
       "name": "Other LangChain, AutoGen, CrewAI, or non-listed agent harnesses",

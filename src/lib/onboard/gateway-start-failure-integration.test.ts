@@ -5,10 +5,9 @@
 // startGatewayWithOptions() takes when `openshell gateway start` reports
 // the Docker daemon is not reachable. See src/lib/onboard.ts:2233.
 //
-// This helper-level suite preserves coverage from the former
-// test/e2e/test-docker-unreachable-gateway-start.sh, which was structurally
-// a Node-process unit test of startGateway() with a PATH-shimmed openshell
-// binary, not a sandbox-lifecycle e2e.
+// This helper-level suite preserves the former shell regression, which was
+// structurally a Node-process unit test of startGateway() with a PATH-shimmed
+// openshell binary, not a sandbox-lifecycle E2E.
 //
 // Original regression: NemoClaw #2347.
 // Owning migration issue: NemoClaw #4355.
@@ -26,12 +25,9 @@
 
 import { describe, expect, it, vi } from "vitest";
 // `handleFinalGatewayStartFailure` is exposed via `module.exports = {...}` at
-// the bottom of onboard.ts (it is not a TypeScript `export`). Import the
-// compiled output (same approach as preflight.test.ts and other onboard-
-// adjacent tests) so the CommonJS `require()` calls in onboard.ts and its
-// transitive dependencies resolve cleanly under Vitest. Coverage also lands
-// on dist/lib/onboard.js, matching what the coverage ratchet measures.
-import onboardExports from "../../../dist/lib/onboard";
+// the bottom of onboard.ts (it is not a TypeScript `export`). The shared source
+// hook preserves those CommonJS semantics without requiring a CLI build.
+import * as onboardExports from "../onboard";
 import { classifyGatewayStartFailure } from "../validation";
 import {
   printDockerDaemonRecovery,
@@ -189,7 +185,7 @@ describe("startGatewayWithOptions docker-unreachable abort (#2347)", () => {
   // confirms the chain bottoms out at exitProcess(1) with the recovery
   // message printed.
 
-  describe("composition: classify → handleFinal → exit 1", () => {
+  describe("composition classifies, handles the final state, and exits 1", () => {
     let capturedClassifyLog: string[];
     let capturedPrintError: string[];
 

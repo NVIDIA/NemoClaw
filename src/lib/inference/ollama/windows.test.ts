@@ -5,8 +5,8 @@ import { createRequire } from "node:module";
 import { describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
-const WINDOWS_DIST_PATH = require.resolve("../../../../dist/lib/inference/ollama/windows");
-const RUNNER_PATH = require.resolve("../../../../dist/lib/runner");
+const WINDOWS_DIST_PATH = require.resolve("./windows");
+const RUNNER_PATH = require.resolve("../../runner");
 const childProcess = require("node:child_process");
 
 function commandText(command: string | string[]): string {

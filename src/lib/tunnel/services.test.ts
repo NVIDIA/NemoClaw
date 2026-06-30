@@ -16,8 +16,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Import from compiled dist/ so coverage is attributed correctly.
-import { resolveDefaultSandboxName } from "../../../dist/lib/tunnel/service-command";
+// Import source directly so tests cannot pass against a stale build.
+import { resolveDefaultSandboxName } from "./service-command";
 import {
   getServiceStatuses,
   getTunnelUrl,
@@ -25,7 +25,7 @@ import {
   showStatus,
   startAll,
   stopAll,
-} from "../../../dist/lib/tunnel/services";
+} from "./services";
 
 const INTEGRATION_ENV_SANDBOX = "nc1077-env-sandbox";
 const INTEGRATION_REGISTRY_SANDBOX = "nc1077-registry-sandbox";
@@ -43,17 +43,7 @@ function seedAliveCloudflaredPid(pidDir: string): void {
   writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid), { mode: 0o600 });
 }
 
-const ollamaProxyDistPath = resolve(
-  import.meta.dirname,
-  "..",
-  "..",
-  "..",
-  "dist",
-  "lib",
-  "inference",
-  "ollama",
-  "proxy.js",
-);
+const ollamaProxySourcePath = resolve(import.meta.dirname, "..", "inference", "ollama", "proxy.ts");
 
 describe("getTunnelUrl", () => {
   let pidDir: string;
@@ -157,7 +147,7 @@ describe("sandbox name validation", () => {
   });
 });
 
-describe("#1077 — status host service PID dir matches start/stop env", () => {
+describe("status host service PID dir matches start/stop env (#1077)", () => {
   const savedSandboxName = process.env.SANDBOX_NAME;
   const savedNemoclawSandbox = process.env.NEMOCLAW_SANDBOX;
   const savedNemoclawSandboxName = process.env.NEMOCLAW_SANDBOX_NAME;
@@ -465,16 +455,16 @@ describe("stopAll", () => {
       }
       return reply;
     };
-    // The dist Ollama proxy module destructures `spawnSync` at
+    // The Ollama proxy source module destructures `spawnSync` at
     // require time, so to make `stopAll` pick up the patched function we
     // bust its cache. `services.ts` requires the proxy lazily, so the
     // next call sees the freshly-loaded module.
-    delete require.cache[require.resolve(ollamaProxyDistPath)];
+    delete require.cache[require.resolve(ollamaProxySourcePath)];
   });
 
   afterEach(() => {
     childProcess.spawnSync = originalSpawnSync;
-    delete require.cache[require.resolve(ollamaProxyDistPath)];
+    delete require.cache[require.resolve(ollamaProxySourcePath)];
     rmSync(pidDir, { recursive: true, force: true });
   });
 

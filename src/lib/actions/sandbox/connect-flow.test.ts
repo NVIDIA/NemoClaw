@@ -6,11 +6,15 @@ import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-type ConnectSandbox =
-  typeof import("../../../../dist/lib/actions/sandbox/connect")["connectSandbox"];
+type ConnectSandbox = typeof import("./connect")["connectSandbox"];
 
 const requireDist = createRequire(import.meta.url);
-const connectModulePath = "../../../../dist/lib/actions/sandbox/connect.js";
+const connectModulePath = "./connect.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(connectModulePath);
+delete require.cache[requireDist.resolve(connectModulePath)];
 
 type ConnectHarness = {
   captureOpenshellSpy: MockInstance;
@@ -65,24 +69,18 @@ function createConnectHarness(options: ConnectHarnessOptions = {}): ConnectHarne
           signal: options.spawnSignal ?? null,
         } as never)) as never);
 
-  const runtime = requireDist("../../../../dist/lib/adapters/openshell/runtime.js");
-  const resolve = requireDist("../../../../dist/lib/adapters/openshell/resolve.js");
-  const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
-  const gatewayState = requireDist("../../../../dist/lib/actions/sandbox/gateway-state.js");
-  const processRecovery = requireDist("../../../../dist/lib/actions/sandbox/process-recovery.js");
-  const autoPairApproval = requireDist(
-    "../../../../dist/lib/actions/sandbox/auto-pair-approval.js",
-  );
-  const connectVllmPreflight = requireDist(
-    "../../../../dist/lib/actions/sandbox/connect-vllm-preflight.js",
-  );
-  const gatewayFailureClassifier = requireDist(
-    "../../../../dist/lib/actions/sandbox/gateway-failure-classifier.js",
-  );
-  const ollamaProxy = requireDist("../../../../dist/lib/inference/ollama/proxy.js");
-  const sandboxVersion = requireDist("../../../../dist/lib/sandbox/version.js");
-  const registry = requireDist("../../../../dist/lib/state/registry.js");
-  const sandboxSession = requireDist("../../../../dist/lib/state/sandbox-session.js");
+  const runtime = requireDist("../../adapters/openshell/runtime.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const gatewayState = requireDist("./gateway-state.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const autoPairApproval = requireDist("./auto-pair-approval.js");
+  const connectVllmPreflight = requireDist("./connect-vllm-preflight.js");
+  const gatewayFailureClassifier = requireDist("./gateway-failure-classifier.js");
+  const ollamaProxy = requireDist("../../inference/ollama/proxy.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
 
   vi.spyOn(connectVllmPreflight, "preflightVllmModelEnvOrExit").mockImplementation(() => undefined);
   vi.spyOn(gatewayState, "ensureLiveSandboxOrExit").mockResolvedValue({
@@ -436,7 +434,7 @@ describe("connectSandbox flow", () => {
         secretBoundaryReason: "raw-secret",
       },
     });
-    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
     const errorSpy = vi.spyOn(console, "error");
@@ -474,7 +472,7 @@ describe("connectSandbox flow", () => {
         secretBoundaryReason: "raw-secret",
       },
     });
-    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
     const errorSpy = vi.spyOn(console, "error");
@@ -509,7 +507,7 @@ describe("connectSandbox flow", () => {
         secretBoundaryReason: "inconclusive",
       },
     });
-    const agentRuntime = requireDist("../../../../dist/lib/agent/runtime.js");
+    const agentRuntime = requireDist("../../agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "hermes" });
     vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("Hermes");
     const errorSpy = vi.spyOn(console, "error");

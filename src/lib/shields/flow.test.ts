@@ -2,22 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
 const requireDist = createRequire(import.meta.url);
-const shieldsModulePath = "../../../dist/lib/shields/index.js";
+const shieldsModulePath = "./index.js";
 
 type ShieldsHarness = {
   auditSpy: MockInstance;
   logSpy: MockInstance;
-  shieldsDown: typeof import("../../../dist/lib/shields/index.js").shieldsDown;
-  shieldsStatus: typeof import("../../../dist/lib/shields/index.js").shieldsStatus;
-  shieldsUp: typeof import("../../../dist/lib/shields/index.js").shieldsUp;
-  isShieldsDown: typeof import("../../../dist/lib/shields/index.js").isShieldsDown;
+  shieldsDown: typeof import("./index.js").shieldsDown;
+  shieldsStatus: typeof import("./index.js").shieldsStatus;
+  shieldsUp: typeof import("./index.js").shieldsUp;
+  isShieldsDown: typeof import("./index.js").isShieldsDown;
 };
 
 let tmpDir: string;
@@ -28,18 +28,18 @@ type HarnessOptions = {
 
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   delete require.cache[requireDist.resolve(shieldsModulePath)];
-  delete require.cache[requireDist.resolve("../../../dist/lib/sandbox/privileged-exec.js")];
+  delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
-  const runner = requireDist("../../../dist/lib/runner.js");
-  const policy = requireDist("../../../dist/lib/policy/index.js");
-  const sandboxConfig = requireDist("../../../dist/lib/sandbox/config.js");
-  const registry = requireDist("../../../dist/lib/state/registry.js");
-  const privilegedExec = requireDist("../../../dist/lib/sandbox/privileged-exec.js");
-  const dockerExec = requireDist("../../../dist/lib/adapters/docker/exec.js");
-  const audit = requireDist("../../../dist/lib/shields/audit.js");
+  const runner = requireDist("../runner.js");
+  const policy = requireDist("../policy/index.js");
+  const sandboxConfig = requireDist("../sandbox/config.js");
+  const registry = requireDist("../state/registry.js");
+  const privilegedExec = requireDist("../sandbox/privileged-exec.js");
+  const dockerExec = requireDist("../adapters/docker/exec.js");
+  const audit = requireDist("./audit.js");
 
   vi.spyOn(runner, "validateName").mockImplementation((name: unknown) => String(name));
   vi.spyOn(runner, "runCapture").mockReturnValue("version: 1\nnetwork_policies:\n  test: {}\n");

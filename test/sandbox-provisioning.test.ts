@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -570,7 +569,6 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     // #4952: recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the long-running
     // gateway into a process whose argv is plain `openclaw` — no `gateway`
     // token at all (see the gateway_pid() helper in
-    // test/e2e/test-issue-2478-crash-loop-recovery.sh). The in-container curl
     // probe fails (connection refused, exit 7) on runtime shapes where the
     // dashboard port lives outside this namespace, so the healthcheck falls
     // back to the in-container gateway-liveness check. A pgrep that only
@@ -1268,7 +1266,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
-
   function runHermesUserSetupBlock() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-users-"));
@@ -1286,7 +1283,6 @@ describe("Hermes sandbox provisioning", () => {
     ]);
     return { ...result, tmp, sandboxRoot };
   }
-
   function runHermesLayoutBlock(
     dockerfilePath: string,
     startMarker: string,
@@ -1309,13 +1305,11 @@ describe("Hermes sandbox provisioning", () => {
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }
-
   it("final image validates and runs the manifest-declared hermes binary path", () => {
     const result = runHermesPathValidation();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("hermes manifest version");
   });
-
   function runHermesUvExtrasExpansion() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
@@ -1338,7 +1332,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);
@@ -1357,7 +1351,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");
@@ -1373,7 +1366,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
@@ -1384,18 +1376,15 @@ describe("Hermes sandbox provisioning", () => {
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
     fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Published base images can lag Dockerfile.base",
       "# Harden: remove unnecessary build tools",
     ).replaceAll("/opt/hermes", hermesRoot);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
       ]);
-
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
@@ -1406,7 +1395,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {
@@ -1419,7 +1407,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(
@@ -1434,7 +1421,6 @@ describe("Hermes sandbox provisioning", () => {
         { precreateConfig: true },
       ),
     ];
-
     try {
       for (const run of runs) {
         expect(run.result.status).toBe(0);
