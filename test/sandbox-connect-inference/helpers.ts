@@ -332,11 +332,23 @@ const sanitizedPrefix =
     index % 2 === 0 ? value === "--env" : /^[A-Z0-9_]+=.*$/.test(value)
   );
 
-if (args[0] === "ps") {
+const isDirectSandboxDiscovery =
+  args[0] === "ps" &&
+  args.includes("--no-trunc") &&
+  args.includes("label=openshell.ai/managed-by=openshell") &&
+  args.includes("label=openshell.ai/sandbox-name=${sandboxName}") &&
+  args.includes("{{.ID}}\\t{{.Names}}");
+
+if (isDirectSandboxDiscovery) {
   const directContainer = state.gatewaySupervisorRecovery
     ? "sandbox-container-id\\topenshell-${sandboxName}-fixture\\n"
     : "";
   process.stdout.write(directContainer);
+  process.exit(0);
+}
+
+if (args[0] === "ps") {
+  process.stdout.write("openshell-cluster-nemoclaw\\n");
   process.exit(0);
 }
 
