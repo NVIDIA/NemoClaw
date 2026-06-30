@@ -197,4 +197,20 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
       expect(status).toBeGreaterThan(0);
     });
   }
+
+  // Counterpart invariant (#5974): the exit-code hardening on the native oclif
+  // argv route (src/lib/cli/oclif-runner.ts) must NOT over-correct a genuine
+  // graceful exit. A native `--help` route rides oclif's ExitError(0) and must
+  // still exit 0 through the real binary — the spawned-CLI lock for the
+  // ExitError(0) unit test in src/lib/cli/oclif-runner.test.ts. The opposite
+  // direction (a native parse/user-error route exiting non-zero) is covered by
+  // the "credentials reset without a provider" row above (oclif parse error,
+  // exit 2), which also flows through the native oclif argv route.
+  it("a native --help route stays a clean exit 0 (#5974)", testTimeoutOptions(30_000), () => {
+    const { status, signal, error, combined } = runCli(["credentials", "--help"]);
+    expect(error).toBeUndefined();
+    expect(signal).toBeNull();
+    expect(combined).toContain("USAGE");
+    expect(status).toBe(0);
+  });
 });
