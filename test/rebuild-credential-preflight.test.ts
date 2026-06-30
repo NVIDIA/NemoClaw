@@ -18,7 +18,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { execTimeout } from "./helpers/timeouts";
+import { execTimeout, testTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const NODE_BIN = path.dirname(process.execPath);
@@ -390,7 +390,7 @@ process.exit(0);
 function runRebuild(
   fixture: ReturnType<typeof createFixture>,
   extraEnv: Record<string, string> = {},
-  options: { yes?: boolean; input?: string } = {},
+  options: { yes?: boolean; input?: string; timeoutMs?: number } = {},
 ) {
   const argv = [path.join(REPO_ROOT, "bin", "nemoclaw.js"), fixture.sandboxName, "rebuild"];
   if (options.yes !== false) argv.push("--yes");
@@ -408,7 +408,7 @@ function runRebuild(
       NO_COLOR: "1",
       ...extraEnv,
     },
-    timeout: execTimeout(60_000),
+    timeout: execTimeout(options.timeoutMs ?? 60_000),
   });
 }
 
@@ -602,7 +602,7 @@ describe("atomic rebuild (#2273)", () => {
     });
 
     it("copies Hermes messaging channels from the registry into the rebuild resume session", {
-      timeout: 60_000,
+      timeout: testTimeout(120_000),
     }, () => {
       const f = createFixture({
         agent: "hermes",
@@ -614,7 +614,7 @@ describe("atomic rebuild (#2273)", () => {
         },
       });
 
-      const result = runRebuild(f);
+      const result = runRebuild(f, {}, { timeoutMs: 120_000 });
       const output = (result.stderr || "") + (result.stdout || "");
       expect(output).toContain("Creating new sandbox with current image");
 

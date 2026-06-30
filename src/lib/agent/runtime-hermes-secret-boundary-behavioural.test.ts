@@ -35,8 +35,7 @@ function removeTempDir(dir: string) {
 function waitForPath(filePath: string, timeoutMs = 1000) {
   const sleepView = new Int32Array(new SharedArrayBuffer(4));
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (fs.existsSync(filePath)) return true;
+  while (!fs.existsSync(filePath) && Date.now() < deadline) {
     Atomics.wait(sleepView, 0, 0, 10);
   }
   return fs.existsSync(filePath);

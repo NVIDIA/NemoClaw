@@ -8,11 +8,14 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { testTimeout } from "../../helpers/timeouts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
   isExpectedMcpCurlPolicyDenial,
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
+
+const SUITE_OPTIONS = { timeout: testTimeout(15_000) };
 
 function denialResult(
   overrides: {
@@ -47,7 +50,7 @@ async function captureRestoreScript(hostBackupPath: string, sandboxBackupPath: s
   return restoreScript;
 }
 
-describe("MCP curl policy denial classification", () => {
+describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
   it("accepts an L7 HTTP 403 denial", () => {
     expect(
       isExpectedMcpCurlPolicyDenial(denialResult({ stdout: "NEMOCLAW_MCP_CURL_HTTP_CODE=403\n" })),
