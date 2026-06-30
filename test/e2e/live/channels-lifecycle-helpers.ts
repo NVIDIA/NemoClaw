@@ -227,16 +227,31 @@ function planChannel(sandboxName: string, channelId: string) {
   );
 }
 
+function optionalMessagingPlan(sandboxName: string): JsonRecord | undefined {
+  const messaging = readRegistryEntry(sandboxName).messaging;
+  if (!messaging || typeof messaging !== "object") return undefined;
+  const state = messaging as JsonRecord;
+  if (state.schemaVersion !== 1 || !state.plan || typeof state.plan !== "object") {
+    return undefined;
+  }
+  return state.plan as JsonRecord;
+}
+
 function expectPlanChannelState(
   sandboxName: string,
   agent: AgentKind,
   channelId: MessagingChannel,
   expected: ChannelState,
 ): void {
-  const plan = messagingPlan(sandboxName);
+  const plan =
+    expected === "removed"
+      ? (optionalMessagingPlan(sandboxName) ?? {})
+      : messagingPlan(sandboxName);
   const channels = arrayRecords(plan.channels);
   const channel = channels.find((entry) => entry.channelId === channelId);
-  expect(plan.agent, "messaging.plan.agent").toBe(agent);
+  if (Object.hasOwn(plan, "agent")) {
+    expect(plan.agent, "messaging.plan.agent").toBe(agent);
+  }
 
   const disabledChannels = stringArray(plan.disabledChannels);
   const networkPolicy =

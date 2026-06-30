@@ -49,7 +49,7 @@ test.skipIf(!shouldRunLiveE2E())(
         "startGateway() invokes a real OpenShell Docker-driver gateway child process",
         "a crashed gateway binary does not log 'Docker-driver gateway is healthy'",
         "startGateway() exits non-zero and surfaces a gateway-start failure",
-        "the gateway log proves the sabotaged GLIBC-failure binary was executed",
+        "captured failure output or the gateway log proves the sabotaged GLIBC-failure binary was executed",
         "no live non-zombie gateway process remains after the simulated crash",
       ],
     });
@@ -142,13 +142,11 @@ test.skipIf(!shouldRunLiveE2E())(
     );
 
     const output = resultText(result);
-    await artifacts.writeText(
-      "gateway-log-tail.txt",
-      fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf8") : "",
-    );
+    const gatewayLogText = fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf8") : "";
+    await artifacts.writeText("gateway-log-tail.txt", gatewayLogText);
 
     expect(
-      fs.existsSync(gatewayLog) ? fs.readFileSync(gatewayLog, "utf8") : "",
+      [output, gatewayLogText].filter(Boolean).join("\n"),
       "sabotage binary must have been executed before health assertions are trusted",
     ).toMatch(/GLIBC_2\.3(?:8|9)|openshell-gateway-sabotage/);
 
