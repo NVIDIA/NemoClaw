@@ -5,9 +5,34 @@ import { afterEach, describe, expect, it } from "vitest";
 
 // Import from compiled dist for parity with the other CLI tests in this project.
 import {
+  buildSandboxExecMarkedCommand,
   probeSandboxInferenceGatewayHealth,
   waitForRecoveredSandboxGateway,
 } from "./process-recovery";
+
+describe("sandbox exec command wrapping", () => {
+  it("keeps single-line payloads readable while avoiding marker newlines", () => {
+    const wrapped = buildSandboxExecMarkedCommand("echo SECRET_BOUNDARY_OK");
+
+    expect(wrapped).not.toMatch(/[\r\n]/);
+    expect(wrapped).toContain("echo SECRET_BOUNDARY_OK");
+    expect(wrapped).not.toContain("base64 -d | sh");
+  });
+
+  it("keeps the OpenShell command argument newline-free while preserving multi-line payloads", () => {
+    const payload = "printf 'hello\\n'\ncat '/sandbox/.openclaw/openclaw.json'";
+    const wrapped = buildSandboxExecMarkedCommand(payload);
+
+    expect(wrapped).not.toMatch(/[\r\n]/);
+    expect(wrapped).toContain("__NEMOCLAW_SANDBOX_EXEC_STARTED__");
+    expect(wrapped).toContain("base64 -d | sh");
+    expect(wrapped).not.toContain(payload);
+
+    const encoded = wrapped.match(/printf '%s' '([^']+)' \| base64 -d \| sh/)?.[1];
+    expect(encoded).toBeTruthy();
+    expect(Buffer.from(encoded as string, "base64").toString("utf8")).toBe(payload);
+  });
+});
 
 describe("probeSandboxInferenceGatewayHealth gateway-chain subprobe (#3265)", () => {
   const makeExec =
