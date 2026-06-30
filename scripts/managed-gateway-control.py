@@ -261,6 +261,8 @@ def _open_managed_runtime_directory() -> int:
         try:
             os.mkdir(name, NEMOCLAW_RUNTIME_DIR_MODE, dir_fd=parent_fd)
         except FileExistsError:
+            # Another root controller may have created the fixed directory;
+            # the descriptor-relative owner and mode checks below decide trust.
             pass
         flags = (
             os.O_RDONLY
@@ -431,8 +433,6 @@ def _publish_expected_exit_lease(
     directory_fd = _open_managed_runtime_directory()
     lock_fd = -1
     marker_fd = -1
-    marker_device = -1
-    marker_inode = -1
     try:
         lock_fd = _open_expected_exit_lock(directory_fd)
         existing = _trusted_expected_exit_marker(directory_fd)
@@ -498,6 +498,8 @@ def _publish_expected_exit_lease(
                     metadata.st_ino,
                 )
         except (ControlError, OSError):
+            # Preserve the original publication failure; cleanup is best effort
+            # and inode matching prevents this path from removing a replacement.
             pass
         if marker_fd >= 0:
             os.close(marker_fd)
