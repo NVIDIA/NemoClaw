@@ -234,6 +234,7 @@ describe("built-in channel manifests", () => {
 
   it("keeps rendered config parser keys limited to manifest config inputs", () => {
     const agentIds: readonly MessagingAgentId[] = ["openclaw", "hermes"];
+    const secretLikePattern = /(?:token|secret|password|client_secret|client-secret)/i;
     expect(
       BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) => {
         const configInputIds: ReadonlySet<string> = new Set(
@@ -242,8 +243,13 @@ describe("built-in channel manifests", () => {
         const parser = getBuiltInRenderedConfigParser(manifest.id);
         return agentIds.flatMap((agentId) =>
           (parser?.listConfigVisibilityKeys({ manifest, agentId, inputs: [] }) ?? [])
-            .filter((key) => !configInputIds.has(key.inputId))
-            .map((key) => `${manifest.id}.${agentId}.${key.inputId}`),
+            .filter(
+              (key) =>
+                !configInputIds.has(key.inputId) ||
+                secretLikePattern.test(key.envKey ?? "") ||
+                secretLikePattern.test(key.target),
+            )
+            .map((key) => `${manifest.id}.${agentId}.${key.inputId}:${key.envKey ?? key.target}`),
         );
       }),
     ).toEqual([]);

@@ -66,9 +66,10 @@ export type SandboxForwardListEntry = {
 export type SandboxForwardHealth = boolean | "occupied" | null;
 
 const SANDBOX_EXEC_STARTED_MARKER = "__NEMOCLAW_SANDBOX_EXEC_STARTED__";
+const HERMES_SECRET_BOUNDARY_VALIDATOR_SCRIPT = "validate-hermes-env-secret-boundary.py";
 
 export function buildSandboxExecMarkedCommand(command: string): string {
-  if (!/[\r\n]/.test(command)) {
+  if (!/[\r\n]/.test(command) || command.includes(HERMES_SECRET_BOUNDARY_VALIDATOR_SCRIPT)) {
     return `printf '%s\\n' '${SANDBOX_EXEC_STARTED_MARKER}'; ${command}`;
   }
   const encodedCommand = Buffer.from(command, "utf8").toString("base64");

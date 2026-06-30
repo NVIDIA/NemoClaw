@@ -14,6 +14,7 @@
 import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
+import { shellQuote as quotePath } from "../../core/shell-quote";
 import {
   createBuiltInChannelManifestRegistry,
   getMessagingManifestAvailabilityContext,
@@ -34,7 +35,7 @@ import {
   type WhatsappProbeInput,
 } from "../../sandbox/whatsapp-diagnostics";
 import * as registry from "../../state/registry";
-import { buildConfigStatusSignals, quotePath } from "./channel-status-config";
+import { buildConfigStatusSignals } from "./channel-status-config";
 
 // runner.ts (which process-recovery transitively depends on) uses a few CJS
 // `require()` calls that vitest's CLI-test project cannot resolve at import

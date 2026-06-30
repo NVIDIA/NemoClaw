@@ -13,7 +13,7 @@ export default class SandboxChannelsStatusCommand extends NemoClawCommand {
   static enableJsonFlag = true;
   static summary = "Inspect messaging channel status";
   static description =
-    "Report configured messaging channels, policy coverage, and non-secret rendered config comparisons. Pass --channel whatsapp for the deeper WhatsApp QR/session and inbound-delivery probe.";
+    "Report configured messaging channels, policy coverage, and non-secret rendered config comparisons in the compact summary and non-WhatsApp detail views. Pass --channel whatsapp for the deeper WhatsApp QR/session and inbound-delivery probe.";
   static usage = ["<name> [--channel <channel>] [--json]"];
   static examples = [
     "<%= config.bin %> sandbox channels status alpha --channel whatsapp",

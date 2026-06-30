@@ -80,7 +80,7 @@ function safeAccountId(value: string | undefined): string | undefined {
     value === "." ||
     value === ".." ||
     value.includes("..") ||
-    /[\\/\0-\x1F\x7F]/.test(value)
+    !/^[A-Za-z0-9._-]+$/.test(value)
   ) {
     return undefined;
   }

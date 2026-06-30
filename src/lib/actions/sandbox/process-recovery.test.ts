@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { afterEach, describe, expect, it } from "vitest";
-
+import { buildHermesEnvFileBoundaryStandaloneCheck } from "../../agent/hermes-recovery-boundary";
 // Import from compiled dist for parity with the other CLI tests in this project.
 import {
   buildSandboxExecMarkedCommand,
@@ -31,6 +31,14 @@ describe("sandbox exec command wrapping", () => {
     const encoded = wrapped.match(/printf '%s' '([^']+)' \| base64 -d \| sh/)?.[1];
     expect(encoded).toBeTruthy();
     expect(Buffer.from(encoded as string, "base64").toString("utf8")).toBe(payload);
+  });
+
+  it("keeps the Hermes secret-boundary validator on the raw exec path", () => {
+    const payload = buildHermesEnvFileBoundaryStandaloneCheck();
+    const wrapped = buildSandboxExecMarkedCommand(payload);
+
+    expect(wrapped).toContain("validate-hermes-env-secret-boundary.py");
+    expect(wrapped).not.toContain("base64 -d | sh");
   });
 });
 
