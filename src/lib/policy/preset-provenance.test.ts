@@ -65,13 +65,21 @@ describe("classifyPresetProvenance", () => {
   });
 
   it("documents current-tier attribution when a user-added preset shadows a tier name", () => {
+    const customPresetRegistry = {
+      getCustomPolicies: vi.fn(() => [
+        { name: "npm", description: "sandbox-scoped custom npm policy" },
+      ]),
+    };
+    const [shadowingCustomPreset] = customPresetRegistry.getCustomPolicies();
+
     // Application history is not persisted, so the display can only infer
     // provenance from the current tier. Keep that limitation explicit until
     // the policy registry stores per-preset source history.
-    expect(classifyPresetProvenance("npm", { tierName: "balanced" })).toEqual({
+    expect(classifyPresetProvenance(shadowingCustomPreset.name, { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
     });
+    expect(customPresetRegistry.getCustomPolicies).toHaveBeenCalledOnce();
   });
 
   it("classifies tier-default presets under the Open tier too", () => {
