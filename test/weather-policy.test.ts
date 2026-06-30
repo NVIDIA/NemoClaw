@@ -6,6 +6,8 @@ import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
+import { loadAgent } from "../src/lib/agent/defs.ts";
+
 type WeatherEndpoint = {
   host: string;
   port: number;
@@ -21,6 +23,8 @@ type WeatherPreset = {
     };
   };
 };
+
+const REVIEWED_WTTR_WEATHER_SKILL_OPENCLAW_VERSION = "2026.5.27";
 
 describe("weather policy preset", () => {
   it("allows only current weather hosts and keeps wttr.in read-only (#1417)", () => {
@@ -49,5 +53,14 @@ describe("weather policy preset", () => {
         { allow: { method: "HEAD", path: "/**" } },
       ],
     });
+  });
+
+  it("forces wttr.in egress re-review when the OpenClaw pin changes (#1417)", () => {
+    const openClaw = loadAgent("openclaw");
+
+    expect(
+      openClaw.expectedVersion,
+      "Revalidate the bundled OpenClaw weather skill egress and update the weather host/rule contract before changing the reviewed version",
+    ).toBe(REVIEWED_WTTR_WEATHER_SKILL_OPENCLAW_VERSION);
   });
 });
