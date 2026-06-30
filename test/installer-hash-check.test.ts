@@ -88,17 +88,20 @@ afterEach(() => {
   }
 });
 
-function createFixture(): string {
+function createFixture(openshellVersion = "0.0.72"): string {
   const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-hash-"));
   const scriptsDir = path.join(fixtureRoot, "scripts");
   const binDir = path.join(fixtureRoot, "bin");
   tempDirs.push(fixtureRoot);
   fs.mkdirSync(scriptsDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
-  fs.copyFileSync(
-    path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"),
-    path.join(scriptsDir, "check-installer-hash.sh"),
-  );
+  const checker = fs
+    .readFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), "utf8")
+    .replace(
+      'OPENSHELL_RELEASE_VERSION="0.0.72"',
+      `OPENSHELL_RELEASE_VERSION="${openshellVersion}"`,
+    );
+  fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
 
   const ollamaDigest = createHash("sha256").update(OLLAMA_FIXTURE).digest("hex");
   fs.writeFileSync(
@@ -107,7 +110,7 @@ function createFixture(): string {
   );
   const cases = ASSETS.map(
     (asset) =>
-      `    v0.0.72:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
+      `    v${openshellVersion}:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
   ).join("\n");
   fs.writeFileSync(
     path.join(scriptsDir, "install-openshell.sh"),
@@ -127,7 +130,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 case "$url" in
-  *releases/download/v0.0.72/*)
+  *releases/download/v${openshellVersion}/*)
     case "\${NEMOCLAW_TEST_CURL_MODE}" in
       failure) exit 22 ;;
     esac
@@ -154,8 +157,8 @@ esac
   return fixtureRoot;
 }
 
-function runFixture(mode: "complete" | "failure" | "partial") {
-  const fixtureRoot = createFixture();
+function runFixture(mode: "complete" | "failure" | "partial", openshellVersion?: string) {
+  const fixtureRoot = createFixture(openshellVersion);
   return spawnSync("bash", ["scripts/check-installer-hash.sh"], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -174,6 +177,14 @@ describe("installer hash verification", () => {
     const result = runFixture("complete");
 
     expect(result.status).toBe(0);
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("uses the single release-version constant for release URLs and pin selection", () => {
+    const result = runFixture("complete", "9.9.9");
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Checking OpenShell v9.9.9 release assets");
     expect(result.stdout).toContain("All installer hashes are current");
   });
 

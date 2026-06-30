@@ -165,16 +165,16 @@ describe("pull request and main workflow contracts", () => {
 
     expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
     expect(checkout.with?.["persist-credentials"]).toBe(false);
-    expect(checkout.with?.["fetch-depth"]).toBe(2);
+    expect(checkout.with?.["fetch-depth"]).toBe(0);
     expect(changeDetector.id).toBe("installer-changes");
     expect(changeDetector.if).toBe("github.event_name == 'pull_request'");
     expect(changeDetector.env).toEqual({
       BASE_SHA: "${{ github.event.pull_request.base.sha }}",
       HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
     });
-    expect(changeDetector.run).toContain("git cat-file -e \"${BASE_SHA}^{commit}\"");
+    expect(changeDetector.run).toContain('git cat-file -e "${BASE_SHA}^{commit}"');
     expect(changeDetector.run).toContain(
-      "git diff --quiet --no-ext-diff --no-renames \"$BASE_SHA\" \"$HEAD_SHA\" --",
+      'git diff --quiet --no-ext-diff --no-renames "$BASE_SHA" "$HEAD_SHA" --',
     );
     for (const installerPath of [
       ".github/workflows/installer-hash-check.yaml",
