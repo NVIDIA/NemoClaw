@@ -235,6 +235,9 @@ def _mask_unquoted(match: "re.Match[str]") -> str:
     return f"{match.group('lead')}{_MASK_PY}{match.group('trail')}"
 
 
+_MAX_INPUT_BYTES = 4 * 1024 * 1024
+
+
 def mask_config_output(stream_in: "object", stream_out: "object") -> int:
     # Tracks indentation of an in-flight YAML block scalar that begins with a
     # secret-shaped key (key: | or key: >). Every continuation line — indented
@@ -253,9 +256,23 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
     # Buffer all output in memory and write only on success. If masking raises
     # mid-stream, nothing reaches `stream_out`, so a partial raw secret cannot
     # leak through an aborted run.
+    #
+    # Bound the input at _MAX_INPUT_BYTES (4 MiB) so an upstream regression
+    # that streams an unbounded buffer through this filter fails closed instead
+    # of consuming all sandbox memory. Hermes' resolved config is kilobytes;
+    # exceeding the cap signals something has gone wrong upstream.
     masked_chunks: list[str] = []
     block_indent: int | None = None
+    total_bytes = 0
     for line in stream_in:
+        total_bytes += len(line.encode("utf-8"))
+        if total_bytes > _MAX_INPUT_BYTES:
+            print(
+                "[SECURITY] Refusing hermes config show: masker input exceeded "
+                f"{_MAX_INPUT_BYTES} bytes",
+                file=sys.stderr,
+            )
+            return 1
         stripped = line.lstrip()
         rstripped = line.rstrip("\r\n")
         line_indent = len(line) - len(stripped)

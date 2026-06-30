@@ -64,8 +64,10 @@
 # path that launches the gateway now passes through the same single-source-of-
 # truth validator before the port is bound.
 #
-# Only the `gateway` subcommand is guarded; all other hermes subcommands
-# (dashboard, --version, ...) pass straight through unchanged.
+# Two subcommands are intercepted: `gateway` runs the runtime-env guard
+# before the real binary, and `config show` post-filters stdout/stderr
+# through the Python masker. All other hermes subcommands (dashboard,
+# --version, ...) pass straight through unchanged.
 #
 # SECURITY: the validator, the python interpreter that runs it, and the real
 # binary are all resolved from fixed paths, never from the environment. This

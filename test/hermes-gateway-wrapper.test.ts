@@ -38,6 +38,14 @@ function python3Available(): boolean {
   }
 }
 const canRun = process.platform === "linux" && python3Available();
+// Surface a hard error in CI when the prerequisites are missing instead of
+// silently skipping — a green CI run that never executed any wrapper test
+// would mask regressions in the security boundary.
+if (process.env.CI && !canRun) {
+  throw new Error(
+    "Hermes wrapper integration tests require Linux + python3; CI environment did not meet both prerequisites",
+  );
+}
 
 type WrapperRun = {
   status: number | null;
