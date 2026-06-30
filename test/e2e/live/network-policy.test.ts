@@ -21,6 +21,7 @@ import { type SandboxClient, trustedSandboxShellScript } from "../fixtures/clien
 import { expect, test } from "../fixtures/e2e-test.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { pollDeniedReasonLog } from "./network-policy-denied-log.ts";
 import {
   POLICY_ADD_EXPECT_SCRIPT,
   requirePolicyPresetNumber,
@@ -176,42 +177,20 @@ async function curlStatus(
   return text(result).trim();
 }
 
-type DeniedReasonLogProof = {
-  line: string;
-  reason: string;
-};
-
-function deniedReasonLogProof(output: string): DeniedReasonLogProof | null {
-  const line = output
-    .split(/\r?\n/u)
-    .find(
-      (candidate) =>
-        candidate.includes("NET:OPEN") &&
-        candidate.includes("DENIED") &&
-        candidate.includes(DENIED_REASON_ENDPOINT),
-    );
-  if (!line) return null;
-  const reason = line.match(/\[reason:([^\]]*)\]/u)?.[1] ?? "";
-  return { line, reason };
-}
-
-async function waitForDeniedReasonLog(host: HostCliClient): Promise<DeniedReasonLogProof> {
-  const attempts = process.env.GITHUB_ACTIONS === "true" ? 12 : 8;
-  let latestLogs = "";
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
-      artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
-      timeoutMs: 60_000,
-    });
-    expect(logs.exitCode, text(logs)).toBe(0);
-    latestLogs = text(logs);
-    const proof = deniedReasonLogProof(latestLogs);
-    if (proof) return proof;
-    await sleep(1_000);
-  }
-  throw new Error(
-    `denied egress audit event for ${DENIED_REASON_ENDPOINT} did not settle into nemoclaw logs --tail 50:\n${latestLogs}`,
-  );
+async function waitForDeniedReasonLog(host: HostCliClient) {
+  return pollDeniedReasonLog({
+    attempts: process.env.GITHUB_ACTIONS === "true" ? 12 : 8,
+    endpoint: DENIED_REASON_ENDPOINT,
+    readLogs: async (attempt) => {
+      const logs = await runNemoclaw(host, [SANDBOX_NAME, "logs", "--tail", "50"], {
+        artifactName: `tc-net-4760-logs-tail-50-attempt-${attempt}`,
+        timeoutMs: 60_000,
+      });
+      expect(logs.exitCode, text(logs)).toBe(0);
+      return text(logs);
+    },
+    settle: () => sleep(1_000),
+  });
 }
 
 async function startMarkerServer(
