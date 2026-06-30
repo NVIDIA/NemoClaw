@@ -9,7 +9,7 @@ import {
   isOpenShellMcpHostAlias,
   MCP_SERVER_URL_MAX_LENGTH,
 } from "../../security/mcp-url-target";
-import { redactStandaloneSecretsFull } from "../../security/redact";
+import { TOKEN_PREFIX_PATTERNS } from "../../security/secret-patterns";
 import type { McpBridgeEntry } from "../../state/registry";
 import { isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
@@ -83,6 +83,28 @@ const SANDBOX_RUNTIME_CONTROL_ENV_PREFIXES = [
   "UV_",
 ];
 const MCP_PROVIDER_HASH_BYTES = 8;
+const MCP_PATH_CREDENTIAL_PATTERNS = TOKEN_PREFIX_PATTERNS.map(
+  // Validation rejects a token contained anywhere in a persisted segment.
+  // Redaction's word boundaries are inappropriate here because '-' is a valid
+  // final Telegram/Discord token character but is not a RegExp "word" byte.
+  (pattern) => new RegExp(pattern.source.replaceAll("\\b", ""), pattern.flags.replace("g", "")),
+);
+
+/**
+ * Reject self-identifying credentials in persisted endpoint path segments.
+ *
+ * This is deliberately a validation predicate rather than a comparison with
+ * presentation-redactor output. In particular, ordinary path segments such as
+ * `botanical` and `bots` must not inherit the redactor's broad Telegram URL
+ * heuristic. Canonical self-identifying token patterns include only Telegram's
+ * narrow numeric-ID, colon, and fixed-length secret shape.
+ */
+function hasSecretShapedMcpPathSegment(pathname: string): boolean {
+  return pathname.split("/").some((segment) => {
+    if (!segment) return false;
+    return MCP_PATH_CREDENTIAL_PATTERNS.some((pattern) => pattern.test(segment));
+  });
+}
 
 function rejectUnsupportedOpenShellMcpHostAlias(hostname: string): void {
   if (!isOpenShellMcpHostAlias(hostname)) return;
@@ -218,7 +240,7 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
       2,
     );
   }
-  if (redactStandaloneSecretsFull(parsed.pathname) !== parsed.pathname) {
+  if (hasSecretShapedMcpPathSegment(parsed.pathname)) {
     throw new McpBridgeError(
       "MCP server URL paths must not contain secret-shaped credential material because the full URL is persisted and displayed. Put the bearer credential in --env KEY.",
       2,

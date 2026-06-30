@@ -214,9 +214,19 @@ describe("MCP CLI parsing", () => {
       "nvapi-abcdefghijklmnop",
       "ghp_abcdefghijklmnop",
       "sk-abcdefghijklmnopqrstuvwxyz",
+      "sk-abcdefghijklmnopqrstuvwxyz.json",
+      `bot1234567890:${"A".repeat(35)}`,
+      `bot1234567890:${"A".repeat(34)}-`,
+      `1234567890:${"B".repeat(35)}`,
+      `${"A".repeat(24)}.${"B".repeat(6)}.${"C".repeat(26)}-`,
     ]) {
       expect(() => normalizeMcpServerUrl(`https://mcp.example.test/mcp/${token}`)).toThrow(
         /paths must not contain secret-shaped credential material.*full URL is persisted/i,
+      );
+    }
+    for (const path of ["/botanical/mcp", "/bottom/mcp", "/api/bots/mcp"]) {
+      expect(normalizeMcpServerUrl(`https://mcp.example.test${path}`)).toBe(
+        `https://mcp.example.test${path}`,
       );
     }
     expect(() => normalizeMcpServerUrl("https://*.example.test/mcp")).toThrow(
