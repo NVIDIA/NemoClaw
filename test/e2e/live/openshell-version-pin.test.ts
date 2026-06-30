@@ -23,49 +23,65 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
 
 test("openshell-version-pin: selects shipping 0.0.72 between older and too-new releases", () => {
-  const result = spawnSync(
-    process.execPath,
-    [
-      "--import",
-      "tsx",
-      "-e",
-      `
-const install = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-install.ts"))});
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-resolver-"));
+  const binDir = path.join(tmpDir, "bin");
+  fs.mkdirSync(binDir);
+  writeExecutable(
+    path.join(binDir, "gh"),
+    `#!/bin/sh
+printf '%s\\n' '${JSON.stringify([
+      { tagName: "v0.0.71" },
+      { tagName: "v0.0.73" },
+      { tagName: "v0.0.72" },
+    ])}'`,
+  );
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "-e",
+        `
 const pin = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-pin.ts"))});
 const version = require(${JSON.stringify(path.join(REPO_ROOT, "src/lib/onboard/openshell-version.ts"))});
-const resolution = install.resolveOpenshellInstallVersion(
-  ["v0.0.71", "v0.0.73", "v0.0.72"],
-  { max: "0.0.72" },
-  { versionGte: version.versionGte },
-);
+const deps = {
+  getBlueprintMinOpenshellVersion: () => "0.0.72",
+  getBlueprintMaxOpenshellVersion: () => "0.0.72",
+  versionGte: version.versionGte,
+};
+const resolution = pin.resolveOpenshellInstallPin(deps);
 const replacement = pin.computeOpenshellInstallEnv(
   { INSTALLED_OPENSHELL_VERSION: "0.0.71" },
-  {
-    getBlueprintMinOpenshellVersion: () => "0.0.72",
-    getBlueprintMaxOpenshellVersion: () => "0.0.72",
-    versionGte: version.versionGte,
-    listReleases: () => ["v0.0.71", "v0.0.72", "v0.0.73"],
-  },
+  deps,
 );
 process.stdout.write(JSON.stringify({
   installed: version.getInstalledOpenshellVersion("openshell 0.0.71"),
   resolution,
   replacement: replacement.env,
 }));`,
-    ],
-    { cwd: REPO_ROOT, encoding: "utf8" },
-  );
-  expect(result.status, result.stderr).toBe(0);
-  expect(JSON.parse(result.stdout)).toEqual({
-    installed: "0.0.71",
-    resolution: { kind: "pin", version: "0.0.72", latest: "0.0.73", reason: "max-cap" },
-    replacement: {
-      INSTALLED_OPENSHELL_VERSION: "0.0.71",
-      NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.72",
-      NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.72",
-      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
-    },
-  });
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${binDir}:${process.env.PATH ?? ""}` },
+      },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      installed: "0.0.71",
+      resolution: { kind: "pin", version: "0.0.72", latest: "0.0.73", reason: "max-cap" },
+      replacement: {
+        INSTALLED_OPENSHELL_VERSION: "0.0.71",
+        NEMOCLAW_OPENSHELL_MIN_VERSION: "0.0.72",
+        NEMOCLAW_OPENSHELL_MAX_VERSION: "0.0.72",
+        NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.72",
+      },
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 const PINNED_OPEN_SHELL_SHA256 = {
