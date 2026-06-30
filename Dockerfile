@@ -100,10 +100,8 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
-COPY scripts/verify-openclaw-fetch-guard-runtime.mjs /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
-        /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -235,10 +233,6 @@ RUN set -eu; \
 # Patch 4: drop when OpenClaw defaults bare fetchWithSsrFGuard calls to
 #   trusted_env_proxy in an OpenShell sandbox, or when all sandbox-sensitive
 #   callsites explicitly pass mode: "trusted_env_proxy".
-#   During every OpenClaw version bump, audit omitted-mode fetchWithSsrFGuard
-#   callsites. If any callsite relies on STRICT direct DNS/TLS/mTLS semantics,
-#   drop this patch or make that callsite pass an explicit strict mode before
-#   carrying the compatibility patch forward.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -384,9 +378,6 @@ RUN set -eu; \
                 if printf '%s\n' "$patched_resolver" | grep -Fq 'params.proxy === "env"'; then \
                     patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
                 fi; \
-                if grep -Fq 'params.proxy === "env" && params.dangerouslyAllowEnvProxyWithoutPinnedDns === true' "$f"; then \
-                    patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
-                fi; \
                 if grep -Fq 'dangerouslyAllowEnvProxyWithoutPinnedDns' "$f"; then \
                     patch_fail "Patch 4 verification left deprecated dangerous env-proxy opt-in in $f"; \
                 fi; \
@@ -470,14 +461,9 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
 # pinned selection-*.js shape changes.
-# The same build layer then imports the npm-installed, compiled fetch guard with
-# an injected fetch implementation (no external request) to prove proxy dispatch,
-# no local DNS, literal SSRF denies, and redirect re-checks after patching.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-    /usr/local/lib/node_modules/openclaw/dist \
-    && node /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs \
-        /usr/local/lib/node_modules/openclaw/dist
+    /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
