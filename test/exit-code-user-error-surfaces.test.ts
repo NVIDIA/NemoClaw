@@ -198,16 +198,28 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
     });
   }
 
-  // Counterpart invariant (#5974): the exit-code hardening on the native oclif
-  // argv route (src/lib/cli/oclif-runner.ts) must NOT over-correct a genuine
-  // graceful exit. A native `--help` route rides oclif's ExitError(0) and must
-  // still exit 0 through the real binary — the spawned-CLI lock for the
-  // ExitError(0) unit test in src/lib/cli/oclif-runner.test.ts. The opposite
-  // direction (a native parse/user-error route exiting non-zero) is covered by
-  // the "credentials reset without a provider" row above (oclif parse error,
-  // exit 2), which also flows through the native oclif argv route.
-  it("a native --help route stays a clean exit 0 (#5974)", testTimeoutOptions(30_000), () => {
-    const { status, signal, error, combined } = runCli(["credentials", "--help"]);
+  // PRA-1 (#5974): exercise the NATIVE oclif argv route end-to-end through the
+  // real binary. `dispatchCli` sends a leading `sandbox`/`internal` token
+  // straight to `runOclifArgv` (src/lib/cli/oclif-runner.ts) — distinct from
+  // the by-id dispatcher used by the rows above — so these two cases lock both
+  // directions of that route:
+  //   - a native parse/user-error route prints oclif's formatted error and
+  //     exits non-zero (the hardening this PR adds to the native path), and
+  //   - a native help route stays a clean exit 0 — a genuine ExitError(0) that
+  //     the hardening must NOT over-correct (the spawned-CLI counterpart to the
+  //     ExitError(0) unit test in src/lib/cli/oclif-runner.test.ts).
+  // Both resolve at oclif's command lookup, before any gateway probe, so they
+  // stay hermetic under the fakes above.
+  it("a native-route user error prints oclif's error and exits non-zero (#5974)", testTimeoutOptions(30_000), () => {
+    const { status, signal, error, combined } = runCli(["sandbox", "bogus-subcmd"]);
+    expect(error).toBeUndefined();
+    expect(signal).toBeNull();
+    expect(combined).toContain("not found");
+    expect(status).toBeGreaterThan(0);
+  });
+
+  it("a native-route --help stays a clean exit 0 (#5974)", testTimeoutOptions(30_000), () => {
+    const { status, signal, error, combined } = runCli(["sandbox", "--help"]);
     expect(error).toBeUndefined();
     expect(signal).toBeNull();
     expect(combined).toContain("USAGE");
