@@ -23,11 +23,12 @@ function expectValidModuleSource(source: string): void {
 
 async function waitFor(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 5_000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
+  let matched = predicate();
+  while (!matched && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 25));
+    matched = predicate();
   }
-  throw new Error(message);
+  expect(matched, message).toBe(true);
 }
 
 describe("messaging provider installed-runtime proofs", () => {
@@ -103,10 +104,9 @@ describe("messaging provider installed-runtime proofs", () => {
       });
     } finally {
       child.kill("SIGTERM");
-      await new Promise<void>((resolve) => {
-        if (child.exitCode !== null) resolve();
-        else child.once("exit", () => resolve());
-      });
+      await new Promise<void>((resolve) =>
+        child.exitCode !== null ? resolve() : child.once("exit", () => resolve()),
+      );
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 10_000);
