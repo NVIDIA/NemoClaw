@@ -3,10 +3,10 @@
 
 import {
   type CurlAuthConfig,
-  type OpenAiLikeAuthMode,
   createBearerAuthConfig,
   createOpenAiLikeAuthConfig,
   createXApiKeyAuthConfig,
+  type OpenAiLikeAuthMode,
 } from "../adapters/http/auth-config";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { getCurlTimingArgs, runCurlProbe } from "../adapters/http/probe";

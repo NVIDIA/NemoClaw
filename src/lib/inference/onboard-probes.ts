@@ -72,9 +72,7 @@ function openAiLikeFailureFromError(error) {
   return {
     ok: false,
     message,
-    failures: [
-      { name: "curl auth config", httpStatus: 0, curlStatus: 0, message, body: "" },
-    ],
+    failures: [{ name: "curl auth config", httpStatus: 0, curlStatus: 0, message, body: "" }],
   };
 }
 
@@ -578,9 +576,7 @@ function runDoubledTimeoutChatCompletionsRetry({
 }) {
   const platformOptions = typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
   const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
-  const doubledArgs = baseArgs.map((arg) =>
-    /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
-  );
+  const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
   const buildRetryArgs = () => [
     "-sS",
     ...doubledArgs,
