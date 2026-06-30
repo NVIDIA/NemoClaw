@@ -433,11 +433,21 @@ describe("ManifestCompiler", () => {
       {
         channelId: "teams",
         kind: "package-install",
-        outputId: "hermesTeamsAppsPackage",
+        outputId: "hermesBotbuilderCorePackage",
         required: true,
         value: {
           manager: "hermes-uv-pip",
-          spec: "microsoft-teams-apps==2.0.13.4",
+          spec: "botbuilder-core==4.17.1",
+        },
+      },
+      {
+        channelId: "teams",
+        kind: "package-install",
+        outputId: "hermesBotbuilderAiohttpPackage",
+        required: true,
+        value: {
+          manager: "hermes-uv-pip",
+          spec: "botbuilder-integration-aiohttp==4.17.1",
         },
       },
       {

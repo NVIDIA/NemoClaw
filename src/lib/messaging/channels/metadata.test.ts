@@ -156,10 +156,17 @@ describe("built-in messaging channel metadata", () => {
     expect(listMessagingPackageInstallSpecs({ agent: "hermes" })).toEqual([
       {
         channelId: "teams",
-        packageId: "hermesTeamsAppsPackage",
+        packageId: "hermesBotbuilderCorePackage",
         agents: ["hermes"],
         manager: "hermes-uv-pip",
-        spec: "microsoft-teams-apps==2.0.13.4",
+        spec: "botbuilder-core==4.17.1",
+      },
+      {
+        channelId: "teams",
+        packageId: "hermesBotbuilderAiohttpPackage",
+        agents: ["hermes"],
+        manager: "hermes-uv-pip",
+        spec: "botbuilder-integration-aiohttp==4.17.1",
       },
       {
         channelId: "teams",

@@ -769,10 +769,17 @@ describe("built-in channel manifests", () => {
       required: true,
     });
     expect(teamsManifest.agentPackages).toContainEqual({
-      id: "hermesTeamsAppsPackage",
+      id: "hermesBotbuilderCorePackage",
       agent: "hermes",
       manager: "hermes-uv-pip",
-      spec: "microsoft-teams-apps==2.0.13.4",
+      spec: "botbuilder-core==4.17.1",
+      required: true,
+    });
+    expect(teamsManifest.agentPackages).toContainEqual({
+      id: "hermesBotbuilderAiohttpPackage",
+      agent: "hermes",
+      manager: "hermes-uv-pip",
+      spec: "botbuilder-integration-aiohttp==4.17.1",
       required: true,
     });
     expect(teamsManifest.agentPackages).toContainEqual({
