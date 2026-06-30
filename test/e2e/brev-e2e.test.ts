@@ -11,8 +11,8 @@
  * suite against the live environment. Tears down the instance when done.
  *
  * NOTE: This does NOT test the community Launchable install path
- * (launch-plugin.sh). For that, see test-launchable-smoke.sh wired into
- * nightly-e2e.yaml.
+ * (launch-plugin.sh). For that, run e2e-launchable-smoke in
+ * e2e.yaml.
  *
  * Intended to be run from CI via:
  *   npx vitest run --project e2e-branch-validation
@@ -421,8 +421,16 @@ function runRemoteCommand(
   return ssh("cat /tmp/test-output.log", { timeout: 30_000 });
 }
 
-function runRemoteTest(scriptPath: string): string {
-  return runRemoteCommand(`bash ${scriptPath}`);
+function runRemoteVitest(project: "cli" | "e2e-live", target: string): string {
+  return runRemoteCommand(
+    `NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project ${project} ${target} --silent=false --reporter=default`,
+  );
+}
+
+function expectVitestPassed(output: string): void {
+  expect(output).toContain("Test Files");
+  expect(output).toMatch(/\bpassed\b/);
+  expect(output).not.toMatch(/\bfailed\b/i);
 }
 
 function printRemoteFailureDiagnostics(): void {
@@ -1158,9 +1166,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-full-e2e.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/full-e2e.test.ts");
+      expectVitestPassed(output);
     },
     900_000,
   );
@@ -1168,9 +1175,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(GPU_TEST_SUITE)(
     "GPU E2E suite passes on Brev GPU VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-gpu-e2e.sh");
-      expect(output).toContain("GPU E2E PASSED");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/gpu-e2e.test.ts");
+      expectVitestPassed(output);
     },
     1_800_000,
   );
@@ -1178,9 +1184,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "credential-sanitization" || TEST_SUITE === "all")(
     "credential sanitization suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-credential-sanitization.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/credential-sanitization.test.ts");
+      expectVitestPassed(output);
     },
     600_000,
   );
@@ -1188,9 +1193,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "telegram-injection" || TEST_SUITE === "all")(
     "telegram bridge injection suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-telegram-injection.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/telegram-injection.test.ts");
+      expectVitestPassed(output);
     },
     600_000,
   );
@@ -1218,9 +1222,8 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "messaging-providers" || TEST_SUITE === "all")(
     "messaging credential provider suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-providers.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest("e2e-live", "test/e2e/live/messaging-providers.test.ts");
+      expectVitestPassed(output);
     },
     900_000, // 15 min — creates a new sandbox with messaging providers
   );
@@ -1231,9 +1234,11 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
   it.runIf(TEST_SUITE === "messaging-compatible-endpoint" || TEST_SUITE === "all")(
     "messaging compatible endpoint suite passes on remote VM",
     () => {
-      const output = runRemoteTest("test/e2e/test-messaging-compatible-endpoint.sh");
-      expect(output).toContain("PASS");
-      expect(output).not.toMatch(/FAIL:/);
+      const output = runRemoteVitest(
+        "e2e-live",
+        "test/e2e/live/messaging-compatible-endpoint.test.ts",
+      );
+      expectVitestPassed(output);
     },
     900_000, // 15 min — creates a new sandbox with Telegram + compatible endpoint
   );
@@ -1243,11 +1248,11 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     () => {
       const output = runRemoteCommand(
         [
-          `NEMOCLAW_RUN_E2E_SCENARIOS=1`,
+          `NEMOCLAW_RUN_LIVE_E2E=1`,
           `NEMOCLAW_E2E_DASHBOARD_REMOTE_BIND=1`,
           `NEMOCLAW_SANDBOX_NAME=e2e-test`,
-          `npx vitest run --project e2e-scenarios-live`,
-          `test/e2e-scenario/live/dashboard-remote-bind.test.ts`,
+          `npx vitest run --project e2e-live`,
+          `test/e2e/live/dashboard-remote-bind.test.ts`,
           `--silent=false --reporter=default`,
         ].join(" "),
         300_000,
