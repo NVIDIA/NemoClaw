@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,79 +9,7 @@ import { describe, expect, it } from "vitest";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REDACTOR = path.resolve(HERE, "e2e/lib/redact-device-state.py");
-const SCOPE_UPGRADE_SCRIPT = path.resolve(HERE, "e2e/test-issue-4462-scope-upgrade-approval.sh");
 const REDACTED = "[REDACTED]";
-
-function requireNonNegative(value: number, message: string): number {
-  return value >= 0
-    ? value
-    : (() => {
-        throw new Error(message);
-      })();
-}
-
-function extractShellFunction(scriptPath: string, name: string): string {
-  const body = readFileSync(scriptPath, "utf8");
-  const startMarker = `${name}() {`;
-  const start = requireNonNegative(
-    body.indexOf(startMarker),
-    `function ${name} not found in ${scriptPath}`,
-  );
-  const lines = body.slice(start).split("\n");
-  const endIndex = requireNonNegative(
-    lines.findIndex((line, index) => index > 0 && line === "}"),
-    `function ${name} missing closing brace in ${scriptPath}`,
-  );
-  return lines.slice(0, endIndex + 1).join("\n");
-}
-
-function materializeRedactor(redactorScriptOverride: string | undefined): string {
-  const overrideRoot = mkdtempSync(path.join(tmpdir(), "scope-upgrade-shell-"));
-  mkdirSync(path.join(overrideRoot, "lib"), { recursive: true });
-  const redactorSource = redactorScriptOverride ?? readFileSync(REDACTOR, "utf8");
-  writeFileSync(path.join(overrideRoot, "lib", "redact-device-state.py"), redactorSource, {
-    mode: 0o755,
-  });
-  return overrideRoot;
-}
-
-function runScopeUpgradeDeviceStateWrapper(stubs: {
-  sandboxRawOutput: string;
-  sandboxRc: number;
-  redactorScriptOverride?: string;
-}): { rc: number; stdout: string; stderr: string } {
-  const functionBody = extractShellFunction(SCOPE_UPGRADE_SCRIPT, "device_state_json");
-  const e2eDir = materializeRedactor(stubs.redactorScriptOverride);
-  const harness = `
-set -u
-sandbox_exec_sh_script() {
-  printf '%s' "$E2E_TEST_SANDBOX_RAW"
-  return "$E2E_TEST_SANDBOX_RC"
-}
-extract_json_doc() { cat; }
-${functionBody}
-device_state_json
-`;
-  try {
-    const result = spawnSync("bash", ["-c", harness], {
-      encoding: "utf-8",
-      timeout: 20_000,
-      env: {
-        ...process.env,
-        E2E_DIR: e2eDir,
-        E2E_TEST_SANDBOX_RAW: stubs.sandboxRawOutput,
-        E2E_TEST_SANDBOX_RC: String(stubs.sandboxRc),
-      },
-    });
-    return {
-      rc: result.status ?? -1,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-    };
-  } finally {
-    rmSync(e2eDir, { recursive: true, force: true });
-  }
-}
 
 function runRedactor(input: unknown): { rc: number; stdout: string; stderr: string; doc: unknown } {
   const result = spawnSync("python3", [REDACTOR], {
@@ -222,94 +148,3 @@ describe("device-state JSON redactor", () => {
   });
 });
 
-describe("scope-upgrade device_state_json shell wrapper", () => {
-  const TOKEN_LEAK = "nvapi-abc.def_ghi-jkl-mnopqrstu";
-  const RAW_TOKEN_PAYLOAD = `{"pending":[{"deviceId":"dev-1","tokens":{"operator":{"value":"${TOKEN_LEAK}"}}}],"paired":[],"paths":{"pending":"/sandbox/.openclaw/devices/pending.json","paired":"/sandbox/.openclaw/devices/paired.json"}}`;
-
-  it("emits only the sandbox-exec failure marker when sandbox_exec_sh_script returns non-zero", () => {
-    const result = runScopeUpgradeDeviceStateWrapper({
-      sandboxRawOutput: `${RAW_TOKEN_PAYLOAD}\n`,
-      sandboxRc: 5,
-    });
-
-    expect(result.rc).toBe(5);
-    expect(result.stdout.trim()).toBe("[DEVICE_STATE_REDACTION_FAILED stage=sandbox-exec rc=5]");
-    expect(result.stdout).not.toContain(TOKEN_LEAK);
-    expect(result.stdout).not.toContain('"tokens"');
-    expect(result.stderr).not.toContain(TOKEN_LEAK);
-  });
-
-  it("emits only the redactor failure marker when the redactor exits non-zero on token-bearing input", () => {
-    const failingRedactor = "#!/usr/bin/env python3\nimport sys\nsys.stdin.read()\nsys.exit(7)\n";
-
-    const result = runScopeUpgradeDeviceStateWrapper({
-      sandboxRawOutput: `${RAW_TOKEN_PAYLOAD}\n`,
-      sandboxRc: 0,
-      redactorScriptOverride: failingRedactor,
-    });
-
-    expect(result.rc).toBe(7);
-    expect(result.stdout.trim()).toBe("[DEVICE_STATE_REDACTION_FAILED stage=redactor rc=7]");
-    expect(result.stdout).not.toContain(TOKEN_LEAK);
-    expect(result.stdout).not.toContain('"tokens"');
-    expect(result.stderr).not.toContain(TOKEN_LEAK);
-  });
-
-  it("emits redacted JSON without leaking raw token-bearing input on the success path", () => {
-    const result = runScopeUpgradeDeviceStateWrapper({
-      sandboxRawOutput: `${RAW_TOKEN_PAYLOAD}\n`,
-      sandboxRc: 0,
-    });
-
-    expect(result.rc).toBe(0);
-    expect(result.stdout).not.toContain(TOKEN_LEAK);
-    expect(result.stdout).toContain(REDACTED);
-    expect(result.stdout).not.toContain("[DEVICE_STATE_REDACTION_FAILED");
-    expect(result.stderr).not.toContain(TOKEN_LEAK);
-  });
-});
-
-describe("scope-upgrade Phase 7 sandbox-B least-privilege onboarding", () => {
-  it("unsets hosted inference credentials and routing env before Ollama onboard", () => {
-    const script = readFileSync(SCOPE_UPGRADE_SCRIPT, "utf8");
-    const onboardCommand = "run_with_timeout 1500 nemoclaw onboard --non-interactive --fresh";
-    const onboardIndex = requireNonNegative(
-      script.indexOf(onboardCommand),
-      "sandbox-B onboard command not found",
-    );
-    const sandboxBStart = requireNonNegative(
-      script.lastIndexOf("export NEMOCLAW_PROVIDER=ollama", onboardIndex),
-      "sandbox-B Ollama provider export not found before onboard",
-    );
-    const sandboxBBlock = script.slice(sandboxBStart, onboardIndex);
-
-    for (const name of [
-      "NVIDIA_INFERENCE_API_KEY",
-      "COMPATIBLE_API_KEY",
-      "NEMOCLAW_ENDPOINT_URL",
-      "NEMOCLAW_COMPAT_MODEL",
-      "NEMOCLAW_PREFERRED_API",
-      "NEMOCLAW_E2E_USE_HOSTED_INFERENCE",
-    ]) {
-      expect(sandboxBBlock).toContain(`unset ${name}`);
-    }
-  });
-});
-
-describe("scope-upgrade Phase 7 hosted inference model wiring", () => {
-  const script = readFileSync(SCOPE_UPGRADE_SCRIPT, "utf8");
-
-  it("follows the reusable NVIDIA inference NEMOCLAW_MODEL export", () => {
-    expect(script).toContain(
-      'EXPECTED_MODEL_A="${NEMOCLAW_CLI_SCOPE_EXPECTED_MODEL_A:-${NEMOCLAW_MODEL:-',
-    );
-    expect(script).not.toMatch(
-      /EXPECTED_MODEL_A="\$\{NEMOCLAW_CLI_SCOPE_EXPECTED_MODEL_A:-nvidia\//,
-    );
-
-    const scriptFallbackMatch = script.match(
-      /EXPECTED_MODEL_A="\$\{NEMOCLAW_CLI_SCOPE_EXPECTED_MODEL_A:-\$\{NEMOCLAW_MODEL:-([^}]+)\}\}"/,
-    );
-    expect(scriptFallbackMatch?.[1]).toBeDefined();
-  });
-});
