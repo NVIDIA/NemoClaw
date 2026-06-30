@@ -675,7 +675,8 @@ async function runOpenShellGatewayAuthSourceContractScenarioUnchecked({
     OPENSHELL_BIND_ADDRESS: "127.0.0.1",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
     OPENSHELL_DOCKER_NETWORK_NAME: networkName,
-    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.72",
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE:
+      "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
     OPENSHELL_DRIVERS: "docker",
     OPENSHELL_GRPC_ENDPOINT: `https://127.0.0.1:${port}`,
     OPENSHELL_LOCAL_TLS_DIR: certBundle.localTlsDir,

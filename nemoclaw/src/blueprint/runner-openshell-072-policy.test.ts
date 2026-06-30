@@ -57,9 +57,15 @@ network_policies:
           strict_tool_names: true
         rules:
           - allow:
-              tool: { any: [search_web, list_tools] }
+              method: tools/call
+              tool:
+                any: [search_web, list_tools]
+          - allow:
+              method: resources/read
         deny_rules:
-          - tool: { any: [send_email, delete_resource] }
+          - method: tools/call
+            tool:
+              any: [send_email, delete_resource]
   existing_json_rpc:
     endpoints:
       - host: rpc.example.com
@@ -69,7 +75,8 @@ network_policies:
         enforcement: enforce
         json_rpc: { max_body_bytes: 131072 }
         rules:
-          - allow: { method: reports.search }
+          - allow:
+              method: { any: [reports.search, reports.get] }
 `;
 
 const FULL_POLICY = `${BASE_POLICY}  _provider_nvidia-inference: {}
@@ -77,6 +84,18 @@ const FULL_POLICY = `${BASE_POLICY}  _provider_nvidia-inference: {}
 
 function policyOutput(policy: string): string {
   return ["Version: 1", "Hash: sha256:test", "---", policy].join("\n");
+}
+
+function policySetCalls(): unknown[][] {
+  return mockExeca.mock.calls.filter(
+    (call) => Array.isArray(call[1]) && call[1][0] === "policy" && call[1][1] === "set",
+  );
+}
+
+function mergedPolicy(): Record<string, unknown> {
+  const key = [...store.keys()].find((candidate) => candidate.endsWith("/merged-policy.yaml"));
+  if (!key) throw new Error("merged policy was not written");
+  return YAML.parse(store.get(key)?.content ?? "");
 }
 
 function blueprint(): Parameters<typeof actionApply>[1] {
@@ -145,13 +164,61 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       expect.anything(),
     );
 
-    const mergedPolicyKey = [...store.keys()].find((key) => key.endsWith("/merged-policy.yaml"));
-    expect(mergedPolicyKey).toBeDefined();
-    const mergedPolicy = YAML.parse(store.get(mergedPolicyKey ?? "")?.content ?? "");
-    expect(mergedPolicy.network_policies).toEqual({
+    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    expect(merged.network_policies).toEqual({
       ...YAML.parse(BASE_POLICY).network_policies,
       nim_service: expect.any(Object),
     });
-    expect(mergedPolicy.network_policies).not.toHaveProperty("_provider_nvidia-inference");
+    expect(merged.network_policies).not.toHaveProperty("_provider_nvidia-inference");
+  });
+
+  it("fails closed when policy get --base fails", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) =>
+      args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+        ? { exitCode: 1, stdout: "", stderr: "gateway unavailable" }
+        : { exitCode: 0, stdout: "", stderr: "" },
+    );
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /Failed to read current policy.*gateway unavailable/,
+    );
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it("filters a malformed provider-composed entry returned by --base", async () => {
+    const malformedBase = YAML.parse(BASE_POLICY);
+    malformedBase.network_policies["_provider_unexpected"] = {
+      endpoints: [{ host: "provider.invalid", port: 443, access: "full" }],
+    };
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
+      exitCode: 0,
+      stdout:
+        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+          ? policyOutput(YAML.stringify(malformedBase))
+          : "",
+      stderr: "",
+    }));
+
+    await actionApply("default", blueprint());
+    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    expect(merged.network_policies).not.toHaveProperty("_provider_unexpected");
+    expect(merged.network_policies).toHaveProperty("existing_mcp");
+    expect(merged.network_policies).toHaveProperty("existing_json_rpc");
+  });
+
+  it("fails closed for a legacy network_policies array instead of dropping it", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
+      exitCode: 0,
+      stdout:
+        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+          ? policyOutput("version: 1\nnetwork_policies:\n  - name: legacy\n")
+          : "",
+      stderr: "",
+    }));
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /network_policies must be a YAML mapping/,
+    );
+    expect(policySetCalls()).toEqual([]);
   });
 });

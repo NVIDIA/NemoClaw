@@ -56,6 +56,13 @@ const PRESET_ENTRIES = YAML.stringify({
   },
 }).replace(/^/gm, "  ");
 
+const CUSTOM_PRESET_ENTRIES = YAML.stringify({
+  custom_registry: {
+    name: "custom_registry",
+    endpoints: [{ host: "registry.example.com", port: 443, access: "read-only" }],
+  },
+}).replace(/^/gm, "  ");
+
 describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
   it("preserves MCP and JSON-RPC fields while merging a preset", () => {
     const merged = YAML.parse(
@@ -66,5 +73,34 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
       ...EXISTING_POLICY.network_policies,
       pypi_access: expect.any(Object),
     });
+  });
+
+  it("preserves protocol fields across multiple built-in and custom-shaped merges", () => {
+    const first = policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), PRESET_ENTRIES);
+    const merged = YAML.parse(policies.mergePresetIntoPolicy(first, CUSTOM_PRESET_ENTRIES));
+
+    expect(merged.network_policies).toEqual({
+      ...EXISTING_POLICY.network_policies,
+      pypi_access: expect.any(Object),
+      custom_registry: expect.any(Object),
+    });
+  });
+
+  it("preserves MCP and JSON-RPC fields when removing a merged preset", () => {
+    const merged = policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), PRESET_ENTRIES);
+    const removed = YAML.parse(policies.removePresetFromPolicy(merged, PRESET_ENTRIES));
+
+    expect(removed.network_policies).toEqual(EXISTING_POLICY.network_policies);
+  });
+
+  it("replaces a legacy network_policies array without serializing array entries as keys", () => {
+    const legacy = YAML.stringify({
+      version: 1,
+      network_policies: [{ host: "legacy.example.com", access: "full" }],
+    });
+    const merged = YAML.parse(policies.mergePresetIntoPolicy(legacy, PRESET_ENTRIES));
+
+    expect(merged.network_policies).toEqual({ pypi_access: expect.any(Object) });
+    expect(merged.network_policies).not.toHaveProperty("0");
   });
 });

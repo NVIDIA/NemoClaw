@@ -16,12 +16,13 @@ The review was completed on June 29, 2026.
 ## Release Identity
 
 - The stable tag is `NVIDIA/OpenShell@v0.0.72` at commit `8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
-- The upstream release workflow completed all 54 jobs, including the MCP conformance lane, package smoke tests, release publication, and GHCR tags.
-- NemoClaw pins the published CLI, gateway, and sandbox SHA-256 digests and the multi-architecture `ghcr.io/nvidia/openshell/supervisor:0.0.72` image.
+- The upstream [v0.0.72 release workflow](https://github.com/NVIDIA/OpenShell/actions/runs/28382086068) completed all 54 jobs at that commit, including the MCP conformance lane, package smoke tests, release publication, and GHCR tags.
+- NemoClaw pins the eight consumed CLI, gateway, and sandbox assets to the digests published by the [GitHub release API](https://api.github.com/repos/NVIDIA/OpenShell/releases/tags/v0.0.72).
+- The stable Docker-driver default pins the multi-architecture supervisor manifest as `ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d`. Explicit operator overrides and the opt-in development channel remain separate trust decisions.
 
 ## Source-of-Truth Boundaries
 
-The generated gateway authentication contract remains unchanged from the OpenShell `0.0.71` dependency review.
+The generated gateway authentication contract remains unchanged from the [OpenShell 0.0.71 gateway authentication review](./openshell-0.0.71-gateway-auth-review).
 The `v0.0.71...v0.0.72` source comparison does not change the gateway config loader, local TLS tables, mTLS user authentication, gateway JWT issuer, or `SandboxJwtAuthenticator` contract used by NemoClaw.
 The live `openshell-gateway-auth-source-contract.test.ts` scenario revalidates that NemoClaw keeps the main OpenShell listener on `127.0.0.1`, rejects unauthenticated Docker-origin calls, accepts a correctly scoped sandbox JWT over guest mTLS, rejects cross-sandbox tokens, and scrubs `OPENSHELL_DISABLE_GATEWAY_AUTH=true`.
 The inherited contract also continues to reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0`.
@@ -30,6 +31,12 @@ User principals remain blocked from sandbox-only methods.
 The compatibility container remains an explicit trusted-host fallback behind `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1`.
 It uses host networking and read-only Docker socket access, so directly supported glibc 2.28 or newer hosts remain preferred.
 Wildcard gateway binds remain rejected while gateway JWT authentication is active.
+
+The release source boundary is the immutable upstream tag, its GitHub release asset digests, and the GHCR manifest digest produced by the linked release workflow.
+A mutable tag, a digest copied from another release, or a checksum file that disagrees with NemoClaw's table is an invalid state.
+NemoClaw cannot make an upstream release mutable source trustworthy after publication, so the installer independently pins every consumed archive and the stable runtime uses the immutable supervisor manifest.
+`install-openshell-version-check.test.ts` compares all eight archive mappings with the checked-in installer table, and `docker-driver-gateway-runtime.test.ts` locks the stable supervisor default while preserving an explicit operator override.
+These version-specific pins are removed only when NemoClaw drops `0.0.72` support or replaces them with independently verified artifacts for a newly supported release.
 
 ## Round-Trippable Policy Boundary
 

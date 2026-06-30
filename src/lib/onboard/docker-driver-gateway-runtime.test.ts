@@ -114,6 +114,30 @@ describe("docker-driver gateway runtime helpers", () => {
     }
   });
 
+  it("pins the stable 0.0.72 supervisor default while preserving an explicit override", () => {
+    withEnv({ OPENSHELL_DOCKER_SUPERVISOR_IMAGE: undefined }, () => {
+      const { helpers } = makeHelpers({
+        getBlueprintMaxOpenshellVersion: () => "0.0.72",
+        supportedOpenshellFallbackVersion: "0.0.72",
+      });
+      expect(
+        helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+      ).toBe(
+        "ghcr.io/nvidia/openshell/supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+      );
+    });
+
+    withEnv(
+      { OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "registry.example.test/supervisor@sha256:override" },
+      () => {
+        const { helpers } = makeHelpers({ supportedOpenshellFallbackVersion: "0.0.72" });
+        expect(
+          helpers.getDockerDriverGatewayEnv(null, "linux").OPENSHELL_DOCKER_SUPERVISOR_IMAGE,
+        ).toBe("registry.example.test/supervisor@sha256:override");
+      },
+    );
+  });
+
   it("clears custom state-dir PID and marker files when the recorded PID is not the gateway", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-runtime-"));
     const pid = 9_876_543;

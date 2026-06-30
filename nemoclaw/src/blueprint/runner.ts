@@ -354,7 +354,9 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
   const existingNetworkPolicies = isObjectLike(current.network_policies)
-    ? current.network_policies
+    ? Object.fromEntries(
+        Object.entries(current.network_policies).filter(([key]) => !key.startsWith("_provider_")),
+      )
     : {};
   const output: UnknownRecord = {};
 

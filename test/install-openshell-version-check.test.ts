@@ -10,9 +10,12 @@ import { describe, expect, it } from "vitest";
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
 const PINNED_OPEN_SHELL_SHA256 = {
   cliDarwinArm64: "117b5354cc42d80bc4d5e070ea5ac4e341208ff6d3c29b516d8a9c80e2310f8d",
+  cliLinuxArm64: "a5ff01a3240d73c72ec1700eda6cc6c752a86cf50c5dd1b5bdc459f544d03045",
   cliLinuxX64: "37836c3b50383e03249c5e16512c1806e591fba8451408a84fb2f628ddb318c4",
   gatewayDarwinArm64: "8c07362107393eb5f4ae4b9ee9f4257fd53862c51ad8dd96f2fe31bb6d8d7ffb",
+  gatewayLinuxArm64: "a97dcb3acb04fb2d1170c1a2170228990c2337e25bb8c18817e5a6e952204108",
   gatewayLinuxX64: "03225fb9388b682af1a5f1614b26b75f828da6031e3ffc1fd920b6fbe5f70877",
+  sandboxLinuxArm64: "2cf62cbd651e55d0f8750804e2b4025e0d6c8eea4564c87cda47a2c922941db0",
   sandboxLinuxX64: "811f914b6a6a3a3f4533449ddebebb6422333861a27a5fa848db6cbfdffdd230",
 };
 const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -307,6 +310,100 @@ exit 0`,
       expect(downloads).toContain("openshell-gateway-aarch64-apple-darwin.tar.gz");
       expect(downloads).not.toContain("openshell-driver-vm-aarch64-apple-darwin.tar.gz");
       expect(downloads).toContain("openshell-gateway-checksums-sha256.txt");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("downloads and verifies every Linux arm64 release asset during reinstall", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-linux-arm64-assets-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      const downloadLog = path.join(tmp, "downloads.log");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "aarch64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.36"; exit 0; fi
+exit 99`,
+      );
+      writeExecutable(path.join(fakeBin, "gh"), "#!/usr/bin/env bash\nexit 1\n");
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+echo "$@" >> ${JSON.stringify(downloadLog)}
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then shift; out="$1"; fi
+  shift || true
+done
+case "$(basename "$out")" in
+openshell-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.cliLinuxArm64}  openshell-aarch64-unknown-linux-musl.tar.gz' > "$out" ;;
+openshell-gateway-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.gatewayLinuxArm64}  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+openshell-sandbox-checksums-sha256.txt)
+  printf '%s\n' '${PINNED_OPEN_SHELL_SHA256.sandboxLinuxArm64}  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out" ;;
+*) : > "$out" ;;
+esac
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        "#!/usr/bin/env bash\ncat >/dev/null\necho 'checksum OK'\n",
+      );
+      writeExecutable(
+        path.join(fakeBin, "tar"),
+        `#!/usr/bin/env bash
+outdir=""
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "-C" ]; then outdir="$arg"; break; fi
+  prev="$arg"
+done
+case "$*" in
+*openshell-gateway*) name="openshell-gateway" ;;
+*openshell-sandbox*) name="openshell-sandbox" ;;
+*) name="openshell" ;;
+esac
+printf '#!/usr/bin/env bash\nexit 0\n' > "$outdir/$name"
+chmod 755 "$outdir/$name"`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "install"),
+        `#!/usr/bin/env bash
+dest="\${@: -1}"
+mkdir -p "$(dirname "$dest")"
+case "$(basename "$dest")" in
+openshell)
+  printf '#!/usr/bin/env bash\nif [ "$1" = "--version" ]; then echo "openshell 0.0.72"; else exit 0; fi\n# request-body-credential-rewrite websocket-credential-rewrite\n' > "$dest" ;;
+*) printf '#!/usr/bin/env bash\nexit 0\n' > "$dest" ;;
+esac
+chmod 755 "$dest"`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          XDG_BIN_HOME: path.join(tmp, "local-bin"),
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      const downloads = fs.readFileSync(downloadLog, "utf8");
+      expect(downloads).toContain("openshell-aarch64-unknown-linux-musl.tar.gz");
+      expect(downloads).toContain("openshell-gateway-aarch64-unknown-linux-gnu.tar.gz");
+      expect(downloads).toContain("openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

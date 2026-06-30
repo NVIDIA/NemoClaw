@@ -28,7 +28,13 @@ describe("docker-driver-gateway auth contract", () => {
 
     expect(compatibilityReview).toContain("NVIDIA/OpenShell@v0.0.72");
     expect(compatibilityReview).toContain("8cb16de9eae4c44d7d31e1493747d8c10abb5963");
-    expect(compatibilityReview).toContain("OpenShell `0.0.71` dependency review");
+    expect(compatibilityReview).toContain("OpenShell 0.0.71 gateway authentication review");
+    expect(compatibilityReview).toContain(
+      "https://github.com/NVIDIA/OpenShell/actions/runs/28382086068",
+    );
+    expect(compatibilityReview).toContain(
+      "supervisor@sha256:80ed9cda5bf672fefdb9dcd4604b40a8b09c0891b6eb9d03e10227c7e3dfb49d",
+    );
     expect(compatibilityReview).toContain("openshell-gateway-auth-source-contract.test.ts");
     expect(compatibilityReview).toContain("OPENSHELL_DISABLE_GATEWAY_AUTH=true");
     expect(compatibilityReview).toContain("Round-Trippable Policy Boundary");
