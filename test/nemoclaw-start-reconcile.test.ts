@@ -223,6 +223,58 @@ describe("agent identity reconciliation with provider (#3175)", () => {
 
   // ── Gateway-as-source-of-truth path (the #3175 user-reported repro) ──
 
+  it("preserves an explicit model override when the live gateway reports a conflicting model", () => {
+    const initial = {
+      agents: { defaults: { model: { primary: "anthropic/claude-sonnet-4-6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "anthropic/claude-sonnet-4-6", name: "anthropic/claude-sonnet-4-6" }],
+          },
+        },
+      },
+    };
+    const { result, config, hash } = runReconcile(initial, {
+      env: { NEMOCLAW_MODEL_OVERRIDE: "anthropic/claude-sonnet-4-6" },
+      gatewayModel: "nvidia/nemotron-3-super-120b-a12b",
+    });
+
+    expect(result.status).toBe(0);
+    expect(config).toEqual(initial);
+    expect(hash).toBe("oldhash\n");
+  });
+
+  it("still reconciles from the live gateway when no explicit model override is set", () => {
+    const { result, config, hash } = runReconcile(
+      {
+        agents: { defaults: { model: { primary: "inference/nvidia-routed" } } },
+        models: {
+          providers: {
+            inference: {
+              api: "openai-completions",
+              models: [{ id: "nvidia-routed", name: "inference/nvidia-routed" }],
+            },
+          },
+        },
+      },
+      { gatewayModel: "nvidia/nemotron-3-super-120b-a12b" },
+    );
+
+    expect(result.status).toBe(0);
+    expect(config.agents.defaults.model.primary).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].name).toBe(
+      "inference/nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(config.models.providers.inference.models[0].id).toBe(
+      "nvidia/nemotron-3-super-120b-a12b",
+    );
+    expect(hash).not.toBe("oldhash\n");
+    expect(hash).toContain("openclaw.json");
+  });
+
   it("patches primary AND models[0] to the live gateway model when both file fields are stale", () => {
     const { result, config, hash } = runReconcile(
       {

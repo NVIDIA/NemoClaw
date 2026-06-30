@@ -21,16 +21,37 @@ function extractShellFunction(source: string, name: string): string {
 
 type Harness = {
   eventLog: string;
+  gatewayLog: string;
   result: SpawnSyncReturns<string>;
+  sensitiveTarget?: string;
   sources: Record<string, string>;
   targets: Record<string, string>;
   tmpDir: string;
 };
 
-function runRecoveryHarness({ missingCiaoSource = false } = {}): Harness {
+type RecoveryHarnessOptions = {
+  gatewayLogKind?: "regular" | "symlink" | "directory";
+  missingCiaoSource?: boolean;
+};
+
+function runRecoveryHarness({
+  gatewayLogKind = "regular",
+  missingCiaoSource = false,
+}: RecoveryHarnessOptions = {}): Harness {
   const source = fs.readFileSync(START_SCRIPT, "utf8");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-guard-recovery-"));
   const eventLog = path.join(tmpDir, "events.log");
+  const gatewayLog = path.join(tmpDir, "gateway.log");
+  let sensitiveTarget: string | undefined;
+  if (gatewayLogKind === "regular") {
+    fs.writeFileSync(gatewayLog, "", { mode: 0o644 });
+  } else if (gatewayLogKind === "symlink") {
+    sensitiveTarget = path.join(tmpDir, "sensitive.log");
+    fs.writeFileSync(sensitiveTarget, "do-not-touch\n", { mode: 0o600 });
+    fs.symlinkSync(sensitiveTarget, gatewayLog);
+  } else {
+    fs.mkdirSync(gatewayLog);
+  }
   const sources = {
     safety: path.join(tmpDir, "source-safety.js"),
     proxy: path.join(tmpDir, "source-proxy.js"),
@@ -59,6 +80,7 @@ function runRecoveryHarness({ missingCiaoSource = false } = {}): Harness {
   const script = [
     "set -uo pipefail",
     `EVENT_LOG=${JSON.stringify(eventLog)}`,
+    `_NEMOCLAW_GATEWAY_LOG=${JSON.stringify(gatewayLog)}`,
     'NODE_OPTIONS=""',
     "NODE_USE_ENV_PROXY=1",
     `_SANDBOX_SAFETY_NET=${JSON.stringify(targets.safety)}`,
@@ -100,6 +122,7 @@ function runRecoveryHarness({ missingCiaoSource = false } = {}): Harness {
     extractShellFunction(source, "append_node_require_once"),
     extractShellFunction(source, "install_core_runtime_preloads"),
     extractShellFunction(source, "openclaw_runtime_guard_chain_complete"),
+    extractShellFunction(source, "append_openclaw_gateway_log_line"),
     extractShellFunction(source, "restore_openclaw_runtime_guard_chain"),
     extractShellFunction(source, "prepare_openclaw_gateway_restart"),
     "rc=0; prepare_openclaw_gateway_restart || rc=$?",
@@ -112,7 +135,7 @@ function runRecoveryHarness({ missingCiaoSource = false } = {}): Harness {
     env: { ...process.env, RUN_TWICE: missingCiaoSource ? "0" : "1" },
     timeout: 10_000,
   });
-  return { eventLog, result, sources, targets, tmpDir };
+  return { eventLog, gatewayLog, result, sensitiveTarget, sources, targets, tmpDir };
 }
 
 describe("OpenClaw PID 1 guard-chain recovery", () => {
@@ -122,6 +145,9 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
       expect(harness.result.status, harness.result.stderr).toBe(0);
       expect(harness.result.stdout).toContain("rc:0\n");
       expect(harness.result.stderr.match(/restoring library guards/g)).toHaveLength(1);
+      expect(
+        fs.readFileSync(harness.gatewayLog, "utf8").match(/restoring library guards/g),
+      ).toHaveLength(1);
 
       const onePass = [
         "guard:preflight-restart",
@@ -152,6 +178,30 @@ describe("OpenClaw PID 1 guard-chain recovery", () => {
         expect(harness.result.stdout.split(target)).toHaveLength(2);
       }
       expect(fs.statSync(harness.targets.runtimeEnv).mode & 0o777).toBe(0o444);
+    } finally {
+      fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write guard-chain warnings through an unsafe gateway log symlink", () => {
+    const harness = runRecoveryHarness({ gatewayLogKind: "symlink" });
+    try {
+      expect(harness.result.status, harness.result.stderr).toBe(0);
+      expect(harness.result.stderr).toContain("refusing unsafe gateway log path");
+      expect(harness.result.stderr).toContain("restoring library guards");
+      expect(harness.sensitiveTarget).toBeDefined();
+      expect(fs.readFileSync(harness.sensitiveTarget ?? "", "utf8")).toBe("do-not-touch\n");
+    } finally {
+      fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not write guard-chain warnings to a non-regular gateway log target", () => {
+    const harness = runRecoveryHarness({ gatewayLogKind: "directory" });
+    try {
+      expect(harness.result.status, harness.result.stderr).toBe(0);
+      expect(harness.result.stderr).toContain("refusing unsafe gateway log path");
+      expect(fs.statSync(harness.gatewayLog).isDirectory()).toBe(true);
     } finally {
       fs.rmSync(harness.tmpDir, { recursive: true, force: true });
     }

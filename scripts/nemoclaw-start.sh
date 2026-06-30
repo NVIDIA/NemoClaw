@@ -4466,11 +4466,46 @@ openclaw_runtime_guard_chain_complete() {
   done
 }
 
+append_openclaw_gateway_log_line() {
+  local log_file="${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}"
+  local line="$1"
+  python3 -I - "$log_file" "$line" <<'PYAPPEND'
+import os
+import stat
+import sys
+
+path = sys.argv[1]
+line = sys.argv[2]
+flags = os.O_WRONLY | os.O_APPEND | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+try:
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode):
+        print(f"[SECURITY] refusing unsafe gateway log path: {path}", file=sys.stderr)
+        raise SystemExit(0)
+    fd = os.open(path, flags)
+except FileNotFoundError:
+    # Production pre-creates /tmp/gateway.log with _nemoclaw_safe_create_tmp_file.
+    # Do not create it here from a PID 1/root recovery path.
+    raise SystemExit(0)
+except OSError as exc:
+    print(f"[SECURITY] refusing unsafe gateway log path: {path}: {exc}", file=sys.stderr)
+    raise SystemExit(0)
+try:
+    current = os.fstat(fd)
+    if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+        print(f"[SECURITY] refusing replaced gateway log path: {path}", file=sys.stderr)
+        raise SystemExit(0)
+    os.write(fd, (line + "\n").encode("utf-8"))
+finally:
+    os.close(fd)
+PYAPPEND
+}
+
 restore_openclaw_runtime_guard_chain() {
   if ! openclaw_runtime_guard_chain_complete; then
     local _guard_warn="[gateway-recovery] WARNING: /tmp guard chain missing or unsafe - restoring library guards from packaged preloads (#2478/#2701)"
     echo "$_guard_warn" >&2
-    echo "$_guard_warn" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+    append_openclaw_gateway_log_line "$_guard_warn" || true
   fi
 
   # Preserve startup ordering: immutable core preloads first, then the
