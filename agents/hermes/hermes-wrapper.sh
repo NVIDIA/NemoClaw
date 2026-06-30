@@ -36,13 +36,24 @@
 #   redacts credential-shaped fields natively or `buildHermesConfig` stops
 #   emitting an inline `api_key` value.
 #
-# Scope note: this masker covers the CLI path only. The Hermes dashboard is
-# upstream-managed (Hermes' own HTTP surface); per the linked report the
-# dashboard already omits provider credentials. NemoClaw vends the dashboard
-# config through `agents/hermes/seed-dashboard-config.py` without exposing a
-# resolved-config REST surface in this repo (grep for `/api/config` returns
-# nothing). If a future NemoClaw-side resolved-config route is added, mirror
-# this masker on that route.
+# Scope note: this masker covers `hermes config show` stdout/stderr. The
+# contract is intentionally narrow:
+#   - It masks recognised key-labelled secret fields (`api_key`, `api_secret`,
+#     `access_token`, `auth_token`, `client_secret`, `secret_key`, `secret`,
+#     `token`, `password`, `bearer`, `authorization`, `credential`, plus their
+#     hyphen/underscore/camelCase variants) in Python-dict, JSON, YAML, env-
+#     style, and YAML block-scalar shapes.
+#   - It does NOT redact arbitrary credential-shaped strings appearing in
+#     free-form prose diagnostics. Hermes' rendered config is structured
+#     (key: value) — covering the structured shapes is sufficient for the
+#     reported `#5981` leak path. Diagnostic prose escape hatches require an
+#     upstream Hermes fix, not a wrapper one.
+# The Hermes dashboard is upstream-managed (Hermes' own HTTP surface); per the
+# linked report the dashboard already omits provider credentials. NemoClaw
+# vends the dashboard config through `agents/hermes/seed-dashboard-config.py`
+# without exposing a resolved-config REST surface in this repo (grep for
+# `/api/config` returns nothing). If a future NemoClaw-side resolved-config
+# route is added, mirror this masker on that route.
 #
 # The same guard runs in the nemoclaw-start entrypoint
 # (agents/hermes/start.sh: validate_hermes_runtime_env_secret_boundary) and in
@@ -65,12 +76,14 @@
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
 
-# This wrapper relies on Bash features that landed in 4.0+ (coproc, named FD
-# allocation, BASH_VERSINFO), and on the PIPESTATUS semantics shipped in
-# Bash 3.0. The NemoClaw sandbox image pins Bash 5+, but assert the floor so a
-# downgraded interpreter cannot silently bypass the masker.
+# Hard-require Bash 4+. The `config show` branch uses array indexing on
+# PIPESTATUS, the `coproc` builtin, named-FD allocation, and the BASH_SOURCE
+# array — all features that older shells silently mis-parse, breaking the
+# fail-closed status check and the in-memory stderr pipe. The NemoClaw
+# sandbox image pins Bash 5+; assert the floor so a downgraded interpreter
+# cannot bypass the masker.
 if [ "${BASH_VERSINFO[0]:-0}" -lt 4 ]; then
-  echo "[SECURITY] Refusing hermes: requires bash 4 or newer (found ${BASH_VERSION:-unknown})" >&2
+  echo "[SECURITY] Refusing hermes wrapper: bash >= 4 required (PIPESTATUS array, coproc, BASH_SOURCE), found ${BASH_VERSION:-unknown}" >&2
   exit 127
 fi
 

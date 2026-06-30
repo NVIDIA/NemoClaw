@@ -7,7 +7,10 @@
 // raw secret-shaped env vars and never reaching the real gateway.
 //
 // Linux + python3 gated: the wrapper uses bash `exec` and invokes python3 (the
-// shared validator). CI runs on Linux with python3 available.
+// shared validator). CI runs on Linux with python3 available, so the suite
+// runs every PR; the gate exists so a maintainer cloning on macOS or Windows
+// does not see a spurious red on `npm test`. See `.github/workflows/` for the
+// canonical CI runner image.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -606,6 +609,73 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("api_key: sk-****");
     expect(run.stdout).toContain("garbage line with no colons at all");
     expect(run.stdout).toContain("next: not-a-secret-value");
+  });
+
+  it("uses the installed-layout paths (/usr/local/bin/hermes.real, /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py) before the dev fallback", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-installed-"));
+    try {
+      const installBin = path.join(dir, "fake-install/usr/local/bin");
+      const installLib = path.join(dir, "fake-install/usr/local/lib/nemoclaw");
+      fs.mkdirSync(installBin, { recursive: true });
+      fs.mkdirSync(installLib, { recursive: true });
+      fs.writeFileSync(
+        path.join(installBin, "hermes.real"),
+        [
+          "#!/usr/bin/env bash",
+          "printf 'installed-real-invoked\\n'",
+          'printf \'api_key: sk-OPENSHELL-PROXY-REWRITE\\n\'',
+          "exit 0",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.copyFileSync(
+        VALIDATOR,
+        path.join(installLib, "validate-hermes-env-secret-boundary.py"),
+      );
+      const wrapperBody = fs.readFileSync(WRAPPER, "utf-8")
+        .replace(
+          /\/usr\/local\/bin\/hermes\.real/g,
+          path.join(installBin, "hermes.real"),
+        )
+        .replace(
+          /\/usr\/local\/lib\/nemoclaw\/validate-hermes-env-secret-boundary\.py/g,
+          path.join(installLib, "validate-hermes-env-secret-boundary.py"),
+        );
+      const wrapperPath = path.join(dir, "hermes");
+      fs.writeFileSync(wrapperPath, wrapperBody, { mode: 0o755 });
+      const decoyDir = path.join(dir, "decoy");
+      fs.mkdirSync(decoyDir);
+      fs.writeFileSync(
+        path.join(decoyDir, "hermes.real"),
+        "#!/usr/bin/env bash\nprintf 'decoy-real-invoked\\n'\nexit 99\n",
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(decoyDir, "validate-env-secret-boundary.py"),
+        "#!/usr/bin/env python3\nimport sys\nsys.exit(99)\n",
+        { mode: 0o755 },
+      );
+      fs.copyFileSync(wrapperPath, path.join(decoyDir, "hermes"));
+
+      const result = spawnSync(
+        "bash",
+        [path.join(decoyDir, "hermes"), "config", "show"],
+        {
+          encoding: "utf-8",
+          timeout: 10_000,
+          env: { PATH: process.env.PATH ?? "", HOME: dir },
+        },
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("installed-real-invoked");
+      expect(result.stdout).not.toContain("decoy-real-invoked");
+      expect(result.stdout).toContain("api_key: sk-****");
+      expect(result.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("masks every api_key emitted by buildHermesConfig so the generated config cannot leak through `config show`", () => {
