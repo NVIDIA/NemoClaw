@@ -375,6 +375,7 @@ RUN_NETWORK_POLICY_TEST(
       contracts: [
         "deny-by-default egress",
         "read-only preset allowlist behavior",
+        "weather preset allows wttr.in GET and HEAD but denies POST and unrelated hosts",
         "live policy-add and dry-run behavior",
         "per-binary policy enforcement",
         "hot reload without sandbox restart",
@@ -493,6 +494,29 @@ RUN_NETWORK_POLICY_TEST(
       "tc-net-01-deny-default",
     );
     expect(denyDefault, `example.com should be blocked under restricted policy`).toMatch(
+      /STATUS_403|ERROR_/,
+    );
+
+    const weatherApply = await applyPreset(host, "weather");
+    expect(weatherApply.exitCode, text(weatherApply)).toBe(0);
+
+    const weatherUrl = "https://wttr.in/London";
+    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-get")).resolves.toMatch(
+      /^[23][0-9][0-9]$/,
+    );
+    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-head", "-I")).resolves.toMatch(
+      /^[23][0-9][0-9]$/,
+    );
+    await expect(curlStatus(sandbox, weatherUrl, "tc-net-weather-post", "-X POST")).resolves.toBe(
+      "403",
+    );
+
+    const unrelatedAfterWeather = await fetchStatus(
+      sandbox,
+      "https://example.com/",
+      "tc-net-weather-unrelated-denied",
+    );
+    expect(unrelatedAfterWeather, "weather preset must not allow unrelated hosts").toMatch(
       /STATUS_403|ERROR_/,
     );
 
@@ -785,6 +809,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
       sandboxName: SANDBOX_NAME,
       assertions: {
         denyDefault: true,
+        weatherReadOnlyPreset: true,
         brewPreset: true,
         pypiReadOnlyPreset: true,
         livePolicyAdd: true,
