@@ -77,6 +77,17 @@ function encodeSanitizedDockerJsonArg(value: unknown): string {
   return sanitizeDockerArg(encodeDockerJsonArg(value));
 }
 
+function dockerfileConsumesBuildId(dockerfile: string): boolean {
+  return dockerfile.split("\n").some((line) => {
+    const trimmed = line.trimStart();
+    return (
+      !trimmed.startsWith("#") &&
+      !/^ARG\s+NEMOCLAW_BUILD_ID(?:=.*)?$/.test(trimmed) &&
+      /\bNEMOCLAW_BUILD_ID\b/.test(trimmed)
+    );
+  });
+}
+
 export function isValidProxyHost(value: string): boolean {
   return PROXY_HOST_RE.test(value);
 }
@@ -171,10 +182,12 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_INFERENCE_COMPAT_B64=.*$/m,
     `ARG NEMOCLAW_INFERENCE_COMPAT_B64=${encodeSanitizedDockerJsonArg(inferenceCompat)}`,
   );
-  dockerfile = dockerfile.replace(
-    /^ARG NEMOCLAW_BUILD_ID=.*$/m,
-    `ARG NEMOCLAW_BUILD_ID=${sanitizeDockerArg(buildId)}`,
-  );
+  if (dockerfileConsumesBuildId(dockerfile)) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_BUILD_ID=.*$/m,
+      `ARG NEMOCLAW_BUILD_ID=${sanitizeDockerArg(buildId)}`,
+    );
+  }
   dockerfile = dockerfile.replace(
     /^ARG NEMOCLAW_DARWIN_VM_COMPAT=.*$/m,
     `ARG NEMOCLAW_DARWIN_VM_COMPAT=${sanitizeDockerArg(darwinVmCompat ? "1" : "0")}`,

@@ -16,6 +16,7 @@ import {
 } from "./dockerfile-patch";
 
 const tmpRoots: string[] = [];
+const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 
 beforeEach(() => {
   delete process.env.NEMOCLAW_MESSAGING_PLAN_B64;
@@ -196,7 +197,7 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/custom-model");
     expect(patched).toContain("ARG CHAT_UI_URL=https://chat.example");
     expect(patched).toContain("ARG NEMOCLAW_INFERENCE_COMPAT_B64=");
-    expect(patched).toContain("ARG NEMOCLAW_BUILD_ID=build-1");
+    expect(patched).toContain("ARG NEMOCLAW_BUILD_ID=old");
     expect(patched).toContain("ARG NEMOCLAW_DARWIN_VM_COMPAT=1");
     expect(patched).toContain("ARG NEMOCLAW_PROXY_HOST=host.docker.internal");
     expect(patched).toContain("ARG NEMOCLAW_PROXY_PORT=3128");
@@ -393,7 +394,8 @@ describe("dockerfile patch helpers", () => {
     expect(patched).not.toMatch(/\r|\nRUN touch/);
     expect(patched).toContain("ARG NEMOCLAW_MODEL=modelRUN touch /tmp/model-pwn");
     expect(patched).toContain("ARG CHAT_UI_URL=https://chat.exampleRUN touch /tmp/chat-pwn");
-    expect(patched).toContain("ARG NEMOCLAW_BUILD_ID=build-1RUN touch /tmp/build-pwn");
+    expect(patched).toContain("ARG NEMOCLAW_BUILD_ID=old");
+    expect(patched).not.toContain("build-1RUN touch /tmp/build-pwn");
     expect(patched).toContain("ARG NEMOCLAW_INFERENCE_API=openai-responsesRUN touch /tmp/api-pwn");
     expect(patched).toContain(
       "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abcRUN touch /tmp/base-pwn",
@@ -429,11 +431,128 @@ describe("dockerfile patch helpers", () => {
       assert.match(patched, /^ARG NEMOCLAW_PROVIDER_KEY=openai$/m);
       assert.match(patched, /^ARG NEMOCLAW_PRIMARY_MODEL_REF=openai\/gpt-5\.4$/m);
       assert.match(patched, /^ARG CHAT_UI_URL=http:\/\/127\.0\.0\.1:19999$/m);
-      assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=build-123$/m);
+      assert.match(patched, /^ARG NEMOCLAW_BUILD_ID=default$/m);
       assert.match(patched, /^ARG NEMOCLAW_DARWIN_VM_COMPAT=0$/m);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("leaves NEMOCLAW_BUILD_ID stable unless the Dockerfile consumes it (#4682)", () => {
+    const unconsumedDockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "# NEMOCLAW_BUILD_ID is documented here but not consumed.",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      unconsumedDockerfilePath,
+      "gpt-5.4",
+      "http://127.0.0.1:19999",
+      "build-cache-stable",
+      "openai-api",
+    );
+
+    expect(fs.readFileSync(unconsumedDockerfilePath, "utf8")).toMatch(
+      /^ARG NEMOCLAW_BUILD_ID=default$/m,
+    );
+
+    for (const [index, consumerLine] of [
+      "ENV LEGACY_BUILD_ID=${NEMOCLAW_BUILD_ID}",
+      "RUN printf '%s\\n' ${NEMOCLAW_BUILD_ID}",
+      "ARG LEGACY_LABEL=prefix-${NEMOCLAW_BUILD_ID}-suffix",
+      "LABEL legacy.build=${NEMOCLAW_BUILD_ID}",
+    ].entries()) {
+      const consumedDockerfilePath = dockerfileWith(
+        [
+          "ARG NEMOCLAW_MODEL=old",
+          "ARG NEMOCLAW_PROVIDER_KEY=old",
+          "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+          "ARG CHAT_UI_URL=old",
+          "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+          "ARG NEMOCLAW_INFERENCE_API=old",
+          "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+          "ARG NEMOCLAW_BUILD_ID=default",
+          consumerLine,
+          "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+        ].join("\n"),
+      );
+      patchStagedDockerfile(
+        consumedDockerfilePath,
+        "gpt-5.4",
+        "http://127.0.0.1:19999",
+        `build-cache-bust-${index}`,
+        "openai-api",
+      );
+
+      expect(fs.readFileSync(consumedDockerfilePath, "utf8")).toMatch(
+        new RegExp(`^ARG NEMOCLAW_BUILD_ID=build-cache-bust-${index}$`, "m"),
+      );
+    }
+  });
+
+  it.each([
+    ["OpenClaw", path.join(REPO_ROOT, "Dockerfile")],
+    ["Hermes", path.join(REPO_ROOT, "agents", "hermes", "Dockerfile")],
+  ])("keeps the stock %s build context byte-identical when only the per-run build ID changes (#4682)", (_agent, stockDockerfile) => {
+    const stockSource = fs.readFileSync(stockDockerfile, "utf8");
+    const firstBuild = dockerfileWith(stockSource);
+    const secondBuild = dockerfileWith(stockSource);
+
+    patchStagedDockerfile(
+      firstBuild,
+      "gpt-5.4",
+      "http://127.0.0.1:19999",
+      "first-per-run-id",
+      "openai-api",
+    );
+    patchStagedDockerfile(
+      secondBuild,
+      "gpt-5.4",
+      "http://127.0.0.1:19999",
+      "second-per-run-id",
+      "openai-api",
+    );
+
+    expect(fs.readFileSync(firstBuild, "utf8")).toBe(fs.readFileSync(secondBuild, "utf8"));
+  });
+
+  it("sanitizes a per-run build ID when a custom Dockerfile consumes it (#4682)", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=default",
+        "LABEL legacy.build=${NEMOCLAW_BUILD_ID}",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "gpt-5.4",
+      "http://127.0.0.1:19999",
+      "build-safe\nRUN touch /tmp/build-id-injection",
+      "openai-api",
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf8");
+    expect(patched).toContain("ARG NEMOCLAW_BUILD_ID=build-safeRUN touch /tmp/build-id-injection");
+    expect(patched).not.toMatch(/\nRUN touch \/tmp\/build-id-injection/);
   });
 
   it("patches the staged Dockerfile for macOS VM rootfs ownership compatibility", () => {
