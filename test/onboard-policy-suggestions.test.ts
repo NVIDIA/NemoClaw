@@ -35,6 +35,15 @@ const { filterSetupPolicyPresetsForAgent } = require("../src/lib/onboard/agent-p
     agent?: string | null,
   ) => T[];
 };
+const { allMessagingChannelPolicyPresets, mergeEnabledMessagingChannelPolicyPresets } =
+  require("../src/lib/onboard/messaging-policy-presets") as {
+    allMessagingChannelPolicyPresets: (channels: string[] | null | undefined) => string[];
+    mergeEnabledMessagingChannelPolicyPresets: (
+      selectedPresets: string[],
+      channels: string[] | null | undefined,
+      knownPresetNames?: Iterable<string> | null,
+    ) => string[];
+  };
 
 describe("onboard policy preset suggestions", () => {
   const known = [
@@ -98,6 +107,41 @@ describe("onboard policy preset suggestions", () => {
       if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
     }
+  });
+
+  // Cross-verification (#5967): the suggestion path
+  // (`computeSetupPresetSuggestions`) and the finalization merge
+  // (`mergeEnabledMessagingChannelPolicyPresets`) must contribute the SAME
+  // channel egress presets for a given `enabledChannels` set. If they diverged,
+  // an operator could be suggested a preset finalization later drops (or finalize
+  // one never suggested). Assert both paths yield exactly
+  // `allMessagingChannelPolicyPresets` for every channel individually and combined.
+  it("suggestion and finalization paths contribute identical channel presets for all channels (#5967)", () => {
+    const channels = ["slack", "discord", "telegram", "teams", "whatsapp", "wechat"];
+    const knownNames = [...known, "teams", "whatsapp", "wechat"];
+    const channelPresetSet = new Set(allMessagingChannelPolicyPresets(channels));
+    const channelPresetsFromSuggestions = (enabled: string[]) =>
+      computeSetupPresetSuggestions("balanced", {
+        enabledChannels: enabled,
+        knownPresetNames: knownNames,
+      }).filter((name) => channelPresetSet.has(name));
+
+    for (const channel of channels) {
+      const expected = allMessagingChannelPolicyPresets([channel]);
+      // Finalization merge contributes exactly the channel's egress presets...
+      expect(mergeEnabledMessagingChannelPolicyPresets([], [channel], knownNames)).toEqual(
+        expected,
+      );
+      // ...and the suggestion path surfaces the same set.
+      expect(channelPresetsFromSuggestions([channel])).toEqual(expected);
+    }
+
+    // All channels enabled together: both paths agree on the full set.
+    const expectedAll = allMessagingChannelPolicyPresets(channels).slice().sort();
+    expect(
+      mergeEnabledMessagingChannelPolicyPresets([], channels, knownNames).slice().sort(),
+    ).toEqual(expectedAll);
+    expect(channelPresetsFromSuggestions(channels).slice().sort()).toEqual(expectedAll);
   });
 
   it("never auto-detects WhatsApp because the channel has no host env key", () => {

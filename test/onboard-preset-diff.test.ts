@@ -431,6 +431,42 @@ describe("setupPoliciesWithSelection preset diff (#2177)", () => {
     assert.deepEqual(payload.finalApplied, ["npm"]);
   });
 
+  // Cover the remaining non-`requiredAtCreate` channels end-to-end through the
+  // real `setupPoliciesWithSelection` path. They flow through the same
+  // channel→preset registry iteration as Discord/Telegram, so each apply/remove
+  // case guards the egress-policy application for every shipped channel — not
+  // only the two already covered above (#5967).
+  for (const channel of ["teams", "whatsapp", "wechat"]) {
+    it(`resume selection applies the ${channel} policy required by a configured ${channel} channel (#5967)`, () => {
+      const payload = runPolicyScenario({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: [],
+        selectionOptions: { selectedPresets: ["npm", "pypi"], enabledChannels: [channel] },
+      });
+
+      assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", channel].sort());
+      assert.ok(
+        payload.appliedCalls.includes(channel),
+        `${channel} must be applied to the gateway when the channel is enabled; got applied ${JSON.stringify(payload.appliedCalls)}`,
+      );
+      assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", channel].sort());
+    });
+
+    it(`custom non-interactive selection removes disabled ${channel} while honoring the explicit preset list (#5967)`, () => {
+      const payload = runPolicyScenario({
+        policyMode: "custom",
+        policyPresets: "npm",
+        alreadyApplied: ["npm", "pypi", channel],
+        selectionOptions: { disabledChannels: [channel] },
+      });
+
+      assert.deepEqual(payload.chosen, ["npm"]);
+      assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", channel].sort());
+      assert.deepEqual(payload.finalApplied, ["npm"]);
+    });
+  }
+
   it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
     const payload = runPolicyScenario({
       policyMode: "custom",
