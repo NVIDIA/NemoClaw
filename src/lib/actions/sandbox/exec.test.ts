@@ -3,13 +3,10 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// execSandbox dynamically requires the OpenShell runtime adapter; stub it so the
-// dispatch-path tests stay hermetic. The actual spawn is injected via the
-// SandboxExecRunner parameter, so we never touch node:child_process here.
-vi.mock("../../adapters/openshell/runtime", () => ({
-  getOpenshellBinary: () => "openshell",
-}));
-
+// execSandbox dynamically requires the OpenShell binary lookup, which exits the
+// process when OpenShell is absent. The dispatch-path tests inject a
+// resolveBinary seam (plus a runner and workdir probe) so they stay hermetic
+// without spawning a real process or hitting that process-exiting lookup.
 import {
   buildOpenshellExecArgs,
   buildWorkdirProbeArgs,
@@ -177,7 +174,7 @@ describe("execSandbox multi-line guard (#5980)", () => {
     const run = vi.fn(() => ({ status: 0 }));
 
     await expect(
-      execSandbox("bug5980test", ["bash", "-lc", "cat <<EOF\nline1\nline2\nEOF"], {}, run),
+      execSandbox("bug5980test", ["bash", "-lc", "cat <<EOF\nline1\nline2\nEOF"], {}, { run }),
     ).rejects.toThrow("exit:2");
 
     expect(exitSpy).toHaveBeenCalledWith(2);
@@ -189,12 +186,70 @@ describe("execSandbox multi-line guard (#5980)", () => {
     expect(printed).toContain('bash -lc "cmd1; cmd2"');
   });
 
-  it("does not reject a single-line command at the guard (the semicolon workaround proceeds to dispatch)", () => {
-    // The argv forwarded to OpenShell for the reporter's confirmed single-line
-    // workaround is built unchanged and carries no newline/carriage return, so
-    // the guard lets it through to dispatch. (The dispatch itself is exercised
-    // by the real worktree-CLI transcript on the PR, not here, because
-    // execSandbox resolves the OpenShell binary via a process-exiting lookup.)
+  it("forwards the single-line semicolon workaround to dispatch and exits with the inner status", async () => {
+    // The reporter's confirmed workaround (`bash -lc "cmd1; cmd2"`) carries no
+    // newline/carriage return, so it passes the guard and dispatches. Injecting
+    // resolveBinary avoids the process-exiting OpenShell lookup, and the runner
+    // returns success so we can assert the argv forwarded and the exit code.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+
+    await expect(
+      execSandbox(
+        "bug5980test",
+        ["bash", "-lc", "echo line1; echo line2"],
+        {},
+        { run, resolveBinary: () => "openshell" },
+      ),
+    ).rejects.toThrow("exit:0");
+
+    expect(run).toHaveBeenCalledWith("openshell", [
+      "sandbox",
+      "exec",
+      "--name",
+      "bug5980test",
+      "--",
+      "bash",
+      "-lc",
+      "echo line1; echo line2",
+    ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("still validates --workdir for a single-line command and fails with the workdir error, not the multi-line error", async () => {
+    // Guard ordering: the multi-line check runs before the workdir probe. A
+    // valid single-line command with a missing --workdir must surface the
+    // workdir error (exit 1), proving the workdir probe still runs after the
+    // guard and that the guard did not swallow the command.
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const run = vi.fn(() => ({ status: 0 }));
+    const probeWorkdir = vi.fn(() => ({ status: 1 })); // `test -d` failure -> missing
+
+    await expect(
+      execSandbox(
+        "alpha",
+        ["bash", "-lc", "echo ok"],
+        { workdir: "/no/such/dir" },
+        { run, resolveBinary: () => "openshell", probeWorkdir },
+      ),
+    ).rejects.toThrow("exit:1");
+
+    expect(probeWorkdir).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    const printed = errSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(printed).toContain("does not exist inside the sandbox");
+    expect(printed).not.toContain("newline or carriage return");
+    // The workdir probe failed, so the command is never dispatched.
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("builds the forwarded argv unchanged for the single-line semicolon workaround", () => {
     const command = ["bash", "-lc", "echo line1; echo line2"];
     expect(findMultilineExecArg(command)).toBe(-1);
     expect(buildOpenshellExecArgs("bug5980test", command)).toEqual([

@@ -53,6 +53,7 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
 // fail with actionable guidance instead.
 const MULTILINE_ARG_PATTERN = /[\r\n]/;
 
+/** @internal Exported for unit testing only; not part of the public API. */
 export function findMultilineExecArg(command: readonly string[]): number {
   for (let index = 0; index < command.length; index += 1) {
     if (MULTILINE_ARG_PATTERN.test(command[index])) return index;
@@ -133,14 +134,27 @@ export type SandboxExecRunner = (binary: string, args: readonly string[]) => Spa
 const defaultExecRunner: SandboxExecRunner = (binary, args) =>
   spawnSync(binary, args, { stdio: "inherit" });
 
+function defaultResolveBinary(): string {
+  const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
+  return getOpenshellBinary();
+}
+
+// Test seams for execSandbox. All default to the production behavior; tests
+// inject them so the dispatch path stays hermetic without spawning a real
+// process or hitting the process-exiting OpenShell binary lookup.
+export type ExecSandboxDeps = {
+  resolveBinary?: () => string;
+  probeWorkdir?: WorkdirProbeRunner;
+  run?: SandboxExecRunner;
+};
+
 export async function execSandbox(
   sandboxName: string,
   command: readonly string[],
   options: SandboxExecOptions = {},
-  run: SandboxExecRunner = defaultExecRunner,
+  deps: ExecSandboxDeps = {},
 ): Promise<void> {
   const { CLI_NAME } = require("../../cli/branding");
-  const { getOpenshellBinary } = require("../../adapters/openshell/runtime");
   if (command.length === 0) {
     console.error(
       `  Usage: ${CLI_NAME} ${sandboxName} exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]`,
@@ -152,10 +166,11 @@ export async function execSandbox(
     console.error(multilineExecMessage(CLI_NAME, sandboxName, command, multilineIndex));
     process.exit(2);
   }
-  const binary = getOpenshellBinary();
+  const binary = (deps.resolveBinary ?? defaultResolveBinary)();
   if (options.workdir) {
-    validateWorkdirOrFail(binary, sandboxName, options.workdir);
+    validateWorkdirOrFail(binary, sandboxName, options.workdir, deps.probeWorkdir);
   }
+  const run = deps.run ?? defaultExecRunner;
   const result = run(binary, buildOpenshellExecArgs(sandboxName, command, options));
   const { code, errorMessage } = computeExitCode(result);
   if (errorMessage) {
