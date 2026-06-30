@@ -75,6 +75,9 @@ export async function setupRemoteProviderInference(
     const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
     let providerResult;
     if (reuseGatewayCredentialWithoutLocalKey) {
+      // This is only a last-moment existence probe. The primary authorization
+      // of the provider's non-secret credential/config binding identity is
+      // assessRecoveredProviderCredentialReuse in recovered-provider-reuse.ts.
       const existing = runOpenshell(["provider", "get", provider], {
         ignoreError: true,
         suppressOutput: true,

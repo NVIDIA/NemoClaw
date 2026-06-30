@@ -171,6 +171,8 @@ export function assessRecoveredProviderCredentialReuse(options: {
     // redacts their values. Without an endpoint value/fingerprint, custom
     // reuse is allowed only from the authoritative registry route, with exact
     // live bindings and no conflicting endpoint recorded for this provider.
+    // Canonicalization validates URL structure and removes non-routing detail
+    // before either endpoint can participate in an identity comparison.
     const selectedEndpoint = canonicalEndpoint(
       options.endpointIdentity.selected,
       options.endpointIdentity.flavor,
@@ -180,6 +182,8 @@ export function assessRecoveredProviderCredentialReuse(options: {
       options.endpointIdentity.flavor,
     );
     const otherEndpoints = options.endpointIdentity.otherRecorded;
+    // Every sibling registry row for this globally named provider must resolve
+    // to the same endpoint; a missing or divergent row is endpoint drift.
     const allRecordedEndpointsMatch =
       otherEndpoints !== null &&
       otherEndpoints.every(
@@ -190,6 +194,8 @@ export function assessRecoveredProviderCredentialReuse(options: {
       !selectedEndpoint ||
       !recoveredEndpoint ||
       selectedEndpoint !== recoveredEndpoint ||
+      // Session/live data cannot authorize custom endpoint identity. Only the
+      // durable registry route crossed the pre-delete authority boundary.
       options.endpointIdentity.routeSource !== "registry" ||
       !allRecordedEndpointsMatch
     ) {

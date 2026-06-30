@@ -36,8 +36,12 @@ const PINNED_CODEX_ACP_INTEGRITY =
   "sha512-My2VSlBtvJipJhImHjFDej2ut/p00QqOISRnZgLgLrSIzjgvdcQvAhaZviWj7XPhk4UIdIb0OoA+Lrls824uiQ==";
 const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY =
   "sha512-jU2q4L6L3qdZZDEIDXrWgwCWOGUaTSF+YzUlfgHED42TB4N3maF6seYchFpwKLB8neOzIDpnzMagEMjxZ/7Wqw==";
+const PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL =
+  "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.9.tgz";
 const PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY =
   "sha512-8HawXB5ylo+vkvkmDJZAE9uhOtm0l9YtzrVqJdM4UqwXeF4uGAkVEOrR3Hxy0sI3Moi5ZBzq2Jx/K5ZQKdiWjQ==";
+const PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL =
+  "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz";
 const PINNED_OPENCLAW_DISCORD_INTEGRITY =
   "sha512-esFhwYW0nrFQvBhkPeK/1qmvumlVAY8ddhYBt7geIYLlBriwPJRwtnVLLfp0n1LbS0/XVZ0ORqlvkWq8Vv61vg==";
 const PINNED_OPENCLAW_SLACK_INTEGRITY =
@@ -181,7 +185,9 @@ function runOptionalOpenClawPluginBlock(
     otel?: boolean;
     webSearch?: boolean;
     diagnosticsRegistryIntegrity?: string;
+    diagnosticsRegistryTarball?: string;
     braveRegistryIntegrity?: string;
+    braveRegistryTarball?: string;
     pluginPackFilename?: string;
   } = {},
 ) {
@@ -190,7 +196,9 @@ function runOptionalOpenClawPluginBlock(
     otel = true,
     webSearch = true,
     diagnosticsRegistryIntegrity = PINNED_OPENCLAW_DIAGNOSTICS_OTEL_INTEGRITY,
+    diagnosticsRegistryTarball = PINNED_OPENCLAW_DIAGNOSTICS_OTEL_TARBALL,
     braveRegistryIntegrity = PINNED_OPENCLAW_BRAVE_PLUGIN_INTEGRITY,
+    braveRegistryTarball = PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL,
     pluginPackFilename = "",
   } = options;
   const command = extractRunBlock(
@@ -230,8 +238,8 @@ function runOptionalOpenClawPluginBlock(
     "  fi",
     '  if [ "${1:-}" != "view" ]; then exit 1; fi',
     '  case "${2:-}" in',
-    `    "@openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(diagnosticsRegistryIntegrity)}; return 0; fi; if [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" "https://registry.npmjs.org/@openclaw/diagnostics-otel/-/diagnostics-otel-2026.6.9.tgz"; return 0; fi ;;`,
-    `    "@openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(braveRegistryIntegrity)}; return 0; fi; if [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.9.tgz"; return 0; fi ;;`,
+    `    "@openclaw/diagnostics-otel@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(diagnosticsRegistryIntegrity)}; return 0; fi; if [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" ${JSON.stringify(diagnosticsRegistryTarball)}; return 0; fi ;;`,
+    `    "@openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION}") if [ "\${3:-}" = "dist.integrity" ]; then printf "%s\\n" ${JSON.stringify(braveRegistryIntegrity)}; return 0; fi; if [ "\${3:-}" = "dist.tarball" ]; then printf "%s\\n" ${JSON.stringify(braveRegistryTarball)}; return 0; fi ;;`,
     "  esac",
     "  return 1",
     "}",
@@ -410,6 +418,29 @@ describe("OpenClaw npm integrity pins", () => {
     expect(calls).toContain(
       `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.integrity`,
     );
+    expect(calls).not.toContain("openclaw plugins install");
+  });
+
+  it("fails closed before optional OpenClaw plugin install when the registry tarball URL drifts", () => {
+    const driftedTarball =
+      "https://registry.npmjs.org/@openclaw/brave-plugin/-/brave-plugin-2026.6.10.tgz";
+    const { result, calls } = runOptionalOpenClawPluginBlock({
+      otel: false,
+      braveRegistryTarball: driftedTarball,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `OpenClaw plugin @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} npm tarball URL mismatch`,
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      `Expected: ${PINNED_OPENCLAW_BRAVE_PLUGIN_TARBALL}`,
+    );
+    expect(`${result.stdout}${result.stderr}`).toContain(`Actual:   ${driftedTarball}`);
+    expect(calls).toContain(
+      `npm view @openclaw/brave-plugin@${PINNED_OPENCLAW_VERSION} dist.tarball`,
+    );
+    expect(calls).not.toContain("npm pack");
     expect(calls).not.toContain("openclaw plugins install");
   });
 

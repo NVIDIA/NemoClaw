@@ -1,0 +1,335 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { createRequire } from "node:module";
+
+import { type MockInstance, vi } from "vitest";
+
+type RebuildSandbox = typeof import("../../src/lib/actions/sandbox/rebuild")["rebuildSandbox"];
+
+const requireDist = createRequire(
+  new URL("../../src/lib/actions/sandbox/rebuild-flow.test.ts", import.meta.url),
+);
+const rebuildModulePath = "./rebuild.js";
+
+// Warm the CommonJS source graph outside the first test's timeout. Each harness
+// still reloads the entry module after installing its dependency spies.
+requireDist(rebuildModulePath);
+delete require.cache[requireDist.resolve(rebuildModulePath)];
+
+type RebuildFlowStep = {
+  status: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+};
+
+export type RebuildFlowSession = Record<string, unknown> & {
+  lastStepStarted: string | null;
+  status: string;
+  failure: { step: string; message: string | null; recordedAt: string } | null;
+  machine: {
+    version: number;
+    state: string;
+    stateEnteredAt: string;
+    revision: number;
+  };
+  steps: Record<string, RebuildFlowStep>;
+};
+
+export type RebuildFlowOverrides = {
+  applyPreset?: (presetName: string) => boolean;
+  executeSandboxCommand?: () => { status: number; stdout: string; stderr: string } | null;
+  onboard?: (session: RebuildFlowSession) => Promise<void> | void;
+  repairMutableConfigPerms?: () =>
+    | { applied: false; skipReason: "agent" | "locked" | "unreadable"; reason: string }
+    | { applied: true; verified: boolean; errors: string[] };
+  restoreSandboxState?: () => {
+    success: boolean;
+    restoredDirs: string[];
+    restoredFiles: string[];
+    failedDirs: string[];
+    failedFiles: string[];
+  };
+  buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
+  sandboxEntry?: Record<string, unknown>;
+  sessionSandboxName?: string;
+  backupPolicyPresets?: string[];
+  updateSession?: () => void;
+};
+
+export type RebuildFlowHarness = {
+  rebuildSandbox: RebuildSandbox;
+  applyPresetSpy: MockInstance;
+  backupSandboxStateSpy: MockInstance;
+  errorSpy: MockInstance;
+  executeSandboxCommandSpy: MockInstance;
+  ensureMessagingHostForwardAfterRebuildSpy: MockInstance;
+  logSpy: MockInstance;
+  markStepFailedSpy: MockInstance;
+  onboardSpy: MockInstance;
+  registryUpdateSpy: MockInstance;
+  restoreRegistryEntryIfMissingSpy: MockInstance;
+  releaseOnboardLockSpy: MockInstance;
+  relockSpy: MockInstance;
+  restoreSandboxStateSpy: MockInstance;
+  runOpenshellSpy: MockInstance;
+  messagingRebuildPlanSpy: MockInstance;
+  session: RebuildFlowSession;
+};
+
+// Snapshot the given env vars and return a restore fn that reinstates their
+// prior values exactly — vars that were unset stay unset, set ones are put back.
+// Branchless on purpose (filter, not conditional restore) so it both restores
+// worker state correctly and keeps the changed-test-file guardrail green.
+export function snapshotEnv(names: readonly string[]): () => void {
+  const saved = names.map((name) => [name, process.env[name]] as const);
+  return () => {
+    for (const [name] of saved) {
+      delete process.env[name];
+    }
+    Object.assign(
+      process.env,
+      Object.fromEntries(
+        saved.filter((entry): entry is [string, string] => entry[1] !== undefined),
+      ),
+    );
+  };
+}
+
+function createStep(status: string): RebuildFlowStep {
+  return { status, startedAt: null, completedAt: null, error: null };
+}
+
+function createRebuildFlowSession(machineSnapshotVersion: number): RebuildFlowSession {
+  return {
+    sandboxName: "alpha",
+    provider: "ollama-local",
+    model: "nvidia/nemotron",
+    credentialEnv: null,
+    metadata: {},
+    hermesToolGateways: [],
+    lastStepStarted: null,
+    status: "in_progress",
+    failure: null,
+    machine: {
+      version: machineSnapshotVersion,
+      state: "gateway",
+      stateEnteredAt: "2026-06-01T00:00:00.000Z",
+      revision: 2,
+    },
+    steps: {
+      preflight: createStep("complete"),
+      gateway: createStep("complete"),
+      provider_selection: createStep("pending"),
+      inference: createStep("pending"),
+      sandbox: createStep("pending"),
+      openclaw: createStep("pending"),
+      agent_setup: createStep("pending"),
+      policies: createStep("pending"),
+    },
+  };
+}
+
+function installTerminalStepFailureMock(
+  onboardSession: { markStepFailed: (...args: unknown[]) => unknown },
+  session: RebuildFlowSession,
+): MockInstance {
+  return vi
+    .spyOn(onboardSession, "markStepFailed")
+    .mockImplementation((stepName: unknown, message: unknown, options: unknown) => {
+      const stepKey = String(stepName);
+      const step = session.steps[stepKey] ?? createStep("pending");
+      session.steps[stepKey] = step;
+      step.status = "failed";
+      step.error = typeof message === "string" ? message : null;
+      session.status = "failed";
+      session.failure = {
+        step: stepKey,
+        message: typeof message === "string" ? message : null,
+        recordedAt: "2026-06-01T00:02:00.000Z",
+      };
+      const updateMachine =
+        (options as { updateMachine?: boolean } | undefined)?.updateMachine === true;
+      session.machine.state = updateMachine ? "failed" : session.machine.state;
+      session.machine.revision += updateMachine ? 1 : 0;
+      return session;
+    });
+}
+
+export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): RebuildFlowHarness {
+  delete require.cache[requireDist.resolve(rebuildModulePath)];
+
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+  const gatewayDrift = requireDist("../../adapters/openshell/gateway-drift.js");
+  const openshellRuntime = requireDist("../../adapters/openshell/runtime.js");
+  const sandboxList = requireDist("../../openshell-sandbox-list.js");
+  const resolve = requireDist("../../adapters/openshell/resolve.js");
+  const agentDefs = requireDist("../../agent/defs.js");
+  const agentRuntime = requireDist("../../agent/runtime.js");
+  const onboardMod = requireDist("../../onboard.js");
+  const onboardSession = requireDist("../../state/onboard-session.js");
+  const registry = requireDist("../../state/registry.js");
+  const sandboxState = requireDist("../../state/sandbox.js");
+  const sandboxSession = requireDist("../../state/sandbox-session.js");
+  const sandboxVersion = requireDist("../../sandbox/version.js");
+  const destroy = requireDist("./destroy.js");
+  const rebuildShields = requireDist("./rebuild-shields.js");
+  const nim = requireDist("../../inference/nim.js");
+  const policies = requireDist("../../policy/index.js");
+  const processRecovery = requireDist("./process-recovery.js");
+  const messagingHostForwardLifecycle = requireDist("./messaging-host-forward-lifecycle.js");
+  const messaging = requireDist("../../messaging/index.js");
+  const shields = requireDist("../../shields/index.js");
+
+  const session = createRebuildFlowSession(onboardSession.MACHINE_SNAPSHOT_VERSION);
+  const rebuildShieldsWindow = { relocked: false, wasLocked: false };
+  const agentDef = {
+    name: "openclaw",
+    expectedVersion: "0.2.0",
+  };
+
+  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
+  vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
+  vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
+    result: { status: 0, output: "alpha Ready" },
+  });
+  vi.spyOn(resolve, "resolveOpenshell").mockReturnValue(null);
+  vi.spyOn(agentDefs, "loadAgent").mockReturnValue(agentDef);
+  vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({ name: "openclaw" });
+  vi.spyOn(agentRuntime, "getAgentDisplayName").mockReturnValue("OpenClaw");
+  vi.spyOn(onboardSession, "loadSession").mockReturnValue(session);
+  vi.spyOn(onboardSession, "updateSession").mockImplementation((mutator: unknown) => {
+    overrides.updateSession?.();
+    if (typeof mutator !== "function") {
+      throw new TypeError("updateSession expected a mutator function");
+    }
+    (mutator as (value: typeof session) => typeof session | void)(session);
+    return session;
+  });
+  const releaseOnboardLockSpy = vi
+    .spyOn(onboardSession, "releaseOnboardLock")
+    .mockImplementation(() => undefined);
+  const markStepFailedSpy = installTerminalStepFailureMock(onboardSession, session);
+  session.sandboxName = overrides.sessionSandboxName ?? session.sandboxName;
+  vi.spyOn(registry, "getSandbox").mockReturnValue({
+    name: "alpha",
+    provider: "ollama-local",
+    model: "nvidia/nemotron",
+    policies: ["npm"],
+    agent: null,
+    nimContainer: null,
+    ...(overrides.sandboxEntry ?? {}),
+  });
+  vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
+  const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
+  const restoreRegistryEntryIfMissingSpy = vi
+    .spyOn(registry, "restoreSandboxEntryIfMissing")
+    .mockReturnValue(true);
+  vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
+    detected: false,
+    sessions: [],
+  });
+  vi.spyOn(sandboxVersion, "checkAgentVersion").mockReturnValue({
+    expectedVersion: "0.2.0",
+    sandboxVersion: "0.1.0",
+  });
+  vi.spyOn(rebuildShields, "openRebuildShieldsWindow").mockReturnValue(rebuildShieldsWindow);
+  const relockSpy = vi
+    .spyOn(rebuildShields, "relockRebuildShieldsWindow")
+    .mockImplementation((...args: unknown[]) => {
+      const window = args[1] as typeof rebuildShieldsWindow;
+      window.relocked = true;
+      return true;
+    });
+  const backupSandboxStateSpy = vi.spyOn(sandboxState, "backupSandboxState").mockReturnValue({
+    success: true,
+    backedUpDirs: ["workspace"],
+    backedUpFiles: ["user.md"],
+    failedDirs: [],
+    failedFiles: [],
+    manifest: {
+      backupPath: "/tmp/nemoclaw-rebuild-backup",
+      timestamp: "2026-06-01T00:00:00.000Z",
+      policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
+    },
+  });
+  const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
+    overrides.restoreSandboxState ??
+      (() => ({
+        success: true,
+        restoredDirs: ["workspace"],
+        restoredFiles: ["user.md"],
+        failedDirs: [],
+        failedFiles: [],
+      })),
+  );
+  const runOpenshellSpy = vi.spyOn(openshellRuntime, "runOpenshell").mockImplementation((args) => {
+    const argv = args as string[];
+    return argv[0] === "provider" && argv[1] === "get"
+      ? {
+          status: 0,
+          stdout:
+            "Name: compatible-endpoint\nType: openai\nCredential keys: COMPATIBLE_API_KEY\nConfig keys: OPENAI_BASE_URL\n",
+          stderr: "",
+        }
+      : { status: 0, output: "" };
+  });
+  vi.spyOn(destroy, "removeSandboxRegistryEntryWithReceipt").mockReturnValue({
+    entry: { name: "alpha", imageTag: "old-image" },
+  });
+  vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
+  vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
+  const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
+    await overrides.onboard?.(session);
+  });
+  const applyPresetSpy = vi
+    .spyOn(policies, "applyPreset")
+    .mockImplementation((_sandboxName: unknown, presetName: unknown) => {
+      const normalizedPresetName = String(presetName);
+      if (overrides.applyPreset) return overrides.applyPreset(normalizedPresetName);
+      if (normalizedPresetName === "throw") throw new Error("preset boom");
+      return normalizedPresetName === "npm";
+    });
+  const executeSandboxCommandSpy = vi
+    .spyOn(processRecovery, "executeSandboxCommand")
+    .mockImplementation(
+      overrides.executeSandboxCommand ?? (() => ({ status: 0, stdout: "doctor ok", stderr: "" })),
+    );
+  vi.spyOn(shields, "repairMutableConfigPerms").mockImplementation(
+    overrides.repairMutableConfigPerms ?? (() => ({ applied: true, verified: true, errors: [] })),
+  );
+  const messagingRebuildPlanSpy = vi
+    .spyOn(messaging.MessagingWorkflowPlanner.prototype, "buildRebuildPlanFromSandboxEntry")
+    .mockImplementation(overrides.buildMessagingRebuildPlan ?? (() => null));
+  const ensureMessagingHostForwardAfterRebuildSpy = vi
+    .spyOn(messagingHostForwardLifecycle, "ensureMessagingHostForwardAfterRebuild")
+    .mockReturnValue(true);
+
+  errorSpy.mockClear();
+  logSpy.mockClear();
+  warnSpy.mockClear();
+
+  return {
+    rebuildSandbox: requireDist(rebuildModulePath).rebuildSandbox,
+    applyPresetSpy,
+    backupSandboxStateSpy,
+    errorSpy,
+    executeSandboxCommandSpy,
+    ensureMessagingHostForwardAfterRebuildSpy,
+    logSpy,
+    markStepFailedSpy,
+    onboardSpy,
+    registryUpdateSpy,
+    restoreRegistryEntryIfMissingSpy,
+    releaseOnboardLockSpy,
+    relockSpy,
+    restoreSandboxStateSpy,
+    runOpenshellSpy,
+    messagingRebuildPlanSpy,
+    session,
+  };
+}

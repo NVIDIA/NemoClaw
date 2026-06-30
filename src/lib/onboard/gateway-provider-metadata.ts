@@ -73,6 +73,9 @@ function commandStreamText(value: string | Buffer | null | undefined): string {
  * Parse the non-secret identity and binding keys emitted by `openshell provider get`.
  * Provider display output is untrusted: it must stay bounded, contain each required
  * field exactly once, and use only the syntax accepted by recovery decisions.
+ * Provider-specific binding semantics remain at the authorization boundary in
+ * `assessRecoveredProviderCredentialReuse`; this parser deliberately has no
+ * selected-provider context and cannot authorize credential reuse by itself.
  */
 export function parseGatewayProviderMetadata(output: string): GatewayProviderMetadata | null {
   if (Buffer.byteLength(output, "utf8") > MAX_PROVIDER_OUTPUT_BYTES) return null;

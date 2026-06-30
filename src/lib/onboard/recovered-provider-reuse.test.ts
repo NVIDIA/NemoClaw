@@ -120,7 +120,7 @@ describe("assessRecoveredProviderCredentialReuse", () => {
     });
   });
 
-  it("rejects syntactically valid but spoofed gateway binding keys", () => {
+  it("rejects syntactically valid credential/config-key spoofing at the authorization boundary", () => {
     const gatewayProvider = parseGatewayProviderMetadata(
       "Name: compatible-endpoint\nType: openai\nCredential keys: ATTACKER_KEY\nConfig keys: ATTACKER_BASE_URL",
     );

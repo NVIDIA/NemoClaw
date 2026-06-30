@@ -8,6 +8,7 @@ import type { InferenceSelection } from "../inference/selection";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import type { SandboxMessagingState } from "./registry-messaging";
+import * as reversibleRemoval from "./registry-reversible-removal";
 
 export {
   getSandboxEntryDisplayInference,
@@ -107,6 +108,8 @@ export interface SandboxRegistry {
   sandboxes: Record<string, SandboxEntry>;
   defaultSandbox: string | null;
 }
+
+export type SandboxRemovalReceipt = reversibleRemoval.RegistryRemovalReceipt<SandboxEntry>;
 
 export const REGISTRY_FILE = path.join(process.env.HOME || "/tmp", ".nemoclaw", "sandboxes.json");
 export const LOCK_DIR = `${REGISTRY_FILE}.lock`;
@@ -469,23 +472,13 @@ export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boo
   });
 }
 
-export type SandboxRemovalReceipt = {
-  entry: SandboxEntry;
-};
-
 /** Atomically capture and remove one registry row for a reversible lifecycle operation. */
 export function removeSandboxWithReceipt(name: string): SandboxRemovalReceipt | null {
   return withLock(() => {
-    const data = load();
-    const entry = data.sandboxes[name];
-    if (!entry) return null;
-    delete data.sandboxes[name];
-    if (data.defaultSandbox === name) {
-      const remaining = Object.keys(data.sandboxes);
-      data.defaultSandbox = remaining.length > 0 ? remaining[0] || null : null;
-    }
-    save(data);
-    return { entry };
+    const result = reversibleRemoval.removeSandboxFromRegistry(load(), name);
+    if (!result.receipt) return null;
+    save(result.registry);
+    return result.receipt;
   });
 }
 
@@ -523,26 +516,13 @@ export function restoreSandboxEntry(
   });
 }
 
-/**
- * Restore a removed entry only while its name is still unclaimed. This is the
- * rebuild-failure rollback: a partially or concurrently registered
- * replacement must win over the pre-rebuild entry.
- *
- * A valid current default is always preserved: without a registry revision
- * token, the fallback selected by removal cannot be distinguished from a later
- * deliberate `setDefault()`. The restored entry becomes default only when the
- * current pointer is absent or stale.
- */
+/** Restore a removed entry unless a recreate already registered its replacement. */
 export function restoreSandboxEntryIfMissing(entry: SandboxEntry): boolean {
   return withLock(() => {
-    const data = load();
-    if (data.sandboxes[entry.name]) return false;
-    data.sandboxes[entry.name] = entry;
-    if (!data.defaultSandbox || !data.sandboxes[data.defaultSandbox]) {
-      data.defaultSandbox = entry.name;
-    }
-    save(data);
-    return true;
+    const result = reversibleRemoval.restoreSandboxIfMissingInRegistry(load(), entry);
+    if (!result.restored) return false;
+    save(result.registry);
+    return result.restored;
   });
 }
 

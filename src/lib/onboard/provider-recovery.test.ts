@@ -123,6 +123,35 @@ describe("provider recovery persisted routing state", () => {
     expect(helpers().readRecordedInferenceRoute("alpha")).toBeNull();
   });
 
+  it("rejects a partial registry row without completing it from live gateway output", () => {
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "alpha",
+      provider: "compatible-endpoint",
+      model: null,
+      endpointUrl: "https://registry.example/v1",
+      preferredInferenceApi: "openai-completions",
+    });
+    vi.spyOn(registry, "listSandboxes").mockReturnValue({
+      defaultSandbox: "alpha",
+      sandboxes: [{ name: "alpha", provider: "compatible-endpoint" }],
+    });
+    const parseGatewayInference = vi.fn(() => ({
+      provider: "compatible-endpoint",
+      model: "gateway-model",
+    }));
+    const runCaptureOpenshell = vi.fn(() =>
+      JSON.stringify({ provider: "compatible-endpoint", model: "gateway-model" }),
+    );
+    const recovery = createProviderRecoveryHelpers({
+      parseGatewayInference,
+      runCaptureOpenshell,
+    });
+
+    expect(recovery.readRecordedInferenceRoute("alpha")).toBeNull();
+    expect(runCaptureOpenshell).not.toHaveBeenCalled();
+    expect(parseGatewayInference).not.toHaveBeenCalled();
+  });
+
   it("reports every other recorded endpoint for the same global provider", () => {
     vi.spyOn(registry, "listSandboxes").mockReturnValue({
       defaultSandbox: "alpha",

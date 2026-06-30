@@ -28,6 +28,38 @@ describe("gateway provider metadata", () => {
     });
   });
 
+  it("strips bounded OSC and CSI sequences before parsing field values", () => {
+    const output = [
+      "Name: comp\u001b]8;;https://attacker.invalid\u0007atible-endpoint",
+      "Type: \u001b[31mopenai\u001b[0m",
+      "Credential keys: COMPATIBLE_\u001b[1mAPI_KEY\u001b[0m",
+      "Config keys: OPENAI_BASE_URL",
+    ].join("\n");
+
+    expect(parseGatewayProviderMetadata(output)).toEqual({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialKeys: ["COMPATIBLE_API_KEY"],
+      configKeys: ["OPENAI_BASE_URL"],
+    });
+  });
+
+  it("parses syntactic binding identity without authorizing provider-specific reuse", () => {
+    // Semantic matching requires the selected provider and therefore belongs
+    // to assessRecoveredProviderCredentialReuse. Its regression test feeds
+    // this exact spoof through the parser and proves the decision is rejected.
+    expect(
+      parseGatewayProviderMetadata(
+        "Name: compatible-endpoint\nType: openai\nCredential keys: ATTACKER_KEY\nConfig keys: ATTACKER_BASE_URL",
+      ),
+    ).toEqual({
+      name: "compatible-endpoint",
+      type: "openai",
+      credentialKeys: ["ATTACKER_KEY"],
+      configKeys: ["ATTACKER_BASE_URL"],
+    });
+  });
+
   it("reads only the exact requested provider without exposing command output", () => {
     const runOpenshell = vi.fn(() => ({ status: 0, stdout: Buffer.from(COMPLETE_OUTPUT) }));
 

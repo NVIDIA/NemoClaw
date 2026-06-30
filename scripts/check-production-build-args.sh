@@ -2,6 +2,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Defense-in-depth guard: primary enforcement of legacy fixture pin rejection is
+# in Dockerfile and Dockerfile.base install blocks. This script prevents the
+# fixture flag from reaching production Docker build commands.
+
 set -euo pipefail
 
 readonly legacy_fixture_key="NEMOCLAW_E2E_FIXTURE_LEGACY_OPENCLAW"

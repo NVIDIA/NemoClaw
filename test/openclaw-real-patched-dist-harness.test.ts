@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const DOCKERFILE = path.join(REPO_ROOT, "Dockerfile");
@@ -146,7 +146,15 @@ function grepRealDist(dist: string, needle: string) {
   );
 }
 
-function packReviewedTarball(tarballUrl: string, destination: string) {
+interface PackCommandResult {
+  status: number | null;
+  stdout: string | null;
+  stderr: string | null;
+}
+
+type PackReviewedTarball = (tarballUrl: string, destination: string) => PackCommandResult;
+
+function packReviewedTarball(tarballUrl: string, destination: string): PackCommandResult {
   const runPack = () =>
     spawnSync("npm", ["pack", tarballUrl, "--pack-destination", destination, "--silent"], {
       encoding: "utf-8",
@@ -155,6 +163,105 @@ function packReviewedTarball(tarballUrl: string, destination: string) {
   const first = runPack();
   return first.status === 0 ? first : runPack();
 }
+
+function materializeReviewedTarball(
+  tarballUrl: string,
+  destination: string,
+  expectedIntegrity: string,
+  packTarball: PackReviewedTarball = packReviewedTarball,
+): string {
+  const pack = packTarball(tarballUrl, destination);
+  requireSpawnSuccess(pack, "npm pack reviewed OpenClaw tarball");
+
+  const reportedFilenames = (pack.stdout ?? "")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (reportedFilenames.length !== 1) {
+    throw new Error("npm pack reviewed OpenClaw tarball did not report exactly one archive");
+  }
+
+  const filename = reportedFilenames[0];
+  const filenameParts = filename.split(/[\\/]+/);
+  if (
+    path.isAbsolute(filename) ||
+    filename === "." ||
+    filename === ".." ||
+    filename.includes("/") ||
+    filename.includes("\\") ||
+    filenameParts.includes("..") ||
+    filenameParts.includes("")
+  ) {
+    throw new Error(
+      `npm pack reviewed OpenClaw tarball reported unsafe archive filename: ${filename}`,
+    );
+  }
+
+  const packRoot = path.resolve(destination);
+  const tarballPath = path.resolve(packRoot, filename);
+  if (!tarballPath.startsWith(`${packRoot}${path.sep}`)) {
+    throw new Error(`npm pack reviewed OpenClaw tarball escaped pack directory: ${filename}`);
+  }
+  fs.existsSync(tarballPath) || runtimeMismatch("missing", "present", tarballPath);
+  requireRuntimeEqual(sha512Sri(tarballPath), expectedIntegrity, "OpenClaw tarball SRI");
+  return tarballPath;
+}
+
+describe("OpenClaw real patched-dist materialization guard", () => {
+  it("rejects drifted tarball integrity before install can start", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-drifted-dist-"));
+    let installStarted = false;
+    try {
+      const fakePack: PackReviewedTarball = (_tarballUrl, destination) => {
+        const filename = "openclaw-drifted.tgz";
+        fs.writeFileSync(path.join(destination, filename), "drifted tarball");
+        return {
+          status: 0,
+          stdout: filename,
+          stderr: "",
+        };
+      };
+
+      expect(() => {
+        materializeReviewedTarball(
+          "https://registry.npmjs.org/openclaw/-/openclaw-drifted.tgz",
+          tmp,
+          "sha512-reviewed-integrity",
+          fakePack,
+        );
+        installStarted = true;
+      }).toThrow(/OpenClaw tarball SRI/);
+      expect(installStarted).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an unsafe reported tarball filename before install can start", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-unsafe-dist-"));
+    let installStarted = false;
+    try {
+      const fakePack: PackReviewedTarball = () => ({
+        status: 0,
+        stdout: "../package.tgz",
+        stderr: "",
+      });
+
+      expect(() => {
+        materializeReviewedTarball(
+          "https://registry.npmjs.org/openclaw/-/openclaw-unsafe.tgz",
+          tmp,
+          "sha512-reviewed-integrity",
+          fakePack,
+        );
+        installStarted = true;
+      }).toThrow(/unsafe archive filename/);
+      expect(installStarted).toBe(false);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
 
 describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
   "OpenClaw real patched-dist harness",
@@ -165,12 +272,7 @@ describe.skipIf(process.env.NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS !== "1")(
       const tarballUrl = readRequiredDockerArg("OPENCLAW_2026_6_9_TARBALL");
       const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-real-dist-"));
       try {
-        const pack = packReviewedTarball(tarballUrl, tmp);
-        requireSpawnSuccess(pack, "npm pack reviewed OpenClaw tarball");
-
-        const tarballPath = path.join(tmp, `openclaw-${version}.tgz`);
-        fs.existsSync(tarballPath) || runtimeMismatch("missing", "present", tarballPath);
-        requireRuntimeEqual(sha512Sri(tarballPath), integrity, "OpenClaw tarball SRI");
+        const tarballPath = materializeReviewedTarball(tarballUrl, tmp, integrity);
 
         const extractDir = path.join(tmp, "extract");
         fs.mkdirSync(extractDir);
