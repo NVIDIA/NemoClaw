@@ -1381,10 +1381,17 @@ Pass `--url` for the MCP endpoint and the required single `--env KEY` bearer cre
 NemoClaw registers that credential in an OpenShell provider, installs a generated OpenShell `protocol: mcp` policy for the target endpoint, attaches the provider to the running sandbox, and writes only an `openshell:resolve:env:KEY` placeholder into the agent config.
 Inline `--env KEY=VALUE` is rejected because it would expose the value in NemoClaw process arguments.
 Load the variable from a secret manager or masked prompt, export it without recording the value in shell history, and pass only `--env KEY`.
-All endpoints must use HTTPS, and persisted MCP URLs cannot contain query strings, percent-escaped or glob-style paths, or port zero.
-NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, and explicit MCP methods. OpenShell v0.0.72 evaluates that policy before replacing the attached provider placeholder in the allowed request header. Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
+All endpoints must use HTTPS. The full URL and path are persisted and displayed, so URLs cannot contain userinfo, query strings, fragments, known secret-shaped path material, percent-escaped or glob-style paths, or port zero.
+NemoClaw generates a narrow `protocol: mcp` policy for the destination, literal path, adapter binaries, pinned addresses, explicit MCP methods, and a 131,072-byte request-body limit. OpenShell v0.0.72 evaluates that policy before replacing the attached provider placeholder in the allowed request header. Static provider placeholders are sandbox-scoped rather than endpoint-exclusive, so do not grant broader inspected-HTTP routes to the same adapter runtime and credential key.
 The sandbox client connects directly through OpenShell's existing egress path, and NemoClaw does not run a host-side MCP data-plane bridge, proxy, relay, or listener.
 For full setup details, see [Set Up MCP Servers](../manage-sandboxes/set-up-mcp-servers).
+
+<AgentOnly variant="hermes">
+
+Hermes MCP add, restart, and remove mutate managed config and are refused while shields are up.
+Run `$$nemoclaw <name> shields down --timeout 5m --reason "MCP maintenance"` before the mutation, then run `$$nemoclaw <name> shields up` after it; list and status remain read-only.
+
+</AgentOnly>
 
 ```bash
 export GITHUB_MCP_TOKEN=ghp_...
@@ -1414,6 +1421,12 @@ If the recorded host variable is exported, restart replaces the provider credent
 Otherwise, restart reuses an existing provider whose current metadata match the registry.
 A missing provider requires the variable to be exported before retrying.
 
+<AgentOnly variant="hermes">
+
+Hermes shields must be down for this config mutation.
+
+</AgentOnly>
+
 ```bash
 $$nemoclaw my-assistant mcp restart [server]
 ```
@@ -1421,8 +1434,15 @@ $$nemoclaw my-assistant mcp restart [server]
 ### `$$nemoclaw <name> mcp remove`
 
 Remove an MCP server from a sandbox.
+
+<AgentOnly variant="hermes">
+
+Hermes shields must be down for this config mutation.
+
+</AgentOnly>
+
 NemoClaw unregisters the sandbox agent adapter, prechecks and removes the recorded OpenShell provider, removes the owned generated policy, and clears the sandbox registry entry.
-The command fails closed on observed drift. `--force` continues best-effort cleanup of independently matching resources and preserves registry state when residuals remain. OpenShell v0.0.72 mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
+The command fails closed on observed drift. `--force` may remove a modified same-name agent adapter entry, but provider deletion still requires the exact recorded ID, type, and credential key and policy deletion still requires exact owned content. Residuals preserve registry state. OpenShell v0.0.72 mutates providers by name, so do not concurrently replace a managed provider through another OpenShell client during this command.
 
 ```bash
 $$nemoclaw my-assistant mcp remove github [--force]
@@ -1430,7 +1450,7 @@ $$nemoclaw my-assistant mcp remove github [--force]
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Best-effort cleanup of resources whose current metadata match the registry; preserves registry state when residuals remain |
+| `--force` | Remove same-name adapter config and continue exact-ownership provider/policy cleanup; preserve registry state when residuals remain |
 
 ### `$$nemoclaw <name> skill install <path>`
 

@@ -11,7 +11,7 @@ content:
 ---
 
 This review covers NemoClaw's stable OpenShell `0.0.72` pin, Docker-driver gateway authentication, policy mutation, and MCP and JSON-RPC policy compatibility.
-The review was completed on June 29, 2026.
+The dependency compatibility review was completed on June 29, 2026; the MCP integration and DNS source/runtime supplement were reviewed on June 30, 2026.
 
 ## Release Identity
 
@@ -52,8 +52,8 @@ OpenShell `0.0.72` adds `protocol: mcp` for MCP Streamable HTTP and `protocol: j
 MCP rules can match methods and `tools/call` tool names, support allow and deny rules, and fail closed for malformed or ambiguous request frames.
 The upstream MCP conformance lane passed `initialize`, `tools_call`, and `elicitation-sep1034-client-defaults` with no expected failures.
 
-This dependency PR preserves the new MCP and JSON-RPC YAML fields when NemoClaw merges existing policies.
-It does not widen NemoClaw's strict blueprint-addition schema to author new MCP endpoints because that is a separate product and API change.
+NemoClaw preserves the new MCP and JSON-RPC YAML fields when it merges existing policies.
+The strict blueprint-addition schema does not author MCP endpoints; `nemoclaw <sandbox> mcp add` is the supported managed product path described in [Set Up MCP Servers](../deployment/set-up-mcp-bridge) and the [accepted architecture decision](https://github.com/NVIDIA/NemoClaw/issues/566#issuecomment-4847534784).
 OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not stdio MCP or generic inbound traffic.
 
 ## DNS Pinning Source and Runtime Contract
