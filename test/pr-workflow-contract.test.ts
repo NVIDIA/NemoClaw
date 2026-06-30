@@ -493,7 +493,7 @@ describe("pull request and main workflow contracts", () => {
     expect(vitestConfig).toContain('include: ["src/**/*.test.ts"]');
     expect(vitestConfig).toContain('name: "integration"');
     expect(vitestConfig).toContain('include: ["test/**/*.test.{js,ts}"]');
-    expect(vitestConfig).toContain('name: "e2e-vitest-support"');
+    expect(vitestConfig).toContain('name: "e2e-support"');
     expect(vitestConfig).toContain('name: "package-contract"');
     expect(vitestConfig).toContain('"test/e2e/**"');
     expect(vitestConfig).toContain('"test/install-express-prompt.test.ts"');

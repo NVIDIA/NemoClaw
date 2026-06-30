@@ -569,7 +569,6 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     // #4952: recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the long-running
     // gateway into a process whose argv is plain `openclaw` — no `gateway`
     // token at all (see the gateway_pid() helper in
-    // test/e2e/test-issue-2478-crash-loop-recovery.sh). The in-container curl
     // probe fails (connection refused, exit 7) on runtime shapes where the
     // dashboard port lives outside this namespace, so the healthcheck falls
     // back to the in-container gateway-liveness check. A pgrep that only
