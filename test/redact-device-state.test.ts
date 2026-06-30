@@ -147,4 +147,3 @@ describe("device-state JSON redactor", () => {
     expect(invalid.stderr).toContain("invalid JSON");
   });
 });
-

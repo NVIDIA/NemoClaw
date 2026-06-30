@@ -114,4 +114,3 @@ describe("scope-upgrade diagnostic text redactor", () => {
     expect(result.stdout).toMatch(/line 1 plain diagnostic/);
   });
 });
-
