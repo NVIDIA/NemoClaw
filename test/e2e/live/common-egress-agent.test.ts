@@ -696,7 +696,7 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
-    "C1 OpenClaw balanced includes weather and agent fetches Open-Meteo",
+    "C1 OpenClaw balanced permits a verified wttr.in curl",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
@@ -708,7 +708,7 @@ describe.sequential("common-egress agent live targets", () => {
         contract: [
           "OpenClaw balanced onboarding applies weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
-          "a real OpenClaw agent turn fetches Open-Meteo through web_fetch",
+          "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
@@ -723,6 +723,7 @@ describe.sequential("common-egress agent live targets", () => {
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
         "api.open-meteo.com",
         "geocoding-api.open-meteo.com",
+        "wttr.in",
       ]);
       await assertPolicyAbsent(
         sandbox,
@@ -730,15 +731,56 @@ describe.sequential("common-egress agent live targets", () => {
         "c1-balanced-scope",
         "restcountries.com",
       );
+      const weatherProofPath = `/tmp/nemoclaw-weather-proof-${Date.now()}-${process.pid}.txt`;
+      const clearWeatherProof = await sandbox.execShell(
+        OPENCLAW_BALANCED_SANDBOX,
+        trustedSandboxShellScript(`rm -f ${shellQuote(weatherProofPath)}`),
+        {
+          artifactName: "c1-weather-clear-proof",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(clearWeatherProof.exitCode, text(clearWeatherProof)).toBe(0);
+      // The agent must leave the fetched body behind. The host-side assertion
+      // independently validates it, so merely echoing the reply token cannot pass.
+      const weatherProofCommand = [
+        "set -eu",
+        `proof=${shellQuote(weatherProofPath)}`,
+        "if test -s \"$proof\"; then printf 'WEATHER_AGENT_OK\\n'; exit 0; fi",
+        "tmp=$(mktemp)",
+        "trap 'rm -f \"$tmp\"' EXIT",
+        "curl -fsS --max-time 30 --output \"$tmp\" 'https://wttr.in/:help'",
+        'test -s "$tmp"',
+        "grep -Fq 'Usage:' \"$tmp\"",
+        "grep -Fq 'Special URLs:' \"$tmp\"",
+        'mv "$tmp" "$proof"',
+        "trap - EXIT",
+        "printf 'WEATHER_AGENT_OK\\n'",
+      ].join("; ");
       await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
         expected: "WEATHER_AGENT_OK",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
-        prompt: `Use the web_fetch tool to fetch exactly this URL:
-https://api.open-meteo.com/v1/forecast?latitude=47.4979&longitude=19.0402&current=temperature_2m
-After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response contains temperature_2m. Do not fetch any other URL.`,
+        prompt: `Run exactly this shell command to verify the weather host curl path:
+${weatherProofCommand}
+Do not use web_fetch, web_search, or any other weather provider.
+After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`,
       });
+      const weatherProof = await sandbox.execShell(
+        OPENCLAW_BALANCED_SANDBOX,
+        trustedSandboxShellScript(
+          `test -s ${shellQuote(weatherProofPath)} && grep -Fq 'Usage:' ${shellQuote(weatherProofPath)} && grep -Fq 'Special URLs:' ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
+        ),
+        {
+          artifactName: "c1-weather-agent-proof",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(weatherProof.exitCode, text(weatherProof)).toBe(0);
+      expect(weatherProof.stdout.trim()).toMatch(/^[a-f0-9]{64}\s+/);
       await artifacts.writeJson("target-result.json", {
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",

@@ -443,13 +443,19 @@ describe("rebuildSandbox flow", () => {
     );
   });
 
-  it("prunes disabled messaging channel presets from the final registry policies", async () => {
+  it("restores enabled messaging presets while pruning disabled ones from final policies", async () => {
     const disabledSlackPlan = {
       schemaVersion: 1,
       sandboxName: "alpha",
       agent: "openclaw",
       workflow: "rebuild",
-      channels: [],
+      channels: [
+        { channelId: "telegram", disabled: false },
+        { channelId: "discord", disabled: false },
+        { channelId: "whatsapp", disabled: false },
+        { channelId: "wechat", disabled: false },
+        { channelId: "slack", disabled: true },
+      ],
       disabledChannels: ["slack"],
       credentialBindings: [],
       networkPolicy: { presets: [], entries: [] },
@@ -460,7 +466,7 @@ describe("rebuildSandbox flow", () => {
     };
     const harness = createRebuildFlowHarness({
       applyPreset: () => true,
-      backupPolicyPresets: ["slack", "npm"],
+      backupPolicyPresets: ["slack", "npm", "pypi", "telegram"],
       buildMessagingRebuildPlan: () => disabledSlackPlan,
     });
 
@@ -468,11 +474,17 @@ describe("rebuildSandbox flow", () => {
       harness.rebuildSandbox("alpha", ["--yes"], { throwOnError: true }),
     ).resolves.toBeUndefined();
 
-    expect(harness.applyPresetSpy).toHaveBeenCalledWith("alpha", "npm");
-    expect(harness.applyPresetSpy).not.toHaveBeenCalledWith("alpha", "slack");
+    expect(harness.applyPresetSpy.mock.calls.map((call) => call[1])).toEqual([
+      "npm",
+      "pypi",
+      "telegram",
+      "discord",
+      "whatsapp",
+      "wechat",
+    ]);
     expect(harness.registryUpdateSpy).toHaveBeenCalledWith("alpha", {
       agentVersion: "0.2.0",
-      policies: ["npm"],
+      policies: ["npm", "pypi", "telegram", "discord", "whatsapp", "wechat"],
     });
   });
 

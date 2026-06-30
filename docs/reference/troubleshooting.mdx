@@ -245,13 +245,21 @@ For an OpenShell gateway port conflict, set `NEMOCLAW_GATEWAY_PORT` to a free no
 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Remote/headless hosts can bind the OpenShell gateway to all IPv4 interfaces:
+Remote/headless hosts should keep the OpenShell gateway on loopback and bind the dashboard forward instead:
 
 ```bash
-NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
+NEMOCLAW_DASHBOARD_BIND=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 $$nemoclaw onboard
 ```
 
-Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the network should be able to reach the gateway.
+Docker-driver gateways on OpenShell 0.0.71 reject `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` while gateway JWT auth is active.
+
+Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only on supported gateway modes and only when other hosts on the network should be able to reach the gateway.
+
+### Older-glibc gateway compatibility container
+
+OpenShell 0.0.71 directly supports Linux hosts with glibc 2.28 or newer. On an older trusted host, `NEMOCLAW_OPENSHELL_GATEWAY_CONTAINER_PATCH=1` explicitly opts into NemoClaw's compatibility container. Leave it unset on supported hosts.
+
+The compatibility container uses host networking and mounts the host Docker socket read-only. A read-only socket mount still permits privileged Docker API operations and can control the host, so do not enable this mode on an untrusted or shared host. The gateway remains loopback-bound, and startup fails closed unless the configured Unix socket answers as a Docker daemon. See the [OpenShell 0.0.71 gateway auth review](../security/openshell-0.0.71-gateway-auth-review#source-of-truth-boundaries) for the accepted boundary and removal conditions.
 
 Refer to [Environment Variables](commands#environment-variables) for the full list of port overrides.
 
@@ -393,6 +401,19 @@ $$nemoclaw <name> connect
 ```
 
 Run `$$nemoclaw status` for a broader gateway health report.
+
+<AgentOnly variant="hermes">
+If `nemohermes <name> recover` reports that the Hermes secret-boundary validator is missing, the sandbox image predates the recovery-side validator that re-checks `/sandbox/.hermes/.env`.
+Current NemoClaw releases fail closed in this state: recovery reports that the validator is missing, stops Hermes gateway/dashboard processes, refuses to claim the secret boundary was checked, and instructs you to re-image the sandbox with a current Hermes build.
+
+Re-image the sandbox with a current Hermes build before retrying recovery:
+
+```bash
+nemohermes <sandbox-name> rebuild --yes
+nemohermes <sandbox-name> recover
+```
+
+</AgentOnly>
 
 ### Sandbox container reports `(unhealthy)` while the agent gateway process is still alive
 
