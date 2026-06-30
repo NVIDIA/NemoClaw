@@ -182,6 +182,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
+    expect(result.stdout).toContain("12 hash(es) are stale");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 

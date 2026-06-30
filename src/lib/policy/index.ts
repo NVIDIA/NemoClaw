@@ -1054,6 +1054,12 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
     presetMeta && typeof presetMeta === "object" && !Array.isArray(presetMeta)
       ? (presetMeta as PolicyObject).name
       : undefined;
+  if (typeof presetName === "string" && presetName.startsWith("_provider_")) {
+    console.error(
+      `  Preset name cannot start with '_provider_' (reserved by OpenShell): ${filePath}`,
+    );
+    return null;
+  }
   if (typeof presetName !== "string" || !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(presetName)) {
     console.error(
       `  Preset must declare preset.name (lowercase, hyphenated RFC 1123 label): ${filePath}`,

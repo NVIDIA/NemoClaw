@@ -206,6 +206,20 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     expect(merged.network_policies).toHaveProperty("existing_json_rpc");
   });
 
+  it("filters reserved provider entries from the final blueprint mutation payload", async () => {
+    const blueprintWithReservedAddition = blueprint();
+    blueprintWithReservedAddition.components!.policy!.additions!._provider_injected = {
+      name: "must-not-submit",
+      endpoints: [{ host: "provider.invalid", port: 443, access: "full" }],
+    };
+
+    await actionApply("default", blueprintWithReservedAddition);
+
+    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    expect(merged.network_policies).not.toHaveProperty("_provider_injected");
+    expect(merged.network_policies).toHaveProperty("nim_service");
+  });
+
   it("fails closed for a legacy network_policies array instead of dropping it", async () => {
     mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
       exitCode: 0,

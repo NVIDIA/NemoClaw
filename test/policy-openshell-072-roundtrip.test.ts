@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const requireForTest = createRequire(import.meta.url);
 const YAML = requireForTest("yaml");
@@ -135,6 +135,29 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
 
       expect(policies.loadPresetFromFile(presetPath)).toBeNull();
     } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects custom preset names reserved for provider-composed entries", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-provider-preset-name-"));
+    const presetPath = path.join(tempDir, "reserved-name.yaml");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      fs.writeFileSync(
+        presetPath,
+        YAML.stringify({
+          preset: { name: "_provider_injected" },
+          network_policies: { safe_entry: { name: "safe-entry" } },
+        }),
+      );
+
+      expect(policies.loadPresetFromFile(presetPath)).toBeNull();
+      expect(consoleError).toHaveBeenCalledWith(
+        expect.stringContaining("Preset name cannot start with '_provider_'"),
+      );
+    } finally {
+      consoleError.mockRestore();
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });

@@ -82,6 +82,7 @@
     "nemoclaw/dist/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
+    "nemoclaw/shared/",
     "nemoclaw-blueprint/",
     "scripts/",
     "Dockerfile",

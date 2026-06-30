@@ -101,7 +101,7 @@ check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
   local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72"
   local workspace manifests spec manifest expected actual asset pinned upstream matches
-  local count=0 published_count=0
+  local count=0 published_count=0 failures=0
   local -a manifest_specs=(
     "openshell-checksums-sha256.txt:0049181983eaf925ef9510382f75348229a9511d02e27196107782e7c3259ae1"
     "openshell-gateway-checksums-sha256.txt:3c454dc15154b8c700ec820628559ea8964c6e552d9c5f8af78b6ee19cf34547"
@@ -116,8 +116,16 @@ check_openshell_release_assets() {
   for spec in "${manifest_specs[@]}"; do
     manifest="${spec%%:*}"
     expected="${spec#*:}"
-    fetch_file "${release_base}/${manifest}" "${workspace}/${manifest}"
-    actual=$(sha256_file "${workspace}/${manifest}")
+    if ! fetch_file "${release_base}/${manifest}" "${workspace}/${manifest}"; then
+      echo "  STALE: unable to download ${manifest}."
+      failures=$((failures + 1))
+      continue
+    fi
+    if ! actual=$(sha256_file "${workspace}/${manifest}"); then
+      echo "  STALE: unable to hash ${manifest}."
+      failures=$((failures + 1))
+      continue
+    fi
     if [[ "$actual" != "$expected" ]]; then
       echo "  STALE: ${manifest} digest does not match the pinned v0.0.72 release asset."
       echo "    pinned:   ${expected}"
@@ -168,6 +176,7 @@ check_openshell_release_assets() {
     echo "  STALE: expected all 8 pinned assets in the v0.0.72 checksum manifests, matched ${published_count}."
     failures=$((failures + 1))
   fi
+  return "$failures"
 }
 
 # ---------------------------------------------------------------------------
@@ -210,7 +219,13 @@ for i in "${!LABELS[@]}"; do
   fi
 done
 
-check_openshell_release_assets
+openshell_failures=0
+if check_openshell_release_assets; then
+  openshell_failures=0
+else
+  openshell_failures=$?
+fi
+failures=$((failures + openshell_failures))
 
 if ((failures > 0)); then
   echo ""

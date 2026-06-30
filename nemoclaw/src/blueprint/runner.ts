@@ -13,16 +13,17 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, sep } from "node:path";
 
 import { execa } from "execa";
 import YAML from "yaml";
 
-import { validateEndpointUrl } from "./ssrf.js";
-import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { withoutProviderComposedPolicies } from "../../shared/openshell-policy-boundary.cjs";
 import { DASHBOARD_PORT } from "../lib/ports.js";
+import { buildSubprocessEnv } from "../lib/subprocess-env.js";
+import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
@@ -352,16 +353,6 @@ function parseCurrentPolicy(raw: string): UnknownRecord {
   return parsed;
 }
 
-// Package boundary: nemoclaw is published from this package-local ESM root and
-// cannot import the root CLI's CommonJS src/lib/policy/merge.ts without TS6059
-// or omitting that helper from the package. Keep this predicate in behavioral
-// parity with test/policy-openshell-072-roundtrip.test.ts.
-function withoutProviderComposedPolicies(policies: UnknownRecord): UnknownRecord {
-  return Object.fromEntries(
-    Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
-  );
-}
-
 function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
   const current = parseCurrentPolicy(currentPolicyRaw);
   if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
@@ -380,7 +371,10 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 
   output.version =
     typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
-  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  output.network_policies = withoutProviderComposedPolicies({
+    ...existingNetworkPolicies,
+    ...additions,
+  });
   return YAML.stringify(output);
 }
 
