@@ -231,11 +231,14 @@ describe("built-in channel manifests", () => {
   });
 
   it("keeps built-in config inputs durable by default", () => {
-    for (const manifest of BUILT_IN_CHANNEL_MANIFESTS) {
-      for (const input of manifest.inputs) {
-        if (input.kind !== "config") continue;
-        expect(input.statePath, `${manifest.id}.${input.id}`).toBeTruthy();
-      }
+    const configInputs = BUILT_IN_CHANNEL_MANIFESTS.flatMap((manifest) =>
+      manifest.inputs
+        .filter((input) => input.kind === "config")
+        .map((input) => ({ manifest, input })),
+    );
+
+    for (const { manifest, input } of configInputs) {
+      expect(input.statePath, `${manifest.id}.${input.id}`).toBeTruthy();
     }
   });
 
