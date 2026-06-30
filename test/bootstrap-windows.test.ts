@@ -570,23 +570,35 @@ function Get-WslDistros { return @() }
 function Start-WslInstallInPowerShellWindow {
   param([string]$Name)
   Set-Content -LiteralPath $script:statusPath -Value '0'
-  Set-Content -LiteralPath $script:logPath -Value @'
+  $log = @'
 **********************
 Windows PowerShell transcript start
-Username: NVIDIA.COM\\zyang
+Username: EXAMPLE\\bootstrap-user
+Benutzername: EXAMPLE\\bootstrap-user
 Machine: TEST-HOST (Microsoft Windows NT 10.0.28000.0)
+Computer: TEST-HOST (Microsoft Windows NT 10.0.28000.0)
 Host Application: powershell.exe -Command $ErrorActionPreference = 'Continue'
+$transcriptStarted = $false
+try { Start-Transcript -Path $logPath -Force | Out-Null; $transcriptStarted = $true } catch { }
 $statusPath = 'status-file'
 & 'C:\\WINDOWS\\System32\\wsl.exe' --install -d 'Ubuntu-24.04'
+try { [System.IO.File]::WriteAllText($statusPath, [string]$wslExitCode) } catch { }
 Process ID: 1234
 PSVersion: 5.1.28000.1830
 **********************
+'@
+  $log += [Environment]::NewLine
+  $log += ('Transcript started, output file is {0}{1}' -f $script:logPath, [Environment]::NewLine)
+  $log += ('Status file is {0}{1}' -f $script:statusPath, [Environment]::NewLine)
+  $log += @'
 The requested operation is successful. Changes will not be effective until the system is rebooted.
 Ubuntu installer command exited. This window will close automatically.
 **********************
 Windows PowerShell transcript end
+End time: 20260628121936
 **********************
 '@
+  Set-Content -LiteralPath $script:logPath -Value $log
   return [pscustomobject]@{ StatusPath = $script:statusPath; LogPath = $script:logPath; ProcessId = 1234 }
 }
 function Request-Reboot {
@@ -619,11 +631,26 @@ try {
     expect(result.stdout).toContain(
       "Ubuntu installer command exited. This window will close automatically.",
     );
-    expect(result.stdout).toContain("Windows PowerShell transcript");
-    expect(result.stdout).toContain("Username:");
-    expect(result.stdout).toContain("Machine:");
-    expect(result.stdout).toContain("Host Application:");
-    expect(result.stdout).toContain("PSVersion:");
+    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).not.toContain("Windows PowerShell transcript");
+    expect(result.stdout).not.toContain("Username:");
+    expect(result.stdout).not.toContain("Machine:");
+    expect(result.stdout).not.toContain("Host Application:");
+    expect(result.stdout).not.toContain("PSVersion:");
+    expect(result.stdout).not.toContain("Benutzername:");
+    expect(result.stdout).not.toContain("Computer:");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+    expect(result.stdout).not.toContain("$statusPath = 'status-file'");
+    expect(result.stdout).not.toContain("$transcriptStarted = $false");
+    expect(result.stdout).not.toContain("Start-Transcript");
+    expect(result.stdout).not.toContain("WriteAllText");
+    expect(result.stdout).not.toContain(
+      "& 'C:\\\\WINDOWS\\\\System32\\\\wsl.exe' --install -d 'Ubuntu-24.04'",
+    );
+    expect(result.stdout).not.toContain("Transcript started, output file is");
+    expect(result.stdout).not.toContain("Status file is");
+    expect(result.stdout).not.toContain("End time:");
     expect(parsed.statusMessages).toContain(
       "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
     );
@@ -633,6 +660,164 @@ try {
     expect(parsed.requestReboot).toBe(true);
     expect(parsed.outcome).toContain("REBOOT_REQUESTED");
   });
+
+  itPowerShell("fails closed when a PowerShell transcript header is incomplete", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$log = @'
+**********************
+Windows PowerShell transcript start
+Username: EXAMPLE\\bootstrap-user
+Machine: TEST-HOST
+'@
+
+Convert-WslInstallLogForDisplay -Log $log
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+  });
+
+  itPowerShell("redacts transcript markers when separators are missing", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$log = @'
+Windows PowerShell transcript start
+Username: EXAMPLE\\bootstrap-user
+Machine: TEST-HOST
+Host Application: powershell.exe -Command Get-Date
+Log file: C:\\Users\\example\\install.log
+'@
+
+Convert-WslInstallLogForDisplay -Log $log
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+    expect(result.stdout).not.toContain("C:\\Users\\example\\install.log");
+  });
+
+  itPowerShell("recognizes transcript separators with a BOM and indentation", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$separator = ([char]0xFEFF) + '  **********************'
+$log = @(
+  $separator,
+  'Windows PowerShell transcript start',
+  'Username: EXAMPLE\\bootstrap-user',
+  'Machine: TEST-HOST',
+  '  **********************',
+  'Useful WSL output',
+  '  **********************',
+  'Windows PowerShell transcript end',
+  '  **********************'
+) -join [Environment]::NewLine
+
+Convert-WslInstallLogForDisplay -Log $log
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toContain("[PowerShell transcript metadata redacted.]");
+    expect(result.stdout).toContain("Useful WSL output");
+    expect(result.stdout).not.toContain("EXAMPLE\\\\bootstrap-user");
+    expect(result.stdout).not.toContain("TEST-HOST");
+    expect(result.stdout).not.toContain("Windows PowerShell transcript");
+  });
+
+  itPowerShell("preserves plain WSL output without transcript evidence", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+Convert-WslInstallLogForDisplay -Log 'Invalid distribution name: NotARealDistro'
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe("Invalid distribution name: NotARealDistro");
+  });
+
+  itPowerShell(
+    "does not request reboot when Ubuntu install exits without registering the distro",
+    () => {
+      const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$script:statusMessages = @()
+$script:requestReboot = $false
+$script:outcome = 'success'
+$script:statusPath = Join-Path $env:TEMP ('ubuntu-install-' + [guid]::NewGuid().ToString('N') + '.status')
+$script:logPath = Join-Path $env:TEMP ('ubuntu-install-' + [guid]::NewGuid().ToString('N') + '.log')
+
+function Resolve-WslExe { return 'wsl.exe' }
+function Get-WslDistros { return @() }
+function Start-WslInstallInPowerShellWindow {
+  param([string]$Name)
+  Set-Content -LiteralPath $script:statusPath -Value '0'
+  Set-Content -LiteralPath $script:logPath -Value @'
+The operation completed successfully.
+Ubuntu installer command exited. This window will close automatically.
+'@
+  return [pscustomobject]@{ StatusPath = $script:statusPath; LogPath = $script:logPath; ProcessId = 1234 }
+}
+function Request-Reboot {
+  $script:requestReboot = $true
+  throw 'UNEXPECTED_REBOOT'
+}
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:statusMessages += ('{0}:{1}' -f $Level, $Message) }
+
+try {
+  Ensure-UbuntuWsl
+} catch {
+  $script:outcome = $_.Exception.Message
+}
+
+[pscustomobject]@{
+  statusMessages = $script:statusMessages
+  requestReboot = $script:requestReboot
+  outcome = $script:outcome
+  statusPathExists = Test-Path -LiteralPath $script:statusPath
+  logPathExists = Test-Path -LiteralPath $script:logPath
+} | ConvertTo-Json -Compress
+`);
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(result.stdout).toContain("WSL install output:");
+      expect(result.stdout).toContain("The operation completed successfully.");
+      expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
+      const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+      expect(parsed.statusMessages).toContain(
+        "WARN:Ubuntu-24.04 install command completed, but the distro is not registered yet.",
+      );
+      expect(parsed.statusMessages).toContain(
+        "WARN:The install output did not report that a reboot is required.",
+      );
+      expect(parsed.statusMessages).not.toContain(
+        "WARN:A reboot is required before WSL can finish registering the distro.",
+      );
+      expect(parsed.requestReboot).toBe(false);
+      expect(parsed.outcome).toContain(
+        "WSL distro 'Ubuntu-24.04' is still not registered after install.",
+      );
+      expect(parsed.statusPathExists).toBe(false);
+      expect(parsed.logPathExists).toBe(false);
+    },
+  );
 
   itPowerShell("reports failed Ubuntu install output in the main window", () => {
     const result = runPowerShellHarness(`

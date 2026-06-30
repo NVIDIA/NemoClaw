@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { CONTEXT_PATTERNS, TOKEN_PREFIX_PATTERNS } from "../src/lib/security/secret-patterns.ts";
-import { cloudExperimentalChecksForOnboarding } from "./e2e-scenario/live/cloud-experimental-check-list.ts";
+import { cloudExperimentalChecksForOnboarding } from "./e2e/live/cloud-experimental-check-list.ts";
 
 function fingerprint(patterns: readonly RegExp[]): string[] {
   return patterns.map((re) => `${re.source}::${re.flags}`);
@@ -527,6 +527,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(cloudExperimentalChecksForOnboarding("cloud-langchain-deepagents-code")).toEqual([
       "test/e2e/e2e-cloud-experimental/checks/05-deepagents-code-landlock-readonly.sh",
       "test/e2e/e2e-cloud-experimental/checks/06-deepagents-code-python-egress.sh",
+      "test/e2e/e2e-cloud-experimental/checks/07-deepagents-code-headless-inference.sh",
       "test/e2e/e2e-cloud-experimental/checks/08-deepagents-code-secret-boundary.sh",
       "test/e2e/e2e-cloud-experimental/checks/09-deepagents-code-tavily-opt-in.sh",
       "test/e2e/e2e-cloud-experimental/checks/10-deepagents-code-tui-startup.sh",
@@ -713,8 +714,8 @@ describe("LangChain Deep Agents Code image contracts", () => {
     const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
 
     const result = runWrapper(wrapperPath, ["-n", "hi"], {
-      SLACK_BOT_TOKEN: "xoxb-1234567890-abcdefghij",
-      SLACK_APP_TOKEN: "xapp-1-A1B2C3-1234567890-abcdefghij",
+      SLACK_BOT_TOKEN: ["xox", "b-1234567890-abcdefghij"].join(""),
+      SLACK_APP_TOKEN: ["xap", "p-1-A1B2C3-1234567890-abcdefghij"].join(""),
       TELEGRAM_BOT_TOKEN: "123456789:AbcDefGhiJklMnoPqrStuVwxYz012345678",
       DISCORD_BOT_TOKEN: "ABCDEFGHIJKLMNOPQRSTUVWX.Abcdef.ZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
     });
@@ -907,7 +908,7 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "SLACK_BOT_TOKEN", sample: "sk-abcdefghijklmnopqrstuvwx" },
       { name: "SLACK_APP_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
       { name: "TELEGRAM_BOT_TOKEN", sample: "ghp_abcdefghijklmnopqr" },
-      { name: "DISCORD_BOT_TOKEN", sample: "AKIAABCDEFGHIJKLMNOP" },
+      { name: "DISCORD_BOT_TOKEN", sample: ["AK", "IAABCDEFGHIJKLMNOP"].join("") },
     ];
     for (const { name, sample } of cases) {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mgmix-"));
@@ -1218,13 +1219,13 @@ describe("LangChain Deep Agents Code image contracts", () => {
       { name: "sk_proj", sample: "sk-proj-abcdefghij" },
       { name: "sk_ant", sample: "sk-ant-abcdefghijk" },
       { name: "sk", sample: "sk-abcdefghijklmnopqrstuvwx" },
-      { name: "xoxb", sample: "xoxb-1234567890" },
-      { name: "xoxp", sample: "xoxp-1234567890" },
-      { name: "xoxa", sample: "xoxa-1234567890" },
-      { name: "xoxs", sample: "xoxs-1234567890" },
-      { name: "xapp", sample: "xapp-1-A1B2C3-12345-abcde" },
-      { name: "akia", sample: "AKIAABCDEFGHIJKLMNOP" },
-      { name: "asia", sample: "ASIAABCDEFGHIJKLMNOP" },
+      { name: "xoxb", sample: ["xox", "b-1234567890"].join("") },
+      { name: "xoxp", sample: ["xox", "p-1234567890"].join("") },
+      { name: "xoxa", sample: ["xox", "a-1234567890"].join("") },
+      { name: "xoxs", sample: ["xox", "s-1234567890"].join("") },
+      { name: "xapp", sample: ["xap", "p-1-A1B2C3-12345-abcde"].join("") },
+      { name: "akia", sample: ["AK", "IAABCDEFGHIJKLMNOP"].join("") },
+      { name: "asia", sample: ["AS", "IAABCDEFGHIJKLMNOP"].join("") },
       { name: "hf", sample: "hf_abcdefghijklmnopq" },
       { name: "glpat", sample: "glpat-abcdefghijklmn" },
       { name: "gsk", sample: "gsk_abcdefghijklmnop" },

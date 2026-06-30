@@ -7,15 +7,15 @@ import { defineConfig } from "vitest/config";
 
 import {
   shouldRunBranchValidationE2E,
-  shouldRunLiveE2EScenarios,
-} from "./test/e2e-scenario/fixtures/live-project-gate.ts";
+  shouldRunLiveE2E,
+} from "./test/e2e/fixtures/live-project-gate.ts";
 import { resolveE2ERetryCount } from "./test/helpers/e2e-retries";
 import { testTimeout } from "./test/helpers/timeouts";
 
 const isGithubActions = process.env.GITHUB_ACTIONS === "true";
 const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
 const LIVE_E2E_PROJECT_TIMEOUT_MS = 30 * 60 * 1000;
-const runLiveE2EScenarios = shouldRunLiveE2EScenarios();
+const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
@@ -58,8 +58,8 @@ export default defineConfig({
             "**/node_modules/**",
             "**/.claude/**",
             "test/e2e/**",
-            "test/e2e-scenario/live/**",
-            "test/e2e-scenario/support-tests/**",
+            "test/e2e/live/**",
+            "test/e2e/support/**",
             "test/package-contract/**",
             "test/install-express-prompt.test.ts",
             "test/install-preflight.test.ts",
@@ -97,23 +97,23 @@ export default defineConfig({
         test: {
           // Fast tests for the E2E fixture/support layer. Vitest remains the
           // only harness; this project does not define a separate runner.
-          name: "e2e-vitest-support",
+          name: "e2e-support",
           testTimeout: testTimeout(),
-          include: ["test/e2e-scenario/support-tests/**/*.test.ts"],
+          include: ["test/e2e/support/**/*.test.ts"],
         },
       },
       {
         test: {
-          name: "e2e-scenarios-live",
+          name: "e2e-live",
           testTimeout: testTimeout(LIVE_E2E_PROJECT_TIMEOUT_MS),
           // Vitest counts retries after the initial failure. In CI the default
           // value of 2 gives live E2Es up to three total attempts while keeping
           // local opt-in runs single-shot unless NEMOCLAW_E2E_RETRIES is set.
           retry: e2eRetryCount,
-          include: runLiveE2EScenarios ? ["test/e2e-scenario/live/**/*.test.ts"] : [],
-          // Live scenario tests are opt-in because they install, onboard, and
+          include: runLiveE2E ? ["test/e2e/live/**/*.test.ts"] : [],
+          // Live E2E tests are opt-in because they install, onboard, and
           // mutate real NemoClaw/OpenShell state. Run explicitly with:
-          //   NEMOCLAW_RUN_E2E_SCENARIOS=1 npx vitest run --project e2e-scenarios-live
+          //   NEMOCLAW_RUN_LIVE_E2E=1 npx vitest run --project e2e-live
         },
       },
       {

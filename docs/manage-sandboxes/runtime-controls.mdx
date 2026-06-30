@@ -71,10 +71,7 @@ If preflight detects an unsafe path, invalid config, invalid ownership posture, 
 | GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
 | Hermes `config.yaml` keys | Mixed. Inference and supported config keys can be patched by host commands; image, policy, and channel changes still require rebuild. | Use `$$nemoclaw inference set` or `$$nemoclaw <name> config set` so the config and root-owned trust anchor change together |
 
-If a row above conflicts with what you observe, the runtime source of truth for
-Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host
-registry caches metadata but the image and Hermes runtime read from the
-in-sandbox files.
+If a row above conflicts with what you observe, the runtime source of truth for Hermes is `/sandbox/.hermes/config.yaml` plus `/sandbox/.hermes/.env`; the host registry caches metadata but the image and Hermes runtime read from the in-sandbox files.
 Do not edit `/sandbox/.hermes/config.yaml`, `/sandbox/.hermes/.env`, or their hash files directly and then expect `gateway restart` to establish those bytes as trusted.
 Use supported host config and inference commands for intended changes because they update the managed config metadata together.
 In the direct root-entrypoint topology, PID 1 validates the Hermes secret boundary and runtime environment and verifies the strict root-owned hash without recomputing it.

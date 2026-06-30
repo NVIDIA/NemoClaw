@@ -21,7 +21,7 @@ const FIXTURE_EXCLUSIONS = new Set([
 const EXCLUDED_PREFIXES = [
   // Live/branch E2E validates installed artifacts rather than unit-test imports.
   "test/e2e/",
-  "test/e2e-scenario/live/",
+  "test/e2e/live/",
   // This is the sole non-live lane allowed to import compiled package artifacts.
   "test/package-contract/",
 ];

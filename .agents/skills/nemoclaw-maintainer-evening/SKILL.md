@@ -1,12 +1,12 @@
 ---
 name: nemoclaw-maintainer-evening
-description: Runs the end-of-day maintainer handoff for NemoClaw. Checks version target progress, bumps stragglers to the next patch version, generates a QA handoff summary, and cuts the release tag. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day.
+description: Runs the end-of-day maintainer handoff for NemoClaw. Checks version target progress, records stragglers for an automatic post-tag bump, generates a QA handoff summary, and cuts the release tag. Use at the end of the workday. Trigger keywords - evening, end of day, EOD, wrap up, ship it, cut tag, handoff, done for the day.
 user_invocable: true
 ---
 
 # NemoClaw Maintainer Evening
 
-Wrap up the day: check progress, bump stragglers, summarize for QA, cut the tag, and prepare release notes for posting.
+Wrap up the day: check progress, identify stragglers, summarize for QA, cut the tag, automatically bump stragglers to the next patch, and prepare release notes for posting.
 
 See [PR-REVIEW-PRIORITIES.md](../nemoclaw-maintainer-day/PR-REVIEW-PRIORITIES.md) for the daily cadence.
 
@@ -19,13 +19,18 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 The first script determines the target version. The second shows shipped vs open. Present the progress summary to the user.
 
-## Step 2: Bump Stragglers
+## Step 2: Review Post-Tag Stragglers
 
 ```bash
-node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer-day/scripts/bump-stragglers.ts <version> <next-version>
+gh pr list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
+  --json number,title,url,labels
+gh issue list --repo NVIDIA/NemoClaw --state open --label <version> --limit 100 \
+  --json number,title,url,labels
 ```
 
-This creates the next version label if needed, then moves all open items from the current version to the next. Tell the user what got bumped.
+List open labeled PRs and issues as the post-tag housekeeping plan. Tell the maintainer that, after the tag and workflow-managed `latest` are verified, `cut-release-tag` will automatically move all of them to the next patch label.
+
+If an item should leave the daily release flow instead of moving forward, remove it from the released-version label before asking for the release confirmation phrase.
 
 ## Step 3: Generate Handoff Summary
 
@@ -37,7 +42,7 @@ This lists commits since the last tag, identifies risky areas touched, and sugge
 
 ## Step 4: Cut the Tag and Publish Release Notes
 
-Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, housekeeping plan, and release notes draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, verify remaining open issues/PRs have been bumped, and prepare the release notes announcement for the maintainer to post.
+Load `cut-release-tag`. The version is already known — default to patch bump, but still show the commit, changelog, post-tag bump plan, and release notes draft for confirmation. NemoClaw releases are tag-based: tag `main`, let the workflow move `latest`, automatically bump remaining open issues/PRs to the next patch label, and prepare the release notes announcement for the maintainer to post.
 
 ## Step 5: Confirm and Share
 
@@ -61,4 +66,5 @@ node --experimental-strip-types --no-warnings .agents/skills/nemoclaw-maintainer
 
 - Never cut a tag or hand off release notes without user confirmation.
 - If nothing was labeled or nothing shipped, ask whether to skip the tag today.
-- Version labels are living markers: they always mean "ship in this version." If an item slips, the label moves forward.
+- A PR version label activates release work; it is not a readiness claim.
+- If an open item misses the tag, post-tag housekeeping moves its target to the next patch version.
