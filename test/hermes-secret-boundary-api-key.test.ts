@@ -12,7 +12,7 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "..",
   "agents",
   "hermes",
-  "validate-env-secret-boundary.py",
+  "validate-hermes-env-secret-boundary.py",
 );
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
@@ -51,7 +51,7 @@ function runRuntimeEnvValidator(envOverrides: Record<string, string>) {
   });
 }
 
-describe("agents/hermes/validate-env-secret-boundary API_SERVER_KEY contract", () => {
+describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contract", () => {
   it("allows generated API_SERVER_KEY values in Hermes .env files", () => {
     const envFileResult = runEnvFileValidator(
       [

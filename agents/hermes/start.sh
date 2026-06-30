@@ -206,7 +206,7 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 # at an attacker-controlled script.
 _HERMES_BOUNDARY_VALIDATOR="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
-  _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
+  _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-hermes-env-secret-boundary.py"
 fi
 
 # Resolve the dashboard config seeder (same install/dev-fallback pattern as the

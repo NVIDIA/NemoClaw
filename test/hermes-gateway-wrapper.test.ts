@@ -29,7 +29,7 @@ const VALIDATOR = path.join(
   "..",
   "agents",
   "hermes",
-  "validate-env-secret-boundary.py",
+  "validate-hermes-env-secret-boundary.py",
 );
 
 function python3Available(): boolean {
@@ -82,7 +82,7 @@ function runWrapper(
   try {
     fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
     const validatorContent = opts.validatorScript ?? fs.readFileSync(VALIDATOR, "utf-8");
-    fs.writeFileSync(path.join(dir, "validate-env-secret-boundary.py"), validatorContent, {
+    fs.writeFileSync(path.join(dir, "validate-hermes-env-secret-boundary.py"), validatorContent, {
       mode: 0o755,
     });
     fs.chmodSync(path.join(dir, "hermes"), 0o755);
@@ -533,7 +533,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-pathshadow-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-hermes-env-secret-boundary.py"));
       fs.chmodSync(path.join(dir, "hermes"), 0o755);
       const stubScript = [
         "#!/usr/bin/env bash",
@@ -624,7 +624,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-shebang-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-hermes-env-secret-boundary.py"));
       fs.chmodSync(path.join(dir, "hermes"), 0o755);
       const bashEnvScript = path.join(dir, "bash-env-evil.sh");
       const bashEnvMarker = path.join(dir, "bash-env-evil-marker.txt");
@@ -686,7 +686,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-dispatch-"));
     try {
       fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
-      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-hermes-env-secret-boundary.py"));
       fs.chmodSync(path.join(dir, "hermes"), 0o755);
       const fixture = [
         "◆ Model",
@@ -825,7 +825,7 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
         { mode: 0o755 },
       );
       fs.writeFileSync(
-        path.join(decoyDir, "validate-env-secret-boundary.py"),
+        path.join(decoyDir, "validate-hermes-env-secret-boundary.py"),
         "#!/usr/bin/env python3\nimport sys\nsys.exit(99)\n",
         { mode: 0o755 },
       );

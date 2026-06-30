@@ -306,7 +306,7 @@ def mask_config_output(stream_in: "object", stream_out: "object") -> int:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="validate-env-secret-boundary")
+    parser = argparse.ArgumentParser(prog="validate-hermes-env-secret-boundary")
     sub = parser.add_subparsers(dest="mode", required=True)
     env_file_parser = sub.add_parser(
         "env-file",

@@ -4,7 +4,7 @@
 // Hermes secret-boundary guards for the host-side recovery path.
 //
 // The Hermes startup entrypoint (agents/hermes/start.sh) already runs
-// validate-env-secret-boundary.py at cold start. `sandbox recover` /
+// validate-hermes-env-secret-boundary.py at cold start. `sandbox recover` /
 // `connect --probe-only` does NOT re-enter that entrypoint — it spawns a
 // recovery shell directly. The helpers in this file emit shell snippets that
 // re-run the same validator from the recovery shell so the documented secret
@@ -42,7 +42,7 @@ function buildHermesBoundaryKillSnippet(): string {
 
 /**
  * Pipe a validator invocation's stderr through `tee` so the detailed `[SECURITY]`
- * lines emitted by `validate-env-secret-boundary.py` are persisted to
+ * lines emitted by `validate-hermes-env-secret-boundary.py` are persisted to
  * `/tmp/gateway-recovery.log` inside the sandbox AND mirrored back onto stderr.
  * The recovery caller currently treats the command result as a boolean, so
  * without this duplication the documented `[SECURITY] Refusing Hermes startup ...`

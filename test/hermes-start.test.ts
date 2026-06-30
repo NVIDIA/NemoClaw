@@ -15,7 +15,7 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
   "..",
   "agents",
   "hermes",
-  "validate-env-secret-boundary.py",
+  "validate-hermes-env-secret-boundary.py",
 );
 const GENERATED_API_SERVER_KEY = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
@@ -935,7 +935,7 @@ describe("agents/hermes/start.sh validator-path bootstrap", () => {
       path.join(os.tmpdir(), "nemoclaw-hermes-validator-bootstrap-fallback-"),
     );
     const scriptDir = path.join(tmpDir, "agents", "hermes");
-    const fallbackValidator = path.join(scriptDir, "validate-env-secret-boundary.py");
+    const fallbackValidator = path.join(scriptDir, "validate-hermes-env-secret-boundary.py");
     fs.mkdirSync(scriptDir, { recursive: true });
     fs.writeFileSync(fallbackValidator, "#!/usr/bin/env python3\n");
 

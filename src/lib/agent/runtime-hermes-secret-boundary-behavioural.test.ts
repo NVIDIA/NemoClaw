@@ -358,7 +358,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       "..",
       "agents",
       "hermes",
-      "validate-env-secret-boundary.py",
+      "validate-hermes-env-secret-boundary.py",
     );
     fs.writeFileSync(
       envFile,
@@ -396,7 +396,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       "..",
       "agents",
       "hermes",
-      "validate-env-secret-boundary.py",
+      "validate-hermes-env-secret-boundary.py",
     );
     fs.writeFileSync(
       envFile,
@@ -513,7 +513,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       "..",
       "agents",
       "hermes",
-      "validate-env-secret-boundary.py",
+      "validate-hermes-env-secret-boundary.py",
     );
     // Clean .env so env-file passes. The hostile proxy-env used to contribute a
     // raw runtime-env secret; recovery now rewrites that volatile shell file

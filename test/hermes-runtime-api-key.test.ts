@@ -24,7 +24,7 @@ const SECRET_BOUNDARY_VALIDATOR = path.join(
   "..",
   "agents",
   "hermes",
-  "validate-env-secret-boundary.py",
+  "validate-hermes-env-secret-boundary.py",
 );
 
 function escapeRegExp(value: string): string {
