@@ -3048,6 +3048,15 @@ PYAPPROVEAFTER
 # byte-for-byte unchanged, and covers every connect path that sources this file.
 # Shown once per top-level interactive TTY session; suppress with
 # NEMOCLAW_NO_POLICY_HINT=1.
+#
+# Source-of-truth: the 403 itself is emitted by the OpenShell L7 egress proxy,
+# which lives in a separate codebase/release cycle, so the denial response
+# cannot be made self-describing from this repo. This proactive breadcrumb is
+# the NemoClaw-owned surface that points at the denial reason in the logs.
+# Regression coverage: test/repro-5978-policy-denial-hint.test.ts. Removal
+# condition: drop this stanza once the OpenShell proxy returns a structured,
+# actionable denial (naming the rule / a logs pointer) at the tunnel-failure
+# site, at which point the breadcrumb is redundant.
 _nemoclaw_policy_denial_hint_label() {
   # OpenShell >=0.0.44 sets OPENSHELL_SANDBOX to the sandbox name; older
   # versions set the boolean "1". OPENSHELL_SANDBOX is untrusted input that is
@@ -3060,6 +3069,13 @@ _nemoclaw_policy_denial_hint_label() {
   # metacharacters, whitespace) falls back to a placeholder the user resolves
   # with `nemoclaw list`. Shell `case` globs match newlines as ordinary
   # characters, so an embedded newline is rejected by the metacharacter class.
+  #
+  # Evaluate the ranges under the C locale so [a-z0-9-] stays ASCII and is not
+  # widened by the caller's LC_COLLATE/LC_CTYPE (e.g. a locale that folds
+  # additional code points into [a-z]). Safe to set unconditionally: this helper
+  # is only ever called inside $(…) command substitution (a subshell), so the
+  # assignment cannot leak into the interactive shell.
+  LC_ALL=C
   case "${OPENSHELL_SANDBOX:-}" in
     "" | 0 | 1 | true | TRUE | false | FALSE) printf '<name>' ;;
     [!a-z]* | *- | *[!a-z0-9-]*) printf '<name>' ;;

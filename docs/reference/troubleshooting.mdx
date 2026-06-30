@@ -689,7 +689,11 @@ curl: (56) CONNECT tunnel failed, response 403
 ```
 
 This is a network-policy denial, not a tool or certificate problem.
-The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this; suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+
+The first interactive `$$nemoclaw <name> connect` shell prints a one-line reminder of this denial signature and the `logs` command below.
+The reminder is shown once per top-level interactive session, and only when all of these hold: an egress proxy is configured, the shell is interactive with a terminal attached to stderr, and it is a top-level shell (not a nested subshell or pane).
+Suppress it with `NEMOCLAW_NO_POLICY_HINT=1`.
+On OpenShell 0.0.44 or newer the reminder names your real sandbox; on older OpenShell it shows `<name>` as a placeholder — run `$$nemoclaw list` to see your sandbox names.
 
 To see which rule denied the request, read the merged logs from the host:
 
