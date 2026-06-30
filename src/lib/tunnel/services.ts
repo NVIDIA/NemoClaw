@@ -642,9 +642,15 @@ export function stopAll(opts: ServiceOptions = {}): void {
         const boundBy = release.remaining.length
           ? ` (still bound by PID ${release.remaining.join(", ")})`
           : "";
+        // Prefer killing exactly the still-bound PIDs over a host-wide pkill that
+        // could take down another worktree's gateway; fall back to pkill only when
+        // no specific PID is known.
+        const remediation = release.remaining.length
+          ? `sudo kill -9 ${release.remaining.join(" ")}`
+          : "sudo pkill -f openshell-gateway";
         warn(
           `NemoClaw gateway port ${release.port ?? "?"} was not confirmed released${boundBy}. ` +
-            "Run: sudo pkill -f openshell-gateway",
+            `Run: ${remediation}`,
         );
       }
     } catch (error) {

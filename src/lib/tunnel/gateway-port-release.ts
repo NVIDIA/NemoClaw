@@ -285,11 +285,16 @@ export function releaseManagedGatewayPort(
 
   let lsofPids: number[] = [];
   let scanned = false;
+  // Distinct from `lsof absent`: lsof is present but the probe itself errored, so
+  // we genuinely could not observe the port and must not optimistically release.
+  let scanFailed = false;
   if (commandExists("lsof")) {
     const probe = listeningPids(port, run, env, warn);
     if (probe !== null) {
       lsofPids = probe;
       scanned = true;
+    } else {
+      scanFailed = true;
     }
   }
 
@@ -320,12 +325,13 @@ export function releaseManagedGatewayPort(
   let remaining: number[] = [];
   const attemptedStop = stopResult.stopped.length > 0 || lsofPids.length > 0;
   if (!scanned) {
-    // Could not probe the port (lsof absent or failing). Trust the stopper:
+    // Could not probe the port. When lsof is simply absent we trust the stopper:
     // released unless it reported a process it could not kill. Known limitation:
     // with lsof unavailable we cannot observe a non-pid-file squatter still holding
-    // the port, so `released` may be optimistic in that case. `stopAll` only claims
-    // teardown succeeded when `released` is true, and otherwise warns.
-    released = stopResult.failed.length === 0;
+    // the port, so `released` may be optimistic in that case. But when lsof was
+    // present and the scan itself errored (`scanFailed`), we confirmed nothing —
+    // fail closed so `stopAll` surfaces its unconfirmed-release warning.
+    released = !scanFailed && stopResult.failed.length === 0;
   } else if (!attemptedStop) {
     // Nothing was bound to the port to begin with — already free.
     released = true;

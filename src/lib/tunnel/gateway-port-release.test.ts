@@ -432,6 +432,10 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     );
 
     expect(result.scanned).toBe(false);
+    // A genuine lsof error (vs lsof simply being absent) means we confirmed
+    // nothing, so the port must not be reported as released (#5968): this is what
+    // lets stopAll surface its unconfirmed-release warning.
+    expect(result.released).toBe(false);
     expect(stop.lastOptions()?.pids).toEqual([]);
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain("lsof failed while scanning");
   });

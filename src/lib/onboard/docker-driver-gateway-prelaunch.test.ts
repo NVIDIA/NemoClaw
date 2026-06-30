@@ -85,10 +85,12 @@ describe("prelaunchReapFailureMessage (#5968)", () => {
     expect(prelaunchReapFailureMessage(emptyResult({ stopped: [10] }))).toBeNull();
   });
 
-  it("describes the unreaped gateway pids and the sudo remediation", () => {
+  it("describes the unreaped gateway pids and a remediation scoped to those pids", () => {
     const message = prelaunchReapFailureMessage(emptyResult({ failed: [321, 654] }));
     expect(message).toContain("321, 654");
-    expect(message).toContain("sudo pkill -f openshell-gateway");
+    // Scoped to the matched pids, never a host-wide `pkill -f openshell-gateway`.
+    expect(message).toContain("sudo kill -9 321 654");
+    expect(message).not.toContain("pkill");
   });
 });
 
