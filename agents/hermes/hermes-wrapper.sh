@@ -80,14 +80,23 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     echo "[SECURITY] Refusing hermes config show: no python3 at a trusted absolute path to run the output masker" >&2
     exit 127
   }
-  # Stream Hermes stderr through a bash coprocess so the raw bytes only ever
-  # live in a kernel pipe — no temp file, no procfs-visible inode, and no
-  # process-substitution PID that PIPESTATUS would silently drop. The
-  # coprocess runs the same Python masker as the stdout pipeline. After
-  # Hermes exits, we close the write end of the stderr pipe so the masker
-  # sees EOF, then `wait` for it and capture its exit status. The masker
-  # itself buffers in memory and writes only on success, so a mid-stream
-  # crash never produces a partial secret on either stream.
+  # Stream Hermes stderr through a bash coprocess so the raw bytes live only
+  # in a kernel pipe — no temp file under TMPDIR, no procfs-visible inode for
+  # cross-namespace observers, and no process-substitution PID that
+  # PIPESTATUS would silently drop. The coprocess runs the same Python
+  # masker as the stdout pipeline. After Hermes exits, we close the write
+  # end of the stderr pipe so the masker sees EOF, then `wait` for it and
+  # capture its exit status. The masker itself buffers in memory and writes
+  # only on success, so a mid-stream crash never produces a partial secret
+  # on either stream.
+  #
+  # Residual surface: a same-UID process inside the sandbox can in principle
+  # open the pipe FDs via /proc/<pid>/fd and race-read raw bytes before the
+  # masker reads them. Closing that surface requires sandbox-level procfs
+  # isolation (hidepid mount or a PID namespace), which is the OpenShell
+  # sandbox's responsibility and lives outside this wrapper. The source-
+  # level fix (Hermes CLI native env-var references) would eliminate the
+  # raw value upstream entirely.
   coproc STDERR_MASK { "$PYTHON3" "$GUARD" mask-config-output >&2; }
   _stderr_mask_pid=$STDERR_MASK_PID
   # shellcheck disable=SC2086  # bash redirect targets cannot be quoted; quoting forces filename semantics

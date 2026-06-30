@@ -357,6 +357,25 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stderr).not.toContain("sk-stderr-only-leak-12345");
   });
 
+  it("masks camelCase variants (apiKey, accessToken, clientSecret, authToken)", () => {
+    const fixture = [
+      "{'apiKey': 'leaked-camel-api-12345', 'accessToken': 'leaked-camel-access-12345'}",
+      '{"clientSecret": "leaked-camel-client-12345"}',
+      "authToken: leaked-camel-auth-12345",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("leaked-camel-api-12345");
+    expect(run.stdout).not.toContain("leaked-camel-access-12345");
+    expect(run.stdout).not.toContain("leaked-camel-client-12345");
+    expect(run.stdout).not.toContain("leaked-camel-auth-12345");
+    expect(run.stdout).toContain("'apiKey': 'sk-****'");
+    expect(run.stdout).toContain("'accessToken': 'sk-****'");
+    expect(run.stdout).toContain('"clientSecret": "sk-****"');
+    expect(run.stdout).toContain("authToken: sk-****");
+  });
+
   it("masks api_secret and auth_token fields beyond the explicit api_key/access_token shapes", () => {
     const fixture = [
       "{'api_secret': 'leaked-api-secret-12345', 'auth_token': 'leaked-auth-token-12345'}",
