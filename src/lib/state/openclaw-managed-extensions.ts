@@ -16,11 +16,12 @@ const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
   ],
 ]);
 
-const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
+const EXTENSION_NPM_BIN_RE = /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modules\/\.bin\/[^/]+$/;
 // `openclaw plugins install <archive>` creates this peer-dependency link for
 // each extension. Match both the narrow path shape and the immutable image
 // target; source-only matching would permit repointing it to an arbitrary file.
-const OPENCLAW_EXTENSION_PEER_LINK_RE = /^extensions\/[^/]+\/node_modules\/openclaw$/;
+const OPENCLAW_EXTENSION_PEER_LINK_RE =
+  /^extensions\/[A-Za-z0-9][A-Za-z0-9._-]*\/node_modules\/openclaw$/;
 const OPENCLAW_GLOBAL_PACKAGE_PATH = "/usr/local/lib/node_modules/openclaw";
 
 // Preserve extensions baked into the freshly rebuilt image instead of
@@ -40,7 +41,9 @@ interface OpenClawRestoreManifest {
 function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
   const normalizedRelPath = relPath.split(path.sep).join("/");
   if (!EXTENSION_NPM_BIN_RE.test(normalizedRelPath)) return false;
-  if (linkTarget.length === 0 || path.posix.isAbsolute(linkTarget)) return false;
+  if (linkTarget.length === 0 || linkTarget.includes("%") || path.posix.isAbsolute(linkTarget)) {
+    return false;
+  }
 
   const binDir = path.posix.dirname(normalizedRelPath);
   const nodeModulesDir = path.posix.dirname(binDir);

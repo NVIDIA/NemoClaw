@@ -42,6 +42,7 @@ const REBUILD_RESUME_SESSION = path.join(
 );
 
 type Workflow = {
+  permissions?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 };
 
@@ -235,6 +236,13 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("Image-Managed OpenClaw Extension Restore Boundary");
     expect(review).toContain("src/lib/state/openclaw-managed-extensions.ts");
     expect(review).toContain("issue #5896");
+    expect(review).toContain("rebuild-resume-config.test.ts` is unchanged from current `main`");
+    expect(review).toContain("`src/lib/state/sandbox.ts` is 100 lines smaller");
+    expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
+    expect(review).toContain("direct source- and target-traversal vectors");
+    expect(review).toContain("Live gateway display output is treated as untrusted text");
+    expect(review).toContain("Retained older OpenClaw pins are inactive compatibility/rollback");
+    expect(review).toContain("fails closed on unknown or ambiguous formatter shapes");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');
     expect(review).toContain("test/messaging-build-applier-integrity.test.ts");
     expect(review).toContain("test/messaging-build-applier-render-safety.test.ts");
@@ -378,18 +386,34 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     const prChecks = pr.jobs.checks;
     const mainChecks = main.jobs.checks;
 
+    expect(pr.permissions).toEqual({ contents: "read" });
+    expect(prJob?.permissions).toEqual({ contents: "read" });
+    expect(prJob?.["runs-on"]).toBe("ubuntu-latest");
+    expect(prJob?.secrets).toBeUndefined();
     expect(prJob?.["timeout-minutes"]).toBe(12);
     expect(mainJob?.["timeout-minutes"]).toBe(12);
-    expect(requiredStep(prJob, "Audit the real patched OpenClaw distribution").env).toMatchObject({
-      NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
-    });
+    const prCheckout = requiredStep(prJob, "Checkout");
+    expect(prCheckout.uses).toBe("actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10");
+    expect(prCheckout.with?.["persist-credentials"]).toBe(false);
+    expect(requiredStep(prJob, "Setup Node.js").uses).toBe(
+      "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
+    );
+    expect(requiredStep(prJob, "Install test dependencies").run).toBe(
+      "npm install --ignore-scripts",
+    );
+    const prHarness = requiredStep(prJob, "Audit the real patched OpenClaw distribution");
+    expect(prHarness.env).toEqual({ NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1" });
+    expect(prHarness.run).toBe(
+      "npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default",
+    );
+    const serializedPrHarnessJob = JSON.stringify(prJob);
+    expect(serializedPrHarnessJob).not.toContain("${{ secrets.");
+    expect(serializedPrHarnessJob).not.toContain("${{ inputs.");
+    expect(serializedPrHarnessJob).not.toContain("pull_request_target");
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
       {
         NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
       },
-    );
-    expect(requiredStep(prJob, "Audit the real patched OpenClaw distribution").run).toContain(
-      "test/openclaw-real-patched-dist-harness.test.ts",
     );
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").run).toContain(
       "test/openclaw-real-patched-dist-harness.test.ts",

@@ -97,6 +97,10 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("deniedPrepared === null");
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("senderFeedbackCalls.length === 1");
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("openclaw-pipeline-runtime");
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain(
+      'process.env.NEMOCLAW_E2E_ALLOW_LEGACY_SLACK_TEST_API === "1"',
+    );
+    expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE.match(/allowLegacyTestApi &&/gu)).toHaveLength(2);
     expect(SLACK_INSTALLED_RUNTIME_PROOF_SOURCE).toContain("/api/chat.postMessage");
   });
 

@@ -28,6 +28,8 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+const allowLegacyTestApi = process.env.NEMOCLAW_E2E_ALLOW_LEGACY_SLACK_TEST_API === "1";
+
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -133,7 +135,7 @@ function resolveOpenClawSlackApiLocation() {
         openclawRoot,
       };
     }
-    if (fs.existsSync(path.join(distDir, "test-api.js"))) {
+    if (allowLegacyTestApi && fs.existsSync(path.join(distDir, "test-api.js"))) {
       return { kind: "external", apiKind: "test-api", root: candidate, openclawRoot };
     }
   }
@@ -144,7 +146,7 @@ function resolveOpenClawSlackApiLocation() {
     if (fs.existsSync(runtimeApiPath) && pipelineRuntimePath) {
       return { kind: "core", apiKind: "pipeline-runtime", root: candidate };
     }
-    if (fs.existsSync(path.join(distDir, "test-api.js"))) {
+    if (allowLegacyTestApi && fs.existsSync(path.join(distDir, "test-api.js"))) {
       return { kind: "core", apiKind: "test-api", root: candidate };
     }
   }

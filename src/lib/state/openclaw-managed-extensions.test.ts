@@ -138,6 +138,19 @@ describe("OpenClaw managed extension symlink policy", () => {
       false,
     );
   });
+
+  it.each([
+    ["extensions/../nemoclaw/node_modules/.bin/json5", "../json5/lib/cli.js"],
+    ["extensions/nemoclaw/node_modules/.bin/../json5", "../json5/lib/cli.js"],
+    ["extensions\\..\\slack\\node_modules\\openclaw", "/usr/local/lib/node_modules/openclaw"],
+    ["extensions/nemoclaw/node_modules/.bin/json5", "../json5/../../../openclaw.json"],
+    ["extensions/%2e%2e/node_modules/.bin/json5", "../json5/lib/cli.js"],
+    ["extensions/nemoclaw/node_modules/.bin/json5", "%2e%2e/%2e%2e/etc/passwd"],
+    ["extensions/nemoclaw/node_modules/.bin/json5", "/proc/self/exe"],
+    ["extensions/nemoclaw/node_modules/.bin/json5", "/host/etc/passwd"],
+  ])("rejects source and target traversal vectors: %s -> %s", (source, target) => {
+    expect(isAllowedStateSymlink(source, target)).toBe(false);
+  });
 });
 
 describe("OpenClaw managed extension cleanup", () => {
