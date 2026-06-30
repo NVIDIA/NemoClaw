@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   prelaunchReapFailureMessage,
   reapDuplicateHostGatewaysExcept,
+  reapDuplicateHostGatewaysExceptOrFail,
   reapHostGatewayBeforeLaunch,
   reapHostGatewayBeforeLaunchOrFail,
 } from "./docker-driver-gateway-prelaunch";
@@ -161,5 +162,49 @@ describe("reapDuplicateHostGatewaysExcept (#5968)", () => {
 
     expect(result).toEqual(emptyResult());
     expect(stop.callCount()).toBe(0);
+  });
+});
+
+describe("reapDuplicateHostGatewaysExceptOrFail (#5968)", () => {
+  const gatewayBin = "/usr/local/bin/openshell-gateway";
+
+  it("returns the result and does not exit when the stale duplicate was reaped", () => {
+    const stop = stopSpy(emptyResult({ stopped: [111] }));
+    const exit = vi.fn(() => undefined as never);
+
+    const result = reapDuplicateHostGatewaysExceptOrFail(
+      999,
+      gatewayBin,
+      [111],
+      false,
+      {},
+      stop.fn,
+      exit,
+    );
+
+    expect(result.stopped).toEqual([111]);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("throws and never reports reuse when a matched duplicate could not be stopped (exitOnFailure off)", () => {
+    const stop = stopSpy(emptyResult({ failed: [111] }));
+    const exit = vi.fn(() => undefined as never);
+
+    expect(() =>
+      reapDuplicateHostGatewaysExceptOrFail(999, gatewayBin, [111], false, {}, stop.fn, exit),
+    ).toThrow(/could not be stopped/);
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("exits with code 1 when a matched duplicate could not be stopped and exitOnFailure is set", () => {
+    const stop = stopSpy(emptyResult({ failed: [111] }));
+    const exit = vi.fn((_code: number) => {
+      throw new Error("exit-called");
+    }) as unknown as (code: number) => never;
+
+    expect(() =>
+      reapDuplicateHostGatewaysExceptOrFail(999, gatewayBin, [111], true, {}, stop.fn, exit),
+    ).toThrow(/exit-called/);
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });

@@ -67,7 +67,7 @@ const dockerGpuLocalInference: typeof import("./onboard/docker-gpu-local-inferen
 const dockerGpuSandboxCreate: typeof import("./onboard/docker-gpu-sandbox-create") = require("./onboard/docker-gpu-sandbox-create");
 const dockerDriverGatewayLaunch: typeof import("./onboard/docker-driver-gateway-launch") = require("./onboard/docker-driver-gateway-launch");
 const dockerDriverGatewayRuntime: typeof import("./onboard/docker-driver-gateway-runtime") = require("./onboard/docker-driver-gateway-runtime");
-const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExcept } =
+const { reapHostGatewayBeforeLaunchOrFail, reapDuplicateHostGatewaysExceptOrFail } =
   require("./onboard/docker-driver-gateway-prelaunch") as typeof import("./onboard/docker-driver-gateway-prelaunch");
 const {
   findReadableNvidiaCdiSpecFiles,
@@ -2194,15 +2194,15 @@ async function startDockerDriverGateway({
     ignoreError: true,
   });
   const activeGatewayInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-  const portCheck = await checkGatewayPortAvailable();
-  const portListenerPid = getDockerDriverGatewayPortListenerPid(portCheck, {
+  const portListenerPid = getDockerDriverGatewayPortListenerPid(await checkGatewayPortAvailable(), {
     gatewayBin: identityGatewayBin,
   });
   const pidFileGatewayPid = getDockerDriverGatewayPid();
   if (
     pidFileGatewayPid !== null &&
     isDockerDriverGatewayProcessAlive() &&
-    isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo)
+    isGatewayHealthy(gatewayStatus, gwInfo, activeGatewayInfo) &&
+    (portListenerPid === null || portListenerPid === pidFileGatewayPid) // reuse only as sole binder (#5968)
   ) {
     const drift = getDockerDriverGatewayRuntimeDrift(
       pidFileGatewayPid,
@@ -2212,14 +2212,11 @@ async function startDockerDriverGateway({
     if (drift) {
       restartDockerDriverGatewayProcessForDrift(pidFileGatewayPid, drift.reason);
     } else if (registerDockerDriverGatewayEndpoint() && (await isDockerDriverGatewayHttpReady())) {
-      // Reuse only when the recorded pid is the sole port binder, else fall through (#5968).
-      if (portListenerPid === null || portListenerPid === pidFileGatewayPid) {
-        await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
-          skip: skipSandboxBridgeReachability,
-        });
-        console.log("  ✓ Reusing existing Docker-driver gateway");
-        return;
-      }
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+        skip: skipSandboxBridgeReachability,
+      });
+      console.log("  ✓ Reusing existing Docker-driver gateway");
+      return;
     } else {
       console.log(
         `  Docker-driver gateway metadata reports healthy but http://127.0.0.1:${GATEWAY_PORT}/ is not responding. Starting a fresh gateway...`,
@@ -2251,7 +2248,12 @@ async function startDockerDriverGateway({
         isGatewayHealthy(adoptedStatus, adoptedGwInfo, adoptedActiveGatewayInfo) &&
         (await isDockerDriverGatewayHttpReady())
       ) {
-        reapDuplicateHostGatewaysExcept(portListenerPid, identityGatewayBin, [pidFileGatewayPid]);
+        reapDuplicateHostGatewaysExceptOrFail(
+          portListenerPid,
+          identityGatewayBin,
+          [pidFileGatewayPid],
+          exitOnFailure,
+        );
         await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
           skip: skipSandboxBridgeReachability,
         });
@@ -2269,9 +2271,7 @@ async function startDockerDriverGateway({
     throw new Error("OpenShell gateway binary not found");
   }
 
-  // Reap the existing host gateway for this port, failing closed if one resists (#5968).
   reapHostGatewayBeforeLaunchOrFail({
-    pidFile: path.join(stateDir, "openshell-gateway.pid"),
     stateDir,
     gatewayBin: identityGatewayBin,
     extraPids: [getDockerDriverGatewayPid(), portListenerPid],

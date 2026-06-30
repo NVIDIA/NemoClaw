@@ -40,10 +40,10 @@ import {
 } from "./host-gateway-process";
 
 export interface ReapHostGatewayBeforeLaunchOptions {
-  /** Pid file in the gateway's per-port state dir (the recorded gateway pid). */
-  pidFile: string;
   /** Per-port gateway state dir (holds the pid file and runtime marker). */
   stateDir: string;
+  /** Recorded gateway pid file; defaults to `<stateDir>/openshell-gateway.pid`. */
+  pidFile?: string;
   /** Canonical gateway binary; cmdline-gates which PIDs may be signalled. */
   gatewayBin: string | null;
   /** Extra candidate PIDs to reap (e.g. the current port listener). */
@@ -88,7 +88,7 @@ export function reapHostGatewayBeforeLaunch(
     { env: process.env, ...deps },
     {
       pids: validPids(options.extraPids ?? []),
-      pidFile: options.pidFile,
+      pidFile: options.pidFile ?? path.join(options.stateDir, "openshell-gateway.pid"),
       stateDir: options.stateDir,
       gatewayBin: options.gatewayBin,
       // Scope strictly to this port's recorded pid + the passed listener PID.
@@ -167,4 +167,29 @@ export function reapDuplicateHostGatewaysExcept(
       usePgrepFallback: false,
     },
   );
+}
+
+/**
+ * Like `reapDuplicateHostGatewaysExcept`, but fail closed when a matched
+ * duplicate resisted stopping (`failed` non-empty): a reuse path must not report
+ * success while a second matching host gateway is still alive (#5968). Honours
+ * `exitOnFailure` (`process.exit(1)` when set, otherwise throw).
+ */
+export function reapDuplicateHostGatewaysExceptOrFail(
+  keepPid: number,
+  gatewayBin: string | null,
+  candidatePids: Array<number | null | undefined>,
+  exitOnFailure?: boolean,
+  deps: Partial<HostGatewayProcessDeps> = {},
+  stop: typeof stopHostGatewayProcesses = stopHostGatewayProcesses,
+  exit: (code: number) => never = (code) => process.exit(code) as never,
+): StopHostGatewayResult {
+  const result = reapDuplicateHostGatewaysExcept(keepPid, gatewayBin, candidatePids, deps, stop);
+  const failure = prelaunchReapFailureMessage(result);
+  if (failure) {
+    console.error(`  ${failure}`);
+    if (exitOnFailure) exit(1);
+    throw new Error(failure);
+  }
+  return result;
 }
