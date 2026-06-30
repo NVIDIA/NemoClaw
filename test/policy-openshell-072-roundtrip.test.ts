@@ -23,6 +23,10 @@ const EXISTING_POLICY = {
     default: "deny",
     roots: ["/sandbox"],
   },
+  metadata: {
+    future_schema: "opaque",
+    preserve: true,
+  },
   network_policies: {
     mcp_server: {
       endpoints: [
@@ -84,6 +88,7 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     });
     expect(merged.future_policy).toEqual(EXISTING_POLICY.future_policy);
     expect(merged.filesystem_policy).toEqual(EXISTING_POLICY.filesystem_policy);
+    expect(merged.metadata).toEqual(EXISTING_POLICY.metadata);
   });
 
   it("preserves protocol fields across multiple built-in and custom-shaped merges", () => {
@@ -104,6 +109,7 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     expect(removed.network_policies).toEqual(EXISTING_POLICY.network_policies);
     expect(removed.future_policy).toEqual(EXISTING_POLICY.future_policy);
     expect(removed.filesystem_policy).toEqual(EXISTING_POLICY.filesystem_policy);
+    expect(removed.metadata).toEqual(EXISTING_POLICY.metadata);
   });
 
   it("drops provider-composed entries from merge and removal mutation payloads", () => {

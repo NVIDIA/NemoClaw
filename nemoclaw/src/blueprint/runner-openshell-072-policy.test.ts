@@ -49,6 +49,9 @@ future_policy:
 filesystem_policy:
   default: deny
   roots: [/sandbox]
+metadata:
+  future_schema: opaque
+  preserve: true
 network_policies:
   existing_mcp:
     endpoints:
@@ -173,10 +176,12 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     const merged = mergedPolicy() as {
       future_policy: { opaque_setting: { keep: boolean } };
       filesystem_policy: { default: string; roots: string[] };
+      metadata: { future_schema: string; preserve: boolean };
       network_policies: Record<string, unknown>;
     };
     expect(merged.future_policy).toEqual({ opaque_setting: { keep: true } });
     expect(merged.filesystem_policy).toEqual({ default: "deny", roots: ["/sandbox"] });
+    expect(merged.metadata).toEqual({ future_schema: "opaque", preserve: true });
     expect(merged.network_policies).toEqual({
       ...YAML.parse(BASE_POLICY).network_policies,
       nim_service: expect.any(Object),
