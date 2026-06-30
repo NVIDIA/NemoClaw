@@ -15,27 +15,26 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 // an OpenAI-compatible mock endpoint so payload-shape and retry regressions
 // do not require a GPU/Ollama runner to catch.
 //
-// Replaces test/e2e/test-strict-tool-call-probe.sh per #5119 retirement
 // pattern: caller-level mock-driven probes belong in test/, not in live E2E
 // scenario/fixture surfaces or the regression-e2e bash workflow. Refs #5098, #4349.
 //
 // Why subprocess: the validation path drives `curl` via spawnSync with a
 // tight process timeout. Driving the entire scenario set through a fresh
-// `tsx <driver>` child mirrors the legacy script (and #5119's
+// source-hooked child mirrors the legacy script (and #5119's
 // onboard-gateway-docker-unreachable.test.ts) and keeps the behavior under
 // test identical to production runtime conditions — bypassing Vitest's
 // worker pool, fetch shim, and signal handling, all of which can interfere
 // with the in-process curl subprocess used by validateOpenAiLikeSelection.
 //
-// The driver is `.ts` (executed via tsx) rather than `.cjs` per the
+// The driver is `.ts` rather than `.cjs` per the
 // codebase-growth guardrail that forbids newly added .js/.cjs/.mjs files.
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const DRIVER = path.join(import.meta.dirname, "fixtures", "strict-tool-call-probe-driver.ts");
-const REQUIRED_DIST_MODULES = [
-  path.join(REPO_ROOT, "dist", "lib", "onboard", "inference-selection-validation.js"),
-  path.join(REPO_ROOT, "dist", "lib", "inference", "local.js"),
+const SOURCE_REQUIRE_HOOK = path.join(REPO_ROOT, "test", "helpers", "onboard-script-mocks.cjs");
+const REQUIRED_SOURCE_MODULES = [
+  path.join(REPO_ROOT, "src", "lib", "onboard", "inference-selection-validation.ts"),
+  path.join(REPO_ROOT, "src", "lib", "inference", "local.ts"),
 ];
 
 const EXPECTED_PASS_MARKERS = [
@@ -50,16 +49,16 @@ describe("strict Chat Completions tool-call probe (#4537)", () => {
     "validates Local Ollama strict tool-call enforcement against a hermetic mock",
     testTimeoutOptions(120_000),
     () => {
-      const missingDistModules = REQUIRED_DIST_MODULES.filter(
+      const missingSourceModules = REQUIRED_SOURCE_MODULES.filter(
         (modulePath) => !fs.existsSync(modulePath),
       );
       assert.deepEqual(
-        missingDistModules,
+        missingSourceModules,
         [],
-        `strict tool-call probe requires built CLI artifacts; run npm run build:cli first. Missing:\n${missingDistModules.join("\n")}`,
+        `strict tool-call probe is missing source modules:\n${missingSourceModules.join("\n")}`,
       );
 
-      const result = spawnSync(TSX, [DRIVER], {
+      const result = spawnSync(process.execPath, ["--require", SOURCE_REQUIRE_HOOK, DRIVER], {
         cwd: REPO_ROOT,
         encoding: "utf8",
         env: { ...process.env, NEMOCLAW_TEST_NO_SLEEP: "1" },

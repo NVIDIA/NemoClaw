@@ -13,7 +13,9 @@ NemoClaw combines a host CLI, an in-sandbox integration layer, and a versioned Y
 
 ## System Overview
 
-NVIDIA OpenShell is a general-purpose agent runtime. It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but has no opinions about what runs inside. NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox, prepares agent-specific integration, and makes the setup accessible.
+NVIDIA OpenShell is a general-purpose agent runtime.
+It provides sandbox containers, a credential-storing gateway, inference proxying, and policy enforcement, but it has no opinions about what runs inside.
+NemoClaw is an opinionated reference stack built on OpenShell that handles what goes in the sandbox, prepares agent-specific integration, and makes the setup accessible.
 
 ```mermaid
 graph LR
@@ -208,11 +210,9 @@ flowchart LR
 
 ## Sandbox Environment
 
-Normal NemoClaw onboarding builds from the
-[`ghcr.io/nvidia/nemoclaw/sandbox-base`](https://github.com/NVIDIA/NemoClaw/pkgs/container/nemoclaw%2Fsandbox-base)
-base image and layers the NemoClaw runtime Dockerfile on top. The direct blueprint
-runner still carries a pinned OpenShell Community OpenClaw image for legacy
-`openshell sandbox create --from` compatibility. Inside the sandbox:
+Normal NemoClaw onboarding builds from the [`ghcr.io/nvidia/nemoclaw/sandbox-base`](https://github.com/NVIDIA/NemoClaw/pkgs/container/nemoclaw%2Fsandbox-base) base image and layers the NemoClaw runtime Dockerfile on top.
+The direct blueprint runner still carries a pinned OpenShell Community OpenClaw image for legacy `openshell sandbox create --from` compatibility.
+Inside the sandbox:
 
 - The selected compatible agent runs with the NemoClaw integration layer installed or generated for that agent.
 - Inference calls are routed through OpenShell to the configured provider.
@@ -225,7 +225,7 @@ runner still carries a pinned OpenShell Community OpenClaw image for legacy
 ## Inference Routing
 
 Inference requests from the agent never leave the sandbox directly.
-OpenShell intercepts them and routes to the configured provider:
+OpenShell intercepts them and routes them to the configured provider:
 
 ```text
 Compatible agent (sandbox)  ──▶  OpenShell gateway  ──▶  Provider endpoint
@@ -242,8 +242,9 @@ Refer to [Inference Options](../inference/inference-options) for provider config
 ## Provider Credential Storage
 
 Provider credentials live in the OpenShell gateway store, not on the host filesystem.
-NemoClaw never writes them to host disk; the OpenShell L7 proxy injects values at egress.
-See [Credential Storage](../security/credential-storage) for the inspection, rotation, and migration flow.
+NemoClaw never writes them to host disk.
+The OpenShell L7 proxy injects values at egress.
+Refer to [Credential Storage](../security/credential-storage) for the inspection, rotation, and migration flow.
 
 ## Host-Side State and Config
 

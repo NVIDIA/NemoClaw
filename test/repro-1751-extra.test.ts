@@ -17,9 +17,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import * as session from "../dist/lib/state/onboard-session";
-import * as stepMutation from "../dist/lib/state/onboard-step-mutation";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import * as session from "../src/lib/state/onboard-session";
+import * as stepMutation from "../src/lib/state/onboard-step-mutation";
 import {
   markStepCompleteLegacy,
   markStepFailedLegacy,
@@ -40,7 +40,7 @@ afterEach(() => {
   }
 });
 
-describe("Issue #1751 — GPU passthrough session persistence", () => {
+describe("GPU passthrough session persistence (#1751)", () => {
   it("filterSafeUpdates: gpuPassthrough=true is propagated to safe", () => {
     session.saveSession(session.createSession());
     markStepCompleteLegacy(session, stepMutation, "provider_selection", { gpuPassthrough: true });

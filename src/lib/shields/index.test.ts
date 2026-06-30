@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
-import path from "node:path";
 import os from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { testTimeoutOptions } from "../../../test/helpers/timeouts";
 
 // The shields module uses CJS require("./runner") etc., which vitest resolves
 // relative to src/lib/. We mock the absolute paths that vitest will resolve.
@@ -286,26 +287,32 @@ describe("shields — unit logic", () => {
 
   // NOTE: Integration tests that call the real shieldsDown/shieldsUp are not
   // feasible here because shields.ts uses CJS require() which doesn't resolve
-  // through vitest's ESM mock system. The full call chain is exercised by the
-  // E2E test (test/e2e/test-shields-config.sh) against a live sandbox.
+  // through vitest's ESM mock system. The full call chain is exercised by
+  // `test/e2e/live/shields-config.test.ts` against a live sandbox.
 
   // -------------------------------------------------------------------
   // NC-2227-02: Three-state shields model
   // -------------------------------------------------------------------
   describe("NC-2227-02: three-state shields model", () => {
-    it("deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases", async () => {
-      const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "index.js");
-      const { deriveShieldsMode } = await import(distModulePath);
+    // The first source import instruments the full shields dependency graph.
+    // Loaded coverage shards can spend well beyond the unit-test default here.
+    it(
+      "deriveShieldsMode encodes the fresh, locked, unlocked, and legacy-state cases",
+      testTimeoutOptions(30_000),
+      async () => {
+        const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+        const { deriveShieldsMode } = await import(sourceModulePath);
 
-      expect(deriveShieldsMode({}, false)).toBe("mutable_default");
-      expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
-      expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
-      expect(deriveShieldsMode({}, true)).toBe("mutable_default");
-    });
+        expect(deriveShieldsMode({}, false)).toBe("mutable_default");
+        expect(deriveShieldsMode({ shieldsDown: true }, true)).toBe("temporarily_unlocked");
+        expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
+        expect(deriveShieldsMode({}, true)).toBe("mutable_default");
+      },
+    );
 
     it("getShieldsPosture exposes canonical status wording for callers", async () => {
-      const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "index.js");
-      const { getShieldsPosture } = await import(distModulePath);
+      const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+      const { getShieldsPosture } = await import(sourceModulePath);
       const stateDir = path.join(tmpDir, ".nemoclaw", "state");
       fs.mkdirSync(stateDir, { recursive: true });
 
@@ -352,8 +359,8 @@ describe("shields — unit logic", () => {
 
   describe("NC-3112: status self-heals stale expired auto-restore markers", () => {
     async function loadShieldsModule() {
-      const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "index.js");
-      return import(distModulePath);
+      const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+      return import(sourceModulePath);
     }
 
     function stateDir(): string {
@@ -619,8 +626,8 @@ describe("shields — unit logic", () => {
   // -------------------------------------------------------------------
   describe("shieldsStatus surfaces drift returned by the verifier", () => {
     async function loadShieldsModule() {
-      const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "index.js");
-      return import(distModulePath);
+      const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+      return import(sourceModulePath);
     }
 
     function stateDir(): string {
@@ -892,8 +899,8 @@ describe("shields — unit logic", () => {
 // -------------------------------------------------------------------
 describe("NC-2227-05: shields timer marker behavior", () => {
   it("readTimerMarker rejects invalid marker pid values", async () => {
-    const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "timer-control.js");
-    const { readTimerMarker } = await import(distModulePath);
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
+    const { readTimerMarker } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
@@ -922,8 +929,8 @@ describe("NC-2227-05: shields timer marker behavior", () => {
   });
 
   it("killTimer terminates verified live timer process and clears marker", async () => {
-    const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "timer-control.js");
-    const { killTimer } = await import(distModulePath);
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
+    const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
@@ -976,8 +983,8 @@ describe("NC-2227-05: shields timer marker behavior", () => {
   });
 
   it("killTimer does not signal a live PID when marker identity mismatches and still clears marker", async () => {
-    const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "timer-control.js");
-    const { killTimer } = await import(distModulePath);
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
+    const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(
@@ -1027,8 +1034,8 @@ describe("NC-2227-05: shields timer marker behavior", () => {
   });
 
   it("killTimer clears stale marker even when PID is not alive", async () => {
-    const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "timer-control.js");
-    const { killTimer } = await import(distModulePath);
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "timer-control.ts");
+    const { killTimer } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     const markerPath = path.join(stateDir, "shields-timer-openclaw.json");
@@ -1066,8 +1073,8 @@ describe("NC-2227-05: shields timer marker behavior", () => {
   });
 
   it("isShieldsDown fails closed when shields state is corrupt", async () => {
-    const distModulePath = path.join(process.cwd(), "dist", "lib", "shields", "index.js");
-    const { isShieldsDown } = await import(distModulePath);
+    const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
+    const { isShieldsDown } = await import(sourceModulePath);
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
     fs.mkdirSync(stateDir, { recursive: true });
     fs.writeFileSync(path.join(stateDir, "shields-openclaw.json"), "{broken-json");

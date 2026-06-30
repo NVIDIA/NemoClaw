@@ -11,10 +11,10 @@ content:
 ---
 import { StarterPromptButton } from "../_components/StarterPromptButton";
 
-NemoClaw publishes an MCP docs server and clean Markdown versions of its Fern documentation for AI coding agents.
-Your agent can search or fetch the same canonical pages that appear on the docs site, then apply that guidance to your local setup.
+NemoClaw publishes an MCP docs server and Markdown versions of its Fern documentation for AI coding agents.
+Your agent can search or fetch the same canonical pages that appear on the docs site and apply that guidance to your local setup.
 
-Use this page when you want your agent to help with installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, or command reference lookup.
+Use this page when you want your agent to help with installation, inference configuration, network policies, monitoring, deployment, security, workspace management, or command reference lookup.
 
 ## Give Your Agent the Starter Prompt
 
@@ -25,7 +25,7 @@ The prompt tells the agent to use the Markdown docs, ask one question at a time,
 
 ## Configure the Docs MCP Server
 
-If your coding agent supports MCP, configure the NemoClaw docs server before you ask installation or troubleshooting questions.
+If your coding agent supports MCP, configure the NemoClaw docs server before you ask installation, configuration, or troubleshooting questions.
 The server URL is `https://docs.nvidia.com/nemoclaw/_mcp/server`.
 It exposes a read-only `searchDocs` tool that searches the NemoClaw documentation and returns source URLs.
 
@@ -40,8 +40,8 @@ For other MCP clients, configure a streamable HTTP MCP server at that URL.
 
 ## Optional Docs-Routing Skill
 
-If your coding agent supports local project skills, you can fetch the single user skill that encodes the same routing rules.
-This skill is small because it points back to the Markdown docs instead of copying the docs into the repository.
+If your coding agent supports local project skills, fetch the user skill that encodes the same routing rules.
+The skill stays small because it points back to the Markdown docs instead of copying page content into the repository.
 
 Fetch only the docs-routing skill and root instructions without downloading the full source tree:
 
@@ -53,4 +53,4 @@ git checkout
 ```
 
 Open the `NemoClaw` directory in your AI coding assistant.
-The assistant discovers `nemoclaw-user-guide` and uses it to fetch the relevant Markdown documentation.
+The assistant discovers `nemoclaw-user-guide` and uses it to fetch relevant Markdown documentation.

@@ -308,7 +308,7 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-describe("Issue #3113: rebuild auto-unlocks when shields are UP", () => {
+describe("rebuild auto-unlocks when shields are UP (#3113)", () => {
   it("detects locked shields and prints auto-unlock notice", { timeout: 60_000 }, () => {
     const f = createFixture({ shieldsLocked: true });
     const r = runRebuild(f);

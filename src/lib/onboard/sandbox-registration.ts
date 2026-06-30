@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import type { InferenceSelection } from "../inference/selection";
+import { inferenceSelectionRegistryFields } from "../inference/selection";
+import * as onboardSession from "../state/onboard-session";
 import type { SandboxEntry, SandboxMessagingState } from "../state/registry";
 import * as registry from "../state/registry";
 import {
@@ -24,8 +27,7 @@ export type CreatedSandboxRuntimeFields = Pick<
 
 export interface CreatedSandboxRegistryEntryInput {
   sandboxName: string;
-  model: string;
-  provider: string;
+  inferenceSelection: InferenceSelection;
   runtimeFields: CreatedSandboxRuntimeFields;
   agent: AgentDefinition | null | undefined;
   agentVersionKnown: boolean;
@@ -43,6 +45,27 @@ export interface CreatedSandboxRegistrationInput extends CreatedSandboxRegistryE
   registerSandbox?(entry: SandboxEntry): void;
 }
 
+export function selection(
+  sandboxName: string,
+  provider: string,
+  model: string,
+  preferredInferenceApi: string | null,
+): InferenceSelection {
+  const session = onboardSession.loadSession();
+  const sessionMatches =
+    session?.sandboxName === sandboxName &&
+    session.provider === provider &&
+    session.model === model;
+  return inferenceSelectionRegistryFields({
+    provider,
+    model,
+    endpointUrl: sessionMatches ? (session.endpointUrl ?? null) : null,
+    credentialEnv: sessionMatches ? (session.credentialEnv ?? null) : null,
+    preferredInferenceApi,
+    nimContainer: sessionMatches ? (session.nimContainer ?? null) : null,
+  });
+}
+
 export function buildCreatedSandboxRegistryEntry(
   input: CreatedSandboxRegistryEntryInput,
 ): SandboxEntry {
@@ -53,8 +76,7 @@ export function buildCreatedSandboxRegistryEntry(
 
   return {
     name: input.sandboxName,
-    model: input.model || null,
-    provider: input.provider || null,
+    ...inferenceSelectionRegistryFields(input.inferenceSelection),
     ...input.runtimeFields,
     ...getSandboxAgentRegistryFields(input.agent, input.agentVersionKnown),
     imageTag: input.imageTag,

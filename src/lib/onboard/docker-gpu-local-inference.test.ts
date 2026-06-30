@@ -10,7 +10,7 @@ import {
   shouldUseDockerGpuPatchHostNetwork,
   verifyDockerGpuSandboxLocalInference,
   verifyGpuSandboxAfterReady,
-} from "../../../dist/lib/onboard/docker-gpu-local-inference";
+} from "./docker-gpu-local-inference";
 
 const HOST_NETWORK_ENV = { NEMOCLAW_DOCKER_GPU_PATCH_NETWORK: "host" } as NodeJS.ProcessEnv;
 const GPU_CONFIG = { sandboxGpuEnabled: true };
@@ -173,7 +173,7 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     expect(script).not.toContain("docker exec");
   });
 
-  it("fails on a 4xx — route reached but not usable (auth/route misconfig), not the #4509 proof", () => {
+  it("fails on a 4xx because the route is reached but unusable instead of satisfying the proof (#4509)", () => {
     const result = verifyDockerGpuSandboxLocalInference(
       GPU_CONFIG,
       "ollama-local",
@@ -186,7 +186,7 @@ describe("verifyDockerGpuSandboxLocalInference", () => {
     }
   });
 
-  it("fails (unreachable) and retries on HTTP 000 — the #4509 regression", () => {
+  it("fails as unreachable and retries on HTTP 000 (#4509)", () => {
     const execInSandbox = execEmitting("HTTP_000");
     const sleep = vi.fn();
     const result = verifyDockerGpuSandboxLocalInference(

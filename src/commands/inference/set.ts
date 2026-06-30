@@ -25,7 +25,7 @@ export default class InferenceSetCommand extends NemoClawCommand {
   static description =
     "Update the OpenShell inference route and sync the running OpenClaw or Hermes sandbox config.";
   static usage = [
-    "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]",
+    "inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify] [--endpoint-url <url>] [--credential-env <ENV>] [--inference-api <api>]",
   ];
   static examples = [
     "<%= config.bin %> inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b",
@@ -41,6 +41,17 @@ export default class InferenceSetCommand extends NemoClawCommand {
     "no-verify": Flags.boolean({
       description: "Pass --no-verify through to openshell inference set",
     }),
+    "endpoint-url": Flags.string({
+      description: "Trusted endpoint URL to persist when switching to a compatible custom provider",
+    }),
+    "credential-env": Flags.string({
+      description:
+        "Trusted credential env name to persist when switching to a compatible custom provider",
+    }),
+    "inference-api": Flags.string({
+      description:
+        "Trusted API family to persist for compatible custom providers (openai-completions, anthropic-messages, openai-responses)",
+    }),
   };
 
   public async run(): Promise<void> {
@@ -55,6 +66,9 @@ export default class InferenceSetCommand extends NemoClawCommand {
         model: flags.model,
         sandboxName: flags.sandbox ?? null,
         noVerify: flags["no-verify"] === true,
+        endpointUrl: flags["endpoint-url"] ?? null,
+        credentialEnv: flags["credential-env"] ?? null,
+        inferenceApi: flags["inference-api"] ?? null,
       });
     } catch (error) {
       if (error instanceof InferenceSetError) {

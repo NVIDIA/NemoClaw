@@ -4,9 +4,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
-import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import { describe, it } from "vitest";
@@ -56,14 +56,14 @@ describe("onboard messaging", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-providers-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-provider-check.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -303,17 +303,17 @@ const { createSandbox, setupMessagingChannels } = require(${onboardPath});
       const customBuildDir = path.join(tmpDir, "custom-build");
       const customDockerfilePath = path.join(customBuildDir, "Dockerfile");
       const scriptPath = path.join(tmpDir, "hermes-slack-policy.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const agentDefsPath = JSON.stringify(path.join(repoRoot, "src", "lib", "agent", "defs.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
       const preflightPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
       const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
       const yamlPath = JSON.stringify(yamlModulePath);
       const customDockerfileArg = JSON.stringify(customDockerfilePath);
@@ -495,14 +495,14 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-reuse-provider.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const messagingPlanB64 = encodeTestMessagingPlan([
       { channelId: "discord", active: true },
@@ -662,14 +662,14 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "disabled-channels-preserve.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
     const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "telegram", active: false }]);
 
@@ -816,16 +816,16 @@ const { createSandbox } = require(${onboardPath});
     try {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "tokenless-whatsapp.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
       const preflightPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
       const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
       const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: true }]);
 
@@ -969,16 +969,16 @@ const { createSandbox } = require(${onboardPath});
     try {
       const fakeBin = path.join(tmpDir, "bin");
       const scriptPath = path.join(tmpDir, "disabled-whatsapp.js");
-      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
       const registryPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "state", "registry.js"),
+        path.join(repoRoot, "src", "lib", "state", "registry.ts"),
       );
       const preflightPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+        path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
       );
       const credentialsPath = JSON.stringify(
-        path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+        path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
       );
       const messagingPlanB64 = encodeTestMessagingPlan([{ channelId: "whatsapp", active: false }]);
 
@@ -1122,14 +1122,14 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-provider-fail-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "provider-upsert-fail.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1204,9 +1204,9 @@ const { createSandbox } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-reuse-providers-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "reuse-with-providers.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1298,14 +1298,14 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "enabled-channels-filter.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1431,14 +1431,14 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "enabled-channels-empty.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
     const preflightPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"),
+      path.join(repoRoot, "src", "lib", "onboard", "preflight.ts"),
     );
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1552,8 +1552,8 @@ const { createSandbox } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-noninteractive.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1621,10 +1621,10 @@ const { setupMessagingChannels } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-slack-live-reject.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const httpProbePath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "adapters", "http", "probe.js"),
+      path.join(repoRoot, "src", "lib", "adapters", "http", "probe.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1703,8 +1703,8 @@ const { setupMessagingChannels } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-messaging-no-tokens-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "messaging-no-tokens.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
@@ -1762,10 +1762,10 @@ const { setupMessagingChannels } = require(${onboardPath});
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-slack-format-reject-"));
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "slack-format-reject.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1872,10 +1872,10 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     );
     const fakeBin = path.join(tmpDir, "bin");
     const scriptPath = path.join(tmpDir, "slack-app-format-reject.js");
-    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
     const credentialsPath = JSON.stringify(
-      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+      path.join(repoRoot, "src", "lib", "credentials", "store.ts"),
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -1974,7 +1974,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
   });
 
   it("Slack bot token format regex rejects obvious bogus tokens and accepts valid ones (#1912)", async () => {
-    const onboardPath = path.join(repoRoot, "dist", "lib", "onboard.js");
+    const onboardPath = path.join(repoRoot, "src", "lib", "onboard.ts");
     // Cache-bust the dynamic import so repeated test runs pick up rebuilds.
     const onboardUrl = `${pathToFileURL(onboardPath).href}?update=${Date.now()}`;
     const { MESSAGING_CHANNELS } = await import(onboardUrl);

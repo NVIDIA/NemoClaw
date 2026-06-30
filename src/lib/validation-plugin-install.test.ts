@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { classifySandboxCreateFailure } from "../../dist/lib/validation";
+import { classifySandboxCreateFailure } from "./validation";
 
 describe("classifySandboxCreateFailure plugin-install network arm", () => {
   it("detects plugin install network denial from ENOTFOUND against the npm registry", () => {

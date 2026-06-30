@@ -67,7 +67,7 @@ Run the smallest meaningful tests for changed behavior:
 
 - CLI or root `src/`, `bin/`, `scripts/`, or `test/` changes: `npx vitest run --project cli` or the directly affected test file.
 - Plugin changes under `nemoclaw/src/`: `npx vitest run --project plugin` or the directly affected plugin test file.
-- E2E support changes under `test/e2e-scenario/support-tests/`: `npx vitest run --project e2e-vitest-support`.
+- E2E support changes under `test/e2e/support/`: `npx vitest run --project e2e-support`.
 - Installer behavior changes: run the relevant installer integration project only when the local environment supports it.
 
 Reserve full `npm test` for broad runtime changes, test harness changes, or cases where targeted coverage is hard to justify.

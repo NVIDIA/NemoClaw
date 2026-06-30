@@ -34,9 +34,8 @@ nemoclaw_cli() {
   fi
 }
 
-python_probe() {
-  local url="$1"
-  sandbox_exec "python3 - ${url@Q} <<'PY'
+python_probe_source() {
+  cat <<'PY'
 import sys
 import urllib.error
 import urllib.request
@@ -90,11 +89,39 @@ except OSError as exc:
 except Exception as exc:
     print(f'ERROR:{type(exc).__name__}:{exc}')
 PY
-"
+}
+
+python_probe() {
+  local url="$1"
+  local encoded remote_cmd
+  if [ -n "${NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE+x}" ]; then
+    printf '%s\n' "$NEMOCLAW_E2E_TAVILY_PROBE_FIXTURE"
+    return 0
+  fi
+  encoded="$(python_probe_source | base64 | tr -d '\n')"
+  remote_cmd="python3 -c \"\$(printf '%s' ${encoded@Q} | base64 -d)\" ${url@Q}"
+  sandbox_exec "$remote_cmd"
 }
 
 PASSED=0
 FAILED=0
+
+if [ "${NEMOCLAW_E2E_TAVILY_SELF_TEST:-}" = "probe-command-shape" ]; then
+  sandbox_exec() {
+    case "$1" in
+      *$'\n'*)
+        printf '%s\n' "NEWLINE_IN_COMMAND"
+        return 1
+        ;;
+      *)
+        printf '%s\n' "NO_NEWLINE_IN_COMMAND"
+        return 0
+        ;;
+    esac
+  }
+  python_probe "https://api.tavily.com/"
+  exit 0
+fi
 
 if ! sandbox_exec "test -d /sandbox/.deepagents && command -v dcode >/dev/null 2>&1" >/dev/null; then
   info "SKIP: sandbox '${SANDBOX_NAME}' is not a Deep Agents Code sandbox"

@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { applyOpenShellVmDnsMonkeypatch } from "../../../dist/lib/actions/sandbox/vm-dns-monkeypatch";
-import { applyOnboardVmDnsMonkeypatch } from "../../../dist/lib/onboard/vm-dns-monkeypatch";
+import { applyOpenShellVmDnsMonkeypatch } from "../actions/sandbox/vm-dns-monkeypatch";
+import { applyOnboardVmDnsMonkeypatch } from "./vm-dns-monkeypatch";
 
 describe("applyOnboardVmDnsMonkeypatch", () => {
   it("logs applied only when the onboard VM DNS monkeypatch changes files", () => {

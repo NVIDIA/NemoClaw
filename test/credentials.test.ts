@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-type CredentialsModule = typeof import("../dist/lib/credentials/store.js");
+type CredentialsModule = typeof import("../src/lib/credentials/store.js");
 
 function isCredentialsModule(value: object | null): value is CredentialsModule {
   return (
@@ -28,7 +28,8 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
 // Pull the credential-env-key allowlist from the production module so
 // future additions only need to be made in one place. Plus a few
 // fixture-only names this suite mutates directly.
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials/store.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../src/lib/credentials/store.js";
+
 const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
 
@@ -44,7 +45,7 @@ async function importCredentialsModule(home: string): Promise<CredentialsModule>
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  const module = await import("../dist/lib/credentials/store.js");
+  const module = await import("../src/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isCredentialsModule(moduleObject)) {
@@ -463,8 +464,8 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
   });
 });
 
-describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () => {
-  it("removes an empty {} legacy file (regression #3105)", async () => {
+describe("removeLegacyCredentialsFileIfEmpty post-upgrade cleanup (#3105)", () => {
+  it("removes an empty legacy file containing {} (#3105)", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
@@ -667,7 +668,7 @@ describe("prompt machinery (unchanged)", () => {
 
   it("settles the outer prompt promise on secret prompt errors", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
 process.stdin.isTTY = true;
 process.stderr.isTTY = true;
 process.stdin.ref = () => process.stdin;
@@ -709,8 +710,8 @@ prompt('secret: ', { secret: true })
 
   it("re-prompts shared credential prompts after help input", () => {
     const script = `
-const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
-const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "credential-navigation.js"))});
+const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
+const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "onboard", "credential-navigation.ts"))});
 const answers = ["help", "sk-TEST-NOT-A-REAL-KEY"];
 const logs = [];
 credentials.prompt = async () => answers.shift() || "";
@@ -755,7 +756,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
 
     try {
-      const credentials = await import("../dist/lib/credentials/store.js");
+      const credentials = await import("../src/lib/credentials/store.js");
       const pending = credentials.prompt("question: ");
       rl.emit("SIGINT");
       await expect(pending).rejects.toMatchObject({
@@ -778,7 +779,7 @@ createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).rea
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then(() => console.log('STAGED=' + process.env.NVIDIA_INFERENCE_API_KEY))
@@ -818,7 +819,7 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 
   it("returns navigation from the NVIDIA API key prompt without staging it", () => {
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_INFERENCE_API_KEY || null })))
@@ -838,7 +839,7 @@ ensureApiKey()
 
   it("returns exit from the NVIDIA API key prompt without staging it", () => {
     const script = `
-const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
 delete process.env.NVIDIA_INFERENCE_API_KEY;
 ensureApiKey()
   .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_INFERENCE_API_KEY || null })))
@@ -858,7 +859,7 @@ ensureApiKey()
 
   it("normal and secret prompts re-ref, cleanup stdin, and preserve masked input", () => {
     const script = `
-const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "src", "lib", "credentials", "store.ts"))});
 const counts = { ref: 0, resume: 0, pause: 0, unref: 0, raw: [] };
 process.stdin.ref = () => { counts.ref += 1; return process.stdin; };
 process.stdin.resume = () => { counts.resume += 1; return process.stdin; };
