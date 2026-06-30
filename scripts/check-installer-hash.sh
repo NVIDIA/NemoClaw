@@ -2,17 +2,15 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Verifies that pinned SHA-256 hashes for downloaded installers still match
-# the current upstream scripts.
+# Verifies that pinned SHA-256 hashes for downloaded OpenShell release assets
+# still match the immutable upstream checksum manifests.
 #
-# Checked installers:
-#   1. Ollama installer    — scripts/install.sh      (OLLAMA_INSTALL_SHA256)
-#   2. OpenShell v0.0.72   — scripts/install-openshell.sh release-asset table
-#   3. Brev OpenShell CLI  — scripts/brev-launchable-ci-cpu.sh release-asset table
+# Checked artifacts:
+#   1. OpenShell v0.0.72   — scripts/install-openshell.sh release-asset table
+#   2. Brev OpenShell CLI  — scripts/brev-launchable-ci-cpu.sh release-asset table
 #
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
-#   scripts/check-installer-hash.sh --update   # rewrite stale hashes in-place
 #
 # CI can execute this script from a trusted checkout while inspecting a
 # separate pull-request tree by setting NEMOCLAW_INSTALLER_HASH_REPO_ROOT.
@@ -27,9 +25,9 @@ fi
 OPENSHELL_RELEASE_VERSION="0.0.72"
 
 case "${1:-}" in
-  "" | --update) ;;
+  "") ;;
   *)
-    echo "Usage: scripts/check-installer-hash.sh [--update]" >&2
+    echo "Usage: scripts/check-installer-hash.sh" >&2
     exit 2
     ;;
 esac
@@ -56,45 +54,6 @@ sha256_file() {
     return 1
   fi
 }
-
-fetch_hash() {
-  local url="$1" tmpfile
-  tmpfile=$(mktemp)
-  trap 'rm -f "$tmpfile"' RETURN
-  fetch_file "$url" "$tmpfile"
-  sha256_file "$tmpfile"
-}
-
-extract_pinned() {
-  local file="$1" var_name="$2"
-  sed -n "s/.*${var_name}=\"\\([a-f0-9]\\{64\\}\\)\".*/\\1/p" "$file"
-}
-
-update_pinned() {
-  local file="$1" old_hash="$2" new_hash="$3"
-  sed -i.bak "s/${old_hash}/${new_hash}/" "$file"
-  rm -f "${file}.bak"
-}
-
-# ---------------------------------------------------------------------------
-# Registry of pinned hashes: (label, file, variable, upstream URL)
-# ---------------------------------------------------------------------------
-LABELS=()
-FILES=()
-VARS=()
-URLS=()
-
-register() {
-  LABELS+=("$1")
-  FILES+=("$2")
-  VARS+=("$3")
-  URLS+=("$4")
-}
-
-register "Ollama installer" \
-  "${REPO_ROOT}/scripts/install.sh" \
-  "OLLAMA_INSTALL_SHA256" \
-  "https://ollama.com/install.sh"
 
 # invalidState: CI reports trusted OpenShell pins without comparing every
 # consumed archive with the immutable v0.0.72 checksum release assets.
@@ -213,61 +172,14 @@ check_openshell_release_assets() {
 # Main
 # ---------------------------------------------------------------------------
 failures=0
-
-for i in "${!LABELS[@]}"; do
-  label="${LABELS[$i]}"
-  file="${FILES[$i]}"
-  var="${VARS[$i]}"
-  url="${URLS[$i]}"
-
-  pinned_values=$(extract_pinned "$file" "$var")
-  pinned_count=$(printf '%s\n' "$pinned_values" | awk 'NF { count++ } END { print count + 0 }')
-
-  if [[ "$pinned_count" -ne 1 ]]; then
-    echo "  STALE: expected exactly one ${var} pin in ${file}, found ${pinned_count}."
-    failures=$((failures + 1))
-    continue
-  fi
-  pinned="$pinned_values"
-
-  echo "Checking ${label} (${var})..."
-  echo "  Fetching ${url}..."
-  upstream=$(fetch_hash "$url")
-
-  if [[ "$pinned" == "$upstream" ]]; then
-    echo "  OK: hash is up-to-date (${pinned})"
-    continue
-  fi
-
-  if [[ "${1:-}" == "--update" ]]; then
-    update_pinned "$file" "$pinned" "$upstream"
-    echo "  UPDATED ${file}: ${var}"
-    echo "    old: ${pinned}"
-    echo "    new: ${upstream}"
-  else
-    echo "  STALE: pinned hash does not match upstream."
-    echo "    pinned:   ${pinned}"
-    echo "    upstream: ${upstream}"
-    failures=$((failures + 1))
-  fi
-done
-
-openshell_failures=0
 if check_openshell_release_assets; then
-  openshell_failures=0
+  echo ""
+  echo "All installer hashes are current."
+  exit 0
 else
-  openshell_failures=$?
-fi
-failures=$((failures + openshell_failures))
-
-if ((failures > 0)); then
-  echo ""
-  echo "${failures} hash(es) are stale. To update, run:"
-  echo ""
-  echo "  scripts/check-installer-hash.sh --update"
-  echo ""
-  exit 1
+  failures=$?
 fi
 
 echo ""
-echo "All installer hashes are current."
+echo "${failures} OpenShell release-asset check(s) failed."
+exit 1

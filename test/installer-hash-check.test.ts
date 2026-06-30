@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,7 +9,6 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const OLLAMA_FIXTURE = "fixture installer\n";
 const ASSET_DIGESTS = new Map([
   [
     "openshell-x86_64-unknown-linux-musl.tar.gz",
@@ -46,6 +44,27 @@ const ASSET_DIGESTS = new Map([
   ],
 ]);
 const ASSETS = [...ASSET_DIGESTS.keys()];
+type FixtureMode =
+  | "brev-mismatch"
+  | "complete"
+  | "duplicate-brev-pin"
+  | "failure"
+  | "missing-brev-pin"
+  | "partial"
+  | "pr-checker-bypass";
+
+const corruptFirstBrevPin = (source: string): string =>
+  source.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64));
+const BREV_MUTATIONS: Partial<Record<FixtureMode, (source: string) => string>> = {
+  "brev-mismatch": corruptFirstBrevPin,
+  "duplicate-brev-pin": (source) => {
+    const pinLine = `      printf '%s\\n' "${ASSET_DIGESTS.get(ASSETS[0])}"`;
+    return source.replace(pinLine, `${pinLine}\n${pinLine}`);
+  },
+  "missing-brev-pin": (source) =>
+    source.replace(ASSET_DIGESTS.get(ASSETS[1]) ?? "missing", "missing"),
+  "pr-checker-bypass": corruptFirstBrevPin,
+};
 const CHECKSUM_MANIFESTS = new Map([
   [
     "openshell-checksums-sha256.txt",
@@ -103,11 +122,6 @@ function createFixture(openshellVersion = "0.0.72"): string {
     );
   fs.writeFileSync(path.join(scriptsDir, "check-installer-hash.sh"), checker);
 
-  const ollamaDigest = createHash("sha256").update(OLLAMA_FIXTURE).digest("hex");
-  fs.writeFileSync(
-    path.join(scriptsDir, "install.sh"),
-    `OLLAMA_INSTALL_SHA256="${ollamaDigest}"\n`,
-  );
   const cases = ASSETS.map(
     (asset) =>
       `    v${openshellVersion}:${asset})\n      printf '%s\\n' "${ASSET_DIGESTS.get(asset)}"\n      ;;`,
@@ -159,7 +173,7 @@ case "$url" in
         ;;
     esac
     ;;
-  *) printf '%s' '${OLLAMA_FIXTURE}' >"$output" ;;
+  *) exit 22 ;;
 esac
 `,
   );
@@ -167,47 +181,25 @@ esac
   return fixtureRoot;
 }
 
-function runFixture(
-  mode:
-    | "brev-mismatch"
-    | "complete"
-    | "duplicate-ollama-pin"
-    | "failure"
-    | "missing-ollama-pin"
-    | "partial"
-    | "pr-checker-bypass",
-  openshellVersion?: string,
-  trustedChecker = false,
-) {
+function runFixture(mode: FixtureMode, openshellVersion?: string, trustedChecker = false) {
   const fixtureRoot = createFixture(openshellVersion);
-  let checker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
-  if (trustedChecker) {
-    const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
-    tempDirs.push(trustedRoot);
-    fs.mkdirSync(path.join(trustedRoot, "scripts"), { recursive: true });
-    checker = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
-    fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), checker);
-  }
-  const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
-  const ollamaInstaller = path.join(fixtureRoot, "scripts", "install.sh");
-  if (mode === "pr-checker-bypass") {
-    fs.writeFileSync(
-      path.join(fixtureRoot, "scripts", "check-installer-hash.sh"),
-      "#!/usr/bin/env bash\necho PR_CHECKER_EXECUTED\nexit 0\n",
-    );
-  }
-  if (mode === "missing-ollama-pin") {
-    fs.writeFileSync(ollamaInstaller, "# missing required Ollama pin\n");
-  } else if (mode === "duplicate-ollama-pin") {
-    fs.appendFileSync(ollamaInstaller, fs.readFileSync(ollamaInstaller, "utf8"));
-  }
-  const brevSource = fs.readFileSync(brevInstaller, "utf8");
+  const targetChecker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
+  const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
+  const trustedCheckerPath = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
+  tempDirs.push(trustedRoot);
+  fs.mkdirSync(path.join(trustedRoot, "scripts"), { recursive: true });
+  fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), trustedCheckerPath);
   fs.writeFileSync(
-    brevInstaller,
-    mode === "brev-mismatch" || mode === "pr-checker-bypass"
-      ? brevSource.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64))
-      : brevSource,
+    targetChecker,
+    trustedChecker
+      ? "#!/usr/bin/env bash\necho PR_CHECKER_EXECUTED\nexit 0\n"
+      : fs.readFileSync(targetChecker, "utf8"),
   );
+  const checker = trustedChecker ? trustedCheckerPath : targetChecker;
+  const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
+  const brevSource = fs.readFileSync(brevInstaller, "utf8");
+  const mutateBrev = BREV_MUTATIONS[mode] ?? ((source: string) => source);
+  fs.writeFileSync(brevInstaller, mutateBrev(brevSource));
   return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
@@ -242,17 +234,18 @@ describe("installer hash verification", () => {
     const result = runFixture("complete", undefined, true);
 
     expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("PR_CHECKER_EXECUTED");
     expect(result.stdout).toContain("All installer hashes are current");
   });
 
   it.each([
-    "missing-ollama-pin",
-    "duplicate-ollama-pin",
+    "missing-brev-pin",
+    "duplicate-brev-pin",
   ] as const)("fails closed when the pull-request tree has a %s", (mode) => {
     const result = runFixture(mode, undefined, true);
 
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain("expected exactly one OLLAMA_INSTALL_SHA256 pin");
+    expect(result.stdout).toContain("expected 2 pinned Brev OpenShell v0.0.72 CLI assets");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
@@ -272,7 +265,7 @@ describe("installer hash verification", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v0.0.72 release assets");
-    expect(result.stdout).toContain("14 hash(es) are stale");
+    expect(result.stdout).toContain("14 OpenShell release-asset check(s) failed");
     expect(result.stdout).not.toContain("All installer hashes are current");
   });
 
