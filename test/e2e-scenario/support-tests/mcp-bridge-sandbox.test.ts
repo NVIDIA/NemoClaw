@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { testTimeout } from "../../helpers/timeouts";
 import type { HostCliClient } from "../fixtures/clients/host.ts";
 import {
+  buildMcpDnsRebindingProbeScript,
   isExpectedMcpCurlPolicyDenial,
   restoreDnsRebindingHostsFixture,
 } from "../live/mcp-bridge-sandbox.ts";
@@ -95,11 +96,74 @@ describe("MCP curl policy denial classification", SUITE_OPTIONS, () => {
     ).toBe(false);
   });
 
+  it("runs the rebinding request beneath each adapter runtime identity", () => {
+    const runtimes = {
+      mcporter: "nemoclaw-start node -e",
+      "hermes-config": "/opt/hermes/.venv/bin/python -c",
+      "deepagents-config": "/opt/venv/bin/python3 -c",
+    } as const;
+
+    for (const [adapter, runtime] of Object.entries(runtimes)) {
+      const script = buildMcpDnsRebindingProbeScript(
+        adapter as keyof typeof runtimes,
+        "https://mcp-rebind.example.test:31337/mcp",
+        "REBIND_MCP_SECRET",
+      );
+      expect(script, adapter).toContain(runtime);
+      expect(script, adapter).toMatch(/spawnSync|subprocess\.run/);
+      expect(script, adapter).toContain("'curl'");
+      expect(script, adapter).toContain("NEMOCLAW_MCP_CURL_HTTP_CODE=%{http_code}");
+      expect(script, adapter).toContain(
+        "authorization: Bearer openshell:resolve:env:REBIND_MCP_SECRET",
+      );
+      expect(script, adapter).not.toContain("fake-rebind-mcp-secret-value");
+      const syntax = spawnSync("/bin/bash", ["-n"], { input: script, encoding: "utf8" });
+      expect(syntax.status, `${adapter}: ${syntax.stderr}`).toBe(0);
+    }
+  });
+
+  it("pins the resolve-validate-connect source contract to OpenShell v0.0.72", () => {
+    const commit = "8cb16de9eae4c44d7d31e1493747d8c10abb5963";
+    const sourcePath = "crates/openshell-supervisor-network/src/proxy.rs";
+    const citations = [
+      `${sourcePath}:2476-2502`,
+      `${sourcePath}:2527-2567`,
+      `${sourcePath}:2622-2630`,
+      `${sourcePath}:822-832`,
+      `${sourcePath}:3885-3893`,
+      `${sourcePath}:4123-4125`,
+    ];
+
+    for (const docsPath of [
+      "docs/deployment/set-up-mcp-bridge.mdx",
+      "docs/security/openshell-0.0.72-compatibility-review.mdx",
+    ]) {
+      const docs = fs.readFileSync(docsPath, "utf8");
+      expect(docs, docsPath).toContain(commit);
+      for (const citation of citations) expect(docs, docsPath).toContain(citation);
+    }
+  });
+
+  it("runs the zero-upstream rebinding proof for all three adapters", () => {
+    const source = fs.readFileSync("test/e2e-scenario/live/mcp-bridge.test.ts", "utf8");
+
+    expect(source.match(/await assertAdapterDnsRebindingDenied/g)).toHaveLength(3);
+    for (const adapter of [
+      'adapter: "mcporter"',
+      'adapter: "hermes-config"',
+      'adapter: "deepagents-config"',
+    ]) {
+      expect(source).toContain(adapter);
+    }
+    expect(source).toContain("rebound request must not reach the upstream MCP server");
+    expect(source).toContain(").toHaveLength(0);");
+  });
+
   it("restores the DNS fixture before MCP removal can restart the sandbox", () => {
     const source = fs.readFileSync("test/e2e-scenario/live/mcp-bridge.test.ts", "utf8");
-    const denialProof = source.indexOf("expect(rebindMcp.requests).toHaveLength(0);");
+    const denialProof = source.indexOf("rebound request must not reach the upstream MCP server");
     const restore = source.indexOf("await restoreDnsRebindingHostsFixture", denialProof);
-    const remove = source.indexOf("const rebindRemove = await host.nemoclaw", denialProof);
+    const remove = source.indexOf("const remove = await host.nemoclaw", denialProof);
 
     expect(denialProof).toBeGreaterThanOrEqual(0);
     expect(restore).toBeGreaterThan(denialProof);

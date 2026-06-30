@@ -24,8 +24,10 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 import { MCP_BRIDGE_TEST_CREDENTIALS } from "../fixtures/mcp-bridge-credentials.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import {
+  buildMcpDnsRebindingProbeScript,
   installMcpTestCaInSandbox,
   isExpectedMcpCurlPolicyDenial,
+  type McpDnsRebindingAdapter,
   remapDnsRebindingHostname,
   restoreDnsRebindingHostsFixture,
   setupDnsRebindingHostsFixture,
@@ -172,6 +174,159 @@ async function assertSecretAbsentFromSandbox(
     timeoutMs: 60_000,
   });
   expectExitZero(result, "host MCP secret must not appear in sandbox files");
+}
+
+async function assertAdapterDnsRebindingDenied(
+  host: HostCliClient,
+  sandbox: SandboxClient,
+  cleanup: CleanupRegistry,
+  options: {
+    adapter: McpDnsRebindingAdapter;
+    artifactPrefix: string;
+    hostAddress: string;
+    sandboxName: string;
+    secretPaths: string[];
+  },
+): Promise<void> {
+  const rebindMcp = await startFakeMcpHttpsServer({ secret: REBIND_HOST_SECRET });
+  cleanup.add(`stop ${options.artifactPrefix} DNS rebinding fake MCP HTTPS server`, () =>
+    rebindMcp.close(),
+  );
+  cleanup.add(`remove ${options.artifactPrefix} DNS rebinding MCP bridge`, () =>
+    bestEffortRemoveBridge(host, options.sandboxName, REBIND_SERVER_NAME),
+  );
+  const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${rebindMcp.port}/mcp`;
+  const hostsFixture = await setupDnsRebindingHostsFixture(
+    host,
+    options.sandboxName,
+    REBIND_HOSTNAME,
+  );
+  cleanup.add(`restore ${options.artifactPrefix} DNS rebinding hosts fixture`, () =>
+    restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture),
+  );
+
+  await remapDnsRebindingHostname(
+    host,
+    options.sandboxName,
+    hostsFixture,
+    REBIND_PUBLIC_IP,
+    `${options.artifactPrefix}-mcp-dns-rebinding-map-public-before-add`,
+  );
+  const add = await host.nemoclaw(
+    [
+      options.sandboxName,
+      "mcp",
+      "add",
+      REBIND_SERVER_NAME,
+      "--url",
+      rebindMcpUrl,
+      "--env",
+      REBIND_CREDENTIAL_KEY,
+    ],
+    {
+      artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-add-with-public-resolution`,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
+      },
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 2 * 60_000,
+    },
+  );
+  expectExitZero(
+    add,
+    `${options.artifactPrefix} registers MCP route while its dedicated hostname resolves publicly`,
+  );
+
+  const status = await host.nemoclaw(
+    [options.sandboxName, "mcp", "status", REBIND_SERVER_NAME, "--json"],
+    {
+      artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-status-after-add`,
+      env: {
+        ...buildAvailabilityProbeEnv(),
+        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
+      },
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 60_000,
+    },
+  );
+  expectExitZero(status, `${options.artifactPrefix} inspects DNS rebinding route after add`);
+  expect(JSON.parse(status.stdout)).toMatchObject({
+    support: { supported: true, adapter: options.adapter },
+    server: REBIND_SERVER_NAME,
+    url: rebindMcpUrl,
+    env: { names: [REBIND_CREDENTIAL_KEY], ready: true, missing: [] },
+    provider: { attached: true, credentialReady: true },
+    policy: { gatewayPresent: true },
+    adapter: { registered: true },
+  });
+
+  const policy = await sandbox.openshell(["policy", "get", "--full", options.sandboxName], {
+    artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-policy-pinned-public-ip`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expectExitZero(policy, `${options.artifactPrefix} inspects add-time DNS pin`);
+  const policyJson = YAML.parse(parseCurrentPolicy(resultText(policy))) as {
+    network_policies?: Record<
+      string,
+      { endpoints?: Array<{ host?: string; allowed_ips?: string[] }> }
+    >;
+  };
+  expect(
+    policyJson.network_policies?.[buildMcpBridgePolicyKey(REBIND_SERVER_NAME)]?.endpoints?.[0],
+  ).toMatchObject({ host: REBIND_HOSTNAME, allowed_ips: [REBIND_PUBLIC_IP] });
+  await assertSecretAbsentFromSandbox(
+    sandbox,
+    options.sandboxName,
+    options.secretPaths,
+    [REBIND_HOST_SECRET],
+    `${options.artifactPrefix}-dns-rebinding-secret-absent-from-sandbox`,
+  );
+
+  // If OpenShell resolved a second time after validating allowed_ips, this
+  // reachable runner address would receive the request. The pinned v0.0.72
+  // implementation instead returns the one resolved-and-validated SocketAddr
+  // list directly to connect; see the exact proxy.rs citation in the helper.
+  expect(options.hostAddress).not.toBe(REBIND_PUBLIC_IP);
+  await remapDnsRebindingHostname(
+    host,
+    options.sandboxName,
+    hostsFixture,
+    options.hostAddress,
+    `${options.artifactPrefix}-mcp-dns-rebinding-map-private-unpinned-after-add`,
+  );
+  const denial = await sandbox.execShell(
+    options.sandboxName,
+    trustedSandboxShellScript(
+      buildMcpDnsRebindingProbeScript(options.adapter, rebindMcpUrl, REBIND_CREDENTIAL_KEY),
+    ),
+    {
+      artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-adapter-denied`,
+      env: buildAvailabilityProbeEnv(),
+      redactionValues: [REBIND_HOST_SECRET],
+      timeoutMs: 90_000,
+    },
+  );
+  expect(
+    isExpectedMcpCurlPolicyDenial(denial),
+    `${options.artifactPrefix} adapter identity must receive an OpenShell policy denial after rebinding\nstdout:\n${denial.stdout}\nstderr:\n${denial.stderr}`,
+  ).toBe(true);
+  expect(
+    rebindMcp.requests,
+    `${options.artifactPrefix} rebound request must not reach the upstream MCP server`,
+  ).toHaveLength(0);
+
+  // Restore while the current sandbox container is stable. Removing the MCP
+  // route reloads policy and can restart the container first; the registered
+  // cleanup remains an idempotent fallback.
+  await restoreDnsRebindingHostsFixture(host, options.sandboxName, hostsFixture);
+  const remove = await host.nemoclaw([options.sandboxName, "mcp", "remove", REBIND_SERVER_NAME], {
+    artifactName: `${options.artifactPrefix}-mcp-dns-rebinding-remove`,
+    env: buildAvailabilityProbeEnv(),
+    timeoutMs: 60_000,
+  });
+  expectExitZero(remove, `${options.artifactPrefix} removes DNS rebinding route after proof`);
 }
 
 async function addBridgeAndReadStatus(
@@ -591,16 +746,11 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
   cleanup.add("stop MCP bridge compatible endpoint mock", () => compatibleMock.close());
   const fakeMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
   cleanup.add("stop fake MCP HTTPS server", () => fakeMcp.close());
-  const rebindMcp = await startFakeMcpHttpsServer({
-    secret: REBIND_HOST_SECRET,
-  });
-  cleanup.add("stop DNS rebinding fake MCP HTTPS server", () => rebindMcp.close());
   const decoyMcp = await startFakeMcpHttpsServer({ secret: HOST_SECRET });
   cleanup.add("stop unconfigured decoy MCP HTTPS server", () => decoyMcp.close());
   const hostAddress = await hostAddressForSandbox(host);
   const endpointUrl = `http://${hostAddress}:${compatibleMock.port}/v1`;
   const mcpUrl = `https://host.openshell.internal:${fakeMcp.port}/mcp`;
-  const rebindMcpUrl = `https://${REBIND_HOSTNAME}:${rebindMcp.port}/mcp`;
   const decoyMcpUrl = `https://host.openshell.internal:${decoyMcp.port}/mcp`;
   await onboardAgent(host, cleanup, endpointUrl, {
     agent: "openclaw",
@@ -614,9 +764,6 @@ liveTest("mcp-bridge", { timeout: 45 * 60_000 }, async ({ artifacts, cleanup, ho
   );
   cleanup.add("remove concurrent MCP bridge", () =>
     bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, CONCURRENT_SERVER_NAME),
-  );
-  cleanup.add("remove DNS rebinding MCP bridge", () =>
-    bestEffortRemoveBridge(host, OPENCLAW_SANDBOX_NAME, REBIND_SERVER_NAME),
   );
 
   await expectMcpCliFailure(
@@ -834,129 +981,13 @@ req.end(body);
       },
     );
 
-  const dnsRebindingHostsFixture = await setupDnsRebindingHostsFixture(
-    host,
-    OPENCLAW_SANDBOX_NAME,
-    REBIND_HOSTNAME,
-  );
-  cleanup.add("restore DNS rebinding hosts fixture", () =>
-    restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture),
-  );
-  await remapDnsRebindingHostname(
-    host,
-    OPENCLAW_SANDBOX_NAME,
-    dnsRebindingHostsFixture,
-    REBIND_PUBLIC_IP,
-    "mcp-dns-rebinding-map-public-before-add",
-  );
-  const rebindAdd = await host.nemoclaw(
-    [
-      OPENCLAW_SANDBOX_NAME,
-      "mcp",
-      "add",
-      REBIND_SERVER_NAME,
-      "--url",
-      rebindMcpUrl,
-      "--env",
-      REBIND_CREDENTIAL_KEY,
-    ],
-    {
-      artifactName: "mcp-dns-rebinding-add-with-public-resolution",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
-      },
-      redactionValues: [REBIND_HOST_SECRET],
-      timeoutMs: 2 * 60_000,
-    },
-  );
-  expectExitZero(rebindAdd, "register MCP route while its dedicated hostname resolves publicly");
-
-  const rebindStatus = await host.nemoclaw(
-    [OPENCLAW_SANDBOX_NAME, "mcp", "status", REBIND_SERVER_NAME, "--json"],
-    {
-      artifactName: "mcp-dns-rebinding-status-after-add",
-      env: {
-        ...buildAvailabilityProbeEnv(),
-        [REBIND_CREDENTIAL_KEY]: REBIND_HOST_SECRET,
-      },
-      redactionValues: [REBIND_HOST_SECRET],
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(rebindStatus, "inspect DNS rebinding MCP route after registration");
-  expect(JSON.parse(rebindStatus.stdout)).toMatchObject({
-    server: REBIND_SERVER_NAME,
-    url: rebindMcpUrl,
-    env: { names: [REBIND_CREDENTIAL_KEY], ready: true, missing: [] },
-    provider: { attached: true, credentialReady: true },
-    policy: { gatewayPresent: true },
-    adapter: { registered: true },
-  });
-
-  const rebindPolicy = await sandbox.openshell(["policy", "get", "--full", OPENCLAW_SANDBOX_NAME], {
-    artifactName: "mcp-dns-rebinding-policy-pinned-public-ip",
-    env: buildAvailabilityProbeEnv(),
-    timeoutMs: 60_000,
-  });
-  expectExitZero(rebindPolicy, "inspect add-time DNS pin for rebinding MCP route");
-  const rebindPolicyJson = YAML.parse(parseCurrentPolicy(resultText(rebindPolicy))) as {
-    network_policies?: Record<
-      string,
-      { endpoints?: Array<{ host?: string; allowed_ips?: string[] }> }
-    >;
-  };
-  expect(
-    rebindPolicyJson.network_policies?.[buildMcpBridgePolicyKey(REBIND_SERVER_NAME)]
-      ?.endpoints?.[0],
-  ).toMatchObject({ host: REBIND_HOSTNAME, allowed_ips: [REBIND_PUBLIC_IP] });
-  await assertSecretAbsentFromSandbox(
-    sandbox,
-    OPENCLAW_SANDBOX_NAME,
-    ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
-    [REBIND_HOST_SECRET],
-    "openclaw-dns-rebinding-secret-absent-from-sandbox",
-  );
-
-  // The supervisor's loopback belongs to the sandbox container. Rebind to the
-  // runner address already used by the sandbox-compatible endpoint instead,
-  // so a missing allowed_ips denial would reach this fake HTTPS server.
-  expect(hostAddress).not.toBe(REBIND_PUBLIC_IP);
-  await remapDnsRebindingHostname(
-    host,
-    OPENCLAW_SANDBOX_NAME,
-    dnsRebindingHostsFixture,
+  await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+    adapter: "mcporter",
+    artifactPrefix: "openclaw",
     hostAddress,
-    "mcp-dns-rebinding-map-private-unpinned-after-add",
-  );
-  const strictRebindDenial = await runNodeMcpProbe(
-    rebindMcpUrl,
-    "tools/list",
-    "deny-strict",
-    "mcp-dns-rebinding-openclaw-node-denied",
-    REBIND_CREDENTIAL_KEY,
-  );
-  expectExitZero(
-    strictRebindDenial,
-    "OpenShell returns HTTP 403 when an add-time public MCP hostname rebinds to a reachable unpinned host address",
-  );
-  expect(resultText(strictRebindDenial)).toContain('"status":403');
-  expect(rebindMcp.requests).toHaveLength(0);
-
-  // Restore while the current sandbox container is stable. Removing the MCP
-  // route reloads policy and can restart the container before /etc/hosts is
-  // restored; the registered cleanup remains an idempotent fallback.
-  await restoreDnsRebindingHostsFixture(host, OPENCLAW_SANDBOX_NAME, dnsRebindingHostsFixture);
-
-  const rebindRemove = await host.nemoclaw(
-    [OPENCLAW_SANDBOX_NAME, "mcp", "remove", REBIND_SERVER_NAME],
-    {
-      artifactName: "mcp-dns-rebinding-remove",
-      env: buildAvailabilityProbeEnv(),
-      timeoutMs: 60_000,
-    },
-  );
-  expectExitZero(rebindRemove, "remove DNS rebinding MCP route after denial proof");
+    sandboxName: OPENCLAW_SANDBOX_NAME,
+    secretPaths: ["/sandbox/.openclaw", "/sandbox/.mcp.json"],
+  });
 
   const requestCountBeforeAllowedNodeProof = fakeMcp.requests.length;
   const allowedNodeCall = await runNodeMcpProbe(
@@ -1181,6 +1212,13 @@ liveAgentMatrixTest(
     });
     await assertHermesConfig(sandbox, HERMES_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(sandbox, HERMES_SANDBOX_NAME, ["/sandbox/.hermes"]);
+    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+      adapter: "hermes-config",
+      artifactPrefix: "hermes",
+      hostAddress,
+      sandboxName: HERMES_SANDBOX_NAME,
+      secretPaths: ["/sandbox/.hermes"],
+    });
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "hermes",
       sandboxName: HERMES_SANDBOX_NAME,
@@ -1298,6 +1336,13 @@ liveAgentMatrixTest(
     });
     await assertDeepAgentsConfig(sandbox, DEEPAGENTS_SANDBOX_NAME, mcpUrl);
     await assertSecretAbsentFromSandbox(sandbox, DEEPAGENTS_SANDBOX_NAME, ["/sandbox/.deepagents"]);
+    await assertAdapterDnsRebindingDenied(host, sandbox, cleanup, {
+      adapter: "deepagents-config",
+      artifactPrefix: "deepagents",
+      hostAddress,
+      sandboxName: DEEPAGENTS_SANDBOX_NAME,
+      secretPaths: ["/sandbox/.deepagents"],
+    });
     await assertRealAdapterToolCall(sandbox, fakeMcp, {
       agent: "langchain-deepagents-code",
       sandboxName: DEEPAGENTS_SANDBOX_NAME,

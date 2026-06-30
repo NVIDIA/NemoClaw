@@ -12,6 +12,8 @@ import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 
 const MCP_CURL_HTTP_CODE_MARKER = "NEMOCLAW_MCP_CURL_HTTP_CODE=";
 
+export type McpDnsRebindingAdapter = "mcporter" | "hermes-config" | "deepagents-config";
+
 export interface DnsRebindingHostsFixture {
   hostname: string;
   hostBackupPath: string;
@@ -190,6 +192,82 @@ export function isExpectedMcpCurlPolicyDenial(
     result.exitCode === 56 &&
     /curl:\s*\(56\)\s*CONNECT tunnel failed,\s*response 403/i.test(result.stderr)
   );
+}
+
+/**
+ * Build an MCP request whose curl child retains the selected adapter runtime
+ * as an ancestor. OpenShell v0.0.72 attributes policy to /proc/<pid>/exe and
+ * ancestors, so this exercises the same unavoidable Node/Python identity used
+ * by the corresponding adapter instead of an unrelated curl-only identity.
+ *
+ * Pinned upstream source contract:
+ * NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963,
+ * crates/openshell-supervisor-network/src/proxy.rs:2476-2502 resolves once,
+ * :2527-2567 validates that address list, :2622-2630 returns it unchanged,
+ * and :822-832 passes that same list directly to TcpStream::connect.
+ */
+export function buildMcpDnsRebindingProbeScript(
+  adapter: McpDnsRebindingAdapter,
+  targetUrl: string,
+  credentialKey: string,
+): string {
+  const fileStem = `/tmp/nemoclaw-mcp-rebinding-${adapter}`;
+  const responsePath = `${fileStem}.body`;
+  const stdoutPath = `${fileStem}.stdout`;
+  const stderrPath = `${fileStem}.stderr`;
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+  const curlArgs = [
+    "curl",
+    "-sS",
+    "--max-time",
+    "30",
+    "-o",
+    responsePath,
+    "-w",
+    `${MCP_CURL_HTTP_CODE_MARKER}%{http_code}\n`,
+    "-X",
+    "POST",
+    targetUrl,
+    "-H",
+    "content-type: application/json",
+    "-H",
+    `authorization: Bearer openshell:resolve:env:${credentialKey}`,
+    "--data-binary",
+    body,
+  ];
+  const quotedCurl = curlArgs.map(shellQuote).join(" ");
+  const runtimeCommand = (() => {
+    switch (adapter) {
+      case "mcporter": {
+        const runner =
+          'const { spawnSync } = require("node:child_process"); const result = spawnSync(process.argv[1], process.argv.slice(2), { stdio: "inherit" }); process.exit(result.status ?? 1);';
+        return `nemoclaw-start node -e ${shellQuote(runner)} ${quotedCurl}`;
+      }
+      case "hermes-config": {
+        const runner =
+          "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
+        return `/opt/hermes/.venv/bin/python -c ${shellQuote(runner)} ${quotedCurl}`;
+      }
+      case "deepagents-config": {
+        const runner =
+          "import subprocess, sys; raise SystemExit(subprocess.run(sys.argv[1:], check=False).returncode)";
+        return `/opt/venv/bin/python3 -c ${shellQuote(runner)} ${quotedCurl}`;
+      }
+    }
+  })();
+
+  return [
+    "set -u",
+    `rm -f ${shellQuote(responsePath)} ${shellQuote(stdoutPath)} ${shellQuote(stderrPath)}`,
+    "set +e",
+    `${runtimeCommand} >${shellQuote(stdoutPath)} 2>${shellQuote(stderrPath)}`,
+    "probe_rc=$?",
+    "set -e",
+    `cat ${shellQuote(responsePath)} 2>/dev/null || true`,
+    `cat ${shellQuote(stdoutPath)} 2>/dev/null || true`,
+    `cat ${shellQuote(stderrPath)} >&2 2>/dev/null || true`,
+    'exit "$probe_rc"',
+  ].join("\n");
 }
 
 function requireMcpTestCaPath(): string {

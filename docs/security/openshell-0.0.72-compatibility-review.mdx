@@ -56,6 +56,18 @@ This dependency PR preserves the new MCP and JSON-RPC YAML fields when NemoClaw 
 It does not widen NemoClaw's strict blueprint-addition schema to author new MCP endpoints because that is a separate product and API change.
 OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not stdio MCP or generic inbound traffic.
 
+## DNS Pinning Source and Runtime Contract
+
+The MCP integration pins the OpenShell DNS enforcement contract to `NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
+In that implementation, `crates/openshell-supervisor-network/src/proxy.rs:2476-2502` produces one socket-address list, `crates/openshell-supervisor-network/src/proxy.rs:2527-2567` validates every address in that list, and `crates/openshell-supervisor-network/src/proxy.rs:2622-2630` returns the validated list unchanged.
+The CONNECT path passes that returned list directly to `TcpStream::connect` at `crates/openshell-supervisor-network/src/proxy.rs:822-832`.
+The explicit HTTP-forward path carries the same returned list from `crates/openshell-supervisor-network/src/proxy.rs:3885-3893` to `crates/openshell-supervisor-network/src/proxy.rs:4123-4125`.
+There is no second hostname resolution between validation and connection in either path.
+
+The live MCP scenario registers a hostname while it resolves to a pinned public address, remaps it to a reachable unpinned runner address, and sends an MCP `tools/list` request beneath each adapter runtime identity.
+OpenClaw uses the managed Node identity, Hermes uses its managed Python identity, and LangChain Deep Agents Code uses its managed virtual-environment Python identity.
+The scenario requires an OpenShell HTTP 403 or CONNECT 403 for every adapter and verifies that the upstream MCP server recorded zero requests.
+
 ## Local Contract Coverage
 
 - Installer and runner tests pin all eight published release digests.
@@ -63,3 +75,4 @@ OpenShell enforcement covers sandbox-to-server Streamable HTTP requests, not std
 - Policy tests cover `--base` command construction and MCP and JSON-RPC field preservation.
 - Blueprint tests prove the merged policy excludes reserved provider entries.
 - The live gateway authentication and gateway-upgrade scenarios run against `0.0.72`.
+- The live MCP matrix proves DNS rebinding denial with zero upstream requests for OpenClaw, Hermes, and LangChain Deep Agents Code.

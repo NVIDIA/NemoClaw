@@ -68,7 +68,13 @@ URLs with query strings are rejected because the URL is persisted and displayed.
 Use a distinct environment variable name for each managed MCP server in the same sandbox.
 OpenShell static credential keys are sandbox-wide and cannot be attached twice.
 Endpoint paths must be literal and canonical, so NemoClaw rejects percent escapes, backslashes, semicolons, OpenShell glob metacharacters, and explicit port zero.
-NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy. OpenShell re-resolves the hostname for each new connection, requires every current answer to match those pinned `allowed_ips`, and connects to the same validated socket addresses. A DNS change to a private, special-use, or otherwise unpinned address therefore fails closed instead of widening the route.
+NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy.
+OpenShell re-resolves the hostname for each new connection, requires every current answer to match those pinned `allowed_ips`, and connects to the same validated socket addresses.
+The pinned implementation is `NVIDIA/OpenShell@8cb16de9eae4c44d7d31e1493747d8c10abb5963`.
+In that implementation, `crates/openshell-supervisor-network/src/proxy.rs:2476-2502` resolves the socket-address list, `crates/openshell-supervisor-network/src/proxy.rs:2527-2567` validates that list, and `crates/openshell-supervisor-network/src/proxy.rs:2622-2630` returns it unchanged.
+The CONNECT path passes the returned list directly to `TcpStream::connect` at `crates/openshell-supervisor-network/src/proxy.rs:822-832`.
+The explicit HTTP-forward path carries the same returned list from `crates/openshell-supervisor-network/src/proxy.rs:3885-3893` to `crates/openshell-supervisor-network/src/proxy.rs:4123-4125`.
+A DNS change to a private, special-use, or otherwise unpinned address therefore fails closed instead of widening the route.
 `restart` resolves the hostname again before updating that policy.
 An OpenShell host alias can identify a native MCP service you already run, but NemoClaw does not start or wrap that service.
 For that exact alias, NemoClaw omits `allowed_ips` and relies on OpenShell `v0.0.72`'s trusted, driver-specific gateway-address path instead of granting private-network CIDRs.
@@ -84,11 +90,22 @@ For the normal MCP client path, OpenShell evaluates the effective network policy
 The generated MCP policy grants only the configured destination, path, adapter binaries, pinned addresses, and explicit MCP method profile.
 NemoClaw accepts only canonical HTTPS MCP URLs and writes the credential placeholder only into the `Authorization` header.
 
-OpenShell v0.0.72 and current main attach static provider credentials at sandbox scope; they do not reserve a credential key exclusively for one endpoint, expose an immutable provider binding on an attachment, provide a `tls: require` policy mode, bind the HTTP `Host` header to the policy destination, or include query parameters in MCP path matching.
-Consequently, the generated policy narrows the managed MCP client path but cannot prevent a separate broader inspected-HTTP policy in the same sandbox from resolving an attached placeholder.
-NemoClaw rejects credential-key reuse between its managed MCP servers and requires a dedicated provider for each definition, but operators must also avoid granting broader routes to the same adapter runtime.
-The generated agent configuration uses the canonical HTTPS URL, but the supported OpenShell policy contract cannot stop malicious code running as an allowed adapter binary from deliberately changing the scheme, Host header, or query string.
-Use a dedicated, least-privilege token and a unique environment key for every server.
+### Stable OpenShell 0.0.72 Limitations
+
+OpenShell v0.0.72 attributes network policy with `/proc/<pid>/exe` and process ancestors, so the script-based adapters require Node or Python interpreter grants rather than immutable package-entrypoint identities.
+NemoClaw compensates with an exact HTTPS destination, path, MCP method profile, and DNS pins, plus a unique least-privilege credential for each server.
+Remove the interpreter grants when OpenShell exposes stable script or package entrypoint attribution.
+
+OpenShell v0.0.72 attaches static provider credentials at sandbox scope rather than reserving a credential key exclusively for one endpoint.
+It also does not expose an immutable provider binding on an attachment, provide a `tls: require` policy mode, bind the HTTP `Host` header to the policy destination, or include query parameters in MCP path matching.
+NemoClaw rejects credential-key reuse between managed MCP servers, creates a dedicated provider for each definition, reports the residual risk in `status`, and requires a unique least-privilege token and environment key.
+Operators must avoid granting a broader inspected-HTTP route to the same adapter runtime because such a route could resolve the sandbox-scoped placeholder.
+The generated agent configuration uses the canonical HTTPS URL, but malicious code running as an allowed interpreter can deliberately change the scheme, `Host` header, or query string within the supported OpenShell policy contract.
+
+OpenShell v0.0.72 updates, attaches, detaches, and deletes providers by mutable name rather than an atomic immutable identity.
+NemoClaw compensates with randomized provider names, the per-sandbox lifecycle lock, and immediate ownership checks against the recorded provider ID, type, and credential-key metadata before mutations.
+NemoClaw fails closed and preserves retryable state when those checks do not match, but the checks do not provide compare-and-swap behavior against another OpenShell client.
+Do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
 
 Use an MCP service you trust with the credential it receives.
 MCP response bodies and SSE streams return through OpenShell's existing sandbox egress path.
@@ -183,7 +200,7 @@ A later `mcp restart` can retry an incomplete post-rebuild restore.
 If deletion is refused, NemoClaw restores the previous MCP state.
 Provider deletion and registry cleanup happen only after OpenShell confirms that the sandbox is gone.
 NemoClaw prechecks the recorded provider ID and credential-key shape before mutation and uses a random per-add provider-name suffix to avoid accidental name reuse.
-OpenShell v0.0.72 and current main still perform update, attach, detach, and delete by mutable provider name, so those checks are not an atomic identity binding; do not concurrently replace or mutate a managed provider through another OpenShell client while an MCP lifecycle command is running.
+The stable OpenShell limitations section describes why these ownership checks do not form an atomic identity binding.
 
 `remove --force` performs best-effort cleanup only where the recorded metadata still matches at inspection time.
 It never deletes an unowned or drifted same-key live policy.
