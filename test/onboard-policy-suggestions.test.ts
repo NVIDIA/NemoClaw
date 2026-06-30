@@ -2,7 +2,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
+import { filterSetupPolicyPresetsForAgent } from "../src/lib/onboard/agent-policy-presets";
+import {
+  allMessagingChannelPolicyPresets,
+  mergeEnabledMessagingChannelPolicyPresets,
+} from "../src/lib/onboard/messaging-policy-presets";
 
+// `../src/lib/onboard` is a CommonJS module (`module.exports = {}`), so it is
+// loaded via `require` per the documented CJS exception for the onboard module.
 const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPolicyPresets } =
   require("../src/lib/onboard") as {
     computeSetupPresetSuggestions: (
@@ -28,21 +35,6 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       agent?: string | null;
       env?: NodeJS.ProcessEnv;
     }) => string[];
-  };
-const { filterSetupPolicyPresetsForAgent } = require("../src/lib/onboard/agent-policy-presets") as {
-  filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
-    presets: T[],
-    agent?: string | null,
-  ) => T[];
-};
-const { allMessagingChannelPolicyPresets, mergeEnabledMessagingChannelPolicyPresets } =
-  require("../src/lib/onboard/messaging-policy-presets") as {
-    allMessagingChannelPolicyPresets: (channels: string[] | null | undefined) => string[];
-    mergeEnabledMessagingChannelPolicyPresets: (
-      selectedPresets: string[],
-      channels: string[] | null | undefined,
-      knownPresetNames?: Iterable<string> | null,
-    ) => string[];
   };
 
 describe("onboard policy preset suggestions", () => {
@@ -127,13 +119,16 @@ describe("onboard policy preset suggestions", () => {
       }).filter((name) => channelPresetSet.has(name));
 
     for (const channel of channels) {
-      const expected = allMessagingChannelPolicyPresets([channel]);
+      // Compare set equality (sorted) rather than incidental array order, so a
+      // channel later expanding to multiple presets can't fail this guard on a
+      // harmless ordering difference between the two internal paths.
+      const expected = allMessagingChannelPolicyPresets([channel]).slice().sort();
       // Finalization merge contributes exactly the channel's egress presets...
-      expect(mergeEnabledMessagingChannelPolicyPresets([], [channel], knownNames)).toEqual(
-        expected,
-      );
+      expect(
+        mergeEnabledMessagingChannelPolicyPresets([], [channel], knownNames).slice().sort(),
+      ).toEqual(expected);
       // ...and the suggestion path surfaces the same set.
-      expect(channelPresetsFromSuggestions([channel])).toEqual(expected);
+      expect(channelPresetsFromSuggestions([channel]).slice().sort()).toEqual(expected);
     }
 
     // All channels enabled together: both paths agree on the full set.

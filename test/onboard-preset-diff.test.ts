@@ -26,6 +26,7 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
       key.startsWith("DISCORD_") ||
       key.startsWith("SLACK_") ||
       key.startsWith("TELEGRAM_") ||
+      key.startsWith("TEAMS_") ||
       key.startsWith("WECHAT_") ||
       key.startsWith("WHATSAPP_")
     ) {
