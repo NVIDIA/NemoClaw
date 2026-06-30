@@ -143,8 +143,9 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
   // OpenShell exposes only combined Docker text here, so this classifier is the
   // source boundary until callers can consume a structured plugin-install
   // failure with package identity; remove the text classifier at that point.
-  // [^']* matches newlines in JS character classes, so multi-line command text
-  // is handled correctly. See #4127 / follow-up from #4125.
+  // In JavaScript, [^'] matches every character except a single quote,
+  // including newlines (unlike `.` without the dotAll flag), so multi-line
+  // command text is handled correctly. See #4127 / follow-up from #4125.
   const pluginInstallErrorMatch =
     /The command '[^']*(?:openclaw plugins install|npm:@openclaw\/)[^']*'\s*returned a non-zero code/i.exec(
       text,
@@ -162,8 +163,10 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
       .filter((line) => /^\s*npm error\b/i.test(line))
       .join("\n")
       .toLowerCase();
+    // npm output may print the scoped-package slash literally or percent-
+    // encoded. Normalize comparisons to lowercase so %2F and %2f both match.
     const hasMatchingPluginPackage = pluginPackages.some((packageName) =>
-      [packageName, packageName.replace("/", "%2f"), encodeURIComponent(packageName)].some(
+      [packageName, packageName.replaceAll("/", "%2f"), encodeURIComponent(packageName)].some(
         (candidate) => npmErrorText.includes(candidate.toLowerCase()),
       ),
     );
