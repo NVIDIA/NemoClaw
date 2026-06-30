@@ -24,7 +24,7 @@ export function createTelegramAllowlistAliasesHook(
 ): MessagingHookHandler {
   return async () => {
     const env = options.env ?? process.env;
-    const value = mergeTelegramAllowlistAliases(env);
+    const value = resolveTelegramAllowlistAliases(env);
     const outputs: Record<string, MessagingHookOutputMap[string]> = {};
     if (value) {
       outputs.allowedIds = {
@@ -45,42 +45,23 @@ export function createTelegramAllowlistAliasesHookRegistration(
   };
 }
 
-export function mergeTelegramAllowlistAliases(
+export function resolveTelegramAllowlistAliases(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
 ): string | null {
-  for (const key of TELEGRAM_ALLOWED_IDS_ALIAS_ENVS) {
-    if (normalizeAllowlistValue(env[key])) warnTelegramAllowlistAliasEnv(key);
+  for (const key of [TELEGRAM_ALLOWED_IDS_ENV, ...TELEGRAM_ALLOWED_IDS_ALIAS_ENVS]) {
+    const normalized = normalizeAllowlistValue(env[key]);
+    if (!normalized) continue;
+    if (key !== TELEGRAM_ALLOWED_IDS_ENV) warnTelegramAllowlistAliasEnv(key);
+    env[TELEGRAM_ALLOWED_IDS_ENV] = normalized;
+    return normalized;
   }
-  const values = [
-    env[TELEGRAM_ALLOWED_IDS_ENV],
-    ...TELEGRAM_ALLOWED_IDS_ALIAS_ENVS.map((key) => env[key]),
-  ];
-  const merged = mergeAllowlistValues(values);
-  if (!merged) return null;
-  env[TELEGRAM_ALLOWED_IDS_ENV] = merged;
-  return merged;
+  return null;
 }
 
 function warnTelegramAllowlistAliasEnv(sourceKey: string): void {
   console.warn(
     `[channels] ${sourceKey} is a legacy Telegram allowlist environment variable; use ${TELEGRAM_ALLOWED_IDS_ENV} instead.`,
   );
-}
-
-function mergeAllowlistValues(values: readonly unknown[]): string | null {
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const normalized = normalizeAllowlistValue(value);
-    if (!normalized) continue;
-    for (const entry of normalized.split(",")) {
-      const id = entry.trim();
-      if (!id || seen.has(id)) continue;
-      ids.push(id);
-      seen.add(id);
-    }
-  }
-  return ids.length > 0 ? ids.join(",") : null;
 }
 
 function normalizeAllowlistValue(value: unknown): string | null {
