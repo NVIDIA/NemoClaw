@@ -15,6 +15,12 @@ export interface PresetProvenanceContext {
   agentName?: string | null;
 }
 
+/**
+ * Infer display-only provenance from the sandbox's current tier and agent.
+ * A current tier-name match takes precedence over agent and user fallbacks;
+ * application history is not persisted, so a later user-added preset that
+ * shadows a tier name is intentionally displayed as tier-derived.
+ */
 export function classifyPresetProvenance(
   presetName: string,
   context: PresetProvenanceContext = {},

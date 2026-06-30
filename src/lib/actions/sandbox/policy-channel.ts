@@ -309,7 +309,8 @@ export function listSandboxPolicies(sandboxName: string) {
         classifyPresetProvenance(p.name, provenanceContext),
       )}]`;
     } else if (marker === "●") {
-      provenanceTag = " [source unverified]";
+      provenanceTag =
+        inGateway === null ? " [source unverified (gateway unreachable)]" : " [source unverified]";
     }
     console.log(`    ${marker} ${p.name}${provenanceTag} — ${p.description}${suffix}`);
   });

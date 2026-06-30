@@ -49,7 +49,7 @@ vi.mock("./tiers", () => ({
 import { classifyPresetProvenance, formatPresetProvenanceTag } from "./preset-provenance";
 
 describe("classifyPresetProvenance", () => {
-  it("classifies tier-default presets as tier-sourced for that tier", () => {
+  it("gives current tier-name matches precedence over fallback sources", () => {
     expect(classifyPresetProvenance("npm", { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
