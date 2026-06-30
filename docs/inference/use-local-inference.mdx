@@ -125,6 +125,10 @@ Refer to [Tool-Calling Reliability](tool-calling-reliability).
 
 On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
 The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
+When non-interactive Linux onboarding finds an existing systemd Ollama service but cannot use passwordless sudo, it checks the service state and active TCP listeners before continuing.
+It continues without rewriting the systemd drop-in only when the service is active, `ss` reports at least one listener on port `11434`, and every reported address is loopback-only.
+Wildcard and non-loopback addresses, as well as missing or unreadable service or listener evidence, are treated as unverified.
+In those cases, onboarding exits before configuring the proxy and asks you to rerun from a terminal with `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt` or configure passwordless sudo.
 Containers and other hosts on the local network reach Ollama only through the proxy, which validates a Bearer token before forwarding requests.
 On that native path, NemoClaw never exposes Ollama without authentication.
 

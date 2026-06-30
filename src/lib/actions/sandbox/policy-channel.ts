@@ -8,7 +8,6 @@ import { type AgentDefinition, loadAgent } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { getSandboxTargetGatewayName } from "./gateway-target";
 import {
   type ChannelManifest,
   createBuiltInChannelManifestRegistry,
@@ -30,6 +29,7 @@ import {
 } from "../../messaging";
 import { hydrateMessagingChannelConfig } from "../../messaging-channel-config";
 import { hashCredential } from "../../security/credential-hash";
+import { getSandboxTargetGatewayName } from "./gateway-target";
 
 const { isNonInteractive } = require("../../onboard") as { isNonInteractive: () => boolean };
 const onboardProviders = require("../../onboard/providers");
@@ -60,10 +60,10 @@ import {
 } from "../../sandbox/channels";
 import * as registry from "../../state/registry";
 import { isDockerRuntimeDown, printDockerRuntimeDownGuidance } from "./gateway-failure-classifier";
+import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { refreshSandboxPolicyContextFile } from "./policy-context-refresh";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
-import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -1120,7 +1120,11 @@ async function rollbackChannelAdd(
   return result;
 }
 
-export function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
+export function applyChannelPresetIfAvailable(
+  sandboxName: string,
+  channelName: string,
+  retryAction: "add" | "start" = "add",
+): boolean {
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
@@ -1128,7 +1132,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
         `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
       );
       return false;
     }
@@ -1139,7 +1143,7 @@ export function applyChannelPresetIfAvailable(sandboxName: string, channelName: 
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels ${retryAction} ${channelName}`,
     );
     return false;
   }
@@ -1424,6 +1428,21 @@ async function sandboxChannelsSetEnabled(
   const plan = await persistManifestChannelDisabledPlan(sandboxName, normalized, disabled);
   if (!plan) {
     console.error(`  Could not persist messaging plan for '${sandboxName}'.`);
+    process.exit(1);
+  }
+  // Rebuild persists only the presets it actually restores. Re-apply a
+  // restarted channel's preset before a queued or immediate rebuild so the
+  // registry and backup manifest carry the enabled plan's policy intent.
+  // If policy application fails, put the plan back in its disabled state so
+  // runtime configuration cannot later be rebuilt without the required egress.
+  if (!disabled && !applyChannelPresetIfAvailable(sandboxName, normalized, "start")) {
+    const rolledBack = await persistManifestChannelDisabledPlan(sandboxName, normalized, true);
+    if (!rolledBack) {
+      console.error(
+        `  ${YW}⚠${R} Could not restore '${normalized}' to disabled state after its policy preset failed to apply.`,
+      );
+      console.error(`    Re-run: ${CLI_NAME} ${sandboxName} channels stop ${normalized}`);
+    }
     process.exit(1);
   }
   const state = disabled ? "disabled" : "enabled";
