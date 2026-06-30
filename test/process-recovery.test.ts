@@ -20,6 +20,11 @@ const {
 } = requireSource(
   "../src/lib/actions/sandbox/process-recovery.ts",
 ) as typeof import("../src/lib/actions/sandbox/process-recovery.js");
+const childProcess = requireSource("node:child_process");
+const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
+const agentRuntime = requireSource("../src/lib/agent/runtime.js");
+const registry = requireSource("../src/lib/state/registry.js");
+const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -237,7 +242,6 @@ describe("classifyForwardHealthWithReachability", () => {
 
 describe("executeSandboxExecCommand", () => {
   it("parses stdout-framed root exec output after the startup marker", () => {
-    const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: [
@@ -256,7 +260,6 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("rejects a non-frame preamble that contains the startup marker", () => {
-    const childProcess = requireSource("node:child_process");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: [
@@ -274,7 +277,6 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("passes a newline-free Hermes validator payload to OpenShell", () => {
-    const childProcess = requireSource("node:child_process");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
       stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nSECRET_BOUNDARY_OK\n",
@@ -298,7 +300,6 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("falls back to local Docker root exec when OpenShell exec output has no marker", () => {
-    const childProcess = requireSource("node:child_process");
     const dockerExec = requireSource("../src/lib/adapters/docker/exec.js");
     vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 0,
@@ -336,7 +337,6 @@ describe("executeSandboxExecCommand", () => {
   });
 
   it("does not let Docker fallback satisfy a strict provider credential proof", () => {
-    const childProcess = requireSource("node:child_process");
     const dockerExec = requireSource("../src/lib/adapters/docker/exec.js");
     const spawn = vi.spyOn(childProcess, "spawnSync").mockReturnValue({
       status: 1,
@@ -366,7 +366,6 @@ describe("executeSandboxExecCommand", () => {
 
 describe("checkAndRecoverSandboxProcesses", () => {
   it("does not attempt gateway recovery for terminal agents", () => {
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
     vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue({
       runtime: { kind: "terminal" },
     } as never);
@@ -381,11 +380,6 @@ describe("checkAndRecoverSandboxProcesses", () => {
   });
 
   it("recovers an HTTP-serving bare Hermes gateway into the managed lifecycle", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     let firstHealthCommand = "";
     vi.stubEnv("NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS", "0");
     try {
@@ -462,11 +456,6 @@ describe("checkAndRecoverSandboxProcesses", () => {
     }
   });
   it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const deadForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  dead`;
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
@@ -529,11 +518,6 @@ beta  127.0.0.1  18789  12345  running`;
   });
 
   it("checkAndRecoverSandboxProcesses re-establishes an active Teams messaging host forward from a compact plan when the dashboard forward is healthy", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
     const dashboardAndTeamsForwards = `${dashboardForward}
@@ -593,11 +577,6 @@ beta  127.0.0.1  3978  12346  running`;
   });
 
   it("checkAndRecoverSandboxProcesses reports messaging webhook recovery failure without claiming forwardRecovered", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const dashboardForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
 
@@ -644,10 +623,6 @@ beta  127.0.0.1  18789  12345  running`;
   });
 
   it("waits for a recovered sandbox gateway before declaring recovery", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
 beta  127.0.0.1  18789  12345  running`;
     let healthProbeCalls = 0;
@@ -697,10 +672,6 @@ beta  127.0.0.1  18789  12345  running`;
   });
 
   it("re-checks the Hermes secret boundary after recovery health and refuses a late poison", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let healthProbeCalls = 0;
     let secretBoundaryCalls = 0;
@@ -781,11 +752,6 @@ beta  127.0.0.1  18789  12345  running`;
   });
 
   it("re-establishes manifest-declared non-primary forward ports when only the primary is healthy", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const onlyPrimaryForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running`;
     const bothForwards = `SANDBOX  BIND  PORT  PID  STATUS
@@ -874,11 +840,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("leaves a non-primary forward owned by another sandbox alone instead of taking it over", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const occupiedForwardList = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running
 sibling-box  127.0.0.1  8642  99999  running`;
@@ -936,11 +897,6 @@ sibling-box  127.0.0.1  8642  99999  running`;
   });
 
   it("ignores invalid forward_ports entries and never invokes openshell forward start for them", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const primaryOnlyForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running`;
 
@@ -992,11 +948,6 @@ hermes-box  127.0.0.1  18789  12345  running`;
   });
 
   it("reports forwardRecovered=false when one declared secondary recovers and another fails", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const partialForward = `SANDBOX  BIND  PORT  PID  STATUS
 hermes-box  127.0.0.1  18789  12345  running
 hermes-box  127.0.0.1  8642  12346  running`;
@@ -1060,10 +1011,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("refuses recovery of a running Hermes gateway when /sandbox/.hermes/.env contains raw secret-shaped values", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
     let forwardListCalls = 0;
@@ -1141,10 +1088,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("fails safe on a running Hermes sandbox when the agent definition cannot be loaded", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
     let forwardListCalls = 0;
@@ -1203,11 +1146,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("falls through when the Hermes secret-boundary check parses stdout-framed root exec markers", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     let secretBoundaryCalls = 0;
 
     const execResponses: Array<[string, () => never]> = [
@@ -1271,11 +1209,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("falls through to the forward-refresh path when the Hermes secret-boundary check passes", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     let secretBoundaryCalls = 0;
     let healthCommand = "";
     const buildRecoveryScript = vi.spyOn(agentRuntime, "buildRecoveryScript");
@@ -1334,11 +1267,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("refuses recovery when the Hermes secret-boundary validator is absent on an older sandbox image", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -1397,11 +1325,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("does not invoke the Hermes secret-boundary check for an OpenClaw sandbox", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const forwardHealth = requireSource("../src/lib/actions/sandbox/forward-health.js");
-    const childProcess = requireSource("node:child_process");
     let secretBoundaryCalls = 0;
 
     vi.spyOn(childProcess, "spawnSync").mockImplementation(
@@ -1435,10 +1358,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("fails safe on a running Hermes gateway when the root exec channel is unreachable", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
     let forwardListCalls = 0;
@@ -1502,10 +1421,6 @@ hermes-box  127.0.0.1  8642  12346  running`;
   });
 
   it("treats a non-zero boundary check without the REFUSED marker as inconclusive, not raw-secret", () => {
-    const openshellRuntime = requireSource("../src/lib/adapters/openshell/runtime.js");
-    const agentRuntime = requireSource("../src/lib/agent/runtime.js");
-    const registry = requireSource("../src/lib/state/registry.js");
-    const childProcess = requireSource("node:child_process");
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     let secretBoundaryCalls = 0;
 

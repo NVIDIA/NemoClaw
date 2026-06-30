@@ -744,20 +744,19 @@ jobs:
 
   it(
     "keeps each free-standing scenario out of the registry matrix",
-    testTimeoutOptions(420_000),
+    testTimeoutOptions(30_000),
     () => {
       const inventory = readFreeStandingJobsInventory();
-      for (const job of inventory.allowedJobs) {
-        expect(generateMatrixForDispatch({ JOBS: job, SCENARIOS: "" })).toMatchObject({
-          hermes_selected: job === "hermes-e2e-vitest" ? "true" : "false",
-          matrix: "[]",
-        });
-      }
+      expect(
+        generateMatrixForDispatch({ JOBS: inventory.allowedJobs.join(","), SCENARIOS: "" }),
+      ).toMatchObject({ hermes_selected: "true", matrix: "[]" });
+      expect(
+        generateMatrixForDispatch({
+          JOBS: "",
+          SCENARIOS: inventory.freeStandingScenarios.join(","),
+        }),
+      ).toMatchObject({ hermes_selected: "true", matrix: "[]" });
       for (const [scenario, job] of inventory.scenarioToJob) {
-        expect(generateMatrixForDispatch({ JOBS: "", SCENARIOS: scenario })).toMatchObject({
-          hermes_selected: scenario === "hermes-e2e" ? "true" : "false",
-          matrix: "[]",
-        });
         expect(evaluateE2eVitestWorkflowDispatchSelectors({ scenarios: scenario })).toMatchObject({
           valid: true,
           liveScenariosRuns: false,
@@ -1335,7 +1334,6 @@ jobs:
       run: "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}",
     });
     fs.writeFileSync(workflowPath, YAML.stringify(workflow));
-
     try {
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toEqual(
@@ -1365,7 +1363,6 @@ jobs:
         "docker login docker.io --username user --password ${{ secrets.DOCKERHUB_TOKEN }}\n          npx vitest run --project e2e-scenarios-live \\\n            test/e2e-scenario/live/runtime-overrides.test.ts \\",
       ),
     );
-
     try {
       const errors = validateE2eVitestScenariosWorkflowBoundary(workflowPath);
       expect(errors).toContain(

@@ -1,48 +1,18 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Brev launchable startup script — CI-Ready CPU
-#
-# Pre-bakes a VM with everything needed for NemoClaw E2E tests so that
-# CI runs only need to: rsync branch code → npm ci → nemoclaw onboard → test.
-#
-# What this installs:
-#   1. Docker (docker.io) — enabled and running
-#   2. Node.js 22 (nodesource)
-#   3. OpenShell CLI binary (pinned release)
-#   4. NemoClaw repo cloned with npm deps installed and TS plugin built
-#   5. Docker images pre-pulled (sandbox-base, openshell/supervisor, node:22-trixie-slim)
-#
-# What this does NOT install (intentionally):
-#   - code-server (not needed for automated CI)
-#   - VS Code themes/extensions
-#   - NVIDIA Container Toolkit (see brev-launchable-ci-gpu.sh for GPU flavor)
-#   - Ollama / vLLM
-#
-# Readiness detection:
-#   Writes /var/run/nemoclaw-launchable-ready when complete.
-#   Also writes "=== Ready ===" to /tmp/launch-plugin.log for backward compat.
-#
-# Usage (Brev launchable startup script — one-liner that curls this):
+# Brev CI-ready CPU launchable: installs Docker, Node.js 22, OpenShell, and
+# NemoClaw, then pre-pulls the images needed by E2E tests.
+# Usage:
 #   curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/<ref>/scripts/brev-launchable-ci-cpu.sh | bash
 #   bash scripts/brev-launchable-ci-cpu.sh --print-openshell-version  # resolve only
-#
-# Environment overrides:
-#   OPENSHELL_VERSION     — Explicit OpenShell CLI release tag override
-#   NEMOCLAW_OPENSHELL_CHANNEL — stable/dev/auto release selection when no explicit tag is set
-#   NEMOCLAW_ALLOW_DEV_NO_VERIFY — Set to 1 to authorize unverified dev artifacts
-#   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
-#   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
-#   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
-#
-# Related:
-#   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
-#   - Issue: https://github.com/NVIDIA/NemoClaw/issues/1327
+# Overrides: OPENSHELL_VERSION, NEMOCLAW_OPENSHELL_CHANNEL (stable/dev/auto),
+# NEMOCLAW_ALLOW_DEV_NO_VERIFY, NEMOCLAW_REF, NEMOCLAW_CLONE_DIR,
+# SKIP_DOCKER_PULL, and LAUNCH_LOG.
 
 set -euo pipefail
 
-# ── Configuration ────────────────────────────────────────────────────
+# Configuration
 OPENSHELL_VERSION="${OPENSHELL_VERSION:-}"
 NEMOCLAW_REF="${NEMOCLAW_REF:-main}"
 
@@ -56,11 +26,11 @@ DOCKER_IMAGES=(
   "node:22-trixie-slim"
 )
 
-# ── Suppress apt noise ───────────────────────────────────────────────
+# Suppress apt noise.
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 
-# ── Logging ──────────────────────────────────────────────────────────
+# Logging
 mkdir -p "$(dirname "$LAUNCH_LOG")"
 exec > >(tee -a "$LAUNCH_LOG") 2>&1
 
@@ -106,7 +76,7 @@ TARGET_USER="${SUDO_USER:-$(id -un)}"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
-# ── Retry helper ─────────────────────────────────────────────────────
+# Retry helper
 # Usage: retry 3 10 "description" command arg1 arg2
 retry() {
   local max_attempts="$1" sleep_sec="$2" desc="$3"
@@ -126,7 +96,7 @@ retry() {
   done
 }
 
-# ── Wait for apt locks ───────────────────────────────────────────────
+# Wait for apt locks.
 # Brev VMs sometimes have unattended-upgrades running at boot.
 wait_for_apt_lock() {
   local max_wait=120 elapsed=0
@@ -215,9 +185,7 @@ install_openshell_cli_release() {
   rm -rf "$tmpdir"
 }
 
-# ══════════════════════════════════════════════════════════════════════
 # 1. System packages
-# ══════════════════════════════════════════════════════════════════════
 # Kill unattended-upgrades immediately — it grabs the apt lock on boot
 # and can block for 60-120s. Irrelevant on an ephemeral CI VM.
 sudo systemctl stop unattended-upgrades 2>/dev/null || true
@@ -231,9 +199,7 @@ retry 3 10 "apt-get install" sudo apt-get install -y -qq \
   ca-certificates curl git jq tar >/dev/null 2>&1
 info "System packages installed"
 
-# ══════════════════════════════════════════════════════════════════════
 # 2. Docker
-# ══════════════════════════════════════════════════════════════════════
 if command -v docker >/dev/null 2>&1; then
   info "Docker already installed"
 else
@@ -250,9 +216,7 @@ sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
 sudo chmod 666 /var/run/docker.sock
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
-# ══════════════════════════════════════════════════════════════════════
 # 3. Node.js 22
-# ══════════════════════════════════════════════════════════════════════
 node_major=""
 if command -v node >/dev/null 2>&1; then
   node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
@@ -291,9 +255,7 @@ else
   info "Node.js $(node --version) installed"
 fi
 
-# ══════════════════════════════════════════════════════════════════════
 # 4. OpenShell CLI
-# ══════════════════════════════════════════════════════════════════════
 if command -v openshell >/dev/null 2>&1; then
   _installed_ver="$(openshell --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo '0.0.0')"
   _pinned_ver="$OPENSHELL_VERSION_NO_V"
@@ -310,9 +272,7 @@ else
   info "OpenShell CLI installed: $(openshell --version 2>&1 || echo unknown)"
 fi
 
-# ══════════════════════════════════════════════════════════════════════
 # 5. Clone NemoClaw and install deps
-# ══════════════════════════════════════════════════════════════════════
 if [[ -d "$NEMOCLAW_CLONE_DIR/.git" ]]; then
   info "NemoClaw repo exists at $NEMOCLAW_CLONE_DIR — refreshing"
   git -C "$NEMOCLAW_CLONE_DIR" fetch origin "$NEMOCLAW_REF"
@@ -379,9 +339,7 @@ sudo ln -sf "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js" /usr/local/bin/nemoclaw
 sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
 info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
 
-# ══════════════════════════════════════════════════════════════════════
 # 6. Wait for Docker image pulls to finish
-# ══════════════════════════════════════════════════════════════════════
 if [[ -n "$DOCKER_PULL_PID" ]]; then
   info "Waiting for background Docker pulls to finish..."
   wait "$DOCKER_PULL_PID" || warn "Some Docker pulls failed (will be pulled at test time)"
@@ -390,9 +348,7 @@ elif [[ "${SKIP_DOCKER_PULL:-0}" == "1" ]]; then
   info "Skipping Docker image pre-pulls (SKIP_DOCKER_PULL=1)"
 fi
 
-# ══════════════════════════════════════════════════════════════════════
 # 7. Readiness sentinel
-# ══════════════════════════════════════════════════════════════════════
 sudo touch "$SENTINEL"
 echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null
 
