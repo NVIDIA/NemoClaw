@@ -70,6 +70,7 @@ Endpoint paths must be literal and canonical, so NemoClaw rejects percent escape
 NemoClaw resolves public hostnames before registration, rejects private, local, and special-use targets, and pins the resolved addresses in the generated policy. OpenShell re-resolves the hostname for each new connection, requires every current answer to match those pinned `allowed_ips`, and connects to the same validated socket addresses. A DNS change to a private, special-use, or otherwise unpinned address therefore fails closed instead of widening the route.
 `restart` resolves the hostname again before updating that policy.
 An OpenShell host alias can identify a native MCP service you already run, but NemoClaw does not start or wrap that service.
+For that exact alias, NemoClaw omits `allowed_ips` and relies on OpenShell `v0.0.72`'s trusted, driver-specific gateway-address path instead of granting private-network CIDRs.
 That service must present a certificate valid for the alias, signed by a CA already trusted by the sandbox supervisor; installing a new CA requires restarting the supervisor before registration.
 
 ## Authenticated MCP Security Boundary

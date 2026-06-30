@@ -117,19 +117,21 @@ describe("MCP OpenShell policy", () => {
     expect(endpoint).not.toHaveProperty("tls");
   });
 
-  it("allows the OpenShell host alias with private-network SSRF guards", () => {
+  it("relies on OpenShell's trusted gateway address for its exact host alias", () => {
     const policy = YAML.parse(
       buildMcpBridgePolicyYaml("local", "https://host.openshell.internal:31337/mcp", "mcporter"),
     ) as {
-      network_policies: Record<string, { endpoints: Array<{ allowed_ips: string[] }> }>;
+      network_policies: Record<
+        string,
+        { endpoints: Array<{ host: string; port: number; allowed_ips?: string[] }> }
+      >;
     };
 
-    expect(policy.network_policies.mcp_bridge_local.endpoints[0].allowed_ips).toEqual([
-      "10.0.0.0/8",
-      "172.16.0.0/12",
-      "192.168.0.0/16",
-      "fc00::/7",
-    ]);
+    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).toMatchObject({
+      host: "host.openshell.internal",
+      port: 31337,
+    });
+    expect(policy.network_policies.mcp_bridge_local.endpoints[0]).not.toHaveProperty("allowed_ips");
   });
 
   it("scopes binaries to the selected agent adapter", () => {

@@ -95,11 +95,11 @@ function allowedIpsForEndpoint(
   resolvedAddresses: readonly string[] | undefined,
 ): string[] | undefined {
   if (isOpenShellMcpHostAlias(hostname)) {
-    // A host alias is an explicit opt-in URL selected by the host operator.
-    // OpenShell maps its gateway IP per driver, so these private CIDRs cover
-    // that mapping; policy remains pinned to the exact alias, port, path,
-    // protocol, allowed MCP methods, and adapter binaries.
-    return ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7"];
+    // OpenShell v0.0.72 recognizes the driver-specific gateway address as a
+    // trusted target for this exact host alias. Omitting allowed_ips delegates
+    // only that address mapping to OpenShell instead of granting broad private
+    // CIDRs; host, port, path, protocol, MCP methods, and binaries remain exact.
+    return undefined;
   }
   // OpenShell resolves this hostname for every new connection, validates every
   // current answer against allowed_ips, and connects to those same validated
