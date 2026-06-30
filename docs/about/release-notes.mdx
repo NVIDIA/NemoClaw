@@ -16,6 +16,29 @@ NVIDIA NemoClaw is available in early preview starting March 16, 2026.
 Use this page to track the highlights of the latest release.
 For more detailed release notes, refer to the [NemoClaw GitHub announcements](https://github.com/NVIDIA/NemoClaw/discussions/categories/announcements?discussions_q=is%3Aopen+category%3AAnnouncements).
 
+## v0.0.71
+
+NemoClaw v0.0.71 improves gateway recovery, OpenShell gateway authentication, policy provenance, uninstall safety, Windows bootstrap diagnostics, messaging behavior, and inference guidance.
+
+- Gateway lifecycle operations use a host-mediated control path for built-in OpenClaw and Hermes sandboxes.
+  `recover` and `gateway restart` target the supervised gateway through the supported topology controller, re-check forwards after replacement, preserve explicit runtime model overrides during OpenClaw reconciliation, and write guard-chain recovery warnings into the gateway log for crash-loop diagnosis.
+  For more information, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle), [NemoClaw CLI Commands Reference](../reference/commands), [Troubleshooting](../reference/troubleshooting), and [Trusted Computing Base](../security/trusted-computing-base).
+- OpenShell 0.0.71 is the validated gateway release for this train.
+  NemoClaw generates local TLS, mTLS, and sandbox JWT material for Docker-driver gateways, keeps gateway binds on loopback while JWT auth is active, and documents the explicit compatibility-container boundary for older trusted Linux hosts.
+  For more information, refer to [OpenShell 0.0.71 Review](../security/openshell-0.0.71-gateway-auth-review), [Security Best Practices](../security/best-practices), and [Troubleshooting](../reference/troubleshooting).
+- Network policy output now explains why active presets are present.
+  `policy-list` annotates verified active presets with tier, agent, user-added, or source-unverified provenance; Restricted onboarding suppresses agent-required preset additions; the Balanced tier no longer includes `weather`; and the `weather` preset covers read-only `wttr.in` lookups when you add it explicitly.
+  For more information, refer to [Network Policies](../reference/network-policies), [NemoClaw CLI Commands Reference](../reference/commands), and [Common NemoClaw Integration Policy Examples](../network-policy/integration-policy-examples).
+- Day-two maintenance paths are more explicit.
+  `$$nemoclaw uninstall --destroy-user-data` provides a visible full-purge flag while keeping `--yes` non-destructive for preserved user data, custom Dockerfile onboarding documents cold and warm build-cache behavior, and host-side OpenClaw `agent` dispatch warns on stderr when a recent shields auto-relock may explain a failed one-shot command.
+  For more information, refer to [Manage Sandbox Lifecycle](../manage-sandboxes/lifecycle) and [NemoClaw CLI Commands Reference](../reference/commands).
+- Messaging and inference setup have clearer runtime defaults and selection guidance.
+  Microsoft Teams channel setup uses final-message delivery by default and runtime mention hints, non-interactive Ollama setup refuses unsafe loopback rewrites when sudo evidence is unavailable, compatible local endpoint docs explain the default chat-completions path, and the inference guide adds model task-fit and capability-audit guidance.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels), [Use a Local Inference Server](../inference/use-local-inference), [NemoClaw Inference Options](../inference/inference-options), and [Model Capability Audit](../inference/model-capability-audit).
+- Windows setup output is safer to share during troubleshooting.
+  The Windows bootstrap redacts PowerShell transcript metadata and temporary paths from WSL install output, and it asks for a reboot only when WSL reports one is required.
+  For more information, refer to [Prepare Windows for NemoClaw](../get-started/prerequisites/windows-preparation) and [Troubleshooting](../reference/troubleshooting).
+
 ## v0.0.70
 
 NemoClaw v0.0.70 completes the E2E migration and improves day-two operation, inference setup, messaging repair, Windows bootstrap guidance, and documentation.
