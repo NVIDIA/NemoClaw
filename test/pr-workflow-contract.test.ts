@@ -220,7 +220,7 @@ describe("pull request and main workflow contracts", () => {
       ".trusted-installer-hash/.github/actions/ci-installer-hash-check/action.yaml",
     );
     expect(trustedActionProbe.run).not.toContain("scripts/check-installer-hash.sh");
-    expect(bootstrapCheckout.with?.ref).toBe("abaccacd476e7ad25388f03dec97418cbfc99839");
+    expect(bootstrapCheckout.with?.ref).toBe("6571063796e1f31648dfd63c7aee91d22612020d");
     expect(String(bootstrapCheckout.with?.ref)).toMatch(/^[a-f0-9]{40}$/u);
     expect(bootstrapCheckout.with?.path).toBe(".bootstrap-installer-hash");
 
