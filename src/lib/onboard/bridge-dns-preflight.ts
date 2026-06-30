@@ -12,6 +12,7 @@
  *   on the fatal reasons described in `[[isFatalContainerDnsProbeFailure]]`.
  */
 
+import { failLine, warnLine } from "../cli/terminal-style";
 import { cliDisplayName, cliName } from "./branding";
 
 interface DaemonJsonDnsPatchOpts {
@@ -75,6 +76,7 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
   ].join(" ");
   console.error(`${indent}${sudoPrefix}sh -c '${shBody.replace(/'/g, "'\"'\"'")}'`);
 }
+
 import {
   BUSYBOX_PROBE_IMAGE,
   DEFAULT_HOST_DNS_PROBE_HOSTNAME,
@@ -95,7 +97,7 @@ export function printDockerBridgeContainerStartFailure(
   result: DockerBridgeContainerStartProbeResult,
   host?: Pick<Host, "isWsl">,
 ): void {
-  console.error("  ✗ Docker could not start a bridge-network test container.");
+  console.error(failLine("Docker could not start a bridge-network test container."));
   if (result.details) {
     for (const line of String(result.details).split("\n").slice(-4)) {
       if (line.trim()) console.error(`    ${line.trim()}`);
@@ -209,7 +211,9 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
         "    but doesn't prove container DNS is broken — the sandbox build may still succeed.",
       );
     } else {
-      console.warn(`  ⚠ Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`);
+      console.warn(
+        warnLine(`Container DNS probe inconclusive (reason: ${dns.reason ?? "unknown"}).`),
+      );
     }
     if (dns.details) {
       for (const line of String(dns.details).split("\n").slice(-3)) {
@@ -249,11 +253,11 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host, nonInteract
     process.exit(1);
   }
   if (dns.reason === "timeout" || dns.reason === "killed") {
-    console.error("  ✗ Container DNS probe did not complete.");
+    console.error(failLine("Container DNS probe did not complete."));
   } else if (dns.reason === "image_pull_failed") {
-    console.error("  ✗ Docker could not resolve or pull the DNS probe image.");
+    console.error(failLine("Docker could not resolve or pull the DNS probe image."));
   } else {
-    console.error("  ✗ DNS resolution from inside a docker container failed.");
+    console.error(failLine("DNS resolution from inside a docker container failed."));
   }
   if (dns.details) {
     for (const line of String(dns.details).split("\n").slice(-4)) {
@@ -383,7 +387,7 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
     return;
   }
   if (!isFatalHostDnsProbeFailure(result)) {
-    console.warn(`  ⚠ Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`);
+    console.warn(warnLine(`Host DNS probe inconclusive (reason: ${result.reason ?? "unknown"}).`));
     if (result.details) {
       console.warn(`    ${String(result.details).trim()}`);
     }
@@ -394,11 +398,15 @@ export function assertHostDnsHealthy(host: Host, opts: AssertHostDnsHealthyOpts 
   }
 
   if (result.reason === "timeout" || result.reason === "killed") {
-    console.error(`  ✗ Host DNS probe did not complete (could not resolve ${result.hostname}).`);
+    console.error(
+      failLine(`Host DNS probe did not complete (could not resolve ${result.hostname}).`),
+    );
   } else if (result.reason === "resolution_failed") {
-    console.error(`  ✗ Host could not resolve ${result.hostname} (resolver answered, no record).`);
+    console.error(
+      failLine(`Host could not resolve ${result.hostname} (resolver answered, no record).`),
+    );
   } else {
-    console.error(`  ✗ Host DNS resolution failed (could not resolve ${result.hostname}).`);
+    console.error(failLine(`Host DNS resolution failed (could not resolve ${result.hostname}).`));
   }
   if (result.details) {
     console.error(`    ${String(result.details).trim()}`);
