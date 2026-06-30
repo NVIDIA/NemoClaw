@@ -52,13 +52,6 @@ export default defineConfig({
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
-          // The integration suite shells out heavily, and stacking multiple
-          // forks of the require-hook transpile cache on the 7 GiB ubuntu
-          // runner reliably exhausts physical RAM when coverage is on. Pin
-          // the integration project to a single fork so spawned children
-          // serialize against the worker rather than racing each other.
-          pool: "forks",
-          poolOptions: { forks: { singleFork: true } },
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
