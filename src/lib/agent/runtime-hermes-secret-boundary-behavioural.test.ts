@@ -325,10 +325,14 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
 
   function ensureTrustedPython3Stub(stubsDir: string) {
     const stubPython3 = path.join(stubsDir, "python3");
-    if (fs.existsSync(stubPython3)) return stubPython3;
-    fs.writeFileSync(stubPython3, '#!/usr/bin/env bash\nexec /usr/bin/python3 "$@"\n', {
-      mode: 0o755,
-    });
+    try {
+      fs.writeFileSync(stubPython3, '#!/usr/bin/env bash\nexec /usr/bin/python3 "$@"\n', {
+        mode: 0o755,
+        flag: "wx",
+      });
+    } catch (_err) {
+      // Already populated by a prior writeStub() — keep that stub.
+    }
     return stubPython3;
   }
 
