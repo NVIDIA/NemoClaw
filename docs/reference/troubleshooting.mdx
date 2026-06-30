@@ -13,6 +13,10 @@ content:
 
 This page covers common installation, onboarding, and runtime issues, along with resolution steps.
 
+<Note>
+The diagnostic commands on this page assume `$$nemoclaw` is on your `PATH` (re-source your shell profile after an nvm- or fnm-managed install) and that your user can reach the Docker socket — either as a member of the `docker` group or by running the Docker commands with `sudo`.
+</Note>
+
 <Warning title="Get Help">
 
 If your issue is not listed here, join the [NemoClaw Discord channel](https://discord.gg/XFpfPv9Uvx) to ask questions and get help from the community.
@@ -782,8 +786,10 @@ It also forwards standard CA bundle variables for subprocesses, including `GIT_S
 If Git still reports `server certificate verification failed`, reconnect to the sandbox and check that the CA variables are present:
 
 ```bash
-env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE'
+env | grep -E 'SSL_CERT_FILE|GIT_SSL_CAINFO|CURL_CA_BUNDLE|REQUESTS_CA_BUNDLE' || true
 ```
+
+`grep` exits non-zero when it finds no matches, so empty output (with the trailing `|| true`) simply means none of these CA variables are set in the current shell.
 
 If they are missing on an older sandbox, upgrade NemoClaw and run:
 

@@ -241,6 +241,7 @@ To opt in to `/v1/responses`, set `NEMOCLAW_PREFERRED_API=openai-responses` befo
 
 Start your model server.
 The examples below use vLLM, but any OpenAI-compatible server works.
+Install vLLM first if it is not already on the host (for example, `pip install vllm`), then start it:
 
 ```bash
 vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000
@@ -266,7 +267,8 @@ Route, configuration, and authentication failures still fail immediately.
 
 ### Non-Interactive Setup
 
-Set the following environment variables for scripted or CI/CD deployments.
+Start your OpenAI-compatible server first; the endpoint in `NEMOCLAW_ENDPOINT_URL` must already be serving, or onboarding fails its validation probe.
+Then set the following environment variables for scripted or CI/CD deployments.
 Set `NEMOCLAW_REASONING=true` when the compatible endpoint serves a reasoning-only model.
 
 <Warning>

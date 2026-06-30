@@ -148,7 +148,8 @@ On native Linux hosts, a firewall can allow the host proxy health check while st
 When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
 
 ```bash
-sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+SUBNET=$(docker network inspect openshell-docker --format '{{(index .IPAM.Config 0).Subnet}}')
+sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
 $$nemoclaw onboard
 ```
 
@@ -175,8 +176,13 @@ This does not delete downloaded model files.
 ```bash
 NEMOCLAW_PROVIDER=ollama \
   NEMOCLAW_MODEL=qwen3.5:9b \
-  $$nemoclaw onboard --non-interactive --yes
+  $$nemoclaw onboard --non-interactive --yes --yes-i-accept-third-party-software
 ```
+
+Non-interactive runs cannot prompt for the third-party software notice, so include `--yes-i-accept-third-party-software` (or set `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`) whenever the path may install or start Ollama.
+For interactive local inference, choose the provider menu option that matches the local server you already started; use the Ollama option only when NemoClaw should manage Ollama for you.
+For vLLM, NIM, or another OpenAI-compatible endpoint, choose the compatible endpoint or custom provider path and enter the host URL from the server setup above.
+When later commands use `<name>`, replace it with the sandbox name you chose during onboarding, for example `my-assistant`.
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
 If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.

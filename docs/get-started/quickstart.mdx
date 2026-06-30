@@ -53,8 +53,16 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-
 To run both installation and onboarding without prompts, also set non-interactive mode and the provider variables your chosen inference path requires:
 
 ```bash
-curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | \
+  NEMOCLAW_NON_INTERACTIVE=1 \
+  NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
+  NEMOCLAW_PROVIDER=build \
+  NVIDIA_INFERENCE_API_KEY=<your-key> \
+  NEMOCLAW_SANDBOX_NAME=my-gpt-claw \
+  bash
 ```
+
+The example above uses the NVIDIA Endpoints path. Set `NEMOCLAW_PROVIDER` and the matching API key variable for your chosen path (see the provider table above), and set `NEMOCLAW_SANDBOX_NAME` so the run does not depend on a default left behind by a previous, possibly interrupted, onboard session.
 
 If a scripted installer rerun finds a failed onboarding session, choose whether to discard the saved state with `--fresh` or retry it with `nemoclaw onboard --resume`.
 For the recovery commands, refer to [Previous onboarding session failed](../reference/troubleshooting#previous-onboarding-session-failed).
@@ -275,7 +283,7 @@ openshell term
 ```
 
 ```bash
-nemoclaw my-assistant connect
+nemoclaw my-gpt-claw connect
 # inside the sandbox:
 openclaw tui
 ```
