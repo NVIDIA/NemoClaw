@@ -19,7 +19,19 @@ const runLiveE2E = shouldRunLiveE2E();
 const runBranchValidationE2E = shouldRunBranchValidationE2E();
 const e2eRetryCount = resolveE2ERetryCount();
 const sourceRequireHook = path.resolve("test/helpers/onboard-script-mocks.cjs");
-const sourceNodeOptions = [process.env.NODE_OPTIONS, `--require=${sourceRequireHook}`]
+// Source-backed integration fixtures spawn many short-lived Node programs
+// that each transpile TypeScript via the require hook. The CI coverage
+// shards run with c8 instrumentation on top, which pushes the default
+// ~1.5 GB old-space ceiling into V8 "Reached heap limit" territory on
+// shards that happen to include the largest integration files. Bumping
+// the spawned children's heap to 4 GiB keeps them comfortably below the
+// runner's actual memory cap (7 GiB on ubuntu-latest) while leaving room
+// for the parent worker.
+const sourceNodeOptions = [
+  process.env.NODE_OPTIONS,
+  `--require=${sourceRequireHook}`,
+  "--max-old-space-size=4096",
+]
   .filter(Boolean)
   .join(" ");
 
