@@ -72,11 +72,14 @@
 //
 //    - Invalid state: after shields auto-relock, the next host CLI
 //      `openclaw agent` dispatch can fail with only `missing scope:
-//      operator.write`, which does not explain the recovery action.
+//      operator.write`, which does not explain the recovery action. An older
+//      relock warning is also stale once the user lowers shields again.
 //    - Source boundary: OpenShell/OpenClaw own current scope state. NemoClaw's
 //      local audit JSONL is non-authoritative and is used only to add likely
-//      relock context; unreadable history never blocks dispatch, and terminal
-//      runtimes are excluded from this OpenClaw-specific diagnostic.
+//      relock context. Validated audit chronology can suppress stale context
+//      but never establishes current policy state; unreadable history never
+//      blocks dispatch, and terminal runtimes are excluded from this
+//      OpenClaw-specific diagnostic.
 //    - Source-fix constraint: an already-running in-sandbox OpenClaw TUI has no
 //      host CLI interception point. Covering that surface requires an upstream
 //      structured relock error or a separate extend-on-activity design. This
@@ -91,7 +94,8 @@
 // captured transport path used to append failure provenance without polluting
 // machine-readable stdout. `passthrough-shields-warning.test.ts` covers the
 // OpenClaw-only relock diagnostic, validated and fallback timeouts, unreadable
-// and absent audit history, and terminal-runtime exclusion.
+// and absent audit history, newer-down suppression, and terminal-runtime
+// exclusion.
 //
 // Removal conditions:
 //

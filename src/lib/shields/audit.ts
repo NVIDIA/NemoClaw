@@ -169,16 +169,27 @@ export function readRecentShieldsAutoRestore(
 
   const now = Date.now();
   // Scan backwards for the most recent shields_auto_restore within the window.
+  // A later shields_down for the same sandbox makes older relock context stale,
+  // but remains advisory: it suppresses only this warning and never establishes
+  // current shield state.
+  let newerShieldsDownMs: number | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
     const entry = parseEntry(lines[i]);
-    if (
-      entry?.action !== "shields_auto_restore" ||
-      entry.sandbox !== sandboxName ||
-      typeof entry.timestamp !== "string"
-    )
+    if (entry?.sandbox !== sandboxName) continue;
+    if (entry.action === "shields_down") {
+      const downMs =
+        typeof entry.timestamp === "string" ? new Date(entry.timestamp).getTime() : Number.NaN;
+      if (Number.isFinite(downMs) && downMs <= now) {
+        newerShieldsDownMs = Math.max(newerShieldsDownMs ?? downMs, downMs);
+      }
       continue;
+    }
+    if (entry?.action !== "shields_auto_restore" || typeof entry.timestamp !== "string") continue;
     const restoreMs = new Date(entry.timestamp).getTime();
     if (!Number.isFinite(restoreMs) || restoreMs < cutoff || restoreMs > now) continue;
+    if (newerShieldsDownMs !== null && newerShieldsDownMs >= restoreMs) {
+      return { kind: "none" };
+    }
     const restoreTs = entry.timestamp;
     // Continue backwards to find the preceding shields_down to get timeout_seconds.
     let timeoutSeconds: number | null = null;

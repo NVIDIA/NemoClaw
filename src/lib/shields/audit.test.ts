@@ -291,6 +291,36 @@ describe("readRecentShieldsAutoRestore", () => {
     expect(event.timeoutSeconds).toBeNull();
   });
 
+  it("suppresses stale relock context after a newer shields_down (#5922)", () => {
+    const now = Date.now();
+    fs.writeFileSync(
+      auditPath,
+      [
+        JSON.stringify({
+          action: "shields_down",
+          sandbox: "alpha",
+          timestamp: new Date(now - 30 * 1000).toISOString(),
+          timeout_seconds: 20,
+        }),
+        JSON.stringify({
+          action: "shields_auto_restore",
+          sandbox: "alpha",
+          timestamp: new Date(now - 20 * 1000).toISOString(),
+        }),
+        JSON.stringify({
+          action: "shields_down",
+          sandbox: "alpha",
+          timestamp: new Date(now - 10 * 1000).toISOString(),
+          timeout_seconds: 60,
+        }),
+      ].join("\n") + "\n",
+    );
+
+    expect(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath)).toEqual({
+      kind: "none",
+    });
+  });
+
   it("returns null timeoutSeconds when shields_down has NaN or Infinity as a raw string payload (#5922)", () => {
     // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
     // so write the JSONL line manually to exercise the non-finite path.
