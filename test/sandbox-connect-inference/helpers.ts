@@ -334,9 +334,9 @@ const sanitizedPrefix =
 
 if (args[0] === "ps") {
   const directContainer = state.gatewaySupervisorRecovery
-    ? "openshell-${sandboxName}-fixture\\n"
+    ? "sandbox-container-id\\topenshell-${sandboxName}-fixture\\n"
     : "";
-  process.stdout.write("openshell-cluster-nemoclaw\\n" + directContainer);
+  process.stdout.write(directContainer);
   process.exit(0);
 }
 
@@ -348,7 +348,7 @@ if (
   args.includes("PYTHONNOUSERSITE=1") &&
   args.length === userIndex + 6 &&
   args[userIndex + 1] === "root" &&
-  args[userIndex + 2] === "openshell-${sandboxName}-fixture" &&
+  args[userIndex + 2] === "sandbox-container-id" &&
   args[userIndex + 3] === "/usr/local/bin/nemoclaw-gateway-control" &&
   args[userIndex + 4] === "recover"
 ) {

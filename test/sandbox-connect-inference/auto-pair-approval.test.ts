@@ -286,7 +286,7 @@ describe("sandbox connect scope-upgrade approval on recover/probe (#4504)", () =
       expect(controlExec?.slice(userIndex, userIndex + 5)).toEqual([
         "--user",
         "root",
-        `openshell-${sandboxName}-fixture`,
+        "sandbox-container-id",
         "/usr/local/bin/nemoclaw-gateway-control",
         "recover",
       ]);

@@ -1187,6 +1187,7 @@ describe("Hermes sandbox provisioning", () => {
     const bashrcPath = path.join(etcDir, "bash.bashrc");
     const gatewayControlPath = path.join(localBin, "nemoclaw-gateway-control");
     const gatewaySupervisorPath = path.join(localLib, "gateway-supervisor.sh");
+    const mcpConfigTransactionPath = path.join(localLib, "hermes-mcp-config-transaction.py");
     const stateDirGuardPath = path.join(localLib, "state-dir-guard.py");
     const managedGatewayControlPath = path.join(localLib, "managed-gateway-control.py");
     const files = [
@@ -1196,6 +1197,7 @@ describe("Hermes sandbox provisioning", () => {
       path.join(localLib, "validate-hermes-env-secret-boundary.py"),
       path.join(localLib, "seed-hermes-dashboard-config.py"),
       path.join(localLib, "hermes-runtime-config-guard.py"),
+      mcpConfigTransactionPath,
       gatewaySupervisorPath,
       stateDirGuardPath,
       managedGatewayControlPath,
@@ -1227,6 +1229,7 @@ describe("Hermes sandbox provisioning", () => {
         `chown root:root ${gatewayControlPath} ${gatewaySupervisorPath} ${stateDirGuardPath} ${managedGatewayControlPath}`,
       );
       expect((fs.statSync(gatewayControlPath).mode & 0o777).toString(8)).toBe("700");
+      expect((fs.statSync(mcpConfigTransactionPath).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(gatewaySupervisorPath).mode & 0o777).toString(8)).toBe("444");
       expect((fs.statSync(stateDirGuardPath).mode & 0o777).toString(8)).toBe("500");
       expect((fs.statSync(managedGatewayControlPath).mode & 0o777).toString(8)).toBe("500");
