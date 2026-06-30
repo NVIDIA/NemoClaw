@@ -23,14 +23,14 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
     expect(script).toContain(VALIDATOR_PATH);
-    expect(script).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
+    expect(script).toContain(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
   });
 
   it("invokes the runtime-env validator after sourcing the generated recovery env", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
     const proxyEnvIdx = script!.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
-    const runtimeGuardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
+    const runtimeGuardIdx = script!.indexOf(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script!.indexOf("nohup");
     expect(proxyEnvIdx).toBeGreaterThanOrEqual(0);
     expect(runtimeGuardIdx).toBeGreaterThanOrEqual(0);
@@ -48,7 +48,7 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
   it("env-file guard runs before the ALREADY_RUNNING health probe so a poisoned gateway gets stopped", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toBeNull();
-    const guardIdx = script!.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
+    const guardIdx = script!.indexOf(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const probeIdx = script!.indexOf("ALREADY_RUNNING");
     expect(guardIdx).toBeGreaterThanOrEqual(0);
     expect(probeIdx).toBeGreaterThanOrEqual(0);
@@ -83,11 +83,11 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
       internalPort: 19119,
       tuiEnabled: false,
     });
-    const envFileIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
+    const envFileIdx = script.indexOf(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
     const guardRecoveryIdx = script.indexOf("_nemoclaw_validate_recovery_proxy_env");
     const proxyEnvIdx = script.indexOf('. "$_NEMOCLAW_RECOVERY_SOURCE_ENV"');
     const bashrcIdx = script.indexOf("[ -f ~/.bashrc ] && . ~/.bashrc;");
-    const runtimeIdx = script.indexOf(`python3 '${VALIDATOR_PATH}' runtime-env`);
+    const runtimeIdx = script.indexOf(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' runtime-env`);
     const launchIdx = script.indexOf('"$AGENT_BIN" dashboard');
     expect(envFileIdx).toBeGreaterThanOrEqual(0);
     expect(guardRecoveryIdx).toBeGreaterThanOrEqual(0);
@@ -107,10 +107,10 @@ describe("Hermes secret-boundary guard — generated shell shape", () => {
 
   it("guards manual Hermes recovery copy-paste command", () => {
     const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
-    expect(cmd).toContain(`python3 '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
-    expect(cmd).toContain(`python3 '${VALIDATOR_PATH}' runtime-env`);
+    expect(cmd).toContain(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' env-file /sandbox/.hermes/.env`);
+    expect(cmd).toContain(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}' runtime-env`);
     expect(cmd).toContain("SECRET_BOUNDARY_REFUSED");
-    const guardIdx = cmd.indexOf(`python3 '${VALIDATOR_PATH}'`);
+    const guardIdx = cmd.indexOf(`"$_NEMOCLAW_PYTHON3" -I '${VALIDATOR_PATH}'`);
     const launchIdx = cmd.indexOf("nohup hermes gateway run");
     expect(guardIdx).toBeGreaterThanOrEqual(0);
     expect(launchIdx).toBeGreaterThanOrEqual(0);

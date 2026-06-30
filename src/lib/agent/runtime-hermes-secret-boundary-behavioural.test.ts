@@ -46,6 +46,9 @@ const SHARED_PYTHON_STUB_BY_MODE = [
   'if [ "$1" = "-c" ]; then',
   "  exit 0",
   "fi",
+  'if [ "$1" = "-I" ]; then',
+  "  shift",
+  "fi",
   'mode="$2"',
   'if [ "$mode" = "env-file" ]; then',
   '  if [ "${STUB_ENVFILE_EXIT:-0}" = "1" ]; then',
@@ -91,9 +94,13 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
 
     const scriptPath = path.join(tmp, "guard.sh");
     const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
+    const stubPython3 = path.join(stubsDir, "python3");
     const guardWithStubs = opts.guard
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
-      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath);
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath)
+      .replace(/\/usr\/local\/bin\/python3/g, stubPython3)
+      .replace(/\/usr\/bin\/python3/g, stubPython3)
+      .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, stubPython3);
     fs.writeFileSync(
       scriptPath,
       [
@@ -233,6 +240,57 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.stdout).not.toContain("SECRET_BOUNDARY_REFUSED");
     expect(result.pkillCalls.length).toBe(0);
   });
+
+  it("refuses recovery when no python3 exists at a trusted absolute path even if a PATH-shadowed python3 is present", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-guard-shadow-"));
+    const stubsDir = path.join(tmp, "bin");
+    const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
+    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
+    fs.mkdirSync(stubsDir, { recursive: true });
+    fs.mkdirSync(validatorRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
+      "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n",
+    );
+    writeStub(stubsDir, "python3", "exit 0");
+    writeStub(stubsDir, "pkill", "exit 0");
+    writeStub(stubsDir, "sleep", "exit 0");
+
+    const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
+    const stubbed = __testing
+      .buildHermesEnvFileBoundaryGuard()
+      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
+      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath)
+      .replace(/\/usr\/local\/bin\/python3/g, path.join(tmp, "no-such-python3-a"))
+      .replace(/\/usr\/bin\/python3/g, path.join(tmp, "no-such-python3-b"))
+      .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, path.join(tmp, "no-such-python3-c"));
+    const scriptPath = path.join(tmp, "guard.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -u",
+        `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`,
+        stubbed,
+        'printf "REACHED_LAUNCH\\n"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: `${stubsDir}:/usr/bin:/bin`, HOME: tmp },
+      });
+      expect(result.status).toBe(127);
+      expect(result.stdout).toContain("SECRET_BOUNDARY_PYTHON3_MISSING");
+      expect(result.stdout).not.toContain("REACHED_LAUNCH");
+      expect(result.stderr).toContain("no python3 at a trusted absolute path");
+    } finally {
+      removeTempDir(tmp);
+    }
+  });
 });
 
 describe("Hermes secret-boundary guard — full recovery script behaviour", () => {
@@ -265,6 +323,15 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     writeStub(stubsDir, "hermes", `: > ${JSON.stringify(hermesLaunchMarker)}\n/bin/sleep 5`);
   }
 
+  function ensureTrustedPython3Stub(stubsDir: string) {
+    const stubPython3 = path.join(stubsDir, "python3");
+    if (fs.existsSync(stubPython3)) return stubPython3;
+    fs.writeFileSync(stubPython3, '#!/usr/bin/env bash\nexec /usr/bin/python3 "$@"\n', {
+      mode: 0o755,
+    });
+    return stubPython3;
+  }
+
   function runRecovery(
     opts: {
       stubsDir: string;
@@ -279,6 +346,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
   ) {
     const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
     expect(recoveryScript).not.toBeNull();
+    const stubPython3 = ensureTrustedPython3Stub(opts.stubsDir);
     let stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, opts)
       .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), opts.validatorPath)
       .replace(/\/tmp\/gateway-recovery\.log/g, opts.recoveryLogPath)
@@ -286,7 +354,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       .replace(
         /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
         `_GATEWAY_LOG=${opts.recoveryFallbackLog}`,
-      );
+      )
+      .replace(/\/usr\/local\/bin\/python3/g, stubPython3)
+      .replace(/\/usr\/bin\/python3/g, stubPython3)
+      .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, stubPython3);
     if (opts.envFilePath) {
       stubbed = stubbed.replace(/\/sandbox\/\.hermes\/\.env/g, opts.envFilePath);
     }
@@ -458,6 +529,7 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
           (() => {
             const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
             expect(recoveryScript).not.toBeNull();
+            const stubPython3 = path.join(harness.stubsDir, "python3");
             const stubbed = rewriteRecoveryPreloadPaths(recoveryScript!, harness)
               .replace(
                 new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"),
@@ -469,7 +541,10 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
               .replace(
                 /_GATEWAY_LOG=\/tmp\/gateway-recovery\.log/g,
                 `_GATEWAY_LOG=${harness.recoveryFallbackLog}`,
-              );
+              )
+              .replace(/\/usr\/local\/bin\/python3/g, stubPython3)
+              .replace(/\/usr\/bin\/python3/g, stubPython3)
+              .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, stubPython3);
             const scriptPath = path.join(harness.tmp, "recovery.sh");
             fs.writeFileSync(
               scriptPath,

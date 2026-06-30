@@ -22,9 +22,32 @@ import { shellQuote } from "../runner";
 export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
   "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
 
+// Trusted absolute paths for the python3 interpreter that runs the validator.
+// Mirrors agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3 so the recovery
+// path cannot be bypassed by an attacker who controls PATH in the recovery
+// shell — bare `python3` would resolve via PATH and could be shadowed.
+const HERMES_TRUSTED_PYTHON3_PATHS = [
+  "/usr/bin/python3",
+  "/usr/local/bin/python3",
+  "/opt/hermes/.venv/bin/python3",
+];
+
 export const SECRET_BOUNDARY_REFUSED_MARKER = "SECRET_BOUNDARY_REFUSED";
 export const SECRET_BOUNDARY_OK_MARKER = "SECRET_BOUNDARY_OK";
 export const SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER = "SECRET_BOUNDARY_VALIDATOR_MISSING";
+export const SECRET_BOUNDARY_PYTHON3_MISSING_MARKER = "SECRET_BOUNDARY_PYTHON3_MISSING";
+
+function buildTrustedPython3Picker(): string {
+  const branches = HERMES_TRUSTED_PYTHON3_PATHS.map(
+    (candidate) =>
+      `if [ -x ${shellQuote(candidate)} ]; then _NEMOCLAW_PYTHON3=${shellQuote(candidate)}; fi;`,
+  ).join(" ");
+  return `unset _NEMOCLAW_PYTHON3; ${branches}`;
+}
+
+function buildTrustedPython3Guard(): string {
+  return `if [ -z "\${_NEMOCLAW_PYTHON3:-}" ]; then echo '[SECURITY] no python3 at a trusted absolute path' >&2; echo ${SECRET_BOUNDARY_PYTHON3_MISSING_MARKER}; exit 127; fi;`;
+}
 
 const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)";
 const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
@@ -59,7 +82,7 @@ function buildHermesBoundaryKillSnippet(): string {
  * O_NOFOLLOW-prepared log file via the shared no-follow helper.
  */
 function buildHermesValidatorInvocation(args: string): string {
-  return `python3 ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
+  return `"$_NEMOCLAW_PYTHON3" -I ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
 }
 
 function buildHermesValidatorMissingLog(): string {
@@ -99,8 +122,10 @@ export function buildHermesEnvFileBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
   const kill = buildHermesBoundaryKillSnippet();
   const missingLog = buildHermesValidatorMissingLog();
+  const picker = buildTrustedPython3Picker();
+  const pythonGuard = buildTrustedPython3Guard();
   const invocation = buildHermesValidatorInvocation("env-file /sandbox/.hermes/.env");
-  return `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
+  return `${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
 }
 
 /**
@@ -118,8 +143,10 @@ export function buildHermesRuntimeEnvBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
   const kill = buildHermesBoundaryKillSnippet();
   const missingLog = buildHermesValidatorMissingLog();
+  const picker = buildTrustedPython3Picker();
+  const pythonGuard = buildTrustedPython3Guard();
   const invocation = buildHermesValidatorInvocation("runtime-env");
-  return `if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
+  return `${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
 }
 
 /**
@@ -153,8 +180,12 @@ export function buildHermesRuntimeEnvBoundaryGuard(): string {
 export function buildHermesEnvFileBoundaryStandaloneCheck(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
   const kill = buildHermesBoundaryKillSnippet();
-  const invocation = `python3 ${shellQuote(validator)} env-file /sandbox/.hermes/.env`;
+  const picker = buildTrustedPython3Picker();
+  const pythonGuard = buildTrustedPython3Guard();
+  const invocation = `"$_NEMOCLAW_PYTHON3" -I ${shellQuote(validator)} env-file /sandbox/.hermes/.env`;
   return [
+    picker,
+    pythonGuard,
     `if [ ! -f ${shellQuote(validator)} ]; then`,
     `  echo ${SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER}; exit 0;`,
     `fi;`,

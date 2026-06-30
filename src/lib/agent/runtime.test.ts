@@ -154,7 +154,7 @@ describe("buildRecoveryScript", () => {
   it("does not launch a Hermes decode proxy during recovery", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).not.toContain("/usr/local/bin/nemoclaw-decode-proxy");
-    expect(script).not.toContain("/opt/hermes/.venv/bin/python");
+    expect(script).not.toMatch(/\/opt\/hermes\/\.venv\/bin\/python(?!3)/);
     expect(script).not.toContain("nemoclaw-discord-facade");
   });
 
