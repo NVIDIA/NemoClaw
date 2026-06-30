@@ -505,11 +505,9 @@ describe("Tavily Search provider profile", () => {
 
   it("limits the binary allowlist to runtimes the Tavily client actually uses", () => {
     expect(profile.binaries).toEqual([
-      "/opt/venv/bin/python3",
-      "/usr/bin/python3",
-      "/usr/local/bin/python3",
       "/usr/local/bin/node",
       "/usr/bin/node",
+      "/usr/local/bin/curl",
       "/usr/bin/curl",
     ]);
   });

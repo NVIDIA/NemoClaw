@@ -7,6 +7,13 @@ import { isErrnoException } from "../core/errno";
 import { inferenceSelectionRegistryFields } from "../inference/selection";
 import type { InferenceSelection } from "../inference/selection";
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
+import {
+  applyAddExtraProvider,
+  applyRemoveExtraProvider,
+  isValidExtraProviderName,
+  normalizeExtraProviders,
+  readExtraProviders,
+} from "./extra-providers";
 import type { SandboxMessagingState } from "./registry-messaging";
 
 export {
@@ -323,18 +330,6 @@ export function save(data: SandboxRegistry): void {
   writeConfigFile(REGISTRY_FILE, serializeRegistryForDisk(data));
 }
 
-const EXTRA_PROVIDER_NAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9._-]{0,127}$/;
-
-function normalizeExtraProviders(input: unknown): string[] | undefined {
-  if (!Array.isArray(input)) return undefined;
-  const cleaned = input.filter(
-    (value): value is string =>
-      typeof value === "string" && EXTRA_PROVIDER_NAME_PATTERN.test(value),
-  );
-  const deduped = [...new Set(cleaned)].sort();
-  return deduped.length > 0 ? deduped : undefined;
-}
-
 function normalizeRegistry(data: SandboxRegistry): SandboxRegistry {
   const extraProviders = normalizeExtraProviders(data.extraProviders);
   const base: SandboxRegistry = {
@@ -557,17 +552,14 @@ export function clearAll(): void {
 }
 
 export function listExtraProviders(): string[] {
-  return [...(load().extraProviders ?? [])];
+  return readExtraProviders(load());
 }
 
 export function addExtraProvider(name: string): boolean {
-  if (!EXTRA_PROVIDER_NAME_PATTERN.test(name)) return false;
+  if (!isValidExtraProviderName(name)) return false;
   return withLock(() => {
     const data = load();
-    const existing = new Set(data.extraProviders ?? []);
-    if (existing.has(name)) return false;
-    existing.add(name);
-    data.extraProviders = [...existing].sort();
+    if (!applyAddExtraProvider(name, data)) return false;
     save(data);
     return true;
   });
@@ -576,11 +568,7 @@ export function addExtraProvider(name: string): boolean {
 export function removeExtraProvider(name: string): boolean {
   return withLock(() => {
     const data = load();
-    const existing = new Set(data.extraProviders ?? []);
-    if (!existing.delete(name)) return false;
-    const sorted = [...existing].sort();
-    if (sorted.length > 0) data.extraProviders = sorted;
-    else delete data.extraProviders;
+    if (!applyRemoveExtraProvider(name, data)) return false;
     save(data);
     return true;
   });
