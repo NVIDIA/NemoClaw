@@ -66,10 +66,17 @@ export type SandboxConnectOptions = {
 // in-sandbox hint can only print a `<name>` placeholder on OpenShell builds that
 // set OPENSHELL_SANDBOX=1 (not the sandbox name); here on the host we know the
 // real name, so the reporter's `connect` flow gets a directly runnable command.
+// Defense in depth: sandbox names are RFC-1123-validated at the policy/registry
+// boundaries (no control characters), but strip them here anyway so this TTY
+// sink can never be turned into a terminal-escape injection — mirroring the
+// `[:cntrl:]` strip the in-sandbox stanza applies to the untrusted
+// OPENSHELL_SANDBOX env value. For any legitimate name this is a no-op, so the
+// printed command stays byte-for-byte runnable.
 export function buildPolicyDenialConnectHint(sandboxName: string): string {
+  const safeName = sanitizeRouteValueForDisplay(sandboxName);
   return (
     "If a request is blocked by network policy ('CONNECT tunnel failed, response 403'), " +
-    `see why with \`${CLI_NAME} ${sandboxName} logs --tail 50\`.`
+    `see why with \`${CLI_NAME} ${safeName} logs --tail 50\`.`
   );
 }
 
