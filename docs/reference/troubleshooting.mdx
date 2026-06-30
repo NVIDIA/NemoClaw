@@ -373,6 +373,24 @@ Upgrade NemoClaw to a version that supports your OpenShell release, or install a
 For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
 If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
 
+### Sandbox build fails during OpenClaw plugin install
+
+During sandbox creation, the OpenClaw image setup can install managed plugins for selected features such as web search or diagnostics.
+If the build reaches `openclaw plugins install` and the npm registry or ClawHub is blocked, NemoClaw classifies that narrow failure and prints a policy hint instead of only generic resume guidance.
+
+Check that the active policy and host network allow the npm registry and ClawHub endpoints needed by the plugin, or disable the feature that requested the plugin.
+For example, if the plugin is for web search, disable that feature and resume onboarding:
+
+```bash
+NEMOCLAW_WEB_SEARCH_ENABLED=0 $$nemoclaw onboard --resume
+```
+
+If you want the feature, fix the network or policy path first, then resume onboarding:
+
+```bash
+$$nemoclaw onboard --resume
+```
+
 ### Sandbox containers cannot reach the gateway
 
 On native Linux Docker-driver hosts, `$$nemoclaw onboard` verifies the route that sandbox containers use to reach the OpenShell gateway.
@@ -1572,7 +1590,8 @@ Download the latest official WSL `.msi` package from the [Microsoft WSL releases
 
 The bootstrap script checks `wsl --status` before it installs or opens Ubuntu.
 If Windows reports that the WSL runtime is not installed, the script attempts `wsl --install --no-distribution` automatically.
-If the repair command succeeds, reboot when prompted and let the bootstrap resume after sign-in.
+If the repair command succeeds and WSL reports that the changes require a reboot, reboot and let the bootstrap resume after sign-in.
+If the repair command succeeds but WSL still cannot be verified and the output does not request a reboot, follow the printed repair guidance instead of rebooting by default.
 If the repair command fails, follow the printed repair steps.
 If the repair command returns `Forbidden (403)` or remains blocked, install WSL manually with Microsoft's [offline install guidance](https://learn.microsoft.com/en-us/windows/wsl/install#offline-install).
 Download the latest official WSL `.msi` package from the [Microsoft WSL releases page](https://github.com/microsoft/WSL/releases/latest), choose the matching `.x64.msi` or `.arm64.msi`, install it, reboot if Windows requests it, then rerun the bootstrap script.
@@ -1587,8 +1606,12 @@ Manual WSL installation only helps when the WSL runtime is missing or the online
 
 ### `wsl -d Ubuntu` says "There is no distribution with the supplied name"
 
-The Ubuntu package was installed with `--no-launch` but never registered.
-Run `ubuntu.exe install --root` from PowerShell to register it, or reinstall without `--no-launch`:
+The Ubuntu package was installed with `--no-launch` but never registered, or Windows finished the install command before the distribution appeared in `wsl -l`.
+When this happens during the NemoClaw bootstrap, the script prints a sanitized `WSL install output` block.
+PowerShell transcript headers, footers, temporary transcript paths, and status-file paths are redacted before display so you can paste the useful WSL output into a bug report with less local machine metadata.
+
+If the sanitized output says a reboot is required, reboot and rerun the bootstrap.
+If it does not request a reboot, register the distro manually or reinstall without `--no-launch`:
 
 ```bash
 wsl --unregister Ubuntu

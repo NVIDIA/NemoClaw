@@ -624,6 +624,7 @@ Host-side validation runs before the sandbox dispatch:
 
 - OpenClaw sandboxes and registry fallbacks must include at least one target selector flag: `--agent`, `--session-id`, `--session-key`, or `--to` in either `--flag value` or `--flag=value` form. OpenClaw invocations without a selector exit `2` and print `No target session selected` locally, without paying the in-sandbox dispatch cost. Registered terminal-runtime sandboxes delegate bare invocations and help flags to the manifest command instead.
 - If the sandbox is registered but not in a `Ready` or `Running` phase, the wrapper exits `1` and prints the documented recovery commands (`$$nemoclaw <name> recover`, `$$nemoclaw <name> rebuild --yes`, `$$nemoclaw onboard --resume`) rather than deferring the readiness rejection to `openshell sandbox exec`.
+- If a recent timed shields window auto-restored before the one-shot OpenClaw command, the wrapper prints a stderr-only reminder such as `Shields auto-relocked` with the matching `$$nemoclaw <name> shields down --timeout ...` command before dispatch. JSON stdout stays parseable, and the warning is advisory because current scope state still belongs to OpenClaw and OpenShell.
 
 </AgentOnly>
 <AgentOnly variant="hermes">
@@ -2300,6 +2301,9 @@ OpenClaw-specific build-time agent configuration:
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_AGENT_TIMEOUT` | positive integer (seconds) | Overrides `agents.defaults.timeoutSeconds` in the built OpenClaw config. Raise for slow inference. |
+| `NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS` | positive number of seconds | Sets the post-pairing poll cadence for the in-sandbox OpenClaw auto-pair watcher. Defaults to `5` so late allowlisted CLI and browser scope upgrades are approved before clients time out. Raise only on load-sensitive gateways. |
+| `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS` | positive integer | Sets how many fast polls run after the watcher observes a fresh allowlisted scope-upgrade request. Defaults to `5`; set lower only when you need to reduce gateway polling. |
+| `NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS` | positive number of seconds | Sets the fast-reentry interval after a fresh allowlisted scope-upgrade request. Defaults to `1`. |
 | `NEMOCLAW_CONTEXT_WINDOW` | positive integer (tokens) | Overrides the model's context-window value in the built OpenClaw config. |
 | `NEMOCLAW_MAX_TOKENS` | positive integer (tokens) | Overrides the model's `maxTokens` in the built OpenClaw config. |
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
