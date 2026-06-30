@@ -594,12 +594,16 @@ function lifecycleEnv(options: {
   sandboxName: string;
   apiKey?: string;
   tokens?: Phase6Tokens;
+  policyMode?: "skip";
 }): NodeJS.ProcessEnv {
   return phase6Env({
     sandboxName: options.sandboxName,
     agent: options.agent,
     apiKey: options.apiKey,
-    extra: options.tokens ? phase6TokenEnv(options.tokens, options.sandboxName) : undefined,
+    extra: {
+      ...(options.tokens ? phase6TokenEnv(options.tokens, options.sandboxName) : {}),
+      ...(options.policyMode ? { NEMOCLAW_POLICY_MODE: options.policyMode } : {}),
+    },
   });
 }
 
@@ -643,9 +647,15 @@ export async function runChannelsAddRemoveTarget(
   assertChannelLifecycleSandboxName(sandboxName, agent, "add-remove");
   const apiKey = secrets.required("NVIDIA_INFERENCE_API_KEY");
   const tokens = phase6Tokens(`${agent}-add-remove`);
-  const installEnv = lifecycleEnv({ agent, sandboxName, apiKey });
-  const channelEnv = lifecycleEnv({ agent, sandboxName, tokens });
-  const authenticatedChannelEnv = lifecycleEnv({ agent, sandboxName, apiKey, tokens });
+  const installEnv = lifecycleEnv({ agent, sandboxName, apiKey, policyMode: "skip" });
+  const channelEnv = lifecycleEnv({ agent, sandboxName, tokens, policyMode: "skip" });
+  const authenticatedChannelEnv = lifecycleEnv({
+    agent,
+    sandboxName,
+    apiKey,
+    tokens,
+    policyMode: "skip",
+  });
   const redactions = redactionValues(apiKey, tokens);
 
   await artifacts.writeJson("target.json", {
