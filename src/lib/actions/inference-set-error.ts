@@ -3,7 +3,7 @@
 
 import { CLI_NAME } from "../cli/branding";
 import { compactText } from "../core/url-utils";
-import { redactFull } from "../security/redact";
+import { redact, redactFull } from "../security/redact";
 
 const OPEN_SHELL_PROVIDER_NOT_FOUND_PATTERNS = [
   /\bprovider\s+["'`]([^"'`\r\n]+)["'`]\s+(?:was\s+)?not found\b/iu,
@@ -35,7 +35,7 @@ export function buildOpenshellInferenceSetFailureMessage(args: {
   stderr: string;
   stdout: string;
 }): string {
-  const detail = compactText(redactFull(`${args.stderr}\n${args.stdout}`)).slice(
+  const detail = compactText(redactFull(redact(`${args.stderr}\n${args.stdout}`))).slice(
     0,
     FAILURE_DETAIL_LIMIT,
   );

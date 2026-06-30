@@ -60,6 +60,24 @@ describe("inference set OpenShell failure diagnostics", () => {
     expect(message).not.toContain(querySecret);
   });
 
+  it("redacts URL userinfo and sensitive query values from failure details (#5924)", () => {
+    const username = "diagnostic-user";
+    const password = "diagnostic-password";
+    const querySecret = "diagnostic-query-secret";
+    const message = buildOpenshellInferenceSetFailureMessage({
+      exitCode: 1,
+      providerNotFound: true,
+      registeredProviders: [],
+      stderr: `error: provider 'openai-api' not found at https://${username}:${password}@gateway.example.test/v1?token=${querySecret}`,
+      stdout: "",
+    });
+
+    expect(message).not.toContain(username);
+    expect(message).not.toContain(password);
+    expect(message).not.toContain(querySecret);
+    expect(message).toContain("https://****:****@gateway.example.test/v1?token=<REDACTED>");
+  });
+
   it("keeps malformed and mismatched diagnostics on the generic path (#5924)", () => {
     const malformed = `error: provider '${"a".repeat(10_000)}`;
     expect(openshellReportsProviderNotFound(malformed, "openai-api")).toBe(false);
