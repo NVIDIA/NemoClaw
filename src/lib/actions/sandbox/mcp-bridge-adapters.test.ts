@@ -435,6 +435,28 @@ describe("MCP adapters", () => {
       prior === undefined ? delete process.env.GITHUB_TOKEN : (process.env.GITHUB_TOKEN = prior);
     }
   });
+
+  it("redacts overlapping raw values longest-first and removes display controls", () => {
+    const redacted = redactBridgeSecretsForDisplay(
+      "Authorization: raw-long-secret raw-long-secret raw\u001b[31m",
+      { env: ["LONG", "SHORT"] },
+      { LONG: "raw-long-secret", SHORT: "raw" },
+    );
+
+    expect(redacted).toBe("Authorization: ***REDACTED*** ***REDACTED*** ***REDACTED***[31m");
+    expect(redacted).not.toContain("secret");
+    expect(redacted).not.toContain("\u001b");
+  });
+
+  it("fully redacts generic bearer and authorization values", () => {
+    const redacted = redactBridgeSecretsForDisplay(
+      'Bearer opaque-value Authorization="second-value"',
+    );
+
+    expect(redacted).toBe('Bearer ***REDACTED*** Authorization="***REDACTED***"');
+    expect(redacted).not.toContain("opaque-value");
+    expect(redacted).not.toContain("second-value");
+  });
 });
 
 describe("MCP image/runtime constants", () => {

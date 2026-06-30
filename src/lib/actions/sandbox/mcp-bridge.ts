@@ -21,6 +21,7 @@ import {
   McpBridgeError,
   type McpBridgeStatus,
 } from "./mcp-bridge-contracts";
+import { redactBridgeSecretsForDisplay } from "./mcp-bridge-output";
 import {
   applyGeneratedPolicy,
   assertGeneratedPolicyMutationSafe,
@@ -1670,7 +1671,7 @@ export async function dispatchMcpBridgeCommand(
     }
   } catch (error) {
     if (error instanceof McpBridgeError) {
-      console.error(`  ${error.message}`);
+      console.error(`  ${redactBridgeSecretsForDisplay(error.message)}`);
       process.exitCode = error.exitCode;
       return;
     }
