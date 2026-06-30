@@ -10,10 +10,12 @@ import {
 
 const COMPLETE_OUTPUT = [
   "\u001b[36mProvider:\u001b[0m",
-  "  Name: compatible-endpoint",
-  "  Type: openai",
-  "  Credential keys: COMPATIBLE_API_KEY",
-  "  Config keys: OPENAI_BASE_URL, EXTRA_FLAG",
+  "  \u001b[2mId:\u001b[0m 2ca3b7c7-eff4-4399-af5a-13c4984d7343",
+  "  \u001b[2mName:\u001b[0m compatible-endpoint",
+  "  \u001b[2mType:\u001b[0m openai",
+  "  \u001b[2mResource version:\u001b[0m 1",
+  "  \u001b[2mCredential keys:\u001b[0m COMPATIBLE_API_KEY",
+  "  \u001b[2mConfig keys:\u001b[0m OPENAI_BASE_URL, EXTRA_FLAG",
 ].join("\n");
 
 describe("gateway provider metadata", () => {

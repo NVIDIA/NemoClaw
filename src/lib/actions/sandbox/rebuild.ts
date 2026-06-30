@@ -66,7 +66,7 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import { removeSandboxRegistryEntry } from "./destroy";
+import { removeSandboxImage } from "./destroy";
 import { ensureMessagingHostForwardAfterRebuild } from "./messaging-host-forward-lifecycle";
 import { executeSandboxCommand } from "./process-recovery";
 import { isolateAmbientRecreateEnv } from "./rebuild-env-isolation";
@@ -716,10 +716,14 @@ export async function rebuildSandbox(
       return;
     }
     sandboxStillExists = false;
-    removeSandboxRegistryEntry(sandboxName);
-    log(
-      `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
-    );
+    // Keep the authoritative registry route until onboard's provider-selection
+    // phase has reused the gateway-held credential. The live sandbox is already
+    // gone, so createSandbox() will prune this stale row immediately after
+    // provider setup and before registering the replacement. Removing it here
+    // would force custom-provider recovery to trust the rewritten session
+    // instead of the registry and fail closed after destructive deletion.
+    removeSandboxImage(sandboxName);
+    log(`Retaining registry route for '${sandboxName}' through recreate provider recovery`);
     console.log(`  ${G}\u2713${R} Old sandbox deleted`);
 
     // Step 4: Recreate via onboard --resume

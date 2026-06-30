@@ -65,7 +65,9 @@ type RebuildFlowHarness = {
   logSpy: MockInstance;
   markStepFailedSpy: MockInstance;
   onboardSpy: MockInstance;
+  registryRemoveSpy: MockInstance;
   registryUpdateSpy: MockInstance;
+  removeSandboxImageSpy: MockInstance;
   releaseOnboardLockSpy: MockInstance;
   relockSpy: MockInstance;
   restoreSandboxStateSpy: MockInstance;
@@ -222,6 +224,7 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     ...(overrides.sandboxEntry ?? {}),
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
+  const registryRemoveSpy = vi.spyOn(registry, "removeSandbox").mockReturnValue(true);
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockImplementation(() => undefined);
   vi.spyOn(sandboxSession, "getActiveSandboxSessions").mockReturnValue({
     detected: false,
@@ -264,7 +267,9 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
   const runOpenshellSpy = vi
     .spyOn(openshellRuntime, "runOpenshell")
     .mockReturnValue({ status: 0, output: "" });
-  vi.spyOn(destroy, "removeSandboxRegistryEntry").mockImplementation(() => undefined);
+  const removeSandboxImageSpy = vi
+    .spyOn(destroy, "removeSandboxImage")
+    .mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainer").mockImplementation(() => undefined);
   vi.spyOn(nim, "stopNimContainerByName").mockImplementation(() => undefined);
   const onboardSpy = vi.spyOn(onboardMod, "onboard").mockImplementation(async () => {
@@ -307,9 +312,11 @@ function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): Rebuild
     logSpy,
     markStepFailedSpy,
     onboardSpy,
+    registryRemoveSpy,
     registryUpdateSpy,
     releaseOnboardLockSpy,
     relockSpy,
+    removeSandboxImageSpy,
     restoreSandboxStateSpy,
     runOpenshellSpy,
     messagingRebuildPlanSpy,
@@ -416,6 +423,8 @@ describe("rebuildSandbox flow", () => {
       ["sandbox", "delete", "alpha"],
       expect.objectContaining({ ignoreError: true }),
     );
+    expect(harness.removeSandboxImageSpy).toHaveBeenCalledWith("alpha");
+    expect(harness.registryRemoveSpy).not.toHaveBeenCalled();
     expect(harness.onboardSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         resume: true,

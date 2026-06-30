@@ -133,6 +133,7 @@ NemoClaw does not read, export, or replace a credential that exists only in the 
 NemoClaw accepts provider, model, preferred API, and custom endpoint metadata only as one complete route from either the current registry row or the matching onboard session; a partial registry row is never completed from older session data.
 The recovery path may omit direct host validation only when the selection was recovered from the target sandbox, provider/model values are complete and bounded, the preferred API is compatible with that provider type, and `openshell provider get` reports the exact provider name, type, credential-binding key, and expected endpoint-config key.
 Custom-endpoint reuse additionally requires the complete route to come from the current registry row, to canonicalize to the same recorded HTTP(S) identity, and every other registry entry using that global provider to record that same endpoint.
+During destructive rebuild, NemoClaw removes the old sandbox image but retains that authoritative registry row through provider selection; sandbox creation then prunes the now-stale row before registering the replacement. This keeps the route provenance registry-backed without persisting a spoofable session marker.
 
 OpenShell deliberately reports provider config keys but not config values, so NemoClaw cannot confirm the exact live endpoint value through this interface.
 Credential-only recovery does not run `provider update`.

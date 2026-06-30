@@ -232,6 +232,7 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("scripts/check-production-build-args.sh");
     expect(review).toContain("Recovered Gateway Credential Boundary");
     expect(review).toContain("src/lib/onboard/recovered-provider-reuse.ts");
+    expect(review).toContain("retains that authoritative registry row through provider selection");
     expect(review).toContain("test/onboard-remote-recreate-credential-reuse.test.ts");
     expect(review).toContain("Image-Managed OpenClaw Extension Restore Boundary");
     expect(review).toContain("src/lib/state/openclaw-managed-extensions.ts");
