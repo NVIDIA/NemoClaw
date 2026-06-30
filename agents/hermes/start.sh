@@ -227,26 +227,27 @@ if [ ! -f "$_HERMES_RUNTIME_CONFIG_GUARD" ]; then
 fi
 
 # The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
-# base-image python3 that is first on PATH at container boot. (An interactive
-# login shell activates the venv, masking this: `python3` there resolves to
-# /opt/hermes/.venv/bin/python3 and has yaml, but the entrypoint that runs this
-# script does not.) Invoked with bare python3, the seeder hits its "PyYAML
-# unavailable; skipping model seed" branch and returns 0, so the model routing
-# is silently never mirrored into the dashboard home and the Models page shows
-# no models. Resolve the venv interpreter explicitly; the fallback uses the
-# same trusted absolute-path list as the wrapper / recovery boundary so a
+# base-image python3 that is first on PATH at container boot. Invoked with
+# the base python3, the seeder hits its "PyYAML unavailable; skipping model
+# seed" branch and returns 0, so the model routing is silently never mirrored
+# into the dashboard home and the Models page shows no models.
+#
+# Pick the venv interpreter from a fixed trusted absolute-path list so a
 # PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
 # entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
-_HERMES_PYTHON="/opt/hermes/.venv/bin/python"
-if [ ! -x "$_HERMES_PYTHON" ]; then
-  _HERMES_PYTHON=""
-  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
-    if [ -x "$_candidate" ]; then
-      _HERMES_PYTHON="$_candidate"
-    fi
-  done
-  unset _candidate
-fi
+# The list scans last-wins so the most-preferred path (the venv python3) is
+# selected when present and falls back to system python3 when the sandbox
+# image has no venv yet. The deprecated `/opt/hermes/.venv/bin/python`
+# symlink path is intentionally not consulted: it is a symlink an attacker
+# with write access to /opt/hermes/.venv could repoint, while the regular
+# files in the trusted list cannot be substituted without breaking the image.
+_HERMES_PYTHON=""
+for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+  if [ -x "$_candidate" ]; then
+    _HERMES_PYTHON="$_candidate"
+  fi
+done
+unset _candidate
 
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in

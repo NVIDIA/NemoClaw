@@ -87,14 +87,24 @@ def _emit_violations(prefix: str, violations: Iterable[str]) -> None:
         print(f"[SECURITY]   {item}", file=sys.stderr)
 
 
+def _no_follow_opener(path: str, flags: int) -> int:
+    return os.open(
+        path,
+        flags | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+
+
 def validate_env_file(path: str) -> int:
     # Open the file with O_NOFOLLOW so a symlink swapped in between any earlier
     # lstat check and this read cannot redirect validation to an attacker-chosen
     # target. fstat then confirms the descriptor still points at a regular file
     # before we parse it, closing the static islink + open(path) TOCTOU gap.
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    # The `open(... opener=_no_follow_opener)` form delegates fd ownership to
+    # the file object's context manager, so any early-exit path closes the
+    # descriptor without an explicit try/finally raw-fd dance.
+    violations: list[str] = []
     try:
-        fd = os.open(path, flags)
+        fh = open(path, "r", encoding="utf-8", opener=_no_follow_opener)
     except FileNotFoundError:
         return 0
     except OSError as exc:
@@ -105,50 +115,33 @@ def validate_env_file(path: str) -> int:
             )
             return 1
         raise
-    violations: list[str] = []
-    try:
-        st = os.fstat(fd)
+    with fh:
+        st = os.fstat(fh.fileno())
         if not stat.S_ISREG(st.st_mode):
             print(
                 f"[SECURITY] Refusing Hermes startup because {path} is not a regular file",
                 file=sys.stderr,
             )
             return 1
-        fh = os.fdopen(fd, encoding="utf-8")
-        fd = -1
-        with fh:
-            for lineno, raw_line in enumerate(fh, 1):
-                stripped = raw_line.strip()
-                if not stripped or stripped.startswith("#") or "=" not in stripped:
-                    continue
-                if stripped.startswith("export "):
-                    stripped = stripped[len("export ") :].lstrip()
-                key, value = stripped.split("=", 1)
-                key = key.strip()
-                if not KEY_NAME_RE.fullmatch(key):
-                    continue
-                if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
-                    continue
-                if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(key, value):
-                    continue
-                if not SECRET_KEY_RE.search(key):
-                    continue
-                if is_allowed_value(unquote(value)):
-                    continue
-                violations.append(f"{key} (line {lineno})")
-    finally:
-        if fd != -1:
-            # Best-effort cleanup of a leaked descriptor when the body raised
-            # before os.fdopen took ownership. Surface a warning instead of
-            # silently swallowing so misuse stays diagnosable; the original
-            # exception (if any) still propagates because this runs in finally.
-            try:
-                os.close(fd)
-            except OSError as exc:
-                print(
-                    f"[WARN] Failed to close {path}: {exc}",
-                    file=sys.stderr,
-                )
+        for lineno, raw_line in enumerate(fh, 1):
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            if stripped.startswith("export "):
+                stripped = stripped[len("export ") :].lstrip()
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            if not KEY_NAME_RE.fullmatch(key):
+                continue
+            if key in ENV_FILE_ALLOWED_NONSECRET_KEYS:
+                continue
+            if key in ENV_FILE_ALLOWED_RAW_SECRET_KEYS and is_allowed_raw_secret_value(key, value):
+                continue
+            if not SECRET_KEY_RE.search(key):
+                continue
+            if is_allowed_value(unquote(value)):
+                continue
+            violations.append(f"{key} (line {lineno})")
     if not violations:
         return 0
     _emit_violations(

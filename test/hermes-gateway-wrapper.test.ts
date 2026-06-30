@@ -571,6 +571,32 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     expect(run.stdout).not.toContain("sk-OPENSHELL-PROXY-REWRITE");
   });
 
+  it("suppresses Python tracebacks from the masker's stderr instead of leaking them to the user", () => {
+    const crashingValidator = [
+      "#!/usr/bin/env python3",
+      "import sys",
+      'sys.stderr.write("Traceback (most recent call last):\\n")',
+      "sys.stderr.write('  File \"/internal/secret-boundary.py\", line 42\\n')",
+      'sys.stderr.write("ValueError: hermes wrapper internal path leak\\n")',
+      "sys.exit(2)",
+      "",
+    ].join("\n");
+    const run = runWrapper(
+      ["config", "show"],
+      {},
+      {
+        stub: { stdout: "api_key: sk-OPENSHELL-PROXY-REWRITE", exitCode: 0 },
+        validatorScript: crashingValidator,
+      },
+    );
+
+    expect(run.status).toBe(2);
+    expect(run.stderr).not.toContain("Traceback");
+    expect(run.stderr).not.toContain("/internal/secret-boundary.py");
+    expect(run.stderr).not.toContain("ValueError");
+    expect(run.stderr).toContain("output masker failed");
+  });
+
   it("masks YAML block-scalar secrets across continuation lines", () => {
     const fixture = [
       "providers:",

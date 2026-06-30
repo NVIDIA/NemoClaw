@@ -109,6 +109,25 @@ def _resolve_trusted_python3() -> str | None:
     return None
 
 
+_MASKER_STDERR_ALLOWED_PREFIX = "[SECURITY]"
+
+
+def _forward_sanitised_masker_stderr(raw: bytes, fallback: str) -> None:
+    # Only forward lines that match the documented `[SECURITY] ...` prefix from
+    # the masker itself. Anything else (Python tracebacks, import errors, OOM
+    # messages) is dropped and replaced with a generic notice so internal file
+    # paths and stack frames cannot leak through the user's terminal on an
+    # unhandled exception.
+    text = raw.decode("utf-8", errors="replace")
+    safe_lines = [
+        line for line in text.splitlines() if line.startswith(_MASKER_STDERR_ALLOWED_PREFIX)
+    ]
+    if safe_lines:
+        sys.stderr.write("\n".join(safe_lines) + "\n")
+    else:
+        sys.stderr.write(fallback + "\n")
+
+
 def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     python3 = _resolve_trusted_python3()
     if python3 is None:
@@ -123,19 +142,22 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
     # stdin pipe (after `real_hermes` inherits the FD) makes the masker see
     # EOF when Hermes finishes writing. The masker itself buffers in
     # memory and only writes on success, so a mid-stream crash never
-    # produces a partial secret on either stream.
+    # produces a partial secret on either stream. Each masker's own stderr
+    # is captured to a pipe so we can filter it before forwarding — a
+    # raw `stderr=sys.stderr.fileno()` would leak Python tracebacks on an
+    # unhandled exception.
     masker_argv = [python3, "-I", guard_path, "mask-config-output"]
     masker_stdout = subprocess.Popen(
         masker_argv,
         stdin=subprocess.PIPE,
         stdout=sys.stdout.fileno(),
-        stderr=sys.stderr.fileno(),
+        stderr=subprocess.PIPE,
     )
     masker_stderr = subprocess.Popen(
         masker_argv,
         stdin=subprocess.PIPE,
         stdout=sys.stderr.fileno(),
-        stderr=sys.stderr.fileno(),
+        stderr=subprocess.PIPE,
     )
     try:
         proc = subprocess.Popen(
@@ -149,18 +171,24 @@ def _run_config_show(real_hermes: str, guard_path: str, argv: list[str]) -> int:
         if masker_stderr.stdin is not None:
             masker_stderr.stdin.close()
     proc.wait()
+    # Read each masker's captured stderr before wait() returns so the
+    # pipe drains and the masker is not blocked writing into a full buffer.
+    # communicate() cannot be used here because the stdin pipe was already
+    # closed for ownership transfer.
+    stdout_masker_stderr = masker_stdout.stderr.read() if masker_stdout.stderr else b""
+    stderr_masker_stderr = masker_stderr.stderr.read() if masker_stderr.stderr else b""
     masker_stdout.wait()
     masker_stderr.wait()
     if masker_stdout.returncode != 0:
-        print(
+        _forward_sanitised_masker_stderr(
+            stdout_masker_stderr,
             "[SECURITY] Refusing hermes config show: output masker failed (stdout)",
-            file=sys.stderr,
         )
         return masker_stdout.returncode
     if masker_stderr.returncode != 0:
-        print(
+        _forward_sanitised_masker_stderr(
+            stderr_masker_stderr,
             "[SECURITY] Refusing hermes config show: output masker failed (stderr)",
-            file=sys.stderr,
         )
         return masker_stderr.returncode
     return proc.returncode
