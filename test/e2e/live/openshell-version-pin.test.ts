@@ -11,8 +11,8 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 // #3474). The former bash script is a hermetic installer-script behavioral
 // test: it runs scripts/install-openshell.sh under a stubbed PATH where the
-// already-installed openshell reports a too-new version (0.0.45) and the
-// downloaded archives produce a binary that reports the pinned 0.0.44.
+// already-installed openshell reports a too-new version (0.0.72) and the
+// downloaded archives produce a binary that reports the pinned 0.0.71.
 //
 // This is a free-standing live test (per #5049's pattern) — it does not exercise
 // the registry-driven steady-state probe model. There is no OpenClaw instance,
@@ -21,6 +21,11 @@ import { expect, test } from "../fixtures/e2e-test.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const INSTALL_SCRIPT = path.join(REPO_ROOT, "scripts", "install-openshell.sh");
+const PINNED_OPEN_SHELL_SHA256 = {
+  cliLinuxX64: "b71e3a7fb6973c7c353521f88740885e6e661a199b6355140d45f4f8ab72d716",
+  gatewayLinuxX64: "85fe7c9d939cb2d32389182e816ac388ee1c95dbf5dae1c3dcd37d5bd979db7d",
+  sandboxLinuxX64: "dbf7fffb285e9ffca7ffd439118b7aadd4e5c4df45c73f0fff89fcca9b19c47d",
+};
 
 type GhDownloadMode = "success" | "fail";
 
@@ -28,32 +33,30 @@ function writeExecutable(target: string, contents: string): void {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-// Bash helpers shared by the gh and curl stubs: write a fake archive, compute
-// a real sha256 digest of it (so install-openshell.sh's `sha256sum -c` step
-// validates), and emit the matching checksum file.
+// Bash helpers shared by the gh and curl stubs: write a fake archive and emit
+// the same pinned digest lines the real OpenShell v0.0.71 release uses. A fake
+// sha256sum below keeps this test hermetic even though the tarball bytes are
+// synthetic.
 const SHARED_DOWNLOAD_BASH_HELPERS = `\
 write_asset() {
   local asset_name="$1"
   local asset_path="$2"
   printf 'fake OpenShell release asset: %s\\n' "$asset_name" >"$asset_path"
 }
-sha256_digest() {
-  if [ -x /usr/bin/sha256sum ]; then
-    /usr/bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /bin/sha256sum ]; then
-    /bin/sha256sum "$1" | awk '{print $1}'
-  elif [ -x /usr/bin/shasum ]; then
-    /usr/bin/shasum -a 256 "$1" | awk '{print $1}'
-  else
-    exit 3
-  fi
+pinned_sha256() {
+  case "$1" in
+    openshell-x86_64-unknown-linux-musl.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.cliLinuxX64)} ;;
+    openshell-gateway-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.gatewayLinuxX64)} ;;
+    openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz) printf '%s\\n' ${JSON.stringify(PINNED_OPEN_SHELL_SHA256.sandboxLinuxX64)} ;;
+    *) exit 4 ;;
+  esac
 }
 write_checksum() {
   local checksum_file="$1"
   local asset_name="$2"
   local asset_path="$3"
   [ -f "$asset_path" ] || write_asset "$asset_name" "$asset_path"
-  printf '%s  %s\\n' "$(sha256_digest "$asset_path")" "$asset_name" >"$checksum_file"
+  printf '%s  %s\\n' "$(pinned_sha256 "$asset_name")" "$asset_name" >"$checksum_file"
 }`;
 
 // Force Linux/x86_64 asset selection regardless of host arch (former shell test
@@ -227,6 +230,19 @@ cat "$@" 2>/dev/null || true`,
   );
 }
 
+function createFakeSha256sum(binDir: string): void {
+  writeExecutable(
+    path.join(binDir, "sha256sum"),
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = "-c" ]; then
+  cat >/dev/null
+  echo "checksum OK"
+  exit 0
+fi
+exec /usr/bin/sha256sum "$@"`,
+  );
+}
+
 async function runVersionPinTarget(
   artifacts: ArtifactSink,
   options: { ghDownloadMode: GhDownloadMode },
@@ -247,12 +263,13 @@ async function runVersionPinTarget(
     fs.writeFileSync(downloadLog, "");
 
     createFakeUname(fakeBin);
-    createFakeStickyOpenshell(fakeBin, "0.0.45");
+    createFakeStickyOpenshell(fakeBin, "0.0.72");
     createFakeHelperBinaries(fakeBin);
     createFakeGh(fakeBin, downloadLog, options.ghDownloadMode);
     createFakeCurl(fakeBin, downloadLog);
-    createFakeTar(fakeBin, "0.0.44");
+    createFakeTar(fakeBin, "0.0.71");
     createFakeStrings(fakeBin);
+    createFakeSha256sum(fakeBin);
 
     const result = spawnSync("bash", [INSTALL_SCRIPT], {
       env: {
@@ -273,40 +290,40 @@ async function runVersionPinTarget(
     // "above the maximum" hard-fail before download).
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
 
-    // Assertion 2: download-log-contains-v0.0.44 — pinned release tag was
+    // Assertion 2: download-log-contains-v0.0.71 — pinned release tag was
     // requested from the release host.
     const downloads = fs.readFileSync(downloadLog, "utf-8");
-    expect(downloads).toContain("v0.0.44");
+    expect(downloads).toContain("v0.0.71");
 
-    // Assertion 3: download-log-excludes-v0.0.45 — the too-new sticky version
+    // Assertion 3: download-log-excludes-v0.0.72 — the too-new sticky version
     // is never re-fetched.
-    expect(downloads).not.toContain("v0.0.45");
+    expect(downloads).not.toContain("v0.0.72");
 
     if (options.ghDownloadMode === "fail") {
       // Assertion 3b: curl-fallback-observed — the installer must recover from
       // gh download failure by re-requesting the pinned assets via curl.
-      expect(downloads).toContain("gh download-fail v0.0.44");
+      expect(downloads).toContain("gh download-fail v0.0.71");
       expect(downloads).toContain("curl ");
     } else {
-      expect(downloads).toContain("gh download v0.0.44");
+      expect(downloads).toContain("gh download v0.0.71");
       expect(downloads).not.toContain("curl ");
     }
 
-    // Assertion 4: replaced-openshell-reports-0.0.44 — the binary on disk in
+    // Assertion 4: replaced-openshell-reports-0.0.71 — the binary on disk in
     // the active install dir (== fakeBin, since ACTIVE_OPENSHELL_BIN resolved
-    // there and it is writable) was overwritten with the pinned 0.0.44 build.
+    // there and it is writable) was overwritten with the pinned 0.0.71 build.
     const replacedVersion = spawnSync(path.join(fakeBin, "openshell"), ["--version"], {
       encoding: "utf8",
     });
     expect(replacedVersion.status).toBe(0);
-    expect(replacedVersion.stdout).toContain("0.0.44");
-    expect(replacedVersion.stdout).not.toContain("0.0.45");
+    expect(replacedVersion.stdout).toContain("0.0.71");
+    expect(replacedVersion.stdout).not.toContain("0.0.72");
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
 
-test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.44 via gh download", async ({
+test("openshell-version-pin: replaces sticky too-new openshell with pinned 0.0.71 via gh download", async ({
   artifacts,
 }) => {
   await runVersionPinTarget(artifacts, { ghDownloadMode: "success" });

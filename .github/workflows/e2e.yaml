@@ -14,7 +14,7 @@ on:
         default: ""
         type: string
       jobs:
-        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs such as jetson-nvmap-gpu and sandbox-rlimits-connect are skipped unless selected."
+        description: "Optional comma-separated free-standing live E2E job ids. Empty runs default-enabled jobs only when targets is also empty; explicit-only jobs openshell-gateway-auth-contract, jetson-nvmap-gpu, and sandbox-rlimits-connect are skipped unless selected."
         required: false
         default: ""
         type: string
@@ -389,6 +389,77 @@ jobs:
         with:
           name: e2e-openshell-version-pin
           path: e2e-artifacts/live/openshell-version-pin/
+          include-hidden-files: false
+          if-no-files-found: ignore
+          retention-days: 14
+
+  openshell-gateway-auth-contract:
+    needs: generate-matrix
+    # Accepted release-gate tradeoff: this resource-heavy live probe remains
+    # selective because regular PR CI enforces the generated auth/JWT config and
+    # package-service fail-closed boundary in focused unit tests. Affected PRs
+    # must explicitly dispatch this job and record its result before merge.
+    if: ${{ contains(format(',{0},', inputs.jobs), ',openshell-gateway-auth-contract,') || contains(format(',{0},', inputs.targets), ',openshell-gateway-auth-contract,') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_JOB: "1"
+      E2E_DEFAULT_ENABLED: "0"
+      E2E_TARGET_ID: "openshell-gateway-auth-contract"
+      E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/openshell-gateway-auth-contract
+      NEMOCLAW_RUN_LIVE_E2E: "1"
+      NEMOCLAW_NON_INTERACTIVE: "1"
+      NEMOCLAW_OPENSHELL_PIN_VERSION: "0.0.71"
+      DOCKER_GRPC_PROBE_IMAGE: "node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d"
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Install OpenShell CLI
+        run: env -u DOCKER_CONFIG -u DOCKERHUB_USERNAME -u DOCKERHUB_TOKEN -u NVIDIA_API_KEY -u NVIDIA_INFERENCE_API_KEY -u GITHUB_TOKEN bash scripts/install-openshell.sh
+
+      - name: Pre-pull pinned gateway auth probe image
+        run: docker pull "$DOCKER_GRPC_PROBE_IMAGE"
+
+      - name: Run OpenShell gateway auth contract live test
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/bin:$HOME/.npm-global/bin:$PATH"
+          if command -v openshell-gateway >/dev/null 2>&1; then
+            OPENSHELL_GATEWAY_BIN="$(command -v openshell-gateway)"
+          elif [ -x "$HOME/.local/bin/openshell-gateway" ]; then
+            OPENSHELL_GATEWAY_BIN="$HOME/.local/bin/openshell-gateway"
+          else
+            echo "::error::OpenShell gateway binary not found after install"
+            ls -la /usr/local/bin/openshell-gateway "$HOME/.local/bin/openshell-gateway" 2>&1 || true
+            exit 1
+          fi
+          export OPENSHELL_GATEWAY_BIN
+          echo "Using OPENSHELL_GATEWAY_BIN=$OPENSHELL_GATEWAY_BIN"
+          "$OPENSHELL_GATEWAY_BIN" --version
+          npx vitest run --project e2e-live \
+            test/e2e/live/openshell-gateway-auth-source-contract.test.ts \
+            --silent=false --reporter=default
+
+      - name: Upload OpenShell gateway auth contract artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-openshell-gateway-auth-contract
+          path: e2e-artifacts/live/openshell-gateway-auth-contract/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14
@@ -6073,6 +6144,7 @@ jobs:
         generate-matrix,
         live,
         openshell-version-pin,
+        openshell-gateway-auth-contract,
         onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,
@@ -6202,11 +6274,15 @@ jobs:
   # comment.
   report-to-pr:
     runs-on: ubuntu-latest
+    # This entire workflow is dispatch-only. Keeping selective jobs in `needs`
+    # makes the report wait for and record any requested job without adding
+    # skipped checks to the normal pull_request workflow.
     needs:
       [
         generate-matrix,
         live,
         openshell-version-pin,
+        openshell-gateway-auth-contract,
         onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,
@@ -6302,6 +6378,11 @@ jobs:
             const requestedTargets = selectorValidationPassed ? rawRequestedTargets : '';
             const requestedJobs = selectorValidationPassed ? rawRequestedJobs : '';
             const explicitOnlyReasons = {
+              'openshell-gateway-auth-contract': {
+                job: 'openshell-gateway-auth-contract',
+                target: 'openshell-gateway-auth-contract',
+                reason: 'default dispatch excludes the resource-heavy OpenShell auth-contract probe unless selected',
+              },
               'jetson-nvmap-gpu': {
                 job: 'jetson-nvmap-gpu',
                 target: 'jetson-nvmap-gpu',
@@ -6432,7 +6513,7 @@ jobs:
                 ? '**Requested jobs:** _(selector rejected by workflow validation)_'
                 : requestedJobs
                   ? `**Requested jobs:** \`${requestedJobs}\``
-                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs such as `jetson-nvmap-gpu` and `sandbox-rlimits-connect` are skipped unless selected)_',
+                  : '**Requested jobs:** _(default — all default-enabled free-standing jobs; explicit-only jobs `openshell-gateway-auth-contract`, `jetson-nvmap-gpu`, and `sandbox-rlimits-connect` are skipped unless selected)_',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${cancelled.length} cancelled, ${skipped.length} skipped`,
               '',
               '| Job | Result |',
@@ -6474,6 +6555,7 @@ jobs:
         generate-matrix,
         live,
         openshell-version-pin,
+        openshell-gateway-auth-contract,
         onboard-negative-paths,
         skill-agent,
         openclaw-skill-cli,

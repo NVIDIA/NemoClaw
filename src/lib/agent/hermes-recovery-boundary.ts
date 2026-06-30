@@ -73,32 +73,33 @@ function buildHermesBoundaryKillSnippet(): string {
  * the sandbox recovers — failing the issue's log-acceptance clause even when
  * relaunch is correctly refused.
  *
- * SECURITY: `tee -a` to `/tmp/gateway-recovery.log` is invoked here BEFORE
- * `buildGatewayLogSetup` runs, so the log path is not pre-opened with the
- * O_NOFOLLOW helper. This is safe today because non-OpenClaw recovery runs as
- * the sandbox user over SSH; the sandbox user owns `/tmp` and cannot win a
- * symlink race with itself for files under its own control. Do not move this
- * snippet into a root-exec recovery path without first prepending an
- * O_NOFOLLOW-prepared log file via the shared no-follow helper.
+ * SECURITY: `tee -a` cannot itself open the log file with `O_NOFOLLOW`, so a
+ * symlink swapped in at the log path could redirect the validator's `[SECURITY]`
+ * lines to an attacker-chosen file. To close that gap without depending on the
+ * `buildGatewayLogSetup` preamble (which runs later, after validator-driven
+ * refusal could already have written to a redirected log), the snippet first
+ * refuses the recovery run when the log path is itself a symlink. The sandbox
+ * user owns `/tmp` in the non-OpenClaw recovery path that consumes this
+ * snippet, so a same-uid symlink race is not credible, but the explicit
+ * `[ -L ... ]` check makes the boundary observable in tests and survives if
+ * this snippet is ever moved to a root-exec context.
  */
+function buildRecoveryLogSymlinkGuard(): string {
+  return `if [ -L ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} ]; then echo '[SECURITY] Refusing Hermes recovery: ${HERMES_BOUNDARY_RECOVERY_LOG} is a symlink' >&2; exit 1; fi;`;
+}
+
 function buildHermesValidatorInvocation(args: string): string {
   return `"$_NEMOCLAW_PYTHON3" -I ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
 }
 
 function buildHermesValidatorMissingLog(): string {
-  const message = `[gateway-recovery] WARNING: secret-boundary validator script ${HERMES_SECRET_BOUNDARY_VALIDATOR_PATH} missing on this sandbox image; skipping recovery boundary check. Production images bake the validator in; older images recover without it.`;
+  const message = `[gateway-recovery] REFUSING: secret-boundary validator script ${HERMES_SECRET_BOUNDARY_VALIDATOR_PATH} is missing on this sandbox image; recovery cannot verify /sandbox/.hermes/.env. Re-image the sandbox with a current Hermes build.`;
   return `printf '%s\\n' ${shellQuote(message)} | tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2;`;
 }
 
-// REMOVAL CONDITION: the warn-and-skip path above is fail-open by design so
-// that a newer NemoClaw CLI talking to an older Hermes sandbox image still
-// recovers. Once the minimum supported Hermes image (currently the
-// `ghcr.io/nvidia/nemoclaw/hermes-sandbox-base` tag tracked by the production
-// Dockerfile) is guaranteed to bake the validator in, flip the missing-file
-// branch to fail-closed (kill + `echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit
-// 1;`) and update `runtime-hermes-secret-boundary-behavioural.test.ts` to
-// assert the refusal. Track the cutoff against the base-image version pinned
-// in `agents/hermes/Dockerfile`.
+// Missing-validator recovery is fail-closed: the host CLI cannot prove the
+// Hermes entrypoint's env-file boundary without this source validator, so older
+// images must be re-imaged before gateway/dashboard recovery can proceed.
 
 /**
  * Build the shell snippet that re-runs the documented Hermes secret-boundary
@@ -114,9 +115,9 @@ function buildHermesValidatorMissingLog(): string {
  * `/tmp/gateway-recovery.log` so a user inspecting the sandbox after a refused
  * recovery can identify the offending key.
  *
- * Older sandbox images that do not yet bake the validator in fall through with
- * a `[gateway-recovery] WARNING` line and the recovery proceeds, so a partial
- * image upgrade does not block recovery.
+ * Older sandbox images that do not yet bake the validator fail closed with a
+ * re-image message, so recovery never reports success without re-checking the
+ * documented env-file secret boundary.
  */
 export function buildHermesEnvFileBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
@@ -124,8 +125,9 @@ export function buildHermesEnvFileBoundaryGuard(): string {
   const missingLog = buildHermesValidatorMissingLog();
   const picker = buildTrustedPython3Picker();
   const pythonGuard = buildTrustedPython3Guard();
+  const symlinkGuard = buildRecoveryLogSymlinkGuard();
   const invocation = buildHermesValidatorInvocation("env-file /sandbox/.hermes/.env");
-  return `${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
+  return `${symlinkGuard} ${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
 }
 
 /**
@@ -136,8 +138,8 @@ export function buildHermesEnvFileBoundaryGuard(): string {
  * is the one checked.
  *
  * Same semantics as the env-file guard: fail-closed when the validator runs and
- * refuses (kill + refuse + exit), warning-skip when the validator script is
- * absent from an older image.
+ * refuses, and fail-closed when the validator script is absent from an older
+ * image.
  */
 export function buildHermesRuntimeEnvBoundaryGuard(): string {
   const validator = HERMES_SECRET_BOUNDARY_VALIDATOR_PATH;
@@ -145,8 +147,9 @@ export function buildHermesRuntimeEnvBoundaryGuard(): string {
   const missingLog = buildHermesValidatorMissingLog();
   const picker = buildTrustedPython3Picker();
   const pythonGuard = buildTrustedPython3Guard();
+  const symlinkGuard = buildRecoveryLogSymlinkGuard();
   const invocation = buildHermesValidatorInvocation("runtime-env");
-  return `${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
+  return `${symlinkGuard} ${picker} ${pythonGuard} if [ ! -f ${shellQuote(validator)} ]; then ${missingLog} ${kill} echo SECRET_BOUNDARY_VALIDATOR_MISSING; exit 1; elif ! ${invocation}; then ${kill} echo SECRET_BOUNDARY_REFUSED; exit 1; fi;`;
 }
 
 /**
@@ -162,7 +165,8 @@ export function buildHermesRuntimeEnvBoundaryGuard(): string {
  *   - `SECRET_BOUNDARY_REFUSED` — validator ran and refused; the snippet
  *     killed any running gateway/dashboard process before exiting non-zero.
  *   - `SECRET_BOUNDARY_VALIDATOR_MISSING` — validator script absent on this
- *     sandbox image (older image, fail-open by design).
+ *     sandbox image; the snippet killed gateway/dashboard processes and exits
+ *     non-zero so the caller can refuse recovery.
  *
  * Validator stderr (`[SECURITY] …` lines) is left on the exec command's
  * stderr; the caller surfaces it directly. This keeps the snippet
@@ -187,7 +191,9 @@ export function buildHermesEnvFileBoundaryStandaloneCheck(): string {
     picker,
     pythonGuard,
     `if [ ! -f ${shellQuote(validator)} ]; then`,
-    `  echo ${SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER}; exit 0;`,
+    `  ${kill}`,
+    `  echo ${SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER};`,
+    `  exit 1;`,
     `fi;`,
     `if ${invocation}; then`,
     `  echo ${SECRET_BOUNDARY_OK_MARKER}; exit 0;`,
