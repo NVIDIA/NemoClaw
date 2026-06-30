@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -85,6 +85,14 @@
 # against this script's own directory so a checkout works without an install,
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
+
+# Defence-in-depth against attacker-controlled bash startup. The absolute
+# shebang (`#!/bin/bash`) avoids resolving the interpreter through the
+# caller's PATH. Clearing BASH_ENV/ENV/SHELLOPTS here cannot un-source any
+# init file that bash already ran at startup, but it prevents the same
+# vectors from leaking into child processes (real Hermes binary, validator,
+# masker). Sandbox callers should also scrub these in the launching env.
+unset BASH_ENV ENV BASH_XTRACEFD
 
 # Hard-require Bash 4+. The `config show` branch uses array indexing on
 # PIPESTATUS, the `coproc` builtin, named-FD allocation, and the BASH_SOURCE

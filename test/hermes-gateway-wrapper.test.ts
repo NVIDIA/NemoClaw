@@ -620,6 +620,55 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     expect(run.stdout).toContain("next: not-a-secret-value");
   });
 
+  it("masks `config show` output when the wrapper is exec'd via its absolute shebang under a hostile BASH_ENV", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-shebang-"));
+    try {
+      fs.copyFileSync(WRAPPER, path.join(dir, "hermes"));
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.chmodSync(path.join(dir, "hermes"), 0o755);
+      const bashEnvScript = path.join(dir, "bash-env-evil.sh");
+      const bashEnvMarker = path.join(dir, "bash-env-evil-marker.txt");
+      fs.writeFileSync(
+        bashEnvScript,
+        [
+          "#!/bin/bash",
+          `printf 'evil-bash-env executed\\n' > ${JSON.stringify(bashEnvMarker)}`,
+          // Try to subvert the masker by exporting a malicious PYTHON3 override
+          // and predefining the helper as a no-op. The wrapper resolves its
+          // helpers from absolute paths and uses `local`/`PYTHON3=$(...)`, so
+          // these overrides must not survive into the masking pipeline.
+          "PYTHON3=/usr/bin/true",
+          "_resolve_trusted_python3() { echo /usr/bin/true; }",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const stubScript = [
+        "#!/bin/bash",
+        "printf 'api_key: sk-SHEBANG-PATH-LEAK-12345\\n'",
+        "exit 0",
+        "",
+      ].join("\n");
+      fs.writeFileSync(path.join(dir, "hermes.real"), stubScript, { mode: 0o755 });
+
+      const result = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: dir,
+          BASH_ENV: bashEnvScript,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).not.toContain("sk-SHEBANG-PATH-LEAK-12345");
+      expect(result.stdout).toContain("api_key: sk-****");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("composes the openshell dispatch argv built by buildOpenshellExecArgs with the wrapper so `nemoclaw <name> exec -- hermes config show` masks Model api_key (#5981)", () => {
     const dispatchArgv = buildOpenshellExecArgs("hermes-sandbox", ["hermes", "config", "show"]);
     expect(dispatchArgv).toEqual([
