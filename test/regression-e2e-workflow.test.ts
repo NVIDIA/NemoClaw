@@ -18,6 +18,7 @@ type RegressionWorkflow = {
   jobs?: Record<
     string,
     {
+      env?: Record<string, string>;
       permissions?: Record<string, string>;
       steps?: WorkflowStep[];
     }
@@ -54,13 +55,21 @@ describe("Regression E2E workflow contract", () => {
     expect(selectorScript).not.toContain("strict_tool_call_probe");
   });
 
-  it("runs WhatsApp compact QR through the consolidated OpenClaw pairing Vitest lane", () => {
+  it("runs WhatsApp compact QR through only the WhatsApp OpenClaw pairing Vitest case", () => {
     const job = workflow.jobs?.["openclaw-channels-pairing-whatsapp-qr-e2e"];
-    const runText = (job?.steps ?? []).map((step) => step.run ?? "").join("\n");
+    const steps = job?.steps ?? [];
+    const runText = steps.map((step) => step.run ?? "").join("\n");
 
     expect(runText).toContain("test/e2e/live/openclaw-channels-pairing.test.ts");
+    expect(runText).toContain('-t "openclaw channels pairing renders WhatsApp QR compactly"');
     expect(runText).toContain("npx vitest run --project e2e-live");
-    expect(runText).not.toContain("NEMOCLAW_RUN_LIVE_E2E");
+    expect(job?.env?.NEMOCLAW_RUN_LIVE_E2E).toBeUndefined();
+    for (const step of steps) {
+      expect(
+        step.env?.NEMOCLAW_RUN_LIVE_E2E,
+        step.name ?? step.uses ?? "<unnamed>",
+      ).toBeUndefined();
+    }
   });
 
   it("stages the public NVIDIA key for the Model Router's NVIDIA credential", () => {

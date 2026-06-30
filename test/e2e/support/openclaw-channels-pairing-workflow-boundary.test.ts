@@ -56,6 +56,7 @@ describe("OpenClaw channels pairing workflow boundary", () => {
       (step) => step.name === "Run OpenClaw channels pairing live tests",
     ) as { env: Record<string, string> };
     liveStep.env.DISCORD_BOT_TOKEN = "real-ish-token";
+    liveStep.env.SLACK_BOT_TOKEN = "real-ish-token";
     liveStep.env.SLACK_APP_TOKEN = "real-ish-token";
     const installOpenShell = pairingJob.steps.find(
       (step) => step.name === "Install OpenShell CLI",
@@ -75,6 +76,7 @@ describe("OpenClaw channels pairing workflow boundary", () => {
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Build CLI' run script must include npm run build:cli",
           "openclaw-channels-pairing step must use fake Discord token",
+          "openclaw-channels-pairing step must use fake Slack bot token",
           "openclaw-channels-pairing step must use fake Slack app token",
           "step 'Install OpenShell CLI' run script must include env -u DOCKER_CONFIG",
         ]),

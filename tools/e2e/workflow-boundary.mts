@@ -4176,7 +4176,11 @@ function validateChannelLifecycleJob(
     "MSTEAMS_APP_PASSWORD",
   ]) {
     const tokenValue = stringValue(runVitestEnv[tokenName]);
-    if (tokenValue.length === 0 || tokenValue.includes("${{")) {
+    if (
+      tokenValue.length === 0 ||
+      tokenValue.includes("${{") ||
+      !/^(test-fake-|xoxb-fake-|xapp-fake-)/.test(tokenValue)
+    ) {
       errors.push(`${jobName} step must set fake ${tokenName}`);
     }
   }
@@ -4286,6 +4290,7 @@ function validateOpenClawChannelsCredentialRewriteJob(
       requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_TOKEN");
       requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     }
+    requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "GITHUB_TOKEN");
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));
@@ -4676,6 +4681,7 @@ function validateOpenClawChannelsTelegramInjectionSafetyJob(
       requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "DOCKERHUB_TOKEN");
       requireNoDockerHubAuthInRun(errors, stepName, stringValue(step.run));
     }
+    requireEnvDoesNotExposeSecret(errors, stepName, asRecord(step.env), "GITHUB_TOKEN");
   }
 
   const checkout = steps.find((step) => stringValue(step.uses).startsWith("actions/checkout@"));

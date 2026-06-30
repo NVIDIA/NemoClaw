@@ -602,6 +602,8 @@ describe("e2e workflow boundary", () => {
         "gateway-health-honest",
         "concurrent-gateway-ports",
         "openclaw-channels-conflict-guard",
+        "openclaw-channels-add-remove",
+        "hermes-channels-add-remove",
       ]) {
         for (const selector of ["targets", "jobs"] as const) {
           expect(evaluateE2eWorkflowDispatchSelectors({ [selector]: job })).toMatchObject({
@@ -612,24 +614,6 @@ describe("e2e workflow boundary", () => {
           });
         }
       }
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({ targets: "openclaw-channels-add-remove" }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["openclaw-channels-add-remove"],
-        registryTargets: [],
-      });
-      expect(
-        evaluateE2eWorkflowDispatchSelectors({
-          jobs: "hermes-channels-add-remove",
-        }),
-      ).toMatchObject({
-        valid: true,
-        liveTargetsRun: false,
-        selectedFreeStandingJobs: ["hermes-channels-add-remove"],
-        registryTargets: [],
-      });
     },
   );
 
@@ -1247,6 +1231,7 @@ jobs:
           "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "openclaw-channels-stop-start step must set fake TELEGRAM_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake DISCORD_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake MSTEAMS_APP_PASSWORD",
           "step 'Run OpenClaw channels stop/start live test' run script must include test/e2e/live/openclaw-channels-stop-start.test.ts",
@@ -1256,6 +1241,43 @@ jobs:
           "openclaw-channels-stop-start artifact upload retention-days must be 14",
           "openclaw-channels-stop-start Docker auth cleanup must always run",
           "step 'Clean up Docker auth' run script must include rm -rf \"${DOCKER_CONFIG}\"",
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects GITHUB_TOKEN exposure in channel credential rewrite and injection safety steps", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    for (const [jobName, stepName] of [
+      [
+        "openclaw-channels-credential-rewrite",
+        "Run OpenClaw channels credential rewrite live Vitest test",
+      ],
+      [
+        "openclaw-channels-telegram-injection-safety",
+        "Run OpenClaw channels Telegram injection safety live test",
+      ],
+    ]) {
+      const step = workflow.jobs[jobName]?.steps.find((item) => item.name === stepName);
+      expect(step, `${jobName} ${stepName}`).toBeDefined();
+      step!.env = {
+        ...((step!.env as Record<string, unknown>) ?? {}),
+        GITHUB_TOKEN: "${{ github.token }}",
+      };
+    }
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "openclaw-channels-credential-rewrite step 'Run OpenClaw channels credential rewrite live Vitest test' env must not include GITHUB_TOKEN",
+          "openclaw-channels-telegram-injection-safety step 'Run OpenClaw channels Telegram injection safety live test' env must not include GITHUB_TOKEN",
         ]),
       );
     } finally {

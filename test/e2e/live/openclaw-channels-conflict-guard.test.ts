@@ -124,8 +124,14 @@ function writeConflictRegistry(homeDir: string): string {
 }
 
 function commandEnv(homeDir: string): NodeJS.ProcessEnv {
+  const inherited = Object.fromEntries(
+    ["PATH", "Path", "TMPDIR", "TMP", "TEMP", "SYSTEMROOT", "SystemRoot"].flatMap((key) => {
+      const value = process.env[key];
+      return typeof value === "string" ? [[key, value]] : [];
+    }),
+  );
   return {
-    ...process.env,
+    ...inherited,
     HOME: homeDir,
     NO_COLOR: "1",
     NEMOCLAW_NON_INTERACTIVE: "1",

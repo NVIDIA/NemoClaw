@@ -352,4 +352,5 @@ jobs:
         run: |
           npx vitest run --project e2e-live \
             test/e2e/live/openclaw-channels-pairing.test.ts \
+            -t "openclaw channels pairing renders WhatsApp QR compactly" \
             --silent=false --reporter=default
