@@ -118,6 +118,17 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     expect(mocks.runInferenceSet).not.toHaveBeenCalled();
   });
 
+  it("rejects an empty --model before runInferenceSet is called (#5977)", async () => {
+    await expect(
+      SandboxInferenceSetCommand.run(
+        ["alpha", "--provider", "nvidia-prod", "--model", "   "],
+        rootDir,
+      ),
+    ).rejects.toThrow(/model id .* cannot be empty/i);
+
+    expect(mocks.runInferenceSet).not.toHaveBeenCalled();
+  });
+
   it("maps the sandbox inference get --json output into oclif JSON handling", async () => {
     mocks.runInferenceGet.mockResolvedValueOnce({
       provider: "nvidia-prod",
