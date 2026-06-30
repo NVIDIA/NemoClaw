@@ -106,8 +106,22 @@ describe("resolveStopGatewayPort (#5968)", () => {
     expect(port).toBe(8090);
   });
 
-  it("falls back to the default gateway port when no binding is found", () => {
-    expect(resolveStopGatewayPort({ sandboxName: "alpha" }, () => null)).toBe(DEFAULT_GATEWAY_PORT);
+  it("fails closed (null) when a named sandbox has no registry entry", () => {
+    // A named stop whose registry entry is absent must not fall back to
+    // default-port cleanup: an unknown name could otherwise tear down a
+    // different sandbox's / worktree's default gateway.
+    expect(resolveStopGatewayPort({ sandboxName: "alpha" }, () => null)).toBe(null);
+  });
+
+  it("falls back to the default gateway port for a call with no sandbox name", () => {
+    // A direct "release the default gateway" request (no sandbox identity).
+    expect(resolveStopGatewayPort({}, () => null)).toBe(DEFAULT_GATEWAY_PORT);
+  });
+
+  it("falls back to the default gateway port for a legacy entry with no gateway fields", () => {
+    // A real legacy entry (e.g. `{}`) maps to the base `nemoclaw` name and
+    // resolves to the default port, keeping single-sandbox deployments working.
+    expect(resolveStopGatewayPort({ sandboxName: "alpha" }, () => ({}))).toBe(DEFAULT_GATEWAY_PORT);
   });
 
   it("fails closed (null) when the persisted gateway binding is invalid", () => {
@@ -259,7 +273,35 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     expect(stop.lastOptions()).toBeUndefined();
     expect(lsof.calls).toBe(0);
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
-      "gateway binding is invalid or unreadable",
+      "no valid gateway binding is registered",
+    );
+  });
+
+  it("skips default-port cleanup for a named sandbox whose registry entry is absent", () => {
+    // A named stop with no registry entry must not scan or signal the
+    // process-wide default gateway, which could belong to another worktree.
+    const lsof = lsofResponder(ok("777\n"));
+    const stop = stopSpy(emptyStopResult());
+    const warn = vi.fn();
+
+    const result = releaseManagedGatewayPort(
+      { sandboxName: "no-such-sandbox" },
+      {
+        ...baseDeps,
+        warn,
+        run: lsof.run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => null,
+      },
+    );
+
+    expect(result.skipped).toBe(true);
+    expect(result.released).toBe(false);
+    expect(result.port).toBe(null);
+    expect(stop.lastOptions()).toBeUndefined();
+    expect(lsof.calls).toBe(0);
+    expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
+      "no valid gateway binding is registered",
     );
   });
 

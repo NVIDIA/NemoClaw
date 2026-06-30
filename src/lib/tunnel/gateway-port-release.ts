@@ -112,17 +112,27 @@ function isValidPort(value: number | undefined): value is number {
 /**
  * Resolve the gateway port `nemoclaw stop` should release for the selected
  * sandbox. Prefers an explicit override, then the sandbox's persisted gateway
- * binding, and finally the process-wide `GATEWAY_PORT` (env-derived, default
- * 8080) so a single-sandbox deployment with no registry entry still works.
+ * binding.
  *
- * Returns `null` when the sandbox *has* a persisted gateway binding that fails
- * validation. This stop path is destructive (it derives a pid file, scans
- * listeners, and signals matched PIDs), so it mirrors the fail-closed contract
- * of `resolveSandboxGatewayName`: a corrupt or tampered binding must not be
- * silently coerced to the default port, which could stop another sandbox's
- * (or worktree's) default gateway. The legacy/no-registry fallback to
- * `GATEWAY_PORT` is kept only for a missing entry or a legacy entry with no
- * gateway fields (where `resolveSandboxGatewayName` returns the base name).
+ * This stop path is destructive (it derives a pid file, scans listeners, and
+ * signals matched PIDs), so it fails closed — returns `null` to skip the
+ * destructive path — in every case where the selected sandbox's gateway port
+ * cannot be trusted:
+ *   - the registry lookup itself throws (e.g. a corrupt registry);
+ *   - the sandbox *has* a persisted binding that fails validation (mirroring
+ *     `resolveSandboxGatewayName`'s fail-closed contract: a corrupt or tampered
+ *     binding must not be silently coerced to the default port);
+ *   - a *named* sandbox has no registry entry at all. Coercing an absent named
+ *     entry to the process-wide `GATEWAY_PORT` could tear down another sandbox's
+ *     (or worktree's) default gateway — the same hazard `stopAll()` avoids for
+ *     the no-sandbox path, where the default port is not tied to the selected
+ *     `pidDir`.
+ *
+ * The `GATEWAY_PORT` fallback (env-derived, default 8080) is kept only for a
+ * call with no sandbox name (a direct "release the default gateway" request)
+ * and for a real legacy entry with no gateway fields (e.g. `{}`), which
+ * `resolveSandboxGatewayName` maps to the base `nemoclaw` name so existing
+ * single-sandbox deployments keep working.
  */
 export function resolveStopGatewayPort(
   options: ReleaseGatewayPortOptions,
@@ -147,6 +157,11 @@ export function resolveStopGatewayPort(
         return null;
       }
     }
+    // Named sandbox with no registry entry: fail closed. A legacy entry with
+    // no gateway fields is honored above (it is truthy); only a truly absent
+    // entry reaches here, and default-port cleanup for an unknown name could
+    // stop a different sandbox's/worktree's gateway.
+    return null;
   }
   return GATEWAY_PORT;
 }
@@ -206,8 +221,8 @@ export function releaseManagedGatewayPort(
     // gateway.
     warn(
       `Skipping gateway port release for sandbox ${JSON.stringify(options.sandboxName)}: ` +
-        "its gateway binding is invalid or unreadable. Resolve the registry entry, " +
-        "then re-run stop.",
+        "no valid gateway binding is registered for it (the entry is missing, " +
+        "invalid, or unreadable). Resolve the registry entry, then re-run stop.",
     );
     return {
       port: null,
