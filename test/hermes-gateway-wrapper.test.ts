@@ -623,21 +623,16 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
         [
           "#!/usr/bin/env bash",
           "printf 'installed-real-invoked\\n'",
-          'printf \'api_key: sk-OPENSHELL-PROXY-REWRITE\\n\'',
+          "printf 'api_key: sk-OPENSHELL-PROXY-REWRITE\\n'",
           "exit 0",
           "",
         ].join("\n"),
         { mode: 0o755 },
       );
-      fs.copyFileSync(
-        VALIDATOR,
-        path.join(installLib, "validate-hermes-env-secret-boundary.py"),
-      );
-      const wrapperBody = fs.readFileSync(WRAPPER, "utf-8")
-        .replace(
-          /\/usr\/local\/bin\/hermes\.real/g,
-          path.join(installBin, "hermes.real"),
-        )
+      fs.copyFileSync(VALIDATOR, path.join(installLib, "validate-hermes-env-secret-boundary.py"));
+      const wrapperBody = fs
+        .readFileSync(WRAPPER, "utf-8")
+        .replace(/\/usr\/local\/bin\/hermes\.real/g, path.join(installBin, "hermes.real"))
         .replace(
           /\/usr\/local\/lib\/nemoclaw\/validate-hermes-env-secret-boundary\.py/g,
           path.join(installLib, "validate-hermes-env-secret-boundary.py"),
@@ -658,15 +653,11 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
       );
       fs.copyFileSync(wrapperPath, path.join(decoyDir, "hermes"));
 
-      const result = spawnSync(
-        "bash",
-        [path.join(decoyDir, "hermes"), "config", "show"],
-        {
-          encoding: "utf-8",
-          timeout: 10_000,
-          env: { PATH: process.env.PATH ?? "", HOME: dir },
-        },
-      );
+      const result = spawnSync("bash", [path.join(decoyDir, "hermes"), "config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("installed-real-invoked");
