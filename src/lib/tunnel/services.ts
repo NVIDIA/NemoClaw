@@ -638,6 +638,12 @@ export function stopAll(opts: ServiceOptions = {}): void {
       warn(
         `Could not release the NemoClaw gateway port: ${(error as Error).message ?? String(error)}`,
       );
+      // Best-effort by design (a stop must not fail on gateway teardown), so the
+      // user-facing warning carries only the message. The full stack is opt-in
+      // via NODE_DEBUG=nemoclaw:gateway for diagnosing an unexpected throw.
+      if ((process.env.NODE_DEBUG ?? "").includes("nemoclaw:gateway")) {
+        console.error((error as Error).stack ?? String(error));
+      }
     }
   }
 

@@ -110,6 +110,18 @@ function isValidPort(value: number | undefined): value is number {
 }
 
 /**
+ * Stderr debug logger gated on `NODE_DEBUG=nemoclaw:gateway`. The fail-closed
+ * catch branches below skip the destructive path silently by design (a stop
+ * must not be noisy about a corrupt/missing binding), but an operator
+ * debugging "why was gateway release skipped?" can opt into the detail without
+ * changing default behavior.
+ */
+function makeGatewayDebug(env: NodeJS.ProcessEnv): (message: string) => void {
+  const enabled = (env.NODE_DEBUG ?? "").includes("nemoclaw:gateway");
+  return enabled ? (message: string) => console.error(`[nemoclaw:gateway] ${message}`) : () => {};
+}
+
+/**
  * Resolve the gateway port `nemoclaw stop` should release for the selected
  * sandbox. Prefers an explicit override, then the sandbox's persisted gateway
  * binding.
@@ -139,6 +151,7 @@ function isValidPort(value: number | undefined): value is number {
 export function resolveStopGatewayPort(
   options: ReleaseGatewayPortOptions,
   getSandbox: (name: string) => SandboxGatewayBinding | null,
+  debug: (message: string) => void = () => {},
 ): number | null {
   // An explicit port override that is present but invalid fails closed (null)
   // rather than silently falling through to sandbox/default resolution: an
@@ -150,17 +163,40 @@ export function resolveStopGatewayPort(
     let entry: SandboxGatewayBinding | null;
     try {
       entry = getSandbox(options.sandboxName);
-    } catch {
+    } catch (error) {
       // Registry lookup itself failed (e.g. corrupt registry). Fail closed
       // rather than falling back to default-port cleanup.
+      //
+      // Source-of-truth review: invalid state = a registry file that throws on
+      // read (corruption); source boundary = the registry write path
+      // (`state/registry`), which should guarantee a readable file; this is the
+      // defensive read-time guard; regression test = "skips the destructive
+      // path when the registry lookup throws"; removal condition = when the
+      // registry write path validates/heals so a lookup cannot throw.
+      debug(
+        `registry lookup for sandbox ${JSON.stringify(options.sandboxName)} threw; ` +
+          `skipping gateway release: ${(error as Error).message ?? String(error)}`,
+      );
       return null;
     }
     if (entry) {
       // Honor the persisted binding as the source of truth. Fail closed when
       // it does not validate rather than guessing the default port.
+      //
+      // Source-of-truth review: invalid state = a corrupt/tampered
+      // gatewayPort/gatewayName in a persisted entry; source boundary = the
+      // onboard/registry write path (`resolveSandboxGatewayName` validates on
+      // write, but pre-existing rows may be invalid); regression test = "does
+      // not fall back to the default port when the persisted gateway binding is
+      // invalid"; removal condition = when registry migration validates all
+      // existing entries.
       try {
         return resolveGatewayPortFromName(resolveSandboxGatewayName(entry));
-      } catch {
+      } catch (error) {
+        debug(
+          `persisted gateway binding for sandbox ${JSON.stringify(options.sandboxName)} is invalid; ` +
+            `skipping gateway release: ${(error as Error).message ?? String(error)}`,
+        );
         return null;
       }
     }
@@ -219,8 +255,9 @@ export function releaseManagedGatewayPort(
     depsOverrides.commandExists ?? ((cmd: string) => defaultCommandExists(cmd, env));
   const stopFn = depsOverrides.stopHostGatewayProcesses ?? stopHostGatewayProcesses;
   const getSandbox = depsOverrides.getSandbox ?? lazyGetSandbox;
+  const debug = makeGatewayDebug(env);
 
-  const port = resolveStopGatewayPort(options, getSandbox);
+  const port = resolveStopGatewayPort(options, getSandbox, debug);
   if (port === null) {
     // Fail closed: the sandbox's persisted gateway binding is invalid or its
     // registry entry could not be read. Skip the destructive path entirely

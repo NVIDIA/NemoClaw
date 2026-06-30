@@ -189,6 +189,35 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     );
   });
 
+  it("scopes the sweep to the sandbox's own gateway port so another worktree's gateway is untouched", () => {
+    // Cross-worktree isolation: a stop for sandbox A (port 8090) must only ever
+    // probe :8090 and target the 8090 state dir, and must never run a host-wide
+    // pgrep sweep — so sandbox B's gateway on a different port is never reaped.
+    const calls: string[][] = [];
+    const run: NonNullable<HostGatewayProcessDeps["run"]> = (command, args) => {
+      calls.push([command, ...args]);
+      return ok("8190\n");
+    };
+    const stop = stopSpy(emptyStopResult({ stopped: [8190] }));
+
+    releaseManagedGatewayPort(
+      { sandboxName: "alpha", confirmTimeoutMs: 5 },
+      {
+        ...baseDeps,
+        run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => ({ gatewayPort: 8090 }),
+      },
+    );
+
+    const lsofCalls = calls.filter((c) => c[0] === "lsof");
+    expect(lsofCalls.length).toBeGreaterThan(0);
+    expect(lsofCalls.every((c) => c.includes(":8090"))).toBe(true);
+    expect(lsofCalls.some((c) => c.includes(":8091"))).toBe(false);
+    expect(stop.lastOptions()?.usePgrepFallback).toBe(false);
+    expect(stop.lastOptions()?.stateDir).toContain("openshell-docker-gateway-8090");
+  });
+
   it("targets the per-port state dir for a non-default gateway port", () => {
     const lsof = lsofResponder(ok(""));
     const stop = stopSpy(emptyStopResult());
@@ -310,6 +339,30 @@ describe("releaseManagedGatewayPort (#5968)", () => {
     expect(warn.mock.calls.map((c) => c[0]).join("\n")).toContain(
       "no valid gateway binding is registered",
     );
+  });
+
+  it("emits a NODE_DEBUG=nemoclaw:gateway diagnostic when the fail-closed path is taken", () => {
+    // The skip is silent by default; opting into NODE_DEBUG surfaces *why*.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const stop = stopSpy(emptyStopResult());
+
+    releaseManagedGatewayPort(
+      { sandboxName: "alpha" },
+      {
+        ...baseDeps,
+        env: { HOME: "/home/tester", NODE_DEBUG: "nemoclaw:gateway" } as NodeJS.ProcessEnv,
+        run: lsofResponder(ok("999\n")).run,
+        stopHostGatewayProcesses: stop.fn,
+        getSandbox: () => {
+          throw new Error("corrupt registry");
+        },
+      },
+    );
+
+    expect(errorSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+      "[nemoclaw:gateway] registry lookup for sandbox",
+    );
+    errorSpy.mockRestore();
   });
 
   it("skips the destructive path when the registry lookup throws", () => {
