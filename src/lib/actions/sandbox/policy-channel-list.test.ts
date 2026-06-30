@@ -30,6 +30,7 @@ const POLICY_PRESETS: PresetInfo[] = [
 let logSpy: MockInstance;
 let errSpy: MockInstance;
 let getSandboxMock: MockInstance;
+let getCustomPoliciesMock: MockInstance;
 let getAppliedPresetsMock: MockInstance;
 
 function printedText(): string {
@@ -63,7 +64,7 @@ beforeEach(() => {
   logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
   errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   getSandboxMock = vi.spyOn(registry, "getSandbox");
-  vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
+  getCustomPoliciesMock = vi.spyOn(registry, "getCustomPolicies").mockReturnValue([]);
   vi.spyOn(policies, "listPresets").mockReturnValue(POLICY_PRESETS);
   vi.spyOn(policies, "listCustomPresets").mockReturnValue([]);
   getAppliedPresetsMock = vi.spyOn(policies, "getAppliedPresets");
@@ -87,6 +88,24 @@ describe("listSandboxPolicies provenance", () => {
     const output = printedText();
     expect(output).toContain("● npm [from balanced tier]");
     expect(output).toContain("● pypi [from balanced tier]");
+  });
+
+  it("keeps tier attribution when a custom registry entry shadows a tier preset (#5774)", () => {
+    getCustomPoliciesMock.mockReturnValue([
+      { name: "npm", description: "sandbox-scoped custom npm policy" },
+    ]);
+    arrangeListing({
+      appliedNames: ["npm"],
+      gatewayNames: ["npm"],
+      tier: "balanced",
+      agent: "openclaw",
+    });
+
+    listSandboxPolicies("test-sandbox");
+
+    const output = printedText();
+    expect(output).toContain("● npm [from balanced tier]");
+    expect(output).not.toContain("● npm [user-added]");
   });
 
   it("tags openclaw-pricing as an OpenClaw agent preset (#5774)", () => {
