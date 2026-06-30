@@ -181,7 +181,7 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("Release Checklist for Accepted Residual Risk");
     expect(review).toContain("test/openclaw-real-patched-dist-harness.test.ts");
     expect(review).toContain("NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS=1");
-    expect(review).toContain("dedicated PR and main CI jobs");
+    expect(review).toContain("PR CI intentionally does not treat PR-authored harness code");
     expect(review).toContain("applies the Dockerfile patch block");
     expect(review).toContain("test/openclaw-issue-4434-diagnostics-patch.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
@@ -381,7 +381,7 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     expect(discoveredBuilds.filter(({ guarded }) => !guarded)).toEqual([]);
   });
 
-  it("runs and gates the real patched-distribution harness in PR and main CI", () => {
+  it("runs and gates the real patched-distribution harness only from trusted main code", () => {
     const pr = readYaml<Workflow>(".github/workflows/pr.yaml");
     const main = readYaml<Workflow>(".github/workflows/main.yaml");
     const prJob = pr.jobs["real-openclaw-dist-harness"];
@@ -390,29 +390,8 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
     const mainChecks = main.jobs.checks;
 
     expect(pr.permissions).toEqual({ contents: "read" });
-    expect(prJob?.permissions).toEqual({ contents: "read" });
-    expect(prJob?.["runs-on"]).toBe("ubuntu-latest");
-    expect(prJob?.secrets).toBeUndefined();
-    expect(prJob?.["timeout-minutes"]).toBe(12);
+    expect(prJob).toBeUndefined();
     expect(mainJob?.["timeout-minutes"]).toBe(12);
-    const prCheckout = requiredStep(prJob, "Checkout");
-    expect(prCheckout.uses).toBe("actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10");
-    expect(prCheckout.with?.["persist-credentials"]).toBe(false);
-    expect(requiredStep(prJob, "Setup Node.js").uses).toBe(
-      "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e",
-    );
-    expect(requiredStep(prJob, "Install test dependencies").run).toBe(
-      "npm install --ignore-scripts",
-    );
-    const prHarness = requiredStep(prJob, "Audit the real patched OpenClaw distribution");
-    expect(prHarness.env).toEqual({ NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1" });
-    expect(prHarness.run).toBe(
-      "npx vitest run --project integration test/openclaw-real-patched-dist-harness.test.ts --silent=false --reporter=default",
-    );
-    const serializedPrHarnessJob = JSON.stringify(prJob);
-    expect(serializedPrHarnessJob).not.toContain("${{ secrets.");
-    expect(serializedPrHarnessJob).not.toContain("${{ inputs.");
-    expect(serializedPrHarnessJob).not.toContain("pull_request_target");
     expect(requiredStep(mainJob, "Audit the real patched OpenClaw distribution").env).toMatchObject(
       {
         NEMOCLAW_REAL_OPENCLAW_DIST_HARNESS: "1",
@@ -422,30 +401,16 @@ grep -Fq -- '--phase post-agent-install' Dockerfile
       "test/openclaw-real-patched-dist-harness.test.ts",
     );
 
-    expect(prChecks.needs).toContain("real-openclaw-dist-harness");
+    expect(prChecks.needs).not.toContain("real-openclaw-dist-harness");
     expect(mainChecks.needs).toContain("real-openclaw-dist-harness");
     const prGate = requiredStep(prChecks, "Verify required PR checks");
     const mainGate = requiredStep(mainChecks, "Verify required main checks");
-    expect(prGate.env).toMatchObject({
-      REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
-    });
+    expect(prGate.env).not.toHaveProperty("REAL_OPENCLAW_DIST_HARNESS_RESULT");
     expect(mainGate.env).toMatchObject({
       REAL_OPENCLAW_DIST_HARNESS_RESULT: "${{ needs['real-openclaw-dist-harness'].result }}",
     });
 
-    const prGateRun = prGate.run ?? "";
-    const codeBranchStart = prGateRun.indexOf('if [ "$CODE_CHANGED" = "true" ]; then');
-    const docsOnlyBranchStart = prGateRun.indexOf("else", codeBranchStart);
-    const codeBranch = prGateRun.slice(codeBranchStart, docsOnlyBranchStart);
-    const docsOnlyBranch = prGateRun.slice(docsOnlyBranchStart);
-    expect(codeBranch).toContain(
-      'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
-    );
-    expect(codeBranch).not.toContain('allow_success_or_skipped "real-openclaw-dist-harness"');
-    expect(docsOnlyBranch).toContain(
-      'allow_success_or_skipped "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
-    );
-    expect(docsOnlyBranch).not.toContain('require_success "real-openclaw-dist-harness"');
+    expect(prGate.run).not.toContain("real-openclaw-dist-harness");
     expect(mainGate.run).toContain(
       'require_success "real-openclaw-dist-harness" "$REAL_OPENCLAW_DIST_HARNESS_RESULT"',
     );
