@@ -225,7 +225,6 @@ function runLaunchable(options: FakeSystemOptions) {
       OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.71",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
-      SKIP_DOCKER_PULL: "1",
       SUDO_USER: "tester",
     },
     timeout: 20_000,
@@ -242,7 +241,7 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
-  it("rejects malformed OPENSHELL_VERSION before downloads or Docker pre-pulls", () => {
+  it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
       openshellVersion: "v0.0.71;touch /tmp/nemoclaw-version-injection",
@@ -325,5 +324,23 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
     } finally {
       fake.cleanup();
     }
+  });
+
+  it("keeps the Docker socket restricted and documents docker-group execution", () => {
+    const source = fs.readFileSync(SCRIPT, "utf-8");
+
+    expect(source).toContain('sudo usermod -aG docker "$TARGET_USER"');
+    expect(source).toContain("sg docker -c");
+    expect(source).not.toMatch(/chmod\s+(?:0?666|a\+rw)\s+[^\n]*docker\.sock/u);
+  });
+
+  it("does not pre-pull mutable cache images or fall back to latest tags", () => {
+    const source = fs.readFileSync(SCRIPT, "utf-8");
+
+    expect(source).not.toContain("docker pull");
+    expect(source).not.toContain("DOCKER_IMAGES");
+    expect(source).not.toContain("supervisor:latest");
+    expect(source).not.toContain("sandbox-base:latest");
+    expect(source).not.toContain("node:22-trixie-slim");
   });
 });

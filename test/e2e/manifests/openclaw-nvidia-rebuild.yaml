@@ -1,0 +1,27 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-rebuild
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    # Lifecycle phase opt-in. The live Vitest path only runs this when a
+    # matching LifecyclePhaseFixture profile is wired.
+    lifecycle: rebuild-current-version
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY
