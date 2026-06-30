@@ -23,8 +23,8 @@ name: E2E / Branch Validation
 #   - Manually via workflow_dispatch, or called from other workflows
 #
 # NOTE: This does NOT test the community install path (launch-plugin.sh).
-# For validating what Brev Launchable users actually get, see the
-# e2e-launchable-smoke job in nightly-e2e.yaml.
+# For validating what Brev Launchable users actually get, run the
+# e2e-launchable-smoke job in e2e.yaml.
 #
 # Test suites:
 #   full                     — Install → onboard → sandbox verify → live inference

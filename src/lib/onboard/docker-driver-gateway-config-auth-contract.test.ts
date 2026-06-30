@@ -22,7 +22,7 @@ describe("docker-driver-gateway auth contract", () => {
   it("keeps the OpenShell gateway auth source review aligned with the generated config", () => {
     const compatibilityReview = fs.readFileSync(GATEWAY_AUTH_REVIEW_NOTE, "utf-8");
     const inheritedAuthReview = fs.readFileSync(
-      path.join(path.dirname(GATEWAY_AUTH_REVIEW_NOTE), "openshell-0.0.71-gateway-auth-review.md"),
+      path.join(path.dirname(GATEWAY_AUTH_REVIEW_NOTE), "openshell-0.0.71-gateway-auth-review.mdx"),
       "utf-8",
     );
 

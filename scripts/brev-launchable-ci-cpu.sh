@@ -12,7 +12,6 @@
 #   2. Node.js 22 (nodesource)
 #   3. OpenShell CLI binary (pinned release)
 #   4. NemoClaw repo cloned with npm deps installed and TS plugin built
-#   5. Docker images pre-pulled (sandbox-base, openshell/supervisor, node:22-trixie-slim)
 #
 # What this does NOT install (intentionally):
 #   - code-server (not needed for automated CI)
@@ -31,7 +30,6 @@
 #   OPENSHELL_VERSION     — OpenShell CLI release tag (default: v0.0.72)
 #   NEMOCLAW_REF          — NemoClaw git ref to clone (default: main)
 #   NEMOCLAW_CLONE_DIR    — Where to clone NemoClaw (default: ~/NemoClaw)
-#   SKIP_DOCKER_PULL      — Set to 1 to skip Docker image pre-pulls
 #
 # Related:
 #   - Epic: https://github.com/NVIDIA/NemoClaw/issues/1326
@@ -48,13 +46,6 @@ NEMOCLAW_CLONE_DIR="${NEMOCLAW_CLONE_DIR:-${TARGET_HOME}/NemoClaw}"
 
 LAUNCH_LOG="${LAUNCH_LOG:-/tmp/launch-plugin.log}"
 SENTINEL="/var/run/nemoclaw-launchable-ready"
-
-# Docker images to pre-pull. These are the expensive layers that cause
-# timeouts when pulled during CI runs.
-DOCKER_IMAGES=(
-  "ghcr.io/nvidia/nemoclaw/sandbox-base:latest"
-  "node:22-trixie-slim"
-)
 
 # ── Suppress apt noise ───────────────────────────────────────────────
 export DEBIAN_FRONTEND=noninteractive
@@ -221,10 +212,10 @@ else
 fi
 sudo systemctl enable --now docker
 sudo usermod -aG docker "$TARGET_USER" 2>/dev/null || true
-# Make the socket world-accessible so SSH sessions (which don't pick up the
-# new docker group until re-login) can use Docker immediately.  This is a
-# short-lived CI VM — socket security is not a concern.
-sudo chmod 666 /var/run/docker.sock
+# The current bootstrap process predates the usermod above, so any Docker
+# daemon command in this session must use `sg docker -c ...`. New SSH sessions
+# naturally receive the docker group. Never weaken the host-root-equivalent
+# Docker socket permissions to work around stale group membership.
 info "Docker enabled ($(docker --version 2>/dev/null | head -c 40))"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -301,32 +292,6 @@ else
     "https://github.com/NVIDIA/NemoClaw.git" "$NEMOCLAW_CLONE_DIR"
 fi
 
-# ── Start Docker image pulls in the background ─────────────────────
-# Docker pulls are network-bound and independent of npm install / plugin
-# build (CPU-bound). Running them in parallel saves ~60-80s.
-DOCKER_PULL_PID=""
-if [[ "${SKIP_DOCKER_PULL:-0}" != "1" ]]; then
-  info "Pre-pulling Docker images in background..."
-  (
-    SUPERVISOR_TAG="$OPENSHELL_VERSION_NO_V"
-    SUPERVISOR_IMAGE="ghcr.io/nvidia/openshell/supervisor:${SUPERVISOR_TAG}"
-
-    # Pull all images in parallel
-    for image in "${DOCKER_IMAGES[@]}" "$SUPERVISOR_IMAGE"; do
-      sg docker -c "docker pull $image" 2>&1 | tail -1 &
-    done
-    wait
-
-    # If pinned supervisor tag failed, try :latest
-    if ! sg docker -c "docker image inspect $SUPERVISOR_IMAGE" >/dev/null 2>&1; then
-      warn "  Could not pull $SUPERVISOR_IMAGE — trying :latest"
-      sg docker -c "docker pull ghcr.io/nvidia/openshell/supervisor:latest" 2>&1 | tail -1 \
-        || warn "  Failed to pull openshell/supervisor (will be pulled at test time)"
-    fi
-  ) &
-  DOCKER_PULL_PID=$!
-fi
-
 info "Installing npm dependencies..."
 cd "$NEMOCLAW_CLONE_DIR"
 npm install --ignore-scripts 2>&1 | tail -3
@@ -357,18 +322,7 @@ sudo chmod +x "$NEMOCLAW_CLONE_DIR/bin/nemoclaw.js"
 info "nemoclaw CLI linked at /usr/local/bin/nemoclaw"
 
 # ══════════════════════════════════════════════════════════════════════
-# 6. Wait for Docker image pulls to finish
-# ══════════════════════════════════════════════════════════════════════
-if [[ -n "$DOCKER_PULL_PID" ]]; then
-  info "Waiting for background Docker pulls to finish..."
-  wait "$DOCKER_PULL_PID" || warn "Some Docker pulls failed (will be pulled at test time)"
-  info "Docker images pre-pulled"
-elif [[ "${SKIP_DOCKER_PULL:-0}" == "1" ]]; then
-  info "Skipping Docker image pre-pulls (SKIP_DOCKER_PULL=1)"
-fi
-
-# ══════════════════════════════════════════════════════════════════════
-# 7. Readiness sentinel
+# 6. Readiness sentinel
 # ══════════════════════════════════════════════════════════════════════
 sudo touch "$SENTINEL"
 echo "=== Ready ===" | sudo tee -a "$LAUNCH_LOG" >/dev/null

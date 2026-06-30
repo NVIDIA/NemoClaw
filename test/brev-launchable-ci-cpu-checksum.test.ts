@@ -36,6 +36,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   cleanup: () => void;
   cloneDir: string;
   curlLog: string;
+  dockerLog: string;
   fakeBin: string;
   launchLog: string;
   sudoLog: string;
@@ -46,6 +47,7 @@ function makeFakeSystem(options: FakeSystemOptions): {
   const cloneDir = path.join(root, "NemoClaw");
   const launchLog = path.join(root, "launch.log");
   const curlLog = path.join(root, "curl.log");
+  const dockerLog = path.join(root, "docker.log");
   const sudoLog = path.join(root, "sudo.log");
   const tarLog = path.join(root, "tar.log");
   fs.mkdirSync(fakeBin);
@@ -85,9 +87,18 @@ exit 1
   writeExecutable(
     path.join(fakeBin, "docker"),
     `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> ${JSON.stringify(dockerLog)}
 if [ "\${1:-}" = "--version" ]; then printf 'Docker version 25.0.0\\n'; exit 0; fi
-if [ "\${1:-}" = "image" ] && [ "\${2:-}" = "inspect" ]; then exit 0; fi
+if [ "\${1:-}" = "image" ] && [ "\${2:-}" = "inspect" ]; then exit 1; fi
 exit 0
+`,
+  );
+  writeExecutable(
+    path.join(fakeBin, "sg"),
+    `#!/usr/bin/env bash
+if [ "\${1:-}" != "docker" ] || [ "\${2:-}" != "-c" ]; then exit 2; fi
+shift 2
+exec bash -c "\${1:-}"
 `,
   );
   writeExecutable(
@@ -207,6 +218,7 @@ exec /usr/bin/sha256sum "$@"
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
     cloneDir,
     curlLog,
+    dockerLog,
     fakeBin,
     launchLog,
     sudoLog,
@@ -225,7 +237,6 @@ function runLaunchable(options: FakeSystemOptions) {
       OPENSHELL_VERSION: options.openshellVersion ?? "v0.0.72",
       PATH:
         options.nodeSourceChecksumTool === false ? fake.fakeBin : `${fake.fakeBin}:/usr/bin:/bin`,
-      SKIP_DOCKER_PULL: "1",
       SUDO_USER: "tester",
     },
     timeout: 20_000,
@@ -242,7 +253,7 @@ function combinedLaunchableOutput(result: ReturnType<typeof spawnSync>, launchLo
 }
 
 describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 }, () => {
-  it("rejects malformed OPENSHELL_VERSION before downloads or Docker pre-pulls", () => {
+  it("rejects malformed OPENSHELL_VERSION before downloads or privileged setup", () => {
     const { fake, result } = runLaunchable({
       checksum: "match",
       openshellVersion: "v0.0.72;touch /tmp/nemoclaw-version-injection",
@@ -320,7 +331,14 @@ describe("brev-launchable-ci-cpu.sh OpenShell checksum gate", { timeout: 30_000 
       expect(result.status, out).toBe(0);
       expect(out).toContain("OpenShell CLI installed: openshell 0.0.72");
       expect(fs.readFileSync(fake.tarLog, "utf-8")).toContain(`xzf`);
-      expect(fs.readFileSync(fake.sudoLog, "utf-8")).toMatch(/^install -m 755 .*openshell/m);
+      const sudoLog = fs.readFileSync(fake.sudoLog, "utf-8");
+      expect(sudoLog).toMatch(/^install -m 755 .*openshell/m);
+      expect(sudoLog).toContain("usermod -aG docker tester");
+      expect(sudoLog).not.toMatch(/chmod\s+(?:0?666|a\+rw)\s+[^\n]*docker\.sock/u);
+      expect(fs.readFileSync(fake.dockerLog, "utf-8").trim().split("\n")).toEqual([
+        "--version",
+        "--version",
+      ]);
       expect(out).toContain("CI-Ready CPU launchable setup complete");
     } finally {
       fake.cleanup();
