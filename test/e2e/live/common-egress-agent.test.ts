@@ -708,7 +708,7 @@ describe.sequential("common-egress agent live targets", () => {
         contract: [
           "OpenClaw balanced onboarding applies weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
-          "a real OpenClaw agent turn returns the digest of a stable wttr.in response",
+          "a real OpenClaw agent turn validates one wttr.in response and leaves its body as proof",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
@@ -731,30 +731,54 @@ describe.sequential("common-egress agent live targets", () => {
         "c1-balanced-scope",
         "restcountries.com",
       );
-      const weatherDigestCommand =
-        "body=$(curl -fsS --max-time 30 'https://wttr.in/:help') && test -n \"$body\" && printf '%s' \"$body\" | sha256sum | awk '{print $1}'";
-      const weatherDigestProbe = await sandbox.execShell(
+      const weatherProofPath = `/tmp/nemoclaw-weather-proof-${Date.now()}-${process.pid}.txt`;
+      const clearWeatherProof = await sandbox.execShell(
         OPENCLAW_BALANCED_SANDBOX,
-        trustedSandboxShellScript(weatherDigestCommand),
+        trustedSandboxShellScript(`rm -f ${shellQuote(weatherProofPath)}`),
         {
-          artifactName: "c1-weather-direct-digest",
+          artifactName: "c1-weather-clear-proof",
           env: commandEnv(),
-          timeoutMs: 60_000,
+          timeoutMs: 30_000,
         },
       );
-      expect(weatherDigestProbe.exitCode, text(weatherDigestProbe)).toBe(0);
-      const weatherDigest = weatherDigestProbe.stdout.trim();
-      expect(weatherDigest).toMatch(/^[a-f0-9]{64}$/);
+      expect(clearWeatherProof.exitCode, text(clearWeatherProof)).toBe(0);
+      // The agent must leave the fetched body behind. The host-side assertion
+      // independently validates it, so merely echoing the reply token cannot pass.
+      const weatherProofCommand = [
+        `proof=${shellQuote(weatherProofPath)}`,
+        "if test -s \"$proof\"; then printf 'WEATHER_AGENT_OK\\n'; exit 0; fi",
+        "tmp=$(mktemp)",
+        "trap 'rm -f \"$tmp\"' EXIT",
+        "curl -fsS --max-time 30 --output \"$tmp\" 'https://wttr.in/:help'",
+        'test -s "$tmp"',
+        "grep -qiE '(usage|weather|wttr\\.in)' \"$tmp\"",
+        'mv "$tmp" "$proof"',
+        "trap - EXIT",
+        "printf 'WEATHER_AGENT_OK\\n'",
+      ].join("; ");
       await runOpenClawAgentAssertion(host, sandbox, artifacts, {
         apiKey,
-        expected: weatherDigest,
+        expected: "WEATHER_AGENT_OK",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         prompt: `Run exactly this shell command to verify the weather host curl path:
-${weatherDigestCommand}
+${weatherProofCommand}
 Do not use web_fetch, web_search, or any other weather provider.
-After it returns, reply with only the 64-character digest printed by the pipeline. Do not fetch any other URL.`,
+After it returns, reply with only WEATHER_AGENT_OK. Do not fetch any other URL.`,
       });
+      const weatherProof = await sandbox.execShell(
+        OPENCLAW_BALANCED_SANDBOX,
+        trustedSandboxShellScript(
+          `test -s ${shellQuote(weatherProofPath)} && grep -qiE '(usage|weather|wttr\\.in)' ${shellQuote(weatherProofPath)} && sha256sum ${shellQuote(weatherProofPath)}`,
+        ),
+        {
+          artifactName: "c1-weather-agent-proof",
+          env: commandEnv(),
+          timeoutMs: 30_000,
+        },
+      );
+      expect(weatherProof.exitCode, text(weatherProof)).toBe(0);
+      expect(weatherProof.stdout.trim()).toMatch(/^[a-f0-9]{64}\s+/);
       await artifacts.writeJson("target-result.json", {
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
