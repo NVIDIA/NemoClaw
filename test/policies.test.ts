@@ -850,11 +850,43 @@ exit 1
     });
   });
 
-  describe("buildPolicyGetCommand", () => {
-    it("returns an argv array with sandbox name as a separate element", () => {
+  describe("policy get command builders", () => {
+    it("uses the base policy for mutation reads", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
       expect(cmd[0]).toMatch(/openshell$/);
       expect(cmd.slice(1)).toEqual(["policy", "get", "--base", "my-assistant"]);
+    });
+
+    it("uses the full effective policy for diagnostic reads", () => {
+      const cmd = policies.buildPolicyGetFullCommand("my-assistant");
+      expect(cmd[0]).toMatch(/openshell$/);
+      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
+    });
+
+    it("queries the full effective policy when matching gateway presets", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-diagnostic-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const argsFile = path.join(tmpDir, "args.txt");
+      fs.writeFileSync(
+        fakeOpenshell,
+        [
+          "#!/bin/sh",
+          `printf "%s\\n" "$*" >${JSON.stringify(argsFile)}`,
+          "printf 'Version: 1\\n---\\nversion: 1\\nnetwork_policies: {}\\n'",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const previousBin = process.env.NEMOCLAW_OPENSHELL_BIN;
+      process.env.NEMOCLAW_OPENSHELL_BIN = fakeOpenshell;
+      try {
+        expect(policies.getGatewayPresets("my-assistant")).toEqual([]);
+        expect(fs.readFileSync(argsFile, "utf-8").trim()).toBe("policy get --full my-assistant");
+      } finally {
+        if (previousBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        else process.env.NEMOCLAW_OPENSHELL_BIN = previousBin;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 

@@ -13,22 +13,45 @@ const MUTATION_READS = [
     relativePath: "src/lib/policy/index.ts",
     baseCommand: 'return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName]',
     fullCommand: 'return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName]',
+    diagnosticFullRead: "runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true })",
+    fullBuilderName: "buildPolicyGetFullCommand",
   },
   {
     relativePath: "nemoclaw/src/blueprint/runner.ts",
     baseCommand: '["openshell", "policy", "get", "--base", sandboxName]',
     fullCommand: '["openshell", "policy", "get", "--full", sandboxName]',
+    diagnosticFullRead: undefined,
+    fullBuilderName: undefined,
   },
 ];
 
 const violations: string[] = [];
-for (const { relativePath, baseCommand, fullCommand } of MUTATION_READS) {
+for (const {
+  relativePath,
+  baseCommand,
+  fullCommand,
+  diagnosticFullRead,
+  fullBuilderName,
+} of MUTATION_READS) {
   const source = readFileSync(path.join(REPO_ROOT, relativePath), "utf8");
   if (!source.includes(baseCommand)) {
     violations.push(`${relativePath}: expected the audited policy mutation read to use --base`);
   }
-  if (source.includes(fullCommand)) {
+  if (!diagnosticFullRead && source.includes(fullCommand)) {
     violations.push(`${relativePath}: audited policy mutation read must never use --full output`);
+  }
+  if (diagnosticFullRead && fullBuilderName) {
+    const builderReferences = source.match(new RegExp(`${fullBuilderName}\\s*\\(`, "g")) ?? [];
+    if (!source.includes(fullCommand) || !source.includes(diagnosticFullRead)) {
+      violations.push(`${relativePath}: expected the audited diagnostic read to use --full`);
+    }
+    // One definition and one diagnostic call are allowed. Any additional call
+    // would let a mutation path consume provider-composed effective policy.
+    if (builderReferences.length !== 2) {
+      violations.push(
+        `${relativePath}: --full policy reads must remain isolated to the diagnostic path`,
+      );
+    }
   }
 }
 
@@ -37,4 +60,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("OpenShell policy mutation reads use --base and exclude --full output.");
+console.log("OpenShell policy mutations use --base; read-only diagnostics isolate --full output.");

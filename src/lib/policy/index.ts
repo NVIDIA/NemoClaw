@@ -301,8 +301,9 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 }
 
 /**
- * Parse the output of `openshell policy get --base` which has a metadata
- * header (Version, Hash, etc.) followed by `---` and then the actual YAML.
+ * Parse the output of `openshell policy get --base` or `--full`, which has a
+ * metadata header (Version, Hash, etc.) followed by `---` and then the actual
+ * YAML.
  */
 function parseCurrentPolicy(raw: string | null | undefined): string {
   if (!raw) return "";
@@ -383,10 +384,17 @@ function buildPolicySetCommand(policyFile: string, sandboxName: string): string[
 }
 
 /**
- * Build the openshell policy get command as an argv array.
+ * Build the openshell base-policy get command used before policy mutations.
  */
 function buildPolicyGetCommand(sandboxName: string): string[] {
   return [resolveOpenshellBinary(), "policy", "get", "--base", sandboxName];
+}
+
+/**
+ * Build the effective-policy get command used by read-only diagnostics.
+ */
+function buildPolicyGetFullCommand(sandboxName: string): string[] {
+  return [resolveOpenshellBinary(), "policy", "get", "--full", sandboxName];
 }
 
 /**
@@ -1161,7 +1169,7 @@ function presetMatchesGateway(
 function getGatewayPresets(sandboxName: string): string[] | null {
   let rawPolicy = "";
   try {
-    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+    rawPolicy = runCapture(buildPolicyGetFullCommand(sandboxName), { ignoreError: true });
   } catch {
     return null;
   }
@@ -1318,6 +1326,7 @@ export {
   applyPresets,
   assertOpenshellResolvable,
   buildPolicyGetCommand,
+  buildPolicyGetFullCommand,
   buildPolicySetCommand,
   clampSetupPolicyPresetNames,
   extractPresetEntries,
