@@ -263,6 +263,19 @@ process.exit(Array.isArray(channels) && channels.some((c) => c?.channelId === "w
       },
     );
     expectExitZero(whatsappRebuild, "M-WA4: rebuild completed after WhatsApp channel add");
+    const whatsappRebuildText = stripAnsi(outputText(whatsappRebuild));
+    check(
+      whatsappRebuildText.includes(`Sandbox '${SANDBOX_NAME}' rebuilt successfully`),
+      "M-WA4a: rebuild reports complete post-restore success",
+    );
+    check(
+      !whatsappRebuildText.includes("CRITICAL:"),
+      "M-WA4b: rebuild emits no critical trusted-posture failure",
+    );
+    check(
+      !whatsappRebuildText.includes("post-restore steps were incomplete"),
+      "M-WA4c: rebuild leaves no incomplete post-restore work",
+    );
 
     const whatsappPolicyPost = await runHost(
       host,

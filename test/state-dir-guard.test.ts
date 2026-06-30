@@ -93,10 +93,10 @@ interface GuardLine {
   removedEntries?: number;
 }
 
-function fixture(): { root: string; configDir: string } {
+function fixture(configDirName = ".agent"): { root: string; configDir: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-state-dir-guard-"));
   fixtures.push(root);
-  const configDir = path.join(root, ".agent");
+  const configDir = path.join(root, configDirName);
   fs.mkdirSync(configDir, { recursive: true });
   // macOS exposes /var through a symlink. The production helper refuses
   // symlinked ancestors, so pass the descriptor-resolved fixture path too.
@@ -187,6 +187,80 @@ describe("state-dir-guard", () => {
     expect(fs.readlinkSync(path.join(pluginDir, "current"))).toBe("versions/v1");
     expect(mode(pluginDir)).toBe(0o755);
     expect(mode(path.join(versionDir, "plugin.js"))).toBe(0o644);
+  });
+
+  it("preserves the exact image-owned OpenClaw extension peer link across transitions", () => {
+    const { configDir } = fixture(".openclaw");
+    const peerLink = path.join(configDir, "extensions", "slack", "node_modules", "openclaw");
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync("/usr/local/lib/node_modules/openclaw", peerLink);
+
+    const preflight = runGuard("preflight", configDir);
+    const locked = runGuard("lock", configDir);
+    const unlocked = runGuard("unlock", configDir);
+
+    expect(preflight.status, preflight.stderr).toBe(0);
+    expect(locked.status, locked.stderr).toBe(0);
+    expect(unlocked.status, unlocked.stderr).toBe(0);
+    expect(fs.lstatSync(peerLink).isSymbolicLink()).toBe(true);
+    expect(fs.readlinkSync(peerLink)).toBe("/usr/local/lib/node_modules/openclaw");
+    expect(locked.lines.at(-1)).toEqual(
+      expect.objectContaining({
+        type: "result",
+        action: "lock",
+        status: "ok",
+        removedEntries: 0,
+      }),
+    );
+  });
+
+  it.each([
+    ["tampered target", "slack", "node_modules/openclaw", "/usr/local/lib/node_modules/other"],
+    [
+      "traversal-shaped extension id",
+      "%2e%2e",
+      "node_modules/openclaw",
+      "/usr/local/lib/node_modules/openclaw",
+    ],
+    ["wrong source path", "slack", "openclaw", "/usr/local/lib/node_modules/openclaw"],
+  ])("rejects a managed extension peer link with a %s", (_case, extensionId, suffix, target) => {
+    const { configDir } = fixture(".openclaw");
+    const peerLink = path.join(configDir, "extensions", extensionId, suffix);
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync(target, peerLink);
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "symlink-outside-protected-root",
+          path: peerLink,
+        }),
+      ]),
+    );
+  });
+
+  it("does not trust an OpenClaw peer target under a non-OpenClaw state root", () => {
+    const { configDir } = fixture(".hermes");
+    const peerLink = path.join(configDir, "extensions", "slack", "node_modules", "openclaw");
+    fs.mkdirSync(path.dirname(peerLink), { recursive: true });
+    fs.symlinkSync("/usr/local/lib/node_modules/openclaw", peerLink);
+
+    const result = runGuard("preflight", configDir);
+
+    expect(result.status).toBe(1);
+    expect(result.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "issue",
+          code: "symlink-outside-protected-root",
+          path: peerLink,
+        }),
+      ]),
+    );
   });
 
   it("rejects links from protected code into the writable sessions carveout", () => {
