@@ -353,6 +353,8 @@ For WeChat specifically, `channels stop wechat` followed by a rebuild keeps the 
 </AgentOnly>
 A subsequent `channels start wechat` plus rebuild revives the bridge against the same iLink account without a fresh QR scan.
 The bot token is held by the OpenShell provider across the stop/start cycle.
+When `channels start` re-enables a channel, NemoClaw also reapplies the matching built-in network policy preset before rebuild.
+If policy restoration fails, the command keeps the channel disabled and exits without rebuilding into a partially active state.
 
 Telegram, Discord, Slack, and WeChat each allow only one active consumer per channel credential.
 Multiple sandboxes can use the same channel type at the same time when each sandbox uses a distinct bot/app token (or a distinct WeChat iLink bot account).

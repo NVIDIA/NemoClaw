@@ -18,13 +18,22 @@ For more detailed release notes, refer to the [NemoClaw GitHub announcements](ht
 
 ## v0.0.70
 
-NemoClaw v0.0.70 hardens OpenShell gateway auth and Hermes recovery behavior:
+NemoClaw v0.0.70 completes the E2E migration and improves day-two operation, inference setup, messaging repair, Windows bootstrap guidance, and documentation.
 
-- OpenShell `0.0.71` Docker-driver gateway setup now generates and validates the local mTLS/JWT auth bundle more defensively, keeps the older-glibc compatibility container behind an explicit opt-in, and limits the live gateway auth contract job to explicit workflow dispatches pinned to OpenShell `0.0.71`.
-  For more information, refer to [OpenShell 0.0.71 Gateway Auth Review](../security/openshell-0.0.71-gateway-auth-review) and [Security Best Practices](../security/best-practices).
-- Hermes recovery now fails closed when an older sandbox image is missing the secret-boundary validator needed to re-check `/sandbox/.hermes/.env`.
-  The command refuses recovery, leaves an otherwise healthy gateway untouched, prints a re-image instruction, and requires rebuilding the sandbox with a current Hermes image before retrying recovery.
-  For more information, refer to [Troubleshooting](../reference/troubleshooting) and [NemoClaw CLI Commands Reference](../reference/commands).
+- Day-two CLI operations are easier to steer from the host.
+  `$$nemoclaw use <name>` selects the default registered sandbox, and mistyped sandbox names now receive the closest registered-sandbox suggestion.
+  For more information, refer to [NemoClaw CLI Commands Reference](../reference/commands).
+- Onboarding and inference validation handle more common setup drift.
+  Docker Desktop gateway bridge checks retry through the short first-start race, OpenAI-compatible endpoints can opt into reasoning-mode validation with `NEMOCLAW_REASONING`, and Windows bootstrap failures preserve WSL recovery guidance.
+  For more information, refer to [NemoClaw Inference Options](../inference/inference-options), [Prepare Windows for NemoClaw](../get-started/prerequisites/windows-preparation), and [Troubleshooting](../reference/troubleshooting).
+- Messaging and Hermes repair paths carry less stale state forward.
+  Rebuilds write the effective policy preset set back to the sandbox registry, `channels start` reapplies the matching network policy preset before rebuilding, and Hermes image repair removes inherited OpenClaw state from older base layers.
+  For more information, refer to [Messaging Channels](../manage-sandboxes/messaging-channels), [NemoClaw CLI Commands Reference](../reference/commands), and [Troubleshooting](../reference/troubleshooting).
+- Documentation now covers the operator workflows added during this release.
+  The OpenClaw quickstart explains the two-terminal network approval workflow, and the messaging guide separates Teams direct-message allowlists from OpenClaw group and channel policy.
+  For more information, refer to [NemoClaw Quickstart with OpenClaw](../get-started/quickstart), [Approve or Deny Agent Network Requests](../network-policy/approve-network-requests), and [Messaging Channels](../manage-sandboxes/messaging-channels).
+- Release validation now runs through one Vitest scenario system.
+  GitHub Actions owns orchestration and reporting, while the scenario runner keeps scheduled failure routing, scorecards, trace-timing summaries, docs validation, and two-agent security-posture coverage in the same selection model.
 
 ## v0.0.69
 
