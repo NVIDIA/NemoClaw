@@ -126,6 +126,8 @@ export const teamsManifest = {
           healthMonitor: {
             enabled: false,
           },
+          // OpenClaw Teams streaming can duplicate or collapse preview and final messages.
+          // Keep final-only mode until that path is fixed and covered by runtime validation.
           streaming: {
             mode: "off",
           },

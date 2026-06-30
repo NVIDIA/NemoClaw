@@ -116,6 +116,7 @@ The client secret is stored as the `<sandbox>-teams-bridge` OpenShell provider a
 Use `TEAMS_ALLOWED_USERS` or `MSTEAMS_ALLOWED_USERS` to list comma-separated Microsoft Entra ID object IDs that may interact with the bot.
 For OpenClaw group and channel messages, `TEAMS_REQUIRE_MENTION` defaults to `1`, so the bot replies only when mentioned.
 Direct messages are unaffected by mention mode.
+NemoClaw configures OpenClaw Teams with `channels.msteams.streaming.mode: "off"` so the channel uses final-message delivery while the upstream Teams streaming path can duplicate or collapse preview and final messages.
 
 WeChat (experimental) delivers messages over Tencent's iLink gateway through the upstream `@tencent-weixin/openclaw-weixin` plugin installed into WeChat-enabled OpenClaw sandbox images and the built-in Hermes iLink WeChat adapter.
 The supported mode in this release is **personal WeChat** (`bot_type=3`).
