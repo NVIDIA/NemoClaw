@@ -170,8 +170,17 @@ esac
 function runFixture(
   mode: "brev-mismatch" | "complete" | "failure" | "partial",
   openshellVersion?: string,
+  trustedChecker = false,
 ) {
   const fixtureRoot = createFixture(openshellVersion);
+  let checker = path.join(fixtureRoot, "scripts", "check-installer-hash.sh");
+  if (trustedChecker) {
+    const trustedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-trusted-hash-check-"));
+    tempDirs.push(trustedRoot);
+    fs.mkdirSync(path.join(trustedRoot, "scripts"), { recursive: true });
+    checker = path.join(trustedRoot, "scripts", "check-installer-hash.sh");
+    fs.copyFileSync(path.join(REPO_ROOT, "scripts", "check-installer-hash.sh"), checker);
+  }
   const brevInstaller = path.join(fixtureRoot, "scripts", "brev-launchable-ci-cpu.sh");
   const brevSource = fs.readFileSync(brevInstaller, "utf8");
   fs.writeFileSync(
@@ -180,13 +189,14 @@ function runFixture(
       ? brevSource.replace(ASSET_DIGESTS.get(ASSETS[0]) ?? "missing", "0".repeat(64))
       : brevSource,
   );
-  return spawnSync("bash", ["scripts/check-installer-hash.sh"], {
+  return spawnSync("bash", [checker], {
     cwd: fixtureRoot,
     encoding: "utf8",
     env: {
       ...process.env,
       GITHUB_TOKEN: "",
       GH_TOKEN: "",
+      NEMOCLAW_INSTALLER_HASH_REPO_ROOT: trustedChecker ? fixtureRoot : "",
       NEMOCLAW_TEST_CURL_MODE: mode === "brev-mismatch" ? "complete" : mode,
       PATH: `${path.join(fixtureRoot, "bin")}:${process.env.PATH ?? ""}`,
     },
@@ -206,6 +216,13 @@ describe("installer hash verification", () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Checking OpenShell v9.9.9 release assets");
+    expect(result.stdout).toContain("All installer hashes are current");
+  });
+
+  it("lets trusted checker code inspect a separate pull-request tree", () => {
+    const result = runFixture("complete", undefined, true);
+
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain("All installer hashes are current");
   });
 

@@ -13,10 +13,17 @@
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
 #   scripts/check-installer-hash.sh --update   # rewrite stale hashes in-place
+#
+# CI can execute this script from a trusted checkout while inspecting a
+# separate pull-request tree by setting NEMOCLAW_INSTALLER_HASH_REPO_ROOT.
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [[ -n "${NEMOCLAW_INSTALLER_HASH_REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$(cd "$NEMOCLAW_INSTALLER_HASH_REPO_ROOT" && pwd)"
+else
+  REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+fi
 OPENSHELL_RELEASE_VERSION="0.0.72"
 
 case "${1:-}" in
