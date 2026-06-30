@@ -43,17 +43,19 @@
 #   emitting an inline `api_key` value.
 #
 # Scope note: this masker covers `hermes config show` stdout/stderr. The
-# contract is intentionally narrow:
+# contract:
 #   - It masks recognised key-labelled secret fields (`api_key`, `api_secret`,
 #     `access_token`, `auth_token`, `client_secret`, `secret_key`, `secret`,
 #     `token`, `password`, `bearer`, `authorization`, `credential`, plus their
 #     hyphen/underscore/camelCase variants) in Python-dict, JSON, YAML, env-
 #     style, and YAML block-scalar shapes.
-#   - It does NOT redact arbitrary credential-shaped strings appearing in
-#     free-form prose diagnostics. Hermes' rendered config is structured
-#     (key: value) — covering the structured shapes is sufficient for the
-#     reported `#5981` leak path. Diagnostic prose escape hatches require an
-#     upstream Hermes fix, not a wrapper one.
+#   - As defence-in-depth, it also redacts free-form `sk-`-prefixed tokens
+#     (length >= 8) on every line, so the `buildHermesConfig` placeholder and
+#     any escaped `sk-`-shape in a diagnostic are caught.
+#   - It does NOT scan for non-`sk-` token families (`xoxb-`, `nvapi-`, etc.)
+#     in free prose. Hermes' rendered config emits secrets via labelled
+#     fields covered above; broader diagnostic redaction across token
+#     families is the upstream Hermes CLI's responsibility.
 # The Hermes dashboard is upstream-managed (Hermes' own HTTP surface); per the
 # linked report the dashboard already omits provider credentials. NemoClaw
 # vends the dashboard config through `agents/hermes/seed-dashboard-config.py`
@@ -148,13 +150,13 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   # closing that side channel entirely requires sandbox-level procfs
   # isolation (hidepid mount or a PID namespace) outside this wrapper, or
   # the upstream Hermes CLI redacting the field natively.
-  coproc STDERR_MASK { "$PYTHON3" "$GUARD" mask-config-output >&2; }
+  coproc STDERR_MASK { "$PYTHON3" -I "$GUARD" mask-config-output >&2; }
   _stderr_mask_pid=$STDERR_MASK_PID
   # shellcheck disable=SC2086  # bash redirect targets cannot be quoted; quoting forces filename semantics
   exec 9>&${STDERR_MASK[1]}
   eval "exec ${STDERR_MASK[1]}>&-"
   eval "exec ${STDERR_MASK[0]}<&-"
-  "$REAL_HERMES" "$@" 2>&9 | "$PYTHON3" "$GUARD" mask-config-output
+  "$REAL_HERMES" "$@" 2>&9 | "$PYTHON3" -I "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
   stdout_masker_status="${statuses[1]}"
@@ -177,7 +179,7 @@ if [ "${1:-}" = "gateway" ]; then
     echo "[SECURITY] Refusing hermes gateway: no python3 at a trusted absolute path to run the secret-boundary guard" >&2
     exit 127
   }
-  "$PYTHON3" "$GUARD" runtime-env || exit $?
+  "$PYTHON3" -I "$GUARD" runtime-env || exit $?
 fi
 
 exec "$REAL_HERMES" "$@"
