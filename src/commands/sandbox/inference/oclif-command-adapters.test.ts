@@ -201,6 +201,140 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     }
   });
 
+  it("surfaces typed endpoint-url validation failures from the action layer with exit code 2 (#5977)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("Custom endpoint URL must use http(s).", 2),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          [
+            "alpha",
+            "--provider",
+            "compatible-endpoint",
+            "--model",
+            "m",
+            "--endpoint-url",
+            "ftp://x",
+          ],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith("Custom endpoint URL must use http(s).");
+
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("Custom endpoint URL must not embed credentials.", 2),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          [
+            "alpha",
+            "--provider",
+            "compatible-endpoint",
+            "--model",
+            "m",
+            "--endpoint-url",
+            "https://u:p@x/v1",
+          ],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith("Custom endpoint URL must not embed credentials.");
+
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("Custom endpoint URL must include a scheme.", 2),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          ["alpha", "--provider", "compatible-endpoint", "--model", "m", "--endpoint-url", "x/v1"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith("Custom endpoint URL must include a scheme.");
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("surfaces typed credential-env, inference-api, and metadata validation failures with exit code 2 (#5977)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError(
+          "credential-env must be COMPATIBLE_API_KEY for compatible-endpoint.",
+          2,
+        ),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          [
+            "alpha",
+            "--provider",
+            "compatible-endpoint",
+            "--model",
+            "m",
+            "--credential-env",
+            "SOME_OTHER_KEY",
+          ],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith(
+        "credential-env must be COMPATIBLE_API_KEY for compatible-endpoint.",
+      );
+
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("inference-api 'bogus-api' is not supported.", 2),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          [
+            "alpha",
+            "--provider",
+            "compatible-endpoint",
+            "--model",
+            "m",
+            "--inference-api",
+            "bogus-api",
+          ],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith("inference-api 'bogus-api' is not supported.");
+
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError(
+          "Custom endpoint metadata is only allowed for compatible providers.",
+          2,
+        ),
+      );
+      await expect(
+        SandboxInferenceSetCommand.run(
+          ["alpha", "--provider", "nvidia-prod", "--model", "m", "--endpoint-url", "https://x/v1"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenLastCalledWith(
+        "Custom endpoint metadata is only allowed for compatible providers.",
+      );
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
   it("records typed inference action failures without throwing oclif ExitError", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;
