@@ -36,8 +36,7 @@ export const OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES = 32_768;
 
 // Leave ample headroom beneath OpenShell's strict per-argument ceiling.
 const SANDBOX_SOURCE_CHUNK_BYTES = 16_384;
-const SANDBOX_SHELL_BOOTSTRAP = `set -eu
-printf '%s' "$@" | base64 -d | sh`;
+const SANDBOX_SHELL_BOOTSTRAP = `set -eu; printf '%s' "$@" | base64 -d | sh`;
 
 validateSandboxName(SANDBOX_NAME);
 

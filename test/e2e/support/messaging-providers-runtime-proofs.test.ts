@@ -60,6 +60,7 @@ describe("messaging provider installed-runtime proofs", () => {
     expect(
       Math.max(...invocation.map((argument) => Buffer.byteLength(argument, "utf8"))),
     ).toBeLessThan(OPENSHELL_EXEC_ARGUMENT_LIMIT_BYTES);
+    expect(invocation.filter((argument) => /[\r\n]/u.test(argument))).toEqual([]);
     const [command, ...args] = invocation;
     const result = spawnSync(command, args, { encoding: "utf8" });
     expect(result.status, result.stderr).toBe(0);
