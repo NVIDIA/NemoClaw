@@ -90,6 +90,7 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
   # crash never produces a partial secret on either stream.
   coproc STDERR_MASK { "$PYTHON3" "$GUARD" mask-config-output >&2; }
   _stderr_mask_pid=$STDERR_MASK_PID
+  # shellcheck disable=SC2086  # bash redirect targets cannot be quoted; quoting forces filename semantics
   exec 9>&${STDERR_MASK[1]}
   eval "exec ${STDERR_MASK[1]}>&-"
   eval "exec ${STDERR_MASK[0]}<&-"
