@@ -100,8 +100,10 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+COPY scripts/verify-openclaw-fetch-guard-runtime.mjs /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+        /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -468,9 +470,14 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
 # pinned selection-*.js shape changes.
+# The same build layer then imports the npm-installed, compiled fetch guard with
+# an injected fetch implementation (no external request) to prove proxy dispatch,
+# no local DNS, literal SSRF denies, and redirect re-checks after patching.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-    /usr/local/lib/node_modules/openclaw/dist
+    /usr/local/lib/node_modules/openclaw/dist \
+    && node /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs \
+        /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
