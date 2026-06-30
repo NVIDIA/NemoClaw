@@ -22,7 +22,7 @@ NemoClaw v0.0.72 advances to OpenShell `0.0.72` and adopts its safe policy
 round-trip boundary:
 
 - Stable installs pin OpenShell `0.0.72` release artifacts and supervisor image,
-  including the upstream MCP and JSON-RPC policy-enforcement implementation.
+  adding MCP Streamable HTTP and JSON-RPC request-policy enforcement.
 - Policy mutations now read the round-trippable base policy instead of the
   effective policy, preventing provider-composed `_provider_*` entries from
   being sent back through `policy set` while preserving existing MCP rules.
