@@ -26,29 +26,28 @@
  * `src/lib/share-command.test.ts` and `test/share-command-remote-path.test.ts`.
  * This matrix locks the nonexistent-sandbox share/upload surfaces instead.
  *
- * Issue instances 3 (onboard dashboard-port exhaustion) and 5 (Model Router
- * Python preflight) are likewise out of this hermetic spawn matrix: reaching
- * them through the real `onboard` flow requires standing in for a chain of host
- * gates (`openshell --version` >= 0.0.44, the request-body-credential-rewrite
- * capability probe, and more) that a bash shim cannot emulate reliably. Both
- * already exit non-zero today and — unlike the surfaces this PR fixes — neither
- * ever rode the `oclif.exit === 0` catch-all this PR hardens, so the runner
- * change neither breaks nor is required by them:
- *   - Instance 3 exits via an explicit `exitFn(1)` (i.e. `process.exit(1)`),
- *     locked by `src/lib/onboard/dashboard-port.test.ts`, which asserts exit
- *     code 1 plus the canonical "All dashboard ports in range 18789-18799 are
- *     occupied" message.
- *   - Instance 5 throws a plain Error that propagates through `onboard`'s
- *     try/finally with no swallowing catch, locked by
- *     `src/lib/onboard/model-router-python.test.ts` (the "above supported
- *     ceiling" reason and the thrown "No usable host Python interpreter found"
- *     message).
- * The thrown-error → non-zero process exit composition that ties instance 5 to
- * a failing `$?` is in turn locked by `src/lib/cli/oclif-runner.test.ts`.
+ * Issue instance 3 (onboard dashboard-port exhaustion) is locked by its own
+ * hermetic `onboard` spawn in the second describe below: it binds the whole
+ * dashboard port range and drives the real `onboard` preflight to the
+ * fail-fast "All dashboard ports in range … are occupied" exit, asserting a
+ * non-zero code. (That preflight exits via an explicit `exitFn(1)`, so it never
+ * rode the `oclif.exit === 0` catch-all this PR hardens — the spawn simply
+ * proves the surface stays non-zero end-to-end.)
+ *
+ * Issue instance 5 (Model Router Python preflight) is the one surface left to
+ * unit tests: `reconcileModelRouter` runs only deep in `onboard`, behind live
+ * gateway + provider + sandbox provisioning that cannot be faked hermetically
+ * here. It throws a plain Error (no `oclif.exit`, so again unaffected by this
+ * PR) that propagates through `onboard`'s try/finally with no swallowing catch.
+ * That throw is locked by `src/lib/onboard/model-router-python.test.ts` (the
+ * "above supported ceiling" reason and the "No usable host Python interpreter
+ * found" message), and the thrown-error → non-zero process-exit composition is
+ * locked by `src/lib/cli/oclif-runner.test.ts`.
  */
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -228,5 +227,103 @@ describe("user-error/startup surfaces return non-zero exit (#5974)", () => {
     expect(signal).toBeNull();
     expect(combined).toContain("USAGE");
     expect(status).toBe(0);
+  });
+});
+
+// Issue #5974 instance 3: `nemoclaw onboard …` printed "All dashboard ports in
+// range … are occupied" but the reporter saw exit 0. The onboard preflight
+// fails fast here via an explicit process.exit(1), so it was never affected by
+// the oclif.exit === 0 catch-all this PR hardens — this spawn locks the
+// end-to-end non-zero exit so the surface cannot silently regress to 0.
+describe("onboard dashboard-port exhaustion exits non-zero (#5974)", () => {
+  const PORT_RANGE_START = 18789;
+  const PORT_RANGE_END = 18799;
+  let home: string;
+  let binDir: string;
+  let servers: net.Server[];
+
+  beforeEach(async () => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-5974-onboard-"));
+    binDir = path.join(home, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+
+    // Fake openshell: report a supported version and embed the capability
+    // markers the installer greps for with `strings`, so onboard's preflight
+    // neither attempts a network reinstall nor fails the credential-rewrite
+    // capability gate before it reaches the dashboard-port check.
+    fs.writeFileSync(
+      path.join(binDir, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        "# openshell capabilities: request-body-credential-rewrite websocket-credential-rewrite",
+        'case "$1" in',
+        '  --version) echo "openshell 0.0.44"; exit 0;;',
+        "esac",
+        "echo '' >&2",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(binDir, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = info ]; then echo "Server Version: 24.0.0"; exit 0; fi',
+        'if [ "$1" = ps ]; then exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    // Occupy the entire dashboard port range so the preflight has no free port.
+    servers = [];
+    const ports = Array.from(
+      { length: PORT_RANGE_END - PORT_RANGE_START + 1 },
+      (_unused, i) => PORT_RANGE_START + i,
+    );
+    await Promise.all(
+      ports.map(
+        (port) =>
+          new Promise<void>((resolve) => {
+            const server = net.createServer();
+            server.once("error", () => resolve());
+            server.listen(port, "127.0.0.1", () => {
+              servers.push(server);
+              resolve();
+            });
+          }),
+      ),
+    );
+  });
+
+  afterEach(() => {
+    for (const server of servers) server.close();
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("prints the canonical message and exits non-zero", testTimeoutOptions(60_000), () => {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "onboard", "--name", "port-test", "--no-gpu", "--non-interactive"],
+      {
+        encoding: "utf-8",
+        timeout: 55_000,
+        env: {
+          ...process.env,
+          HOME: home,
+          PATH: `${binDir}:${process.env.PATH || ""}`,
+          NEMOCLAW_TEST_NO_SLEEP: "1",
+          NEMOCLAW_STATUS_PROBE_TIMEOUT_MS: "2000",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        },
+      },
+    );
+    const combined = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    expect(result.error).toBeUndefined();
+    expect(result.signal).toBeNull();
+    expect(combined).toContain(
+      `All dashboard ports in range ${PORT_RANGE_START}-${PORT_RANGE_END} are occupied`,
+    );
+    expect(result.status).toBeGreaterThan(0);
   });
 });
