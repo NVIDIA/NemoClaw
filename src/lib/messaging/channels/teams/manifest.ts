@@ -183,6 +183,20 @@ export const teamsManifest = {
         configKeys: ["msteams"],
         logPatterns: ["msteams", "teams"],
       },
+      nodePreloads: [
+        {
+          module: "msteams-message-hints",
+          injectInto: ["boot", "connect"],
+          // Require the packaged asset at setup time. The preload itself fails
+          // open at runtime so an upstream shape change preserves Teams with a
+          // bounded warning instead of preventing the gateway from starting.
+          optional: false,
+          installMessage:
+            "[channels] Installing Microsoft Teams message hint patch (native mentions)",
+          installedMessage:
+            "[channels] Microsoft Teams message hint patch installed (NODE_OPTIONS updated)",
+        },
+      ],
     },
   },
   agentPackages: [

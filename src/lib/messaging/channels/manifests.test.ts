@@ -760,6 +760,7 @@ describe("built-in channel manifests", () => {
       ],
     });
     expectOpenClawRuntimeVisibility(teamsManifest, ["msteams"], ["msteams", "teams"], "msteams");
+    expectOpenClawNodePreload(teamsManifest, "msteams-message-hints");
     expect(teamsManifest.agentPackages).toContainEqual({
       id: "openclawPluginPackage",
       agent: "openclaw",
