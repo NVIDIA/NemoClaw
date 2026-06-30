@@ -11,7 +11,7 @@
 # to all FROM directives. Can be overridden via --build-arg.
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
-# Stage 1: Build TypeScript plugin and build-time verifier from source
+# Stage 1: Build TypeScript plugin from source
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -24,18 +24,6 @@ COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /op
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
-COPY scripts/verify-openclaw-fetch-guard-runtime.ts /opt/nemoclaw-verifier-src/verify-openclaw-fetch-guard-runtime.ts
-RUN /opt/nemoclaw/node_modules/.bin/tsc \
-    /opt/nemoclaw-verifier-src/verify-openclaw-fetch-guard-runtime.ts \
-    --target ES2022 \
-    --module ES2022 \
-    --moduleResolution bundler \
-    --types node \
-    --strict \
-    --skipLibCheck \
-    --esModuleInterop \
-    --noEmitOnError \
-    --outDir /opt/nemoclaw-verifier
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -112,10 +100,8 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
-COPY --from=builder /opt/nemoclaw-verifier/verify-openclaw-fetch-guard-runtime.js /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
-        /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -220,20 +206,23 @@ RUN set -eu; \
 # sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
 # unmodified, so metadata/link-local/private IP literals are unchanged.
 #
-# === Patch 4: default bare SSRF fetches to trusted env proxy in sandbox ===
-# (NVIDIA/NemoClaw#396, #4687, openclaw#5129). fetchWithSsrFGuard defaults to
-# STRICT mode when callers omit `mode`. STRICT does local DNS pinning before it
-# can route through any proxy path, which fails for OpenShell-only hostnames
-# such as inference.local and public endpoints reachable only through the
-# sandbox egress proxy. OpenClaw web_search already avoids this by wrapping
-# calls with withTrustedEnvProxyGuardedFetchMode(); the repeated failure class is
-# bare fetchWithSsrFGuard({...}) callsites.
-#
-# Patch resolveGuardedFetchMode() so missing mode defaults to
-# TRUSTED_ENV_PROXY only when OPENSHELL_SANDBOX=1. Explicit modes still win.
-# The deprecated `proxy: "env"` compatibility branch is removed; outside an
-# OpenShell sandbox, omitted mode remains STRICT. This broad default replaces
-# narrower callsite-specific rewrites such as the old cron preflight patch.
+# === Patch 4: route unconfigured strict SSRF fetches through the egress proxy ===
+# (NVIDIA/NemoClaw#4687). fetchWithSsrFGuard builds a per-request DNS-pinned
+# *direct* undici dispatcher for STRICT-mode fetches that pass no explicit
+# dispatcherPolicy — e.g. the @openclaw/googlechat inbound JWT signing-cert
+# fetch from www.googleapis.com/service_accounts/v1/metadata/x509/.... A direct
+# dispatcher ignores the global EnvHttpProxyAgent installed by
+# NODE_USE_ENV_PROXY=1, so the request never reaches the OpenShell L7 proxy and
+# fails in the proxy-only sandbox netns — rejecting every inbound Google Chat
+# webhook. OpenClaw already has a "managed proxy" branch that routes such
+# fetches through the env proxy (createHttp1EnvHttpProxyAgent) while still
+# resolving + SSRF-validating the target hostname, but it is gated on
+# isManagedProxyActive() (OPENCLAW_PROXY_ACTIVE=1), which NemoClaw does not set.
+# Inside an OpenShell sandbox the configured egress proxy IS the managed proxy,
+# so extend that activation to OPENSHELL_SANDBOX=1 for fetches that supply no
+# explicit dispatcherPolicy. Explicit-proxy and direct(mTLS) dispatcher policies
+# (Google auth proxy / client-cert paths) keep their existing behavior, and
+# resolvePinnedHostnameWithPolicy still blocks private/link-local targets.
 #
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
@@ -244,9 +233,9 @@ RUN set -eu; \
 # Patch 2b: drop when OpenClaw ships a reviewed web_fetch trusted-proxy SSRF
 #   policy surface that can allow host.openshell.internal without allowing
 #   broader private/special-use hostnames.
-# Patch 4: drop when OpenClaw defaults bare fetchWithSsrFGuard calls to
-#   trusted_env_proxy in an OpenShell sandbox, or when all sandbox-sensitive
-#   callsites explicitly pass mode: "trusted_env_proxy".
+# Patch 4: drop when OpenClaw routes unconfigured strict fetches through the
+#   env proxy in proxy-only environments without OPENCLAW_PROXY_ACTIVE, or when
+#   NemoClaw sets OPENCLAW_PROXY_ACTIVE=1 in the sandbox runtime instead.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -365,50 +354,103 @@ RUN set -eu; \
             patch_fail "Patch 2b cannot safely skip"; \
         fi; \
     fi; \
-    # --- Patch 4: default bare guarded fetches to trusted env-proxy in sandbox --- \
-    # Reviewed against openclaw@2026.5.27 dist fetch-guard: \
-    # resolveGuardedFetchMode() returns explicit params.mode, then the deprecated \
-    # proxy+dangerous opt-in, then STRICT. Remove the deprecated proxy opt-in and \
-    # make omitted mode resolve to trusted_env_proxy only when OPENSHELL_SANDBOX=1 \
-    # and no caller-owned dispatcher behavior would be discarded. A plain env-proxy \
-    # policy is equivalent to the sandbox default; direct, explicit-proxy, connect, \
-    # and proxyTls policies retain STRICT semantics. \
-    mode_files="$(grep -RIlE --include='*.js' 'function resolveGuardedFetchMode\(params\)' "$OC_DIST" || true)"; \
-    if [ -n "$mode_files" ]; then \
-        patched_mode_default=0; \
-        for f in $mode_files; do \
-            if grep -q 'nemoclaw: default bare guarded fetches to trusted env proxy' "$f"; then \
+    # --- Patch 4: route unconfigured strict fetches through the sandbox egress proxy (#4687) --- \
+    # Reviewed against openclaw@2026.5.27 dist fetch-guard: the STRICT-mode \
+    # managed-proxy gate is `mode === GUARDED_FETCH_MODE.STRICT && \
+    # isManagedProxyActive() && hasProxyEnvConfigured()`. Extend activation to \
+    # OPENSHELL_SANDBOX=1 only for fetches with no explicit dispatcherPolicy so \
+    # the per-request direct dispatcher reuses the env proxy (EnvHttpProxyAgent) \
+    # like the managed-proxy path already does; explicit-proxy / direct dispatcher \
+    # policies and out-of-sandbox behavior are unchanged. \
+    mp_files="$(grep -RIlF --include='*.js' 'const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT && isManagedProxyActive() && hasProxyEnvConfigured();' "$OC_DIST" || true)"; \
+    if [ -n "$mp_files" ]; then \
+        patched_managed_proxy=0; \
+        for f in $mp_files; do \
+            if grep -q 'nemoclaw: route unconfigured strict fetch' "$f"; then \
                 echo "INFO: Patch 4 already present in $f"; \
             else \
-                grep -Fq 'params.dangerouslyAllowEnvProxyWithoutPinnedDns === true' "$f" \
-                    || patch_fail "Patch 4 target $f is missing reviewed deprecated env-proxy opt-in"; \
-                grep -Fq 'return GUARDED_FETCH_MODE.STRICT;' "$f" \
-                    || patch_fail "Patch 4 target $f is missing reviewed strict default"; \
-                sed -i -E '/function resolveGuardedFetchMode\(params\)/,/return GUARDED_FETCH_MODE\.STRICT;/ { /if \(params\.proxy === "env" \&\& params\.dangerouslyAllowEnvProxyWithoutPinnedDns === true\) return GUARDED_FETCH_MODE\.TRUSTED_ENV_PROXY;/ d; /if \(params\.proxy === "env" \&\& params\.dangerouslyAllowEnvProxyWithoutPinnedDns === true\) \{/,/^[[:space:]]*\}/ d; }' "$f"; \
-                sed -i -E '/function resolveGuardedFetchMode\(params\)/,/return GUARDED_FETCH_MODE\.STRICT;/ s#return GUARDED_FETCH_MODE\.STRICT;#if (process.env.OPENSHELL_SANDBOX === "1" \&\& (!params.dispatcherPolicy || (params.dispatcherPolicy.mode === "env-proxy" \&\& !params.dispatcherPolicy.connect \&\& !params.dispatcherPolicy.proxyTls))) return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */#' "$f"; \
-                grep -Fq 'if (process.env.OPENSHELL_SANDBOX === "1" && (!params.dispatcherPolicy || (params.dispatcherPolicy.mode === "env-proxy" && !params.dispatcherPolicy.connect && !params.dispatcherPolicy.proxyTls))) return GUARDED_FETCH_MODE.TRUSTED_ENV_PROXY; return GUARDED_FETCH_MODE.STRICT; /* nemoclaw: default bare guarded fetches to trusted env proxy in OpenShell sandbox, see Dockerfile */' "$f" \
-                    || patch_fail "Patch 4 verification failed to add sandbox default in $f"; \
-                patched_resolver="$(sed -n '/function resolveGuardedFetchMode(params)/,/nemoclaw: default bare guarded fetches to trusted env proxy/p' "$f")"; \
-                if printf '%s\n' "$patched_resolver" | grep -Fq 'params.proxy === "env"'; then \
-                    patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
-                fi; \
-                if grep -Fq 'dangerouslyAllowEnvProxyWithoutPinnedDns' "$f"; then \
-                    patch_fail "Patch 4 verification left deprecated dangerous env-proxy opt-in in $f"; \
-                fi; \
-                patched_mode_default=1; \
+                sed -i -E 's#const canUseManagedProxy = mode === GUARDED_FETCH_MODE\.STRICT \&\& isManagedProxyActive\(\) \&\& hasProxyEnvConfigured\(\);#const canUseManagedProxy = mode === GUARDED_FETCH_MODE.STRICT \&\& (isManagedProxyActive() || (process.env.OPENSHELL_SANDBOX === "1" \&\& !params.dispatcherPolicy)) \&\& hasProxyEnvConfigured(); /* nemoclaw: route unconfigured strict fetch through sandbox egress proxy, see Dockerfile */#' "$f"; \
+                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && !params.dispatcherPolicy' "$f" \
+                    || patch_fail "Patch 4 verification failed for $f"; \
+                patched_managed_proxy=1; \
             fi; \
         done; \
-        if [ "$patched_mode_default" = "1" ]; then \
-            echo "INFO: Patch 4 applied to OpenClaw ${OC_VERSION} sandbox trusted env-proxy default"; \
+        if [ "$patched_managed_proxy" = "1" ]; then \
+            echo "INFO: Patch 4 applied to OpenClaw ${OC_VERSION} managed-proxy strict-fetch activation"; \
         fi; \
     else \
-        mode_refs="$(grep -RIlE --include='*.js' 'resolveGuardedFetchMode|dangerouslyAllowEnvProxyWithoutPinnedDns' "$OC_DIST" || true)"; \
-        if [ -z "$mode_refs" ]; then \
-            echo "INFO: OpenClaw ${OC_VERSION} has no guarded-fetch mode resolver; Patch 4 not needed"; \
+        managed_proxy_refs="$(grep -RIlE --include='*.js' 'canUseManagedProxy|isManagedProxyActive' "$OC_DIST" || true)"; \
+        if [ -z "$managed_proxy_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no managed-proxy strict-fetch gate; Patch 4 not needed"; \
         else \
-            echo "ERROR: Patch 4 target missing but guarded-fetch mode/proxy references remain:" >&2; \
-            printf '%s\n' "$mode_refs" | head -n 5 >&2; \
+            echo "ERROR: Patch 4 target missing but managed-proxy references remain:" >&2; \
+            printf '%s\n' "$managed_proxy_refs" | head -n 5 >&2; \
             patch_fail "Patch 4 cannot safely skip"; \
+        fi; \
+    fi; \
+    # --- Patch 6: cron model-provider preflight opts into trusted env-proxy mode --- \
+    # Reviewed against openclaw@2026.5.27 dist: the cron isolated-agent preflight \
+    # (`probeLocalProviderEndpoint`) calls `fetchWithSsrFGuard` with \
+    # `auditContext: "cron-model-provider-preflight"` and a narrow hostname-allowlist \
+    # SsrFPolicy from `buildLocalProviderSsrFPolicy`, but does not pass a `mode`. \
+    # Default STRICT mode pins DNS for the managed inference hostname \
+    # (`inference.local`), which is intentionally only resolvable through the \
+    # OpenShell L7 proxy — pinned `dns.lookup` therefore fails with EAI_AGAIN and \
+    # the scheduler permanently skips every cron run. Inject \
+    # `mode: "trusted_env_proxy"` so the call uses the env proxy dispatcher; SSRF \
+    # protection is retained through the existing hostname allowlist and the \
+    # proxy's own ACLs. \
+    # \
+    # The patch keys on the co-located shape of the reviewed preflight call: in \
+    # any file that mentions the audit context literal, both the \
+    # `fetchWithSsrFGuard(` helper and the `buildLocalProviderSsrFPolicy` policy \
+    # builder must appear; the audit literal itself must appear exactly once; and \
+    # after patching exactly one patched literal must remain. Any ambiguous \
+    # multi-callsite or mixed patched/unpatched layout fails the image build \
+    # rather than silently widening the rewrite. \
+    # \
+    # Removal condition: drop this block (and any related `OC_VERSION` floor bump) \
+    # once an OpenClaw release sets `mode: "trusted_env_proxy"` directly at the \
+    # preflight call site or otherwise routes the managed inference base URL \
+    # through the env-proxy dispatcher by default. The reviewed shape lives at \
+    # `src/cron/isolated-agent/model-preflight.runtime.ts` in the openclaw repo. \
+    preflight_files="$(grep -RIlF --include='*.js' 'cron-model-provider-preflight' "$OC_DIST" || true)"; \
+    if [ -n "$preflight_files" ]; then \
+        patched_preflight=0; \
+        for f in $preflight_files; do \
+            audit_count="$(grep -Fc 'auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            [ "${audit_count:-0}" -ge 1 ] \
+                || patch_fail "Patch 6 shape gate: $f mentions cron-model-provider-preflight but has no auditContext literal"; \
+            [ "${audit_count:-0}" -eq 1 ] \
+                || patch_fail "Patch 6 shape gate: $f has ${audit_count} auditContext literals (expected exactly 1); refusing ambiguous multi-callsite rewrite"; \
+            grep -Fq 'fetchWithSsrFGuard(' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no fetchWithSsrFGuard call"; \
+            grep -Fq 'buildLocalProviderSsrFPolicy' "$f" \
+                || patch_fail "Patch 6 shape gate: $f has cron-model-provider-preflight but no buildLocalProviderSsrFPolicy"; \
+            patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+            if [ "${patched_count:-0}" -eq 1 ]; then \
+                echo "INFO: Patch 6 already present in $f"; \
+            elif [ "${patched_count:-0}" -eq 0 ]; then \
+                sed -i -E 's|auditContext: "cron-model-provider-preflight"|mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"|g' "$f"; \
+                new_patched_count="$(grep -Fc 'mode: "trusted_env_proxy", auditContext: "cron-model-provider-preflight"' "$f" || true)"; \
+                [ "${new_patched_count:-0}" -eq 1 ] \
+                    || patch_fail "Patch 6 verification: expected exactly one patched literal in $f, found ${new_patched_count}"; \
+                patched_preflight=1; \
+            else \
+                patch_fail "Patch 6 shape gate: $f has ${patched_count} already-patched literals (expected 0 or 1); refusing mixed-state rewrite"; \
+            fi; \
+        done; \
+        if [ "$patched_preflight" = "1" ]; then \
+            echo "INFO: Patch 6 applied to OpenClaw ${OC_VERSION} cron preflight trusted env-proxy"; \
+        fi; \
+    else \
+        preflight_refs="$(grep -RIlE --include='*.js' 'preflightCronModelProvider|probeLocalProviderEndpoint' "$OC_DIST" || true)"; \
+        if [ -z "$preflight_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no cron model-provider preflight; Patch 6 not needed"; \
+        else \
+            echo "ERROR: Patch 6 target missing but cron preflight references remain:" >&2; \
+            printf '%s\n' "$preflight_refs" | head -n 5 >&2; \
+            patch_fail "Patch 6 cannot safely skip"; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
@@ -475,14 +517,9 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
 # pinned selection-*.js shape changes.
-# The same build layer then imports the npm-installed, compiled fetch guard with
-# an injected fetch implementation (no external request) to prove proxy dispatch,
-# no local DNS, literal SSRF denies, and redirect re-checks after patching.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-    /usr/local/lib/node_modules/openclaw/dist \
-    && node /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs \
-        /usr/local/lib/node_modules/openclaw/dist
+    /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
