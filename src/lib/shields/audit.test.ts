@@ -267,6 +267,30 @@ describe("readRecentShieldsAutoRestore", () => {
     expect(event.timeoutSeconds).toBe(45);
   });
 
+  it("rejects a shields_down timeout timestamped after its auto-restore (#5922)", () => {
+    const restoreTimestamp = new Date().toISOString();
+    fs.writeFileSync(
+      auditPath,
+      JSON.stringify({
+        action: "shields_down",
+        sandbox: "alpha",
+        timestamp: new Date(Date.now() + 60 * 1000).toISOString(),
+        timeout_seconds: 45,
+      }) +
+        "\n" +
+        JSON.stringify({
+          action: "shields_auto_restore",
+          sandbox: "alpha",
+          timestamp: restoreTimestamp,
+        }) +
+        "\n",
+    );
+
+    const event = requireEvent(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath));
+    expect(event.timestamp).toBe(restoreTimestamp);
+    expect(event.timeoutSeconds).toBeNull();
+  });
+
   it("returns null timeoutSeconds when shields_down has NaN or Infinity as a raw string payload (#5922)", () => {
     // JSON.stringify(NaN) and JSON.stringify(Infinity) both produce "null",
     // so write the JSONL line manually to exercise the non-finite path.
@@ -344,5 +368,13 @@ describe("readRecentShieldsAutoRestore", () => {
 
     const event = requireEvent(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath));
     expect(event.timestamp).toBe(timestamp);
+  });
+
+  it("returns no event when the bounded tail has no complete JSONL entry (#5922)", () => {
+    fs.writeFileSync(auditPath, "x".repeat(1024 * 1024 + 100));
+
+    expect(readRecentShieldsAutoRestore("alpha", 10 * 60 * 1000, auditPath)).toEqual({
+      kind: "none",
+    });
   });
 });

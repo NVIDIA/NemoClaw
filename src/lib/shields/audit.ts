@@ -92,7 +92,8 @@ function readAuditTail(auditFile: string): string {
     if (offset === 0) return content;
 
     // The bounded read can begin in the middle of a JSONL entry. Drop that
-    // partial first line and retain only complete entries from the tail.
+    // partial first line and retain only complete entries from the tail. If
+    // there is no newline, the tail contains no complete JSONL entry.
     const firstNewline = content.indexOf("\n");
     return firstNewline === -1 ? "" : content.slice(firstNewline + 1);
   } finally {
@@ -178,7 +179,11 @@ export function readRecentShieldsAutoRestore(
     for (let j = i - 1; j >= 0; j--) {
       const prev = parseEntry(lines[j]);
       if (prev?.action === "shields_down" && prev.sandbox === sandboxName) {
+        const downMs =
+          typeof prev.timestamp === "string" ? new Date(prev.timestamp).getTime() : Number.NaN;
         if (
+          Number.isFinite(downMs) &&
+          downMs <= restoreMs &&
           typeof prev.timeout_seconds === "number" &&
           Number.isFinite(prev.timeout_seconds) &&
           Number.isInteger(prev.timeout_seconds) &&

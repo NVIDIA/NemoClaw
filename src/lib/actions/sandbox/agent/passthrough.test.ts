@@ -160,14 +160,14 @@ describe("runAgentPassthrough", () => {
 
     await runAgentPassthrough(
       "alpha",
-      { extraArgs: ["--agent", "work", "--some-future-value-flag", "--json"] },
+      { extraArgs: ["--agent", "work", "--json-output", "--json"] },
       { execJson },
     );
 
     expect(execJson).not.toHaveBeenCalled();
     expect(execMock).toHaveBeenCalledWith(
       "alpha",
-      ["openclaw", "agent", "--agent", "work", "--some-future-value-flag", "--json"],
+      ["openclaw", "agent", "--agent", "work", "--json-output", "--json"],
       { tty: false },
     );
   });

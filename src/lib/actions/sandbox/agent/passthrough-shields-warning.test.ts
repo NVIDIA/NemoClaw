@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ShieldsAutoRestoreReadResult } from "../../../shields/audit";
 
@@ -35,7 +39,7 @@ vi.mock("../../../shields/audit", () => ({
   readRecentShieldsAutoRestore: vi.fn(() => ({ kind: "none" })),
 }));
 
-import { runAgentPassthrough } from "./passthrough";
+import { type AgentPassthroughDeps, runAgentPassthrough } from "./passthrough";
 
 function makeProcMock() {
   const writes: string[] = [];
@@ -108,6 +112,62 @@ describe("runAgentPassthrough shields-relock warning", () => {
     );
     expect(output).toContain("nemoclaw 'alpha; touch /tmp/pwn' shields down --timeout 20s");
     expect(output).not.toContain("nemoclaw alpha; touch /tmp/pwn");
+  });
+
+  it("keeps JSON stdout parseable while warning from a real audit file on stderr (#5922)", async () => {
+    const actualAudit =
+      await vi.importActual<typeof import("../../../shields/audit")>("../../../shields/audit");
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-warning-"));
+    const auditPath = path.join(tempDir, "shields-audit.jsonl");
+    const restoreTimestamp = new Date().toISOString();
+    const stdoutWrites: string[] = [];
+    const { writes, proc } = makeProcMock();
+    const processWithStdout = {
+      ...proc,
+      stdout: { write: (value: string) => stdoutWrites.push(value) },
+    };
+    const execJson = vi.fn(((_sandboxName, _command, jsonProc): never => {
+      jsonProc?.stdout.write('{"ok":true}\n');
+      throw new Error("__json-exit:0");
+    }) as NonNullable<AgentPassthroughDeps["execJson"]>);
+
+    try {
+      fs.writeFileSync(
+        auditPath,
+        [
+          JSON.stringify({
+            action: "shields_down",
+            sandbox: "alpha",
+            timestamp: new Date(Date.now() - 20 * 1000).toISOString(),
+            timeout_seconds: 20,
+          }),
+          JSON.stringify({
+            action: "shields_auto_restore",
+            sandbox: "alpha",
+            timestamp: restoreTimestamp,
+          }),
+        ].join("\n") + "\n",
+      );
+
+      await expect(
+        runAgentPassthrough(
+          "alpha",
+          { extraArgs: ["--agent", "main", "-m", "hi", "--json"] },
+          {
+            process: processWithStdout,
+            execJson,
+            getRecentShieldsAutoRestore: (sandboxName) =>
+              actualAudit.readRecentShieldsAutoRestore(sandboxName, 10 * 60 * 1000, auditPath),
+          },
+        ),
+      ).rejects.toThrow("__json-exit:0");
+
+      expect(JSON.parse(stdoutWrites.join(""))).toEqual({ ok: true });
+      expect(writes.join("")).toMatch(/Shields auto-relocked after 20s/);
+      expect(execJson).toHaveBeenCalledOnce();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("emits no relock warning when the audit has no recent event (#5922)", async () => {
