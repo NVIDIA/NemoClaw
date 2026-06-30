@@ -107,7 +107,8 @@
 //     directly (e.g., a distinct exit code or structured error field for
 //     missing-scope-after-relock), or when NemoClaw implements
 //     extend-on-activity so the scope never lapses mid-session.
-//     (The shields_auto_restore audit entry is appended by timer.ts:295–302.)
+//     (shields_auto_restore audit entries are written by the shields timer
+//     and inline expired-timer recovery paths.)
 
 import { type AgentDefinition, isTerminalAgent, listAgents, loadAgent } from "../../../agent/defs";
 import { CLI_NAME } from "../../../cli/branding";
