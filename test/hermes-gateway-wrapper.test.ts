@@ -12,6 +12,7 @@
 // does not see a spurious red on `npm test`. See `.github/workflows/` for the
 // canonical CI runner image.
 
+import assert from "node:assert";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -41,11 +42,10 @@ const canRun = process.platform === "linux" && python3Available();
 // Surface a hard error in CI when the prerequisites are missing instead of
 // silently skipping — a green CI run that never executed any wrapper test
 // would mask regressions in the security boundary.
-if (process.env.CI && !canRun) {
-  throw new Error(
-    "Hermes wrapper integration tests require Linux + python3; CI environment did not meet both prerequisites",
-  );
-}
+assert(
+  !process.env.CI || canRun,
+  "Hermes wrapper integration tests require Linux + python3; CI environment did not meet both prerequisites",
+);
 
 type WrapperRun = {
   status: number | null;
