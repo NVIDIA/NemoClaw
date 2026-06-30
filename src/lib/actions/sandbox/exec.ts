@@ -51,6 +51,20 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
 // low-level InvalidArgument error that gives the reporter no NemoClaw-specific
 // recovery path (#5980). We detect the offending argument before dispatch and
 // fail with actionable guidance instead.
+//
+// Source-of-truth for this guard:
+//   - Invalid state: OpenShell's exec endpoint returns InvalidArgument for any
+//     argv element containing \r or \n.
+//   - Source boundary: the limitation lives in the external OpenShell
+//     `sandbox exec` argv contract, not in NemoClaw. We cannot fix it at the
+//     source from this repo, so the guard is a deliberately localized
+//     translation of that constraint into actionable NemoClaw guidance.
+//   - Regression coverage: `findMultilineExecArg`, `multilineExecMessage`, and
+//     the `execSandbox multi-line guard (#5980)` suite in exec.test.ts.
+//   - Removal condition: if a future OpenShell release accepts multi-line argv
+//     elements, this guard and the matching docs notice in
+//     docs/reference/commands.mdx + commands-nemohermes.mdx become unnecessary
+//     and should be removed together.
 const MULTILINE_ARG_PATTERN = /[\r\n]/;
 
 /** @internal Exported for unit testing only; not part of the public API. */

@@ -1,7 +1,19 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// The default exec runner shells out via spawnSync with stdio: "inherit"; the
+// stdin-pipe workaround relies on that inheritance to deliver piped script
+// content to the sandbox shell. Mock node:child_process so a single test can
+// assert the inherited-stdio wiring at the execSandbox boundary without
+// spawning a real process. Every other test injects a runner/probe seam, so
+// this default spawnSync is exercised only by that one test.
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawnSync: vi.fn() };
+});
 
 // execSandbox dynamically requires the OpenShell binary lookup, which exits the
 // process when OpenShell is absent. The dispatch-path tests inject a
@@ -186,7 +198,7 @@ describe("execSandbox multi-line guard (#5980)", () => {
     expect(printed).toContain('bash -lc "cmd1; cmd2"');
   });
 
-  it("forwards the single-line semicolon workaround to dispatch and exits with the inner status", async () => {
+  it("forwards the semicolon workaround to dispatch and exits with the inner status", async () => {
     // The reporter's confirmed workaround (`bash -lc "cmd1; cmd2"`) carries no
     // newline/carriage return, so it passes the guard and dispatches. Injecting
     // resolveBinary avoids the process-exiting OpenShell lookup, and the runner
@@ -277,10 +289,11 @@ describe("execSandbox multi-line guard (#5980)", () => {
     );
   });
 
-  it("forwards the stdin-pipe workaround to dispatch (script travels over stdin, not argv)", async () => {
+  it("forwards the stdin-pipe workaround argv to dispatch (script travels over stdin, not argv)", async () => {
     // `printf 'cmd1\ncmd2\n' | nemoclaw <sb> exec -- bash` puts the multi-line
     // script on stdin; the forwarded argv is just `bash` (no newline), so it
-    // passes the guard and dispatches. stdin is forwarded via stdio: "inherit".
+    // passes the guard and dispatches. This test pins the argv shape only; the
+    // adjacent "inherits stdio" test proves the runner actually forwards stdin.
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
@@ -299,6 +312,32 @@ describe("execSandbox multi-line guard (#5980)", () => {
       "--",
       "bash",
     ]);
+    expect(exitSpy).toHaveBeenCalledWith(0);
+  });
+
+  it("dispatches the default runner with inherited stdio so the stdin-pipe workaround receives piped input", async () => {
+    // The argv-only test above cannot catch a regression that stops the runner
+    // from inheriting stdin (#5980). Exercise the *default*
+    // runner (no injected `run`) and assert spawnSync inherits stdio, which is
+    // the observable mechanism the documented `printf ... | exec -- bash`
+    // workaround depends on. Only resolveBinary is injected, to avoid the
+    // process-exiting OpenShell binary lookup.
+    const spawned = vi.mocked(spawnSync);
+    spawned.mockReturnValue({ status: 0 } as never);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      execSandbox("bug5980test", ["bash"], {}, { resolveBinary: () => "openshell" }),
+    ).rejects.toThrow("exit:0");
+
+    expect(spawned).toHaveBeenCalledWith(
+      "openshell",
+      ["sandbox", "exec", "--name", "bug5980test", "--", "bash"],
+      { stdio: "inherit" },
+    );
     expect(exitSpy).toHaveBeenCalledWith(0);
   });
 
