@@ -18,11 +18,11 @@ import {
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
 import { expect, test } from "../fixtures/e2e-test.ts";
-import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import {
   type HostedInferenceConfig,
   requireHostedInferenceConfig,
 } from "../fixtures/hosted-inference.ts";
+import { shouldRunLiveE2EScenarios } from "../fixtures/live-project-gate.ts";
 import type { SecretStore } from "../fixtures/secrets.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
@@ -697,7 +697,7 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
 
 describe.sequential("common-egress agent live scenarios", () => {
   openClawTest(
-    "C1 OpenClaw balanced includes weather and agent fetches Open-Meteo",
+    "C1 OpenClaw balanced bundled skill fetches wttr.in",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
@@ -710,7 +710,7 @@ describe.sequential("common-egress agent live scenarios", () => {
         contract: [
           "OpenClaw balanced onboarding applies weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
-          "a real OpenClaw agent turn fetches Open-Meteo through web_fetch",
+          "a real OpenClaw agent turn follows the bundled weather skill's curl path to wttr.in",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
@@ -725,6 +725,7 @@ describe.sequential("common-egress agent live scenarios", () => {
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
         "api.open-meteo.com",
         "geocoding-api.open-meteo.com",
+        "wttr.in",
       ]);
       await assertPolicyAbsent(
         sandbox,
@@ -737,9 +738,10 @@ describe.sequential("common-egress agent live scenarios", () => {
         expected: "WEATHER_AGENT_OK",
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
-        prompt: `Use the web_fetch tool to fetch exactly this URL:
-https://api.open-meteo.com/v1/forecast?latitude=47.4979&longitude=19.0402&current=temperature_2m
-After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response contains temperature_2m. Do not fetch any other URL.`,
+        prompt: `Use the installed weather skill with curl to fetch exactly this URL:
+https://wttr.in/London?format=3
+Do not use web_fetch, web_search, or any other weather provider.
+After curl returns, reply exactly WEATHER_AGENT_OK if the response contains London. Do not fetch any other URL.`,
       });
       await artifacts.writeJson("scenario-result.json", {
         id: "common-egress-agent",

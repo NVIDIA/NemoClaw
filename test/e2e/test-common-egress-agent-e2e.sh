@@ -5,7 +5,7 @@
 # Common Egress Agent E2E
 #
 # Proves the safe common-egress defaults through real agent turns:
-#   C1  OpenClaw balanced includes weather and the agent fetches Open-Meteo.
+#   C1  OpenClaw balanced includes weather and the bundled skill fetches wttr.in.
 #   C2  OpenClaw open includes public-reference and the agent fetches Wikidata.
 #   C3  Hermes open includes public-reference plus all Hermes Nous policy presets,
 #       and the Hermes agent fetches Wikidata through its API-server agent path.
@@ -426,13 +426,14 @@ if [ "${NEMOCLAW_COMMON_EGRESS_SKIP_OPENCLAW:-}" != "1" ]; then
   section "Phase 1: OpenClaw balanced weather"
   OPENCLAW_BALANCED_SANDBOX="${NEMOCLAW_COMMON_EGRESS_OPENCLAW_BALANCED_SANDBOX:-e2e-common-egress-openclaw-balanced}"
   run_onboard "$OPENCLAW_BALANCED_SANDBOX" "openclaw" "balanced"
-  assert_policy_contains "$OPENCLAW_BALANCED_SANDBOX" "C1 policy" "api.open-meteo.com" "geocoding-api.open-meteo.com"
+  assert_policy_contains "$OPENCLAW_BALANCED_SANDBOX" "C1 policy" "api.open-meteo.com" "geocoding-api.open-meteo.com" "wttr.in"
   assert_policy_absent "$OPENCLAW_BALANCED_SANDBOX" "C1 balanced scope" "restcountries.com"
   WEATHER_AGENT_PROMPT=$(
     cat <<'PROMPT'
-Use the web_fetch tool to fetch exactly this URL:
-https://api.open-meteo.com/v1/forecast?latitude=47.4979&longitude=19.0402&current=temperature_2m
-After web_fetch returns, reply exactly WEATHER_AGENT_OK if the fetched response contains temperature_2m. Do not fetch any other URL.
+Use the installed weather skill with curl to fetch exactly this URL:
+https://wttr.in/London?format=3
+Do not use web_fetch, web_search, or any other weather provider.
+After curl returns, reply exactly WEATHER_AGENT_OK if the response contains London. Do not fetch any other URL.
 PROMPT
   )
   run_openclaw_agent_assertion "$OPENCLAW_BALANCED_SANDBOX" "C1 agent weather" "$WEATHER_AGENT_PROMPT" "WEATHER_AGENT_OK"

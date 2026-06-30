@@ -9,25 +9,15 @@ network_policies:
   weather:
     name: weather
     endpoints:
-      # Hosts the bundled OpenClaw weather skill actually calls (web_fetch + curl).
-      # wttr.in is the host the skill uses on the pinned OpenClaw (2026.5.27).
-      # wttr.is is pre-allowed for forward-compat: OpenClaw >= 2026.6.2 documents it as the
-      # fallback host, so allowlisting it now prevents a silent egress gap on the next
-      # OpenClaw bump. It is simply unused on 2026.5.27 (the skill never calls it there).
+      # Host the bundled OpenClaw weather skill calls with curl on the pinned
+      # OpenClaw (2026.5.27).
       # Paths are /<location> (city, region, airport code, or coordinates) and /:help.
       #
       # Why path "/**": wttr.in's location namespace IS the path — /<city>, /<airport>,
       # /<lat,lon>, /~<place>, /:help — so there is no narrower stable prefix to pin to.
       # Scope stays bounded: GET/HEAD only (every other method is denied by deny-by-default),
-      # a single read-only public host family, and no credentials are sent.
+      # a single read-only public host, and no credentials are sent.
       - host: wttr.in
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: HEAD, path: "/**" }
-      - host: wttr.is
         port: 443
         protocol: rest
         enforcement: enforce
