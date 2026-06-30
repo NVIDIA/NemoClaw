@@ -94,6 +94,20 @@ describe("enforceHermesSecretBoundaryOnRunningGateway", () => {
     expect(result).toEqual({ refused: false });
   });
 
+  it("rejects a legacy-script ALREADY_RUNNING marker on the supervisor protocol", () => {
+    mockSandboxAgent("hermes");
+    const exec = vi.fn(() => makeExecResult("ALREADY_RUNNING\n"));
+
+    const result = enforceHermesSecretBoundaryOnRunningGateway(SANDBOX, HERMES_AGENT, exec);
+
+    expect(result).toEqual({
+      refused: true,
+      reason: "unexpected-marker",
+      stderr: "",
+    });
+    expect(exec).toHaveBeenCalledWith(SANDBOX, "recover");
+  });
+
   it("refuses recovery when an older sandbox image lacks the validator", () => {
     mockSandboxAgent("hermes");
     const exec = vi.fn(() => makeExecResult("SECRET_BOUNDARY_VALIDATOR_MISSING\n", "missing\n", 1));

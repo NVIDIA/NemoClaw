@@ -1120,8 +1120,9 @@ RUN set -eu; \
 # nemoclaw-start records `pid starttime` for the exact gateway process in
 # /tmp/nemoclaw-gateway.pid on every launch.  When curl sees connection
 # refused, validate both values against `/proc/<pid>/stat` field 22 before
-# accepting the `openclaw` comm fallback.  A numeric PID or OpenClaw-looking
-# argv alone is insufficient because either can belong to a recycled process.
+# accepting the exact OpenClaw gateway cmdline fallback.  A numeric PID or
+# OpenClaw-looking argv alone is insufficient because either can belong to a
+# recycled process.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
@@ -1137,11 +1138,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         case "${gwpid:-x}" in *[!0-9]*) exit 1 ;; esac; \
         case "${gwstart:-x}" in *[!0-9]*) exit 1 ;; esac; \
         [ -z "$gwextra" ] || exit 1; \
-        gwidentity="$(awk '{ line=$0; sub(/^[0-9]+ \(.*\) /, "", line); n=split(line, f, /[[:space:]]+/); if (n >= 20) print f[1] ":" f[20] }' "/proc/$gwpid/stat" 2>/dev/null)"; \
-        gwstate="${gwidentity%%:*}"; gwcurrent="${gwidentity#*:}"; \
-        [ "$gwstate" != Z ] || exit 1; \
-        [ "$gwcurrent" = "$gwstart" ] || exit 1; \
-        case "$(ps -p "$gwpid" -o comm= 2>/dev/null)" in openclaw*) ;; *) exit 1 ;; esac; \
+        python3 -c 'import pathlib, sys; proc = pathlib.Path(sys.argv[1]); expected = sys.argv[2].encode("ascii"); port = sys.argv[3].encode(); parse = lambda data: (lambda fields: (fields[0], fields[19]))(data.rsplit(b") ", 1)[1].split()); before = parse((proc / "stat").read_bytes()); raw = (proc / "cmdline").read_bytes(); after = parse((proc / "stat").read_bytes()); trimmed = raw.rstrip(b"\0"); padding = len(raw) - len(trimmed); title = padding >= 1 and trimmed in (b"openclaw", b"openclaw-gateway"); argv = raw[:-1].split(b"\0") if padding == 1 else []; interpreters = (b"node", b"nodejs", b"/usr/local/bin/node", b"/usr/local/bin/nodejs", b"/usr/bin/node", b"/usr/bin/nodejs"); launchers = (b"/usr/local/bin/openclaw", b"/usr/local/lib/node_modules/openclaw/openclaw.mjs"); index = 1 if argv and argv[0] in interpreters else 0; command = index < len(argv) and argv[index] in launchers and argv[index + 1:] in ([b"gateway", b"run", b"--port", port], [b"gateway", b"run", b"--port=" + port]); identity = before[1] == expected == after[1] and before[0] != b"Z" and after[0] != b"Z"; raise SystemExit(not (identity and (title or command)))' "/proc/$gwpid" "$gwstart" "$port" 2>/dev/null || exit 1; \
         [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,

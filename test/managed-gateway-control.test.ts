@@ -67,6 +67,7 @@ with tempfile.TemporaryDirectory() as root:
     proc_root = os.path.join(root, "proc")
     system_root = os.path.join(root, "system")
     os.makedirs(os.path.join(proc_root, "net"))
+    os.makedirs(os.path.join(system_root, "run"))
     os.makedirs(os.path.join(system_root, "usr/local/lib/nemoclaw"))
     os.makedirs(os.path.join(system_root, "sandbox/.hermes"))
     os.makedirs(os.path.join(system_root, "etc/nemoclaw"))
@@ -107,6 +108,19 @@ with tempfile.TemporaryDirectory() as root:
         1000,
         b"/usr/local/bin/hermes.real\0gateway\0run\0",
         listener_inode="77777",
+    )
+    controller_pid = os.getpid()
+    controller_start_time = "777"
+    write_process(
+        proc_root,
+        namespace_path,
+        controller_pid,
+        controller_start_time,
+        1,
+        os.geteuid(),
+        b"python3\0-I\0/usr/local/lib/nemoclaw/managed-gateway-control.py\0restart\0"
+        + (b"a" * 64)
+        + b"\0",
     )
 
     control._sandbox_uid = lambda: 1000
@@ -262,8 +276,47 @@ with tempfile.TemporaryDirectory() as root:
     control._preflight = lambda *_args: None
     control._http_healthy_in_gateway_namespace = lambda *_args: True
     real_terminate = control._terminate_gateway
+    with control.ProcReader(proc_root) as controller_reader:
+        controller_identity = control._controller_process_identity(controller_reader)
+    lease_path = os.path.join(
+        system_root,
+        "run/nemoclaw",
+        control.EXPECTED_EXIT_MARKER_NAME,
+    )
+    lock_path = os.path.join(
+        system_root,
+        "run/nemoclaw",
+        control.EXPECTED_EXIT_LOCK_NAME,
+    )
+    lease_observations = []
+    def observe_expected_exit_lease(identity, label):
+        metadata = os.stat(lease_path, follow_symlinks=False)
+        lock_metadata = os.stat(lock_path, follow_symlinks=False)
+        with open(lease_path, "r", encoding="ascii") as stream:
+            version, pid, start_time, controller, controller_start = stream.read().split()
+        lease_observations.append({
+            "label": label,
+            "identity": [
+                version,
+                int(pid),
+                start_time,
+                int(controller),
+                controller_start,
+            ],
+            "secure": (
+                metadata.st_uid == os.geteuid()
+                and metadata.st_gid == os.getegid()
+                and (metadata.st_mode & 0o777) == 0o444
+                and metadata.st_nlink == 1
+                and lock_metadata.st_uid == os.geteuid()
+                and lock_metadata.st_gid == os.getegid()
+                and (lock_metadata.st_mode & 0o777) == 0o600
+                and lock_metadata.st_nlink == 1
+            ),
+        })
     def replace_gateway(_reader, identity):
         assert identity.pid == 41
+        observe_expected_exit_lease(identity, "restart")
         remove_process(proc_root, 41)
         write_process(
             proc_root,
@@ -275,11 +328,99 @@ with tempfile.TemporaryDirectory() as root:
             b"/usr/local/bin/hermes.real\0gateway\0run\0",
             listener_inode="77777",
         )
+
+    active_lease = control._publish_expected_exit_lease(
+        expected_gateway,
+        controller_identity,
+    )
+    try:
+        control._publish_expected_exit_lease(expected_gateway, controller_identity)
+        active_controller_lock = "replaced"
+    except control.ControlError as error:
+        active_controller_lock = error.code
+    control._clear_expected_exit_lease(active_lease)
+
+    orphaned_lease = control._publish_expected_exit_lease(
+        expected_gateway,
+        controller_identity,
+    )
+    orphaned_inode = os.stat(lease_path, follow_symlinks=False).st_ino
+    os.close(orphaned_lease.marker_fd)
+    os.close(orphaned_lease.lock_fd)
+    os.close(orphaned_lease.directory_fd)
+    untrusted_marker_fd = os.open(lease_path, os.O_RDONLY)
+    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_SH)
+    recovered_lease = control._publish_expected_exit_lease(
+        expected_gateway,
+        controller_identity,
+    )
+    marker_flock_cannot_pin = (
+        os.stat(lease_path, follow_symlinks=False).st_ino != orphaned_inode
+    )
+    control.fcntl.flock(untrusted_marker_fd, control.fcntl.LOCK_UN)
+    os.close(untrusted_marker_fd)
+    control._clear_expected_exit_lease(recovered_lease)
+
+    original_lease = control._publish_expected_exit_lease(
+        expected_gateway,
+        controller_identity,
+    )
+    os.unlink(lease_path)
+    with open(lease_path, "w", encoding="ascii") as stream:
+        stream.write(f"v1 41 333 {controller_pid} {controller_start_time}\n")
+    os.chmod(lease_path, 0o444)
+    replacement_inode = os.stat(lease_path, follow_symlinks=False).st_ino
+    control._clear_expected_exit_lease(original_lease)
+    inode_safe_cleanup = (
+        os.path.exists(lease_path)
+        and os.stat(lease_path, follow_symlinks=False).st_ino == replacement_inode
+    )
+    os.unlink(lease_path)
+
+    os.unlink(lock_path)
+    original_umask = os.umask(0o777)
+    try:
+        restrictive_umask_lease = control._publish_expected_exit_lease(
+            expected_gateway,
+            controller_identity,
+        )
+    finally:
+        os.umask(original_umask)
+    restrictive_umask_modes = [
+        os.stat(lease_path, follow_symlinks=False).st_mode & 0o777,
+        os.stat(lock_path, follow_symlinks=False).st_mode & 0o777,
+    ]
+    control._clear_expected_exit_lease(restrictive_umask_lease)
+
     control._terminate_gateway = replace_gateway
     try:
         restarted = control._control("restart", "a" * 64)
+        restart_lease_cleared = not os.path.exists(lease_path)
         recovered = control._control("recover", "b" * 64)
         probed = control._control("probe", "e" * 64)
+
+        real_detect_agent = control._detect_agent
+        real_agent_spec = control._agent_spec
+        real_gateway_candidates = control._gateway_candidates
+        real_wait_for_healthy = control._wait_for_healthy_gateway
+        real_publish_lease = control._publish_expected_exit_lease
+        control._detect_agent = lambda: "openclaw"
+        control._agent_spec = lambda *_args: control.AgentSpec("openclaw", 18642)
+        control._gateway_candidates = lambda reader, *_args: [reader.capture(43)]
+        control._wait_for_healthy_gateway = lambda reader, *_args: reader.capture(43)
+        control._terminate_gateway = lambda *_args: None
+        control._publish_expected_exit_lease = lambda *_args: (_ for _ in ()).throw(
+            AssertionError("OpenClaw must not publish a Hermes crash-budget lease")
+        )
+        try:
+            openclaw_restart = control._control("restart", "f" * 64)
+        finally:
+            control._detect_agent = real_detect_agent
+            control._agent_spec = real_agent_spec
+            control._gateway_candidates = real_gateway_candidates
+            control._wait_for_healthy_gateway = real_wait_for_healthy
+            control._publish_expected_exit_lease = real_publish_lease
+            control._terminate_gateway = replace_gateway
 
         real_wait_for_healthy = control._wait_for_healthy_gateway
         timeout_refresh_waits = []
@@ -316,6 +457,7 @@ with tempfile.TemporaryDirectory() as root:
         def terminate_refreshed_gateway(_reader, identity):
             timeout_refresh_signals.append(identity.pid)
             assert identity.pid == 44
+            observe_expected_exit_lease(identity, "unhealthy-recover")
             remove_process(proc_root, 44)
             write_process(
                 proc_root,
@@ -331,6 +473,7 @@ with tempfile.TemporaryDirectory() as root:
         control._terminate_gateway = terminate_refreshed_gateway
         try:
             timeout_refresh = control._control("recover", "d" * 64)
+            timeout_lease_cleared = not os.path.exists(lease_path)
         finally:
             control._wait_for_healthy_gateway = real_wait_for_healthy
             control._terminate_gateway = replace_gateway
@@ -461,6 +604,18 @@ with tempfile.TemporaryDirectory() as root:
         "restarted": restarted,
         "recovered": recovered,
         "probed": probed,
+        "openclaw_restart": openclaw_restart,
+        "lease_races": [
+            active_controller_lock,
+            marker_flock_cannot_pin,
+            inode_safe_cleanup,
+            restrictive_umask_modes,
+        ],
+        "expected_exit_leases": [
+            lease_observations,
+            restart_lease_cleared,
+            timeout_lease_cleared,
+        ],
         "timeout_refresh": [
             timeout_refresh,
             timeout_refresh_signals,
@@ -516,6 +671,24 @@ describe("managed gateway root control", () => {
       restarted: ["ok", 41, 43],
       recovered: ["already-running", 43, 43],
       probed: ["already-running", 43, 43],
+      openclaw_restart: ["ok", 43, 43],
+      lease_races: ["SUPERVISOR_BUSY", true, true, [0o444, 0o600]],
+      expected_exit_leases: [
+        [
+          {
+            label: "restart",
+            identity: ["v1", 41, "333", expect.any(Number), "777"],
+            secure: true,
+          },
+          {
+            label: "unhealthy-recover",
+            identity: ["v1", 44, "666", expect.any(Number), "777"],
+            secure: true,
+          },
+        ],
+        true,
+        true,
+      ],
       timeout_refresh: [
         ["ok", 44, 45],
         [44],

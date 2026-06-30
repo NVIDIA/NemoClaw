@@ -3,6 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GATEWAY_RESTART_MARKERS as MARKERS } from "../../agent/gateway-restart-markers";
+import * as agentRuntime from "../../agent/runtime";
+import * as registry from "../../state/registry";
 import { classifyGatewayRestartFailure } from "./gateway-restart";
 import { restartSandboxGateway } from "./process-recovery";
 
@@ -109,6 +111,41 @@ describe("restartSandboxGateway — host-mediated gateway restart", () => {
       });
       expect(deps.ensureSandboxPortForward).toHaveBeenCalledWith("alpha");
     } finally {
+      restore();
+    }
+  });
+
+  it("uses the injected supervisor action for the managed settle probe", () => {
+    const restore = silenceConsole();
+    const previousSettleSeconds = process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS;
+    process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = "0.001";
+    try {
+      vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+      vi.spyOn(registry, "getSandbox").mockReturnValue({
+        name: "alpha",
+        agent: "openclaw",
+        openshellDriver: "docker",
+      });
+      const requestGatewaySupervisorAction = vi.fn(() => ({
+        status: 0,
+        stdout: "GATEWAY_PID=123",
+        stderr: "",
+      }));
+      const { waitForRecoveredSandboxGateway: _defaultWait, ...deps } = baseDeps({
+        requestGatewaySupervisorAction,
+      });
+
+      const result = restartSandboxGateway("alpha", { quiet: true, deps });
+
+      expect(result).toMatchObject({ ok: true, restarted: true, healthPassed: true });
+      expect(requestGatewaySupervisorAction.mock.calls).toEqual([
+        ["alpha", "restart", 210000],
+        ["alpha", "probe"],
+      ]);
+    } finally {
+      previousSettleSeconds === undefined
+        ? delete process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS
+        : (process.env.NEMOCLAW_GATEWAY_RECOVERY_SETTLE_SECONDS = previousSettleSeconds);
       restore();
     }
   });

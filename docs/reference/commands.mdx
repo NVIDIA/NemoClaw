@@ -737,10 +737,11 @@ On success, the command reports that the gateway was restarted, health passed, a
 It also checks the dashboard forward, messaging forward, and manifest-declared agent forwards.
 `--quiet` suppresses progress lines but still prints refusal diagnostics.
 In the direct root-entrypoint topology, PID 1 stops only the gateway child whose process ID and process start identity match the tracked child, applies the restart seal, and launches the replacement under the separate `gateway` UID.
-In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, pidfd-targets the exact observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
+In the OpenShell-managed topology, the installed root controller verifies a stable OpenShell to `nemoclaw-start` to gateway process shape, holds a root-only lifecycle lock, publishes one root-owned exit authorization bound to the exact gateway process ID, kernel start identity, and live controller identity, pidfd-targets the observed child, waits for the nonroot entrypoint supervisor to respawn it under the sandbox UID, and proves the replacement listener and HTTP health.
 That managed process proof prevents PID reuse from redirecting the signal but cannot establish provenance against a malicious same-UID process or create gateway and agent UID isolation.
 For Hermes, the entrypoint supervisor also owns the dashboard process, internal API relay, dashboard relay, and gateway log stream.
-The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five exits within 60 seconds until sandbox recreation.
+The managed nonroot supervisor continuously repairs those processes, stops an alive but deaf gateway after four consecutive failed health checks, and quarantines relaunch after five unexpected exits or failed replacement candidates within 60 seconds until sandbox recreation.
+That authorization keeps an authenticated host-requested exit out of the crash budget while its exact root controller remains live; it records host intent for the exit but does not claim that the host signal was the only possible cause in the shared-UID topology.
 The host repairs only the host-side OpenShell forwards after the supervisor reports a healthy gateway.
 
 <AgentOnly variant="hermes">

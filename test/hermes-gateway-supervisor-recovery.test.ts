@@ -534,6 +534,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_tracked_role_is_current() { [ "$2" = "6262" ] && { trace "supervised:$2"; exit 0; }; return 1; }',
       'wait() { trace "wait:$1"; return 143; }',
       "mark_hermes_gateway_stopped() { trace mark-stopped; GATEWAY_PID=0; }",
+      "hermes_managed_gateway_exit_was_host_authorized() { return 1; }",
       'date() { printf "100\\n"; }',
       "sleep() { :; }",
       "prepare_calls=0",
@@ -585,6 +586,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       "hermes_tracked_role_is_current() { return 1; }",
       'wait() { trace "wait:$1"; return 137; }',
       "mark_hermes_gateway_stopped() { GATEWAY_PID=0; }",
+      "hermes_managed_gateway_exit_was_host_authorized() { return 1; }",
       'date() { printf "100\\n"; }',
       'sleep() { [ "$1" = "60" ] && { trace quarantine; exit 0; }; }',
       'recover_hermes_gateway_current_user() { recover_calls=$((recover_calls + 1)); GATEWAY_PID=$((5000 + recover_calls)); trace "recover:$GATEWAY_PID"; }',
@@ -1238,6 +1240,44 @@ describe("Hermes supervised auxiliary recovery", () => {
 });
 
 describe("Hermes socat bridge startup", () => {
+  it("fails promptly when the exact service owner exits during readiness", () => {
+    const source = fs.readFileSync(START_SCRIPT, "utf-8");
+    const result = runBashHarness(
+      [
+        "INTERNAL_PORT=18642",
+        "DASHBOARD_INTERNAL_PORT=19119",
+        'trace() { printf "%s\\n" "$*"; }',
+        'sleep() { trace "unexpected-sleep:$1"; }',
+        'hermes_tracked_role_is_current() { trace "owner-check:$1:$2:$3:$4"; return 1; }',
+        'hermes_tracked_service_owns_listener() { trace "unexpected-listener-check"; return 1; }',
+        "hermes_capture_tracked_role() { return 0; }",
+        extractShellFunction(source, "start_socat_forwarder"),
+        'SOCAT_PID=""',
+        "if start_socat_forwarder 8642 18642 API SOCAT_PID 4242 current; then rc=0; else rc=$?; fi",
+        'printf "RC=%s PID=%s\\n" "$rc" "$SOCAT_PID"',
+      ],
+      (tmpDir) => {
+        const binDir = path.join(tmpDir, "bin");
+        fs.mkdirSync(binDir);
+        fs.writeFileSync(path.join(binDir, "socat"), "#!/usr/bin/env bash\nexit 0\n", {
+          mode: 0o700,
+        });
+        return { PATH: `${binDir}:${process.env.PATH ?? ""}` };
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "owner-check:gateway:4242:current:18642",
+      "RC=1 PID=",
+    ]);
+    expect(result.stdout).not.toContain("unexpected-sleep");
+    expect(result.stdout).not.toContain("unexpected-listener-check");
+    expect(result.stderr).toContain(
+      "API service owner pid 4242 exited before binding 127.0.0.1:18642",
+    );
+  });
+
   it("refuses to publish a forward when the internal service never binds", () => {
     const source = fs.readFileSync(START_SCRIPT, "utf-8");
     const result = runBashHarness(

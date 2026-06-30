@@ -1124,14 +1124,18 @@ start_socat_forwarder() {
   local attempts=0
   local internal_ready=0
   while [ "$attempts" -lt 30 ]; do
-    if [ -n "$owner_pid" ] \
-      && [ -n "$owner_role" ] \
-      && hermes_tracked_role_is_current "$owner_role" "$owner_pid" "$owner_user" "$internal_port" \
-      && hermes_tracked_service_owns_listener "$owner_pid" "$internal_port" "$owner_user"; then
-      internal_ready=1
-      break
-    elif [ -z "$owner_pid" ] \
-      && ss -tln 2>/dev/null | grep -q "127.0.0.1:${internal_port}"; then
+    if [ -n "$owner_pid" ]; then
+      if [ -z "$owner_role" ] \
+        || ! hermes_tracked_role_is_current \
+          "$owner_role" "$owner_pid" "$owner_user" "$internal_port"; then
+        echo "[gateway] ${label} service owner pid ${owner_pid} exited before binding 127.0.0.1:${internal_port}" >&2
+        return 1
+      fi
+      if hermes_tracked_service_owns_listener "$owner_pid" "$internal_port" "$owner_user"; then
+        internal_ready=1
+        break
+      fi
+    elif ss -tln 2>/dev/null | grep -q "127.0.0.1:${internal_port}"; then
       # Compatibility for non-supervised callers; PID 1 production paths pass
       # an exact owner PID and never rely on this transport-only fallback.
       internal_ready=1
@@ -2424,11 +2428,120 @@ launch_hermes_gateway_current_user() {
 
 HERMES_MANAGED_GATEWAY_EXIT_TIMES=()
 HERMES_MANAGED_GATEWAY_EXIT_COUNT=0
+readonly HERMES_MANAGED_EXPECTED_EXIT_DIR="/run/nemoclaw"
+readonly HERMES_MANAGED_EXPECTED_EXIT_MARKER="managed-gateway-expected-exit"
+readonly HERMES_MANAGED_CONTROLLER_PATH="/usr/local/lib/nemoclaw/managed-gateway-control.py"
 
 quarantine_hermes_managed_gateway_relaunch() {
   while :; do
     sleep 60 || true
   done
+}
+
+hermes_managed_controller_argv_is_expected() {
+  [ "$#" -eq 5 ] || return 1
+  case "${1##*/}" in
+    python3) ;;
+    *) return 1 ;;
+  esac
+  [ "$2" = "-I" ] && [ "$3" = "$HERMES_MANAGED_CONTROLLER_PATH" ] || return 1
+  case "$4" in
+    restart | recover) ;;
+    *) return 1 ;;
+  esac
+  case "$5" in
+    '' | *[!0-9a-f]*) return 1 ;;
+  esac
+  [ "${#5}" -eq 64 ]
+}
+
+hermes_managed_controller_is_live() {
+  local pid="$1"
+  local expected_start_identity="$2"
+  local proc_root="${_HERMES_PROC_ROOT:-/proc}"
+  local first_start second_start first_state second_state first_uids second_uids
+  local -a first_argv=()
+  local -a second_argv=()
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$expected_start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  [ -r "${proc_root}/${pid}/status" ] \
+    && [ -r "${proc_root}/${pid}/cmdline" ] || return 1
+
+  first_start="$(gateway_control_pid_start_identity "$pid")" || return 1
+  first_state="$(gateway_control_pid_state "$pid")" || return 1
+  first_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
+  mapfile -d '' -t first_argv <"${proc_root}/${pid}/cmdline" || return 1
+  hermes_managed_controller_argv_is_expected "${first_argv[@]}" || return 1
+
+  second_start="$(gateway_control_pid_start_identity "$pid")" || return 1
+  second_state="$(gateway_control_pid_state "$pid")" || return 1
+  second_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
+  mapfile -d '' -t second_argv <"${proc_root}/${pid}/cmdline" || return 1
+  hermes_managed_controller_argv_is_expected "${second_argv[@]}" || return 1
+
+  [ "$first_start" = "$expected_start_identity" ] \
+    && [ "$second_start" = "$expected_start_identity" ] \
+    && [ "$first_uids" = "0:0:0:0" ] \
+    && [ "$second_uids" = "0:0:0:0" ] \
+    && [ "$first_state" != "Z" ] \
+    && [ "$second_state" != "Z" ] \
+    && [ "${first_argv[*]}" = "${second_argv[*]}" ]
+}
+
+hermes_managed_gateway_exit_was_host_authorized() {
+  local pid="$1"
+  local start_identity="$2"
+  local marker dir_metadata marker_metadata
+  local version marker_pid marker_start_identity controller_pid controller_start_identity extra
+  local trailing=""
+  local marker_fd
+
+  case "$pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+
+  [ -d "$HERMES_MANAGED_EXPECTED_EXIT_DIR" ] \
+    && [ ! -L "$HERMES_MANAGED_EXPECTED_EXIT_DIR" ] || return 1
+  dir_metadata="$(stat -c '%u:%g %a' "$HERMES_MANAGED_EXPECTED_EXIT_DIR" 2>/dev/null || true)"
+  [ "$dir_metadata" = "0:0 711" ] || return 1
+
+  marker="${HERMES_MANAGED_EXPECTED_EXIT_DIR}/${HERMES_MANAGED_EXPECTED_EXIT_MARKER}"
+  [ -f "$marker" ] && [ ! -L "$marker" ] || return 1
+  marker_metadata="$(stat -c '%u:%g %a %h' "$marker" 2>/dev/null || true)"
+  [ "$marker_metadata" = "0:0 444 1" ] || return 1
+
+  exec {marker_fd}<"$marker" || return 1
+  if ! IFS=' ' read -r \
+    version marker_pid marker_start_identity controller_pid controller_start_identity extra \
+    <&"$marker_fd"; then
+    exec {marker_fd}<&-
+    return 1
+  fi
+  if IFS= read -r trailing <&"$marker_fd" || [ -n "$trailing" ]; then
+    exec {marker_fd}<&-
+    return 1
+  fi
+  exec {marker_fd}<&-
+
+  [ "$version" = "v1" ] \
+    && [ "$marker_pid" = "$pid" ] \
+    && [ "$marker_start_identity" = "$start_identity" ] \
+    && [ -z "${extra:-}" ] || return 1
+  case "$controller_pid" in
+    '' | 0 | 1 | *[!0-9]*) return 1 ;;
+  esac
+  case "$controller_start_identity" in
+    '' | *[!0-9]*) return 1 ;;
+  esac
+  hermes_managed_controller_is_live "$controller_pid" "$controller_start_identity"
 }
 
 record_hermes_managed_gateway_exit() {
@@ -2480,7 +2593,7 @@ recover_hermes_gateway_current_user() {
 }
 
 supervise_hermes_gateway_current_user() {
-  local exited_gateway_pid rc respawn_count unhealthy_streak=0
+  local exited_gateway_pid exited_gateway_start_identity rc respawn_count unhealthy_streak=0
 
   while :; do
     # Keep one exact supervisor alive for the full managed OpenShell process
@@ -2510,13 +2623,19 @@ supervise_hermes_gateway_current_user() {
     done
 
     exited_gateway_pid="$GATEWAY_PID"
+    exited_gateway_start_identity="${GATEWAY_PID_START_IDENTITY:-}"
     rc=0
     wait "$GATEWAY_PID" 2>/dev/null || rc=$?
     mark_hermes_gateway_stopped
 
-    record_hermes_managed_gateway_exit || return 1
-    respawn_count="$HERMES_MANAGED_GATEWAY_EXIT_COUNT"
-    echo "[gateway] Hermes gateway pid $exited_gateway_pid exited (rc=$rc); respawning (#$respawn_count in 60s window) in 2s" >&2
+    if hermes_managed_gateway_exit_was_host_authorized \
+      "$exited_gateway_pid" "$exited_gateway_start_identity"; then
+      echo "[gateway] Hermes gateway pid $exited_gateway_pid exited (rc=$rc; authenticated host authorization); respawning without charging crash quarantine in 2s" >&2
+    else
+      record_hermes_managed_gateway_exit || return 1
+      respawn_count="$HERMES_MANAGED_GATEWAY_EXIT_COUNT"
+      echo "[gateway] Hermes gateway pid $exited_gateway_pid exited (rc=$rc); respawning (#$respawn_count in 60s window) in 2s" >&2
+    fi
     sleep 2 || true
 
     recover_hermes_gateway_current_user || return 1

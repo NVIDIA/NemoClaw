@@ -104,7 +104,7 @@ Built-in OpenClaw and Hermes images support two direct-container lifecycle topol
 | Topology | Process ownership | Lifecycle and trust boundary |
 |---|---|---|
 | Direct root entrypoint | `nemoclaw-start` is root PID 1, the gateway runs under the separate `gateway` UID, and the agent runs under the `sandbox` UID. | A root-only request channel reaches PID 1. The supervisor tracks the exact child, applies the restart seal, validates locked config, and launches the replacement under the gateway UID. |
-| OpenShell-managed | `/opt/openshell/bin/openshell-sandbox` is PID 1. It launches nonroot `nemoclaw-start`, which owns and reaps the gateway. The supervisor, gateway, and agent all use the `sandbox` UID. | A root-owned mode `0500` controller entered through sanitized registry-scoped direct-container control validates a stable OpenShell to `nemoclaw-start` to gateway process shape, signals the exact observed child through a pidfd, waits for the normal supervisor respawn, and proves the replacement listener and HTTP health. |
+| OpenShell-managed | `/opt/openshell/bin/openshell-sandbox` is PID 1. It launches nonroot `nemoclaw-start`, which owns and reaps the gateway. The supervisor, gateway, and agent all use the `sandbox` UID. | A root-owned mode `0500` controller entered through sanitized registry-scoped direct-container control validates a stable OpenShell to `nemoclaw-start` to gateway process shape, publishes a root-owned authorization for one exact exit while that controller identity remains live, signals the observed child through a pidfd, waits for the normal supervisor respawn, and proves the replacement listener and HTTP health. |
 
 The managed controller authenticates the host lifecycle action and prevents PID reuse from redirecting its signal.
 It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
@@ -121,7 +121,9 @@ Custom agents that recover through an SSH script do not use this controller prob
 
 The nonroot Hermes supervisor continuously repairs the gateway, API relay, dashboard, dashboard relay, and gateway log stream.
 Four consecutive gateway health failures trigger exact-child recovery.
-Five gateway exits within 60 seconds quarantine relaunch until the sandbox is recreated.
+Five unexpected gateway exits or failed replacement candidates within 60 seconds quarantine relaunch until the sandbox is recreated.
+An authenticated host action authorizes one exit bound to the exact gateway process ID and kernel start identity while the exact root controller process remains live, so deliberate `gateway restart` and controller-driven replacement do not consume that crash budget.
+The authorization records host intent for that exact exit; it does not claim that the host signal was the only possible cause of process termination in the shared-UID topology.
 After the in-sandbox processes are healthy, the host repairs only the host-side OpenShell forwards.
 
 The host selects the matching controller automatically for `recover` and `gateway restart`.

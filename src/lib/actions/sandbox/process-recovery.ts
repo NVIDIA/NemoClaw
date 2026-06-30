@@ -523,7 +523,8 @@ export function restartSandboxGateway(
             timeoutSeconds: gatewayRecoveryTimeoutSeconds(agentRuntime.getSessionAgent(name)),
             managedProbeImpl: (sandboxName) =>
               confirmRecoveredSandboxGatewayManaged(sandboxName, {
-                requestGatewaySupervisorActionImpl: executeGatewaySupervisorAction,
+                requestGatewaySupervisorActionImpl:
+                  deps.requestGatewaySupervisorAction ?? executeGatewaySupervisorAction,
               }),
           }),
         ensureSandboxPortForward,

@@ -44,6 +44,7 @@ to that source-of-truth boundary.
 from __future__ import annotations
 
 import errno
+import fcntl
 import hashlib
 import http.client
 import importlib.util
@@ -77,6 +78,10 @@ KILL_GRACE_SECONDS = 5.0
 RECOVERY_TIMEOUT_SECONDS = 150.0
 RECOVER_EXISTING_GRACE_SECONDS = 10.0
 POLL_SECONDS = 0.2
+NEMOCLAW_RUNTIME_DIR = "/run/nemoclaw"
+NEMOCLAW_RUNTIME_DIR_MODE = 0o711
+EXPECTED_EXIT_MARKER_NAME = "managed-gateway-expected-exit"
+EXPECTED_EXIT_LOCK_NAME = "managed-gateway-expected-exit.lock"
 NONCE_RE = re.compile(r"[0-9a-f]{64}\Z")
 ENV_KEY_RE = re.compile(rb"[A-Za-z_][A-Za-z0-9_]*\Z")
 SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -124,6 +129,18 @@ class AgentSpec:
     port: int
     health_path: str = "/health"
     readiness_checks: tuple[tuple[int, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class ExpectedExitLease:
+    """Pinned authorization marker and root-only controller lock."""
+
+    directory_fd: int
+    lock_fd: int
+    marker_fd: int
+    name: str
+    device: int
+    inode: int
 
 
 def _source_mode() -> bool:
@@ -215,6 +232,305 @@ def _open_directory(path: str) -> int:
         | getattr(os, "O_CLOEXEC", 0)
     )
     return os.open(path, flags)
+
+
+def _trusted_runtime_owner() -> tuple[int, int]:
+    if _source_mode():
+        return os.geteuid(), os.getegid()
+    return 0, 0
+
+
+def _open_managed_runtime_directory() -> int:
+    """Open the fixed root-owned runtime directory, creating it if absent."""
+
+    runtime_dir = _system_path(NEMOCLAW_RUNTIME_DIR)
+    parent = os.path.dirname(runtime_dir)
+    name = os.path.basename(runtime_dir)
+    expected_uid, expected_gid = _trusted_runtime_owner()
+    parent_fd = _open_directory(parent)
+    directory_fd = -1
+    try:
+        parent_stat = os.fstat(parent_fd)
+        if (
+            not stat.S_ISDIR(parent_stat.st_mode)
+            or parent_stat.st_uid != expected_uid
+            or parent_stat.st_gid != expected_gid
+            or stat.S_IMODE(parent_stat.st_mode) & 0o022
+        ):
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        try:
+            os.mkdir(name, NEMOCLAW_RUNTIME_DIR_MODE, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        directory_fd = os.open(name, flags, dir_fd=parent_fd)
+        directory_stat = os.fstat(directory_fd)
+        if (
+            not stat.S_ISDIR(directory_stat.st_mode)
+            or directory_stat.st_uid != expected_uid
+            or directory_stat.st_gid != expected_gid
+            or stat.S_IMODE(directory_stat.st_mode) & 0o022
+        ):
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        if stat.S_IMODE(directory_stat.st_mode) != NEMOCLAW_RUNTIME_DIR_MODE:
+            os.fchmod(directory_fd, NEMOCLAW_RUNTIME_DIR_MODE)
+            if stat.S_IMODE(os.fstat(directory_fd).st_mode) != NEMOCLAW_RUNTIME_DIR_MODE:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+        return directory_fd
+    except Exception:
+        if directory_fd >= 0:
+            os.close(directory_fd)
+        raise
+    finally:
+        os.close(parent_fd)
+
+
+def _lease_path_matches(
+    directory_fd: int, name: str, device: int, inode: int
+) -> bool:
+    try:
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+    return metadata.st_dev == device and metadata.st_ino == inode
+
+
+def _unlink_matching_runtime_file(
+    directory_fd: int, name: str, device: int, inode: int
+) -> None:
+    if _lease_path_matches(directory_fd, name, device, inode):
+        os.unlink(name, dir_fd=directory_fd)
+
+
+def _validate_runtime_regular(
+    metadata: os.stat_result, expected_mode: int
+) -> None:
+    expected_uid, expected_gid = _trusted_runtime_owner()
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != expected_uid
+        or metadata.st_gid != expected_gid
+        or metadata.st_nlink != 1
+        or stat.S_IMODE(metadata.st_mode) != expected_mode
+    ):
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+
+
+def _open_expected_exit_lock(directory_fd: int) -> int:
+    """Acquire the root-only lock that serializes authorization publication."""
+
+    base_flags = (
+        os.O_RDWR
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    lock_fd = -1
+    created = False
+    for _attempt in range(3):
+        try:
+            lock_fd = os.open(
+                EXPECTED_EXIT_LOCK_NAME,
+                base_flags | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=directory_fd,
+            )
+            created = True
+            break
+        except FileExistsError:
+            try:
+                lock_fd = os.open(
+                    EXPECTED_EXIT_LOCK_NAME,
+                    base_flags,
+                    dir_fd=directory_fd,
+                )
+                break
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+        except OSError as exc:
+            raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+    if lock_fd < 0:
+        raise ControlError("SUPERVISOR_BUSY")
+
+    try:
+        if created:
+            os.fchmod(lock_fd, 0o600)
+        metadata = os.fstat(lock_fd)
+        _validate_runtime_regular(metadata, 0o600)
+        if not _lease_path_matches(
+            directory_fd,
+            EXPECTED_EXIT_LOCK_NAME,
+            metadata.st_dev,
+            metadata.st_ino,
+        ):
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ControlError("SUPERVISOR_BUSY") from exc
+        locked = os.fstat(lock_fd)
+        _validate_runtime_regular(locked, 0o600)
+        if (
+            locked.st_dev != metadata.st_dev
+            or locked.st_ino != metadata.st_ino
+            or not _lease_path_matches(
+                directory_fd,
+                EXPECTED_EXIT_LOCK_NAME,
+                locked.st_dev,
+                locked.st_ino,
+            )
+        ):
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+        return lock_fd
+    except Exception:
+        os.close(lock_fd)
+        raise
+
+
+def _trusted_expected_exit_marker(
+    directory_fd: int,
+) -> tuple[int, os.stat_result] | None:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        marker_fd = os.open(EXPECTED_EXIT_MARKER_NAME, flags, dir_fd=directory_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ControlError("SUPERVISOR_UNAVAILABLE") from exc
+    try:
+        metadata = os.fstat(marker_fd)
+        _validate_runtime_regular(metadata, 0o444)
+        return marker_fd, metadata
+    except Exception:
+        os.close(marker_fd)
+        raise
+
+
+def _controller_process_identity(reader: ProcReader) -> ProcessIdentity:
+    identity = reader.capture(os.getpid())
+    expected_uid, _expected_gid = _trusted_runtime_owner()
+    if identity.state == "Z" or identity.uids != (expected_uid,) * 4:
+        raise ControlError("SUPERVISOR_UNAVAILABLE")
+    return identity
+
+
+def _publish_expected_exit_lease(
+    identity: ProcessIdentity,
+    controller: ProcessIdentity,
+) -> ExpectedExitLease:
+    """Authorize one exact gateway exit while this root controller is live."""
+
+    directory_fd = _open_managed_runtime_directory()
+    lock_fd = -1
+    marker_fd = -1
+    marker_device = -1
+    marker_inode = -1
+    try:
+        lock_fd = _open_expected_exit_lock(directory_fd)
+        existing = _trusted_expected_exit_marker(directory_fd)
+        if existing is not None:
+            existing_fd, metadata = existing
+            try:
+                _unlink_matching_runtime_file(
+                    directory_fd,
+                    EXPECTED_EXIT_MARKER_NAME,
+                    metadata.st_dev,
+                    metadata.st_ino,
+                )
+            finally:
+                os.close(existing_fd)
+
+        payload = (
+            f"v1 {identity.pid} {identity.start_time} "
+            f"{controller.pid} {controller.start_time}\n"
+        ).encode("ascii")
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        try:
+            marker_fd = os.open(
+                EXPECTED_EXIT_MARKER_NAME,
+                flags,
+                0o600,
+                dir_fd=directory_fd,
+            )
+        except FileExistsError as exc:
+            raise ControlError("SUPERVISOR_BUSY") from exc
+        offset = 0
+        while offset < len(payload):
+            written = os.write(marker_fd, payload[offset:])
+            if written <= 0:
+                raise ControlError("SUPERVISOR_UNAVAILABLE")
+            offset += written
+        os.fchmod(marker_fd, 0o444)
+        os.fsync(marker_fd)
+        metadata = os.fstat(marker_fd)
+        marker_device = metadata.st_dev
+        marker_inode = metadata.st_ino
+        _validate_runtime_regular(metadata, 0o444)
+        if not _lease_path_matches(
+            directory_fd,
+            EXPECTED_EXIT_MARKER_NAME,
+            marker_device,
+            marker_inode,
+        ):
+            raise ControlError("SUPERVISOR_UNAVAILABLE")
+    except Exception:
+        try:
+            if marker_fd >= 0:
+                metadata = os.fstat(marker_fd)
+                _unlink_matching_runtime_file(
+                    directory_fd,
+                    EXPECTED_EXIT_MARKER_NAME,
+                    metadata.st_dev,
+                    metadata.st_ino,
+                )
+        except (ControlError, OSError):
+            pass
+        if marker_fd >= 0:
+            os.close(marker_fd)
+        if lock_fd >= 0:
+            os.close(lock_fd)
+        os.close(directory_fd)
+        raise
+    return ExpectedExitLease(
+        directory_fd=directory_fd,
+        lock_fd=lock_fd,
+        marker_fd=marker_fd,
+        name=EXPECTED_EXIT_MARKER_NAME,
+        device=marker_device,
+        inode=marker_inode,
+    )
+
+
+def _clear_expected_exit_lease(lease: ExpectedExitLease) -> None:
+    try:
+        _unlink_matching_runtime_file(
+            lease.directory_fd,
+            lease.name,
+            lease.device,
+            lease.inode,
+        )
+    except (ControlError, OSError):
+        # The exact exited identity cannot recur. Never delete a path that no
+        # longer names this authorization merely to clean up an orphan marker.
+        pass
+    finally:
+        os.close(lease.marker_fd)
+        os.close(lease.lock_fd)
+        os.close(lease.directory_fd)
 
 
 def _open_pid(proc_fd: int, pid: int) -> int:
@@ -1065,18 +1381,34 @@ def _control(action: str, nonce: str) -> tuple[str, int, int]:
                 )
                 return "already-running", original_identity.pid, completed.pid
 
-        if old_identity is not None:
-            _terminate_gateway(reader, old_identity)
+        expected_exit_lease = None
+        try:
+            if old_identity is not None and spec.name == "hermes":
+                # The nonroot entrypoint owns the child and its crash budget.
+                # Publish an exact root-owned authorization before the pidfd
+                # signal. The marker names this live root controller so a
+                # delayed reap remains authorized without trusting wall time,
+                # while an orphaned marker fails closed as an ordinary crash.
+                controller_identity = _controller_process_identity(reader)
+                expected_exit_lease = _publish_expected_exit_lease(
+                    old_identity,
+                    controller_identity,
+                )
+            if old_identity is not None:
+                _terminate_gateway(reader, old_identity)
 
-        replacement = _wait_for_healthy_gateway(
-            reader,
-            supervisor,
-            spec,
-            old_identity,
-            RECOVERY_TIMEOUT_SECONDS,
-            True,
-        )
-        return "ok", old_identity.pid if old_identity else 0, replacement.pid
+            replacement = _wait_for_healthy_gateway(
+                reader,
+                supervisor,
+                spec,
+                old_identity,
+                RECOVERY_TIMEOUT_SECONDS,
+                True,
+            )
+            return "ok", old_identity.pid if old_identity else 0, replacement.pid
+        finally:
+            if expected_exit_lease is not None:
+                _clear_expected_exit_lease(expected_exit_lease)
 
 
 def _validate_request(argv: list[str]) -> tuple[str, str]:
