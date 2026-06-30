@@ -87,28 +87,34 @@ if [ "${1:-}" = "config" ] && [ "${2:-}" = "show" ]; then
     echo "[SECURITY] Refusing hermes config show: no rm at a trusted absolute path" >&2
     exit 127
   }
-  # Buffer Hermes stderr to a temp file so its masker's exit status is
-  # observable. A process-substitution `2> >(... mask ...)` cannot be checked
-  # via PIPESTATUS — Bash does not record the substituted command's exit
-  # status — so a stderr-side masker that crashed or refused unexpected input
-  # would silently fall back to whatever the substitution wrote (which on
-  # failure is nothing, but the wrapper would also miss observing the failure
-  # and return the Hermes status as if everything succeeded). Buffering lets
-  # us mask after Hermes exits and fail closed on either stream. The masker
-  # itself buffers in memory and writes only on success, so neither stream
-  # produces a partial secret. The temp file is removed via EXIT trap.
+  # Buffer Hermes stderr through an anonymous file descriptor so its masker's
+  # exit status is observable. A process-substitution `2> >(... mask ...)`
+  # cannot be checked via PIPESTATUS — Bash does not record the substituted
+  # command's exit status — so a stderr-side masker that crashed or refused
+  # unexpected input would silently fall back to whatever the substitution
+  # wrote (which on failure is nothing, but the wrapper would also miss
+  # observing the failure and return the Hermes status as if everything
+  # succeeded). The buffer is created with mktemp, opened read-write on a
+  # private FD, then unlinked immediately so the raw stderr bytes never live
+  # at an observable filesystem path while Hermes is running — closing the
+  # same-UID-process / shared-TMPDIR side channel. The masker reads the FD
+  # via /proc/self/fd, which on Linux re-opens the same inode with a fresh
+  # position-0 cursor. The masker itself buffers in memory and writes only
+  # on success, so neither stream produces a partial secret.
   _stderr_buf="$("$MKTEMP")" || {
     echo "[SECURITY] Refusing hermes config show: cannot create stderr buffer" >&2
     exit 1
   }
-  # shellcheck disable=SC2064
-  trap "\"$RM\" -f \"$_stderr_buf\"" EXIT
-  "$REAL_HERMES" "$@" 2>"$_stderr_buf" | "$PYTHON3" "$GUARD" mask-config-output
+  exec 9<>"$_stderr_buf"
+  "$RM" -f "$_stderr_buf"
+  _stderr_buf=""
+  "$REAL_HERMES" "$@" 2>&9 | "$PYTHON3" "$GUARD" mask-config-output
   statuses=("${PIPESTATUS[@]}")
   hermes_status="${statuses[0]}"
   stdout_masker_status="${statuses[1]}"
-  "$PYTHON3" "$GUARD" mask-config-output <"$_stderr_buf" >&2
+  "$PYTHON3" "$GUARD" mask-config-output </proc/self/fd/9 >&2
   stderr_masker_status=$?
+  exec 9>&-
   if [ "$stdout_masker_status" -ne 0 ]; then
     echo "[SECURITY] Refusing hermes config show: output masker failed (stdout)" >&2
     exit "$stdout_masker_status"

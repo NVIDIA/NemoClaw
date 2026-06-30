@@ -555,6 +555,31 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.sh", () => {
     }
   });
 
+  it("does not crash on malformed input and still masks recognised secret fields", () => {
+    const fixture = [
+      "}}}}{{{{ bogus prefix line",
+      'api_key: "unclosed quote then garbage rest',
+      "api_key: sk-real-after-bogus-12345",
+      "garbage line with no colons at all",
+      "api_key: |",
+      "  sk-real-block-leak-12345",
+      "  more secret block content",
+      "next: not-a-secret-value",
+      "{garbage} { nested stuff } { api_key: should-not-match",
+      "api_key:   sk-real-trailing-spaces-12345   ",
+    ].join("\n");
+    const run = runWrapper(["config", "show"], {}, { stub: { stdout: fixture, exitCode: 0 } });
+
+    expect(run.status).toBe(0);
+    expect(run.stdout).not.toContain("sk-real-after-bogus-12345");
+    expect(run.stdout).not.toContain("sk-real-block-leak-12345");
+    expect(run.stdout).not.toContain("more secret block content");
+    expect(run.stdout).not.toContain("sk-real-trailing-spaces-12345");
+    expect(run.stdout).toContain("api_key: sk-****");
+    expect(run.stdout).toContain("garbage line with no colons at all");
+    expect(run.stdout).toContain("next: not-a-secret-value");
+  });
+
   it("masks every api_key emitted by buildHermesConfig so the generated config cannot leak through `config show`", () => {
     const settings = {
       model: "meta/llama-3.1-8b-instruct",
