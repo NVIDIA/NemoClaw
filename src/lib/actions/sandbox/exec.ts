@@ -65,6 +65,13 @@ export function buildWorkdirProbeArgs(sandboxName: string, workdir: string): str
 //     elements, this guard and the matching docs notice in
 //     docs/reference/commands.mdx + commands-nemohermes.mdx become unnecessary
 //     and should be removed together.
+//
+// The pattern is intentionally limited to \r and \n: OpenShell rejects only
+// "newline or carriage return characters", so Unicode line separators (U+2028
+// LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR) are valid argv that OpenShell
+// accepts. Broadening the pattern to those code points would reject commands
+// OpenShell would otherwise run, so the guard deliberately mirrors OpenShell's
+// exact constraint rather than a general "line break" notion.
 const MULTILINE_ARG_PATTERN = /[\r\n]/;
 
 /** @internal Exported for unit testing only; not part of the public API. */
