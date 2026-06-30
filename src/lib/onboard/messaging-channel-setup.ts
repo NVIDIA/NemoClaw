@@ -58,6 +58,27 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
   return normalizeCredentialValue(process.env[input.envKey]) || null;
 };
 
+/**
+ * Detect which built-in messaging channels currently have complete required
+ * inputs in the process environment, using the same manifest input rules as
+ * {@link setupMessagingChannels}. Pure and side-effect free: it only reads env
+ * via the manifest input resolvers so callers can compare current env inputs
+ * against a reused/stale sandbox messaging plan before treating that plan as
+ * authoritative. NEMOCLAW_POLICY_PRESETS is intentionally ignored — policy
+ * presets are not messaging channel selection.
+ */
+export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = null): string[] {
+  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
+  const availableChannels = manifestRegistry.listAvailable(availabilityContext);
+  return availableChannels
+    .filter((manifest) => hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue))
+    .map((manifest) => manifest.id);
+}
+
 export async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
@@ -77,7 +98,10 @@ export async function setupMessagingChannels(
   const isNonInteractive =
     deps.isNonInteractive ?? (() => process.env.NEMOCLAW_NON_INTERACTIVE === "1");
   const manifestRegistry = createBuiltInChannelManifestRegistry();
-  const availabilityContext = getMessagingManifestAvailabilityContext(agent);
+  const availabilityContext = getMessagingManifestAvailabilityContext(
+    agent,
+    manifestRegistry.list(),
+  );
   const availableChannels = manifestRegistry.listAvailable(availabilityContext);
   const hasManifestRequiredInputs = (manifest: ChannelManifest) =>
     hasMessagingManifestRequiredInputs(manifest, getMessagingInputValue);
@@ -169,7 +193,7 @@ export async function setupSelectedMessagingChannels(
     return null;
   }
 
-  const agent = toMessagingAgentId(options.agent);
+  const agent = toMessagingAgentId(options.agent, registry.list());
   const sandboxName = resolveMessagingSetupSandboxName(options);
   const planner = new MessagingWorkflowPlanner(
     registry,

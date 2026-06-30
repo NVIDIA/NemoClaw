@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { resolveSandboxContainerOwner } from "../dist/lib/actions/sandbox/sandbox-container-owner.js";
+import { resolveSandboxContainerOwner } from "../src/lib/actions/sandbox/sandbox-container-owner.js";
 
 describe("resolveSandboxContainerOwner", () => {
   it("returns null when no candidate matches the sandbox prefix", () => {

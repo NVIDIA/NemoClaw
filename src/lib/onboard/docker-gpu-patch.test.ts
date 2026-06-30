@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
-
+import { getSandboxFailurePhase, isSandboxReady } from "../state/gateway";
 import {
   buildDockerGpuCloneRunArgs,
   buildDockerGpuCloneRunOptions,
@@ -26,9 +26,8 @@ import {
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
-import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
-import { getSandboxFailurePhase, isSandboxReady } from "../../../dist/lib/state/gateway";
+} from "./docker-gpu-patch";
+import { waitForCreatedSandboxReadyWithTrace } from "./sandbox-readiness-tracing";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -765,7 +764,7 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
     );
   });
 
-  it("regression manifest: host.openshell.internal + google.com + gateway.discord.gg + integrate.api.nvidia.com (#3579 manager spec)", () => {
+  it("includes every hostname from the manager-provided regression manifest (#3579)", () => {
     // The four hostnames called out in #3579's manager-provided spec:
     //   host.openshell.internal      → resolved via --add-host (mount namespace)
     //   google.com                   → public DNS via embedded Docker resolver

@@ -8,6 +8,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { DASHBOARD_PORT } from "../core/ports";
 import { ROOT } from "../runner";
+import {
+  formatAgentAliasSuffix,
+  resolveAgentNameAlias as resolveKnownAgentNameAlias,
+} from "./aliases";
 import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 import { readAgentRuntime, type AgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
@@ -86,7 +90,6 @@ export interface AgentDefinition {
   state_dirs?: string[];
   state_files?: AgentStateFile[];
   user_managed_files?: string[];
-  messaging_platforms?: { supported?: string[] };
   _legacy_paths?: StringMap;
   agentDir: string;
   manifestPath: string;
@@ -105,7 +108,6 @@ export interface AgentDefinition {
   readonly expectedVersion: string | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
-  readonly messagingPlatforms: string[];
   readonly dockerfileBasePath: string | null;
   readonly dockerfilePath: string | null;
   readonly startScriptPath: string | null;
@@ -122,6 +124,25 @@ export interface AgentChoice {
 }
 
 const _cache = new Map<string, AgentDefinition>();
+
+export { agentAliasSummary } from "./aliases";
+
+export function resolveAgentNameAlias(
+  value: string | null | undefined,
+  availableAgents: readonly string[] = listAgents(),
+): string | null {
+  return resolveKnownAgentNameAlias(value, availableAgents);
+}
+
+function unknownAgentMessage(
+  value: string,
+  context: string | null,
+  available: readonly string[],
+): string {
+  const choices = available.join(", ");
+  const suffix = context ? ` ${context}` : "";
+  return `Unknown agent '${value}'${suffix}. Available: ${choices}${formatAgentAliasSuffix(available)}`;
+}
 
 function isManifestValue(value: unknown): value is ManifestValue {
   if (value === null || value instanceof Date) return true;
@@ -304,14 +325,6 @@ function readHealthProbe(record: ManifestRecord): AgentHealthProbe | undefined {
   return undefined;
 }
 
-function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] } | undefined {
-  const messagingPlatforms = readObject(record, "messaging_platforms");
-  if (!messagingPlatforms) return undefined;
-
-  const supported = readStringArray(messagingPlatforms, "supported");
-  return supported ? { supported } : {};
-}
-
 function readDashboard(record: ManifestRecord): AgentDashboard {
   const d = readObject(record, "dashboard") ?? {};
   const rawKind = d.kind;
@@ -433,7 +446,6 @@ export function loadAgent(name: string): AgentDefinition {
   const stateFiles = readStateFiles(raw);
   const userManagedFiles = readUserManagedFiles(raw);
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
-  const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
   const dashboardUi = readDashboardUi(raw);
 
@@ -456,7 +468,6 @@ export function loadAgent(name: string): AgentDefinition {
     state_dirs: stateDirs,
     state_files: stateFiles,
     user_managed_files: userManagedFiles,
-    messaging_platforms: messagingPlatforms,
     _legacy_paths: legacyPathConfig,
     agentDir,
     manifestPath,
@@ -536,10 +547,6 @@ export function loadAgent(name: string): AgentDefinition {
 
     get phoneHomeHosts(): string[] {
       return phoneHomeHosts ?? [];
-    },
-
-    get messagingPlatforms(): string[] {
-      return messagingPlatforms?.supported ?? [];
     },
 
     get dockerfileBasePath(): string | null {
@@ -641,32 +648,33 @@ export function resolveAgentName({
 } = {}): string {
   if (agentFlag) {
     const available = listAgents();
-    if (!available.includes(agentFlag)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${agentFlag}'. Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(agentFlag, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(agentFlag, null, available));
     }
-    return agentFlag;
+    return resolved;
   }
 
   const envAgent = process.env.NEMOCLAW_AGENT;
   if (envAgent) {
     const available = listAgents();
-    if (!available.includes(envAgent)) {
-      const choices = available.join(", ");
-      throw new Error(`Unknown agent '${envAgent}' (from NEMOCLAW_AGENT). Available: ${choices}`);
+    const resolved = resolveAgentNameAlias(envAgent, available);
+    if (!resolved) {
+      throw new Error(unknownAgentMessage(envAgent, "(from NEMOCLAW_AGENT)", available));
     }
-    return envAgent;
+    return resolved;
   }
 
   if (session?.agent) {
     const available = listAgents();
-    if (!available.includes(session.agent)) {
+    const resolved = resolveAgentNameAlias(session.agent, available);
+    if (!resolved) {
       console.error(
         `  Warning: session references unknown agent '${session.agent}', falling back to openclaw.`,
       );
       return "openclaw";
     }
-    return session.agent;
+    return resolved;
   }
 
   return "openclaw";

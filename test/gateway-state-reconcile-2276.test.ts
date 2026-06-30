@@ -293,7 +293,7 @@ afterEach(() => {
 });
 
 // ─── Scenario 1 ─── connect is now non-destructive (#4497) ─────────────────
-describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound truly gone", () => {
+describe("connect with a healthy active nemoclaw gateway and a truly gone sandbox in scenario 1", () => {
   it("preserves the registry entry and session, points at rebuild/destroy, and exits 1", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -324,7 +324,7 @@ describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound tru
 });
 
 // ─── Scenario 2 ─── passive `status` must preserve registry state ─────────
-describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound truly gone", () => {
+describe("status with a healthy active nemoclaw gateway and a truly gone sandbox in scenario 2", () => {
   it("reports the missing live sandbox without removing local registry state", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -352,7 +352,7 @@ describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound trul
 });
 
 // ─── Scenario 3 ─── self-heal via gateway select succeeds ──────────────────
-describe("Scenario 3: status — select succeeds, sandbox reappears, registry intact", () => {
+describe("status preserves the registry when selection succeeds and the sandbox reappears in scenario 3", () => {
   it("attempts `gateway select nemoclaw`, re-queries, proceeds; registry preserved", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -386,7 +386,7 @@ describe("Scenario 3: status — select succeeds, sandbox reappears, registry in
 });
 
 // ─── Scenario 4 ─── select fails → wrong_gateway_active, registry intact ───
-describe("Scenario 4: connect — select fails, sandbox still NotFound", () => {
+describe("connect when selection fails and the sandbox remains NotFound in scenario 4", () => {
   it("surfaces wrong_gateway_active guidance, preserves registry, exits 1", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -419,7 +419,7 @@ describe("Scenario 4: connect — select fails, sandbox still NotFound", () => {
 });
 
 // ─── Scenario 5 ─── exact #2276 repro: registry entry still present ────────
-describe("Scenario 5: #2276 repro — failed connect must leave registry entry intact", () => {
+describe("failed connect leaves the registry entry intact in scenario 5 (#2276)", () => {
   it("after a failed connect triggered by drifted gateway, entry is still present", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -446,7 +446,7 @@ describe("Scenario 5: #2276 repro — failed connect must leave registry entry i
 });
 
 // ─── Scenario 6 ─── nemoclaw gateway missing + NotFound ────────────────────
-describe("Scenario 6: connect — nemoclaw gateway missing after restart", () => {
+describe("connect with a missing nemoclaw gateway after restart in scenario 6", () => {
   it("returns gateway_missing_after_restart, preserves registry, exits 1", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -476,7 +476,7 @@ describe("Scenario 6: connect — nemoclaw gateway missing after restart", () =>
 });
 
 // ─── Scenario 7 ─── nemoclaw gateway unreachable + NotFound ────────────────
-describe("Scenario 7: connect — nemoclaw gateway unreachable after restart", () => {
+describe("connect with an unreachable nemoclaw gateway after restart in scenario 7", () => {
   it("returns gateway_unreachable_after_restart, preserves registry, exits 1", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -506,7 +506,7 @@ describe("Scenario 7: connect — nemoclaw gateway unreachable after restart", (
 });
 
 // ─── Scenario 8 ─── gateway info fails / unparseable ───────────────────────
-describe("Scenario 8: gateway info fails — safe default, registry preserved", () => {
+describe("gateway info failure preserves the registry with a safe default in scenario 8", () => {
   it("non-zero exit on `openshell gateway info -g nemoclaw` still preserves registry", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -533,8 +533,8 @@ describe("Scenario 8: gateway info fails — safe default, registry preserved", 
 });
 
 // ─── Scenario 9 ─── openshell status empty / malformed ─────────────────────
-describe("Scenario 9: empty or malformed status — registry untouched", () => {
-  it("empty status + gateway info missing → registry preserved, no removal", {
+describe("empty or malformed status leaves the registry untouched in scenario 9", () => {
+  it("preserves the registry without removal when status is empty and gateway info is missing", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({
@@ -557,7 +557,7 @@ describe("Scenario 9: empty or malformed status — registry untouched", () => {
     assert.doesNotMatch(r.stderr, /Removed stale local registry entry/);
   });
 
-  it("malformed status + malformed gateway info → registry preserved", {
+  it("preserves the registry when status and gateway info are malformed", {
     timeout: TIMEOUT_MS,
   }, () => {
     writeStubOpenshell({
@@ -581,7 +581,7 @@ describe("Scenario 9: empty or malformed status — registry untouched", () => {
 });
 
 // ─── Scenario 10 ─── non-interactive mode: no prompts ──────────────────────
-describe("Scenario 10: non-interactive mode — deterministic exit, no prompts", () => {
+describe("non-interactive mode exits deterministically without prompts in scenario 10", () => {
   it("NEMOCLAW_NON_INTERACTIVE=1 does not block on user input and exits 1", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -609,7 +609,7 @@ describe("Scenario 10: non-interactive mode — deterministic exit, no prompts",
 });
 
 // ─── Scenario 11 ─── cross-command parity: status drifts same way ──────────
-describe("Scenario 11: status — wrong gateway active yields guidance, not removal", () => {
+describe("status gives guidance instead of removal for the wrong active gateway in scenario 11", () => {
   it("drift case under `status` preserves registry and prints guidance", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -641,7 +641,7 @@ describe("Scenario 11: status — wrong gateway active yields guidance, not remo
 });
 
 // ─── Scenario 12 ─── cross-command parity: skill install drifts same way ───
-describe("Scenario 12: skill install — wrong gateway active yields guidance, not removal", () => {
+describe("skill install gives guidance instead of removal for the wrong active gateway in scenario 12", () => {
   it("skill install under drift preserves registry, exits 1 with guidance", {
     timeout: TIMEOUT_MS,
   }, () => {
@@ -710,7 +710,7 @@ describe("Scenario 12: skill install — wrong gateway active yields guidance, n
 // (a) locates the preserved entry (no "does not exist"), (b) does NOT dead-end
 // at "Cannot back up state", and (c) reports the stale state and proceeds to
 // recreate from the preserved registry metadata instead of aborting.
-describe("Scenario 14 (#4497): connect preserves registry so rebuild can recover", () => {
+describe("connect preserves the registry so rebuild can recover in scenario 14 (#4497)", () => {
   it("after a non-destructive connect, `rebuild --yes` recovers the stale sandbox", {
     timeout: TIMEOUT_MS,
   }, () => {

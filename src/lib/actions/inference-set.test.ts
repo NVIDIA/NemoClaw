@@ -123,6 +123,7 @@ function createDeps(options: {
     writeSandboxConfig: ReturnType<typeof vi.fn>;
     recomputeSandboxConfigHash: ReturnType<typeof vi.fn>;
     updateSandbox: ReturnType<typeof vi.fn>;
+    readSandboxConfig: ReturnType<typeof vi.fn>;
     updateSession: ReturnType<typeof vi.fn>;
     appendAuditEntry: ReturnType<typeof vi.fn>;
     log: ReturnType<typeof vi.fn>;
@@ -145,6 +146,7 @@ function createDeps(options: {
     writeSandboxConfig: vi.fn(),
     recomputeSandboxConfigHash: vi.fn(),
     updateSandbox: vi.fn(() => true),
+    readSandboxConfig: vi.fn(() => options.config),
     updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
       const current = session ?? baseSession();
       session = mutator(current) ?? current;
@@ -167,7 +169,7 @@ function createDeps(options: {
     loadSession: () => session,
     updateSession: calls.updateSession,
     resolveAgentConfig: () => options.target ?? OPENCLAW_TARGET,
-    readSandboxConfig: () => options.config,
+    readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
     runOpenshell: calls.runOpenshell,
@@ -453,10 +455,24 @@ describe("runInferenceSet", () => {
     });
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET, config);
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("alpha", OPENCLAW_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        credentialEnv: null,
+        endpointUrl: null,
+        nimContainer: null,
+        preferredInferenceApi: null,
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "nvidia-prod",
       model: "nvidia/nemotron-3-super-120b-a12b",
@@ -545,10 +561,13 @@ describe("runInferenceSet", () => {
       "/sandbox/.hermes/config.yaml",
     );
     expect(deps.calls.recomputeSandboxConfigHash).toHaveBeenCalledWith("hermes", HERMES_TARGET);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes", {
-      provider: "hermes-provider",
-      model: "openai/gpt-5.4-mini",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+      }),
+    );
     expect(deps.getSession()).toMatchObject({
       provider: "hermes-provider",
       model: "openai/gpt-5.4-mini",
@@ -586,7 +605,16 @@ describe("runInferenceSet", () => {
         },
       },
     };
-    const deps = createDeps({ config, session: baseSession() });
+    const deps = createDeps({
+      config,
+      session: baseSession({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    });
 
     const result = await runInferenceSet(
       {
@@ -616,6 +644,16 @@ describe("runInferenceSet", () => {
         },
       },
     });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
@@ -624,6 +662,186 @@ describe("runInferenceSet", () => {
     expect(result).toMatchObject({
       providerKey: "anthropic",
       primaryModelRef: "anthropic/claude-sonnet-proxy",
+    });
+  });
+
+  it("rejects custom-compatible provider switches without trusted endpoint metadata", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "compatible-endpoint", model: "openai/gpt-5.4-mini", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow(/without trusted durable endpoint metadata/);
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("rejects Anthropic Messages metadata for OpenAI-compatible endpoint switches", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await expect(
+      runInferenceSet(
+        {
+          provider: "compatible-endpoint",
+          model: "mock-openai-model",
+          noVerify: true,
+          endpointUrl: "https://compatible.example/v1",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          inferenceApi: "anthropic-messages",
+        },
+        deps,
+      ),
+    ).rejects.toThrow(
+      /inference-api for 'compatible-endpoint' must be one of: openai-completions, openai-responses/,
+    );
+
+    expect(deps.calls.runOpenshell).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("preserves explicit inference API through the final registry and session sync", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        noVerify: true,
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        inferenceApi: "openai-responses",
+      },
+      deps,
+    );
+
+    expect(config.models).toMatchObject({
+      providers: {
+        inference: {
+          api: "openai-responses",
+          models: [{ id: "mock-responses-model", name: "inference/mock-responses-model" }],
+        },
+      },
+    });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "mock-responses-model",
+        endpointUrl: "https://compatible.example/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-responses",
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-endpoint",
+      model: "mock-responses-model",
+      endpointUrl: "https://compatible.example/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+      preferredInferenceApi: "openai-responses",
+    });
+  });
+
+  it("accepts explicit compatible Anthropic endpoint metadata for provider-family switches", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
+      models: { providers: { inference: { api: "openai-completions", models: [] } } },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "alpha",
+        agent: "openclaw",
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+      },
+      session: baseSession({
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        endpointUrl: "https://integrate.api.nvidia.com/v1",
+        credentialEnv: "NVIDIA_INFERENCE_API_KEY",
+      }),
+    });
+
+    await runInferenceSet(
+      {
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        noVerify: true,
+        endpointUrl: "http://host.openshell.internal:18767/",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        inferenceApi: "anthropic-messages",
+      },
+      deps,
+    );
+
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "alpha",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "mock-anthropic-model",
+        endpointUrl: "http://host.openshell.internal:18767",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+        nimContainer: null,
+      }),
+    ]);
+    expect(deps.getSession()).toMatchObject({
+      provider: "compatible-anthropic-endpoint",
+      model: "mock-anthropic-model",
+      endpointUrl: "http://host.openshell.internal:18767",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      preferredInferenceApi: "anthropic-messages",
+      nimContainer: null,
     });
   });
 
@@ -719,8 +937,11 @@ describe("runInferenceSet", () => {
       session: baseSession({
         agent: "hermes",
         sandboxName: "hermes",
-        provider: "hermes-provider",
-        model: "openai/gpt-5.4-mini",
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
       }),
     });
 
@@ -747,6 +968,16 @@ describe("runInferenceSet", () => {
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
     });
+    expect(deps.calls.updateSandbox.mock.calls.at(-1)).toEqual([
+      "hermes",
+      expect.objectContaining({
+        provider: "compatible-anthropic-endpoint",
+        model: "claude-sonnet-proxy",
+        endpointUrl: "https://anthropic-compatible.example/v1",
+        credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+        preferredInferenceApi: "anthropic-messages",
+      }),
+    ]);
     expect(deps.getSession()).toMatchObject({
       provider: "compatible-anthropic-endpoint",
       model: "claude-sonnet-proxy",
@@ -823,10 +1054,13 @@ describe("runInferenceSet", () => {
     await runInferenceSet({ provider: "hermes-provider", model: "z-ai/glm-5.1" }, deps);
 
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalledWith("hermes-one", HERMES_TARGET, config);
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("hermes-one", {
-      provider: "hermes-provider",
-      model: "z-ai/glm-5.1",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "hermes-one",
+      expect.objectContaining({
+        provider: "hermes-provider",
+        model: "z-ai/glm-5.1",
+      }),
+    );
   });
 
   it("requires --sandbox when the nemohermes alias cannot choose one Hermes sandbox", async () => {
@@ -876,6 +1110,33 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
 
+  it("keeps gateway and registry consistent when the sandbox config read fails", async () => {
+    const deps = createDeps({ config: {}, session: baseSession() });
+    deps.calls.readSandboxConfig.mockImplementation(() => {
+      throw new Error("sandbox config unreadable");
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b", noVerify: true },
+        deps,
+      ),
+    ).rejects.toThrow("sandbox config unreadable");
+
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        endpointUrl: null,
+        credentialEnv: null,
+        preferredInferenceApi: null,
+        nimContainer: null,
+      }),
+    );
+    expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
+  });
+
   it("keeps gateway and registry consistent when the in-sandbox config write fails (#3726)", async () => {
     const config: ConfigObject = {
       agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
@@ -899,10 +1160,13 @@ describe("runInferenceSet", () => {
     );
 
     // Registry still updated despite the in-sandbox sync throwing (no stale registry → no revert).
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       provider: "nvidia-prod",
@@ -940,10 +1204,13 @@ describe("runInferenceSet", () => {
 
     // Config write happened and registry is updated; the run resolves without aborting.
     expect(deps.calls.writeSandboxConfig).toHaveBeenCalled();
-    expect(deps.calls.updateSandbox).toHaveBeenCalledWith("alpha", {
-      provider: "nvidia-prod",
-      model: "nvidia/nemotron-3-super-120b-a12b",
-    });
+    expect(deps.calls.updateSandbox).toHaveBeenCalledWith(
+      "alpha",
+      expect.objectContaining({
+        provider: "nvidia-prod",
+        model: "nvidia/nemotron-3-super-120b-a12b",
+      }),
+    );
     expect(result).toMatchObject({ inSandboxConfigSynced: false });
 
     // Degraded: warns about the stale integrity hash, points at rebuild, no "synced".

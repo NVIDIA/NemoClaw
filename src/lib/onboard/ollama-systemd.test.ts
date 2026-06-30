@@ -3,9 +3,9 @@
 
 import { describe, expect, it } from "vitest";
 
-import { OLLAMA_PORT } from "../../../dist/lib/core/ports";
-import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../../../dist/lib/inference/ollama-runtime-context";
-import { mergeOllamaLoopbackSystemdOverride } from "../../../dist/lib/onboard/ollama-systemd";
+import { OLLAMA_PORT } from "../core/ports";
+import { MIN_AUTODETECTED_OLLAMA_CONTEXT_WINDOW } from "../inference/ollama-runtime-context";
+import { mergeOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
 describe("mergeOllamaLoopbackSystemdOverride", () => {
   it("writes the OLLAMA_HOST and OLLAMA_CONTEXT_LENGTH lines under [Service] when no drop-in exists", () => {

@@ -380,7 +380,7 @@ describe("agents/hermes/generate-config.ts", () => {
     ).toEqual(["INTERNAL_API line 3"]);
   });
 
-  it("regression #4230: configures Anthropic Messages routing for Hermes managed inference", () => {
+  it("configures Anthropic Messages routing for Hermes managed inference (#4230)", () => {
     const { config } = runConfigScript({
       NEMOCLAW_PROVIDER_KEY: "anthropic",
       NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local",

@@ -4,16 +4,16 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  DEFAULT_VLLM_MODEL,
-  VLLM_EXTRA_ARGS_ENV,
-  VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  DEFAULT_VLLM_MODEL,
   modelsForPlatform,
   parseVllmExtraServeArgs,
   preflightVllmModelEnv,
   selectVllmModelFromEnv,
-} from "../../../dist/lib/inference/vllm-models";
+  VLLM_EXTRA_ARGS_ENV,
+  VLLM_MODELS,
+} from "./vllm-models";
 
 describe("vllm model registry", () => {
   it("returns null when NEMOCLAW_VLLM_MODEL is unset so the caller can fall back to the profile default", () => {
@@ -170,9 +170,7 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--no-disable-hybrid-kv-cache-manager");
     expect(cmd).toContain("--disable-uvicorn-access-log");
     expect(cmd).toContain("--max-cudagraph-capture-size 128");
-    expect(cmd).toContain(
-      `--speculative-config '{"method":"mtp","num_speculative_tokens":3,"rejection_sample_method":"synthetic","synthetic_acceptance_length":3}'`,
-    );
+    expect(cmd).toContain(`--speculative-config '{"method":"mtp","num_speculative_tokens":3}'`);
     expect(cmd).toContain("--max-model-len 1048576");
     expect(cmd).toContain("--max-num-batched-tokens 8192");
     expect(cmd).toContain("--max-num-seqs 16");

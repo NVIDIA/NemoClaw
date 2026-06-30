@@ -475,7 +475,7 @@ EOF
     // Default (no NEMOCLAW_REQUIRE_CAP_DROP): warns and CONTINUES even though
     // dangerous caps remain — preserving the zero-regression posture for
     // CAP_SETPCAP-less hosts. report_residual_capabilities still names them.
-    it("warns but does NOT refuse to start when CAP_SETPCAP is unavailable (issue #3280)", () => {
+    it("warns without refusing to start when CAP_SETPCAP is unavailable (#3280)", () => {
       const { stdout } = runWithLib(
         [
           "TMP=$(mktemp -d)",
@@ -697,8 +697,8 @@ EOF
       }
     });
 
-    it("uses bash builtin ulimit for nproc and nofile enforcement and verification", () => {
-      const nprocLimit = process.platform === "darwin" ? 4096 : 512;
+    it("bypasses shadowed ulimit functions for nproc and nofile enforcement and verification", () => {
+      const nprocLimit = process.platform === "darwin" ? 4000 : 4096;
       const { stdout } = runWithLib(
         [
           `NEMOCLAW_SANDBOX_NPROC_LIMIT=${nprocLimit}`,

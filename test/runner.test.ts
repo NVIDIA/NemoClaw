@@ -2,18 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { StdioOptions } from "node:child_process";
-
-import { spawnSync } from "node:child_process";
-import childProcess from "node:child_process";
+import childProcess, { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
-import { redact, runCapture } from "../dist/lib/runner";
+import { redact, runCapture } from "../src/lib/runner";
 
-const runnerPath = path.join(import.meta.dirname, "..", "dist", "lib", "runner.js");
+const runnerPath = path.join(import.meta.dirname, "..", "src", "lib", "runner.ts");
 
 type SpawnCallOptions = {
   stdio?: StdioOptions;
@@ -231,7 +229,7 @@ describe("runner env merging", () => {
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
 
-  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+  it("injects NO_PROXY=localhost,127.0.0.1 in runCaptureEx when http_proxy is set (#2616)", () => {
     // Regression for the macOS Privoxy scenario: validateOllamaModel calls
     // runCaptureEx with a curl probe against http://localhost:11434. Before
     // the fix, runCaptureEx merged raw process.env (including the user's
@@ -908,13 +906,13 @@ describe("regression guards", () => {
 
     it("the e2e sandbox suite exercises the tmux-session flow", () => {
       const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
         "utf-8",
       );
-      expect(src).toContain("test_sbx_09_tmux_session_flow");
+      expect(src).toContain("assertTmuxPtyFlow");
       expect(src).toContain("command -v tmux");
       // The smoke must be wired into the run, not just defined.
-      expect(src).toMatch(/^\s*test_sbx_09_tmux_session_flow\s*$/m);
+      expect(src).toContain("await assertTmuxPtyFlow(sandbox, SANDBOX_A)");
     });
 
     // The reopened #4513: installing tmux was not enough — the bundled
@@ -944,15 +942,15 @@ describe("regression guards", () => {
 
     it("e2e TC-SBX-09 hard-asserts the tmux lifecycle and no longer skips on fork failure", () => {
       const src = fs.readFileSync(
-        path.join(repoRoot, "test", "e2e", "test-sandbox-operations.sh"),
+        path.join(repoRoot, "test", "e2e", "live", "sandbox-operations.test.ts"),
         "utf-8",
       );
       // The PTY root cause is pinned with an explicit openpty() probe.
       expect(src).toContain("os.openpty()");
       // The #4640 soft-skip-on-fork-failure branch must be gone — a fork
       // failure now means the devpts grant regressed and must fail loudly.
-      const tc09 = src.slice(src.indexOf("test_sbx_09_tmux_session_flow"));
-      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n"));
+      const tc09 = src.slice(src.indexOf("async function assertTmuxPtyFlow"));
+      const tc09Body = tc09.slice(0, tc09.indexOf("\n}\n") + 3);
       expect(tc09Body).not.toMatch(/skip "TC-SBX-09"/);
     });
   });

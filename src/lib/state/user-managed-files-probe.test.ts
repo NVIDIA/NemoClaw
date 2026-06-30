@@ -9,16 +9,16 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type SandboxStateModule = typeof import("../../../dist/lib/state/sandbox");
-type RegistryModule = typeof import("../../../dist/lib/state/registry");
-type DefsModule = typeof import("../../../dist/lib/agent/defs");
-type ProbeModule = typeof import("../../../dist/lib/state/user-managed-files-probe");
+type SandboxStateModule = typeof import("./sandbox");
+type RegistryModule = typeof import("./registry");
+type DefsModule = typeof import("../agent/defs");
+type ProbeModule = typeof import("./user-managed-files-probe");
 
 const requireDist = createRequire(import.meta.url);
-const sandboxStatePath = "../../../dist/lib/state/sandbox.js";
-const registryPath = "../../../dist/lib/state/registry.js";
-const defsPath = "../../../dist/lib/agent/defs.js";
-const probePath = "../../../dist/lib/state/user-managed-files-probe.js";
+const sandboxStatePath = "./sandbox.js";
+const registryPath = "./registry.js";
+const defsPath = "../agent/defs.js";
+const probePath = "./user-managed-files-probe.js";
 
 function loadProbe(): ProbeModule {
   delete require.cache[requireDist.resolve(probePath)];

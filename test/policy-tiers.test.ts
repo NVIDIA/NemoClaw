@@ -11,8 +11,8 @@
 //   - Integration with the existing policies module
 
 import { describe, expect, it } from "vitest";
-import policies from "../dist/lib/policy";
-import { getTier, listTiers, resolveTierPresets } from "../dist/lib/policy/tiers";
+import * as policies from "../src/lib/policy";
+import { getTier, listTiers, resolveTierPresets } from "../src/lib/policy/tiers";
 
 interface TierPreset {
   name: string;
@@ -71,7 +71,7 @@ describe("tiers", () => {
       expect(listTiers()).toHaveLength(3);
     });
 
-    it("tiers are ordered restricted → balanced → open", () => {
+    it("orders tiers as restricted, balanced, then open", () => {
       const names = listTiers().map((tier: Tier) => tier.name);
       expect(names).toEqual(["restricted", "balanced", "open"]);
     });

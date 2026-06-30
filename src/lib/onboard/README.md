@@ -12,7 +12,7 @@ types.ts
 providers.ts
 preflight.ts
 usage-notice.ts
-legacy-command.ts
+command.ts
 ```
 
 Related modules may live outside this folder when their ownership is clearer:

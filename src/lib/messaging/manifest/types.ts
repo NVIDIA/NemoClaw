@@ -19,7 +19,7 @@ export type MessagingSerializableObject = {
 export type MessagingChannelId = string;
 
 /** Agent runtimes that messaging manifests can target today. */
-export type MessagingAgentId = "openclaw" | "hermes" | "langchain-deepagents-code";
+export type MessagingAgentId = "openclaw" | "hermes";
 
 /** Dot-separated path into NemoClaw's persisted sandbox or channel state. */
 export type MessagingStatePath = string;

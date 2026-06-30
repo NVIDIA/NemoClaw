@@ -17,6 +17,9 @@ const SECRET_BOUNDARY_VALIDATOR_SCRIPT = path.join(
 const GENERATED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
   (index % 16).toString(16),
 ).join("");
+const INHERITED_HEX_TOKEN = Array.from({ length: 64 }, (_value, index) =>
+  (15 - (index % 16)).toString(16),
+).join("");
 
 function runEnvFileValidator(envFileContent: string) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-api-key-boundary-"));
@@ -75,14 +78,14 @@ describe("agents/hermes/validate-env-secret-boundary API_SERVER_KEY contract", (
     const runtimeEnvResult = runRuntimeEnvValidator({
       API_SERVER_HOST: "127.0.0.1",
       API_SERVER_PORT: "18642",
-      API_SERVER_KEY: "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+      API_SERVER_KEY: INHERITED_HEX_TOKEN,
     });
 
     expect(envFileResult.status, envFileResult.stderr).toBe(0);
     expect(runtimeEnvResult.status).toBe(1);
     expect(runtimeEnvResult.stderr).toContain("process environment");
     expect(runtimeEnvResult.stderr).toContain("API_SERVER_KEY");
-    expect(runtimeEnvResult.stderr).not.toContain("fedcba9876543210");
+    expect(runtimeEnvResult.stderr).not.toContain(INHERITED_HEX_TOKEN.slice(0, 16));
   });
 
   it("rejects weak API_SERVER_KEY values in Hermes .env without printing the value", () => {

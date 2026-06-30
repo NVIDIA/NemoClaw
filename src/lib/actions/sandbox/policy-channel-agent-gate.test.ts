@@ -1,26 +1,22 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Lifecycle-boundary regression: `addSandboxChannel` must refuse agents that
-// either fall outside the runtime allowlist or carry an explicit empty
-// `messagingPlatforms` allowlist BEFORE any preset load, policy mutation,
-// provider upsert, registry write, credential prompt, or rebuild trigger.
+// Lifecycle-boundary regression: `addSandboxChannel` must refuse channel/agent pairs
+// that fall outside the channel manifest `supportedAgents` set BEFORE any preset load,
+// policy mutation, provider upsert, registry write, credential prompt, or rebuild trigger.
 // Without this gate, a destructive sandbox rebuild can run and fail late at
 // Dockerfile patching.
 //
-// Why dist + vi.spyOn (matches policy-channel-conflict.test.ts): the source
-// policy-channel.ts loads several deps via runtime CommonJS `require()`. In
-// this repo's vitest setup, `vi.mock` only intercepts ESM `import`, not plain
-// `require()`. We `require()` the COMPILED module + its real compiled
-// dependency modules from dist/ (one shared require cache) and `vi.spyOn`
-// the dependency exports. Run `npm run build:cli` first.
+// policy-channel.ts loads several dependencies through CommonJS `require()`.
+// Load the source module and its dependencies through the shared source hook
+// so `vi.spyOn` observes one require cache without depending on a CLI build.
 
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 
-const requireDist = createRequire(import.meta.url);
-const D = (p: string) => requireDist(`../../../../dist/lib/${p}`);
+const requireSource = createRequire(import.meta.url);
+const D = (p: string) => requireSource(`../../${p}`);
 
 const registry = D("state/registry.js");
 const providers = D("onboard/providers.js");
@@ -93,7 +89,6 @@ describe("addSandboxChannel agent gate", () => {
   it("rejects an unknown agent before any preset, mutation, provider, credential, or rebuild call", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "custom-agent",
-      messagingPlatforms: [],
     });
 
     let caught: unknown;
@@ -107,8 +102,9 @@ describe("addSandboxChannel agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).toMatch(/Agent 'custom-agent' does not support messaging channels/);
-    expect(errorText).toMatch(/Messaging-capable agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channel 'discord' does not support agent 'custom-agent'/);
+    expect(errorText).toMatch(/Channel-supported agents: openclaw, hermes/);
+    expect(errorText).toMatch(/Channels supported by agent 'custom-agent': \(none\)/);
 
     expect(loadPresetMock).not.toHaveBeenCalled();
     expect(applyPresetMock).not.toHaveBeenCalled();
@@ -121,10 +117,9 @@ describe("addSandboxChannel agent gate", () => {
     expect(runOpenshellMock).not.toHaveBeenCalled();
   });
 
-  it("rejects any agent with an explicit empty messagingPlatforms allowlist before any mutation", async () => {
+  it("rejects an agent that is not listed by any channel manifest before any mutation", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "future-agent",
-      messagingPlatforms: [],
     });
 
     let caught: unknown;
@@ -145,7 +140,6 @@ describe("addSandboxChannel agent gate", () => {
   it("does not gate messaging-capable agents (openclaw flows past the agent check)", async () => {
     vi.spyOn(defs, "loadAgent").mockReturnValue({
       name: "openclaw",
-      messagingPlatforms: ["telegram", "discord", "slack", "wechat", "whatsapp"],
     });
 
     let caught: unknown;
@@ -158,7 +152,7 @@ describe("addSandboxChannel agent gate", () => {
     const errorText = (errSpy.mock.calls as unknown[][])
       .map((call) => call.map(String).join(" "))
       .join("\n");
-    expect(errorText).not.toMatch(/does not support messaging channels/);
+    expect(errorText).not.toMatch(/does not support agent/);
     expect(loadPresetMock).toHaveBeenCalled();
     void caught;
     void exitMock;
