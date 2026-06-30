@@ -5,13 +5,18 @@ import YAML from "yaml";
 
 import type { JsonObject, JsonValue } from "../core/json-types";
 
-const { withoutProviderComposedPolicies } =
-  require("../../../dist/shared/openshell-policy-boundary.js") as {
-    withoutProviderComposedPolicies<T>(policies: Record<string, T>): Record<string, T>;
-  };
-
 function isPolicyObject(value: JsonValue): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+// This package-local implementation and the separately published ESM runner's
+// equivalent are kept in behavioral parity by package-contract coverage. A
+// cross-root import would either violate both TypeScript rootDir boundaries or
+// make one published package depend on generated dist output.
+export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {
+  return Object.fromEntries(
+    Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
+  );
 }
 
 export function stripProviderComposedPolicies(policy: string): string {
@@ -26,5 +31,3 @@ export function stripProviderComposedPolicies(policy: string): string {
     throw new Error(`Cannot filter provider-composed policy entries from invalid YAML: ${detail}`);
   }
 }
-
-export { withoutProviderComposedPolicies };

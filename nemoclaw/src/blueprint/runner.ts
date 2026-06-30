@@ -22,7 +22,7 @@ import YAML from "yaml";
 
 import { DASHBOARD_PORT } from "../lib/ports.js";
 import { buildSubprocessEnv } from "../lib/subprocess-env.js";
-import { withoutProviderComposedPolicies } from "../shared/openshell-policy-boundary.js";
+import { stripProviderComposedPolicies } from "../shared/openshell-policy-boundary.js";
 import { validateEndpointUrl } from "./ssrf.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
@@ -359,7 +359,7 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     throw new Error("Current policy network_policies must be a YAML mapping");
   }
   const existingNetworkPolicies = isObjectLike(current.network_policies)
-    ? withoutProviderComposedPolicies(current.network_policies)
+    ? current.network_policies
     : {};
   const output: UnknownRecord = {};
 
@@ -371,11 +371,8 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
 
   output.version =
     typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
-  output.network_policies = withoutProviderComposedPolicies({
-    ...existingNetworkPolicies,
-    ...additions,
-  });
-  return YAML.stringify(output);
+  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  return stripProviderComposedPolicies(YAML.stringify(output));
 }
 
 export function loadBlueprint(): Blueprint {

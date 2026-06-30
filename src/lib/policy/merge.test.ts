@@ -15,6 +15,22 @@ describe("OpenShell provider-composed policy boundary", () => {
     ).toEqual({ safe_entry: { name: "safe-entry" } });
   });
 
+  it("filters reserved entries through the public YAML mutation boundary", () => {
+    const filtered = stripProviderComposedPolicies(
+      [
+        "version: 1",
+        "network_policies:",
+        "  safe_entry:",
+        "    name: safe-entry",
+        "  _provider_injected:",
+        "    name: must-not-submit",
+      ].join("\n"),
+    );
+
+    expect(filtered).toContain("safe_entry:");
+    expect(filtered).not.toContain("_provider_injected:");
+  });
+
   it("fails closed when malformed YAML cannot be filtered", () => {
     expect(() => stripProviderComposedPolicies("version: [unterminated")).toThrow(
       /Cannot filter provider-composed policy entries from invalid YAML/,

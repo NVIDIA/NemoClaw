@@ -12,6 +12,7 @@ import {
 } from "./helpers/e2e-workflow-contract";
 
 type CiWorkflow = {
+  on?: { pull_request?: { paths?: string[] } };
   jobs: Record<string, WorkflowJob & { if?: string; needs?: string | string[] }>;
 };
 
@@ -159,10 +160,35 @@ describe("pull request and main workflow contracts", () => {
   it("keeps installer hash verification credential-free", () => {
     const job = installerHashWorkflow.jobs["check-hash"];
     const checkout = requiredWorkflowStep(job, "Checkout");
+    const changeDetector = requiredWorkflowStep(job, "Detect installer-affecting changes");
     const hashCheck = requiredWorkflowStep(job, "Verify installer hashes are current");
 
+    expect(installerHashWorkflow.on?.pull_request?.paths).toBeUndefined();
     expect(checkout.with?.["persist-credentials"]).toBe(false);
+    expect(checkout.with?.["fetch-depth"]).toBe(2);
+    expect(changeDetector.id).toBe("installer-changes");
+    expect(changeDetector.if).toBe("github.event_name == 'pull_request'");
+    expect(changeDetector.env).toEqual({
+      BASE_SHA: "${{ github.event.pull_request.base.sha }}",
+      HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+    });
+    expect(changeDetector.run).toContain("git cat-file -e \"${BASE_SHA}^{commit}\"");
+    expect(changeDetector.run).toContain(
+      "git diff --quiet --no-ext-diff --no-renames \"$BASE_SHA\" \"$HEAD_SHA\" --",
+    );
+    for (const installerPath of [
+      ".github/workflows/installer-hash-check.yaml",
+      "scripts/check-installer-hash.sh",
+      "scripts/install-openshell.sh",
+      "scripts/install.sh",
+      "test/installer-hash-check.test.ts",
+    ]) {
+      expect(changeDetector.run).toContain(installerPath);
+    }
     expect(hashCheck.env).toBeUndefined();
+    expect(hashCheck.if).toBe(
+      "github.event_name != 'pull_request' || steps.installer-changes.outputs.installer == 'true'",
+    );
     expect(hashCheck.run).toBe("bash scripts/check-installer-hash.sh");
   });
 

@@ -43,6 +43,9 @@ vi.mock("./ssrf.js", () => ({
 const { actionApply } = await import("./runner.js");
 
 const BASE_POLICY = `version: 1
+future_policy:
+  opaque_setting:
+    keep: true
 network_policies:
   existing_mcp:
     endpoints:
@@ -164,7 +167,11 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
       expect.anything(),
     );
 
-    const merged = mergedPolicy() as { network_policies: Record<string, unknown> };
+    const merged = mergedPolicy() as {
+      future_policy: { opaque_setting: { keep: boolean } };
+      network_policies: Record<string, unknown>;
+    };
+    expect(merged.future_policy).toEqual({ opaque_setting: { keep: true } });
     expect(merged.network_policies).toEqual({
       ...YAML.parse(BASE_POLICY).network_policies,
       nim_service: expect.any(Object),
@@ -181,6 +188,22 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     await expect(actionApply("default", blueprint())).rejects.toThrow(
       /Failed to read current policy.*gateway unavailable/,
+    );
+    expect(policySetCalls()).toEqual([]);
+  });
+
+  it("fails closed when policy get --base returns metadata without a policy document", async () => {
+    mockExeca.mockImplementation(async (_cmd: string, args: string[]) => ({
+      exitCode: 0,
+      stdout:
+        args.slice(0, 4).join(" ") === "policy get --base test-sandbox"
+          ? "Version: 1\nHash: sha256:test\n"
+          : "",
+      stderr: "",
+    }));
+
+    await expect(actionApply("default", blueprint())).rejects.toThrow(
+      /does not contain a policy YAML document/,
     );
     expect(policySetCalls()).toEqual([]);
   });

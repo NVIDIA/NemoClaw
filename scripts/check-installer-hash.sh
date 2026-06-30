@@ -16,6 +16,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+OPENSHELL_RELEASE_VERSION="0.0.72"
 
 case "${1:-}" in
   "" | --update) ;;
@@ -99,7 +100,7 @@ register "Ollama installer" \
 # release-asset digests or an equivalent independent verifier replaces it.
 check_openshell_release_assets() {
   local installer="${REPO_ROOT}/scripts/install-openshell.sh"
-  local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v0.0.72"
+  local release_base="https://github.com/NVIDIA/OpenShell/releases/download/v${OPENSHELL_RELEASE_VERSION}"
   local workspace manifests spec manifest expected actual asset pinned upstream matches
   local count=0 published_count=0 failures=0
   local -a manifest_specs=(
@@ -112,7 +113,7 @@ check_openshell_release_assets() {
   : >"$manifests"
   trap 'rm -rf "$workspace"' RETURN
 
-  echo "Checking OpenShell v0.0.72 release assets..."
+  echo "Checking OpenShell v${OPENSHELL_RELEASE_VERSION} release assets..."
   for spec in "${manifest_specs[@]}"; do
     manifest="${spec%%:*}"
     expected="${spec#*:}"
@@ -127,7 +128,7 @@ check_openshell_release_assets() {
       continue
     fi
     if [[ "$actual" != "$expected" ]]; then
-      echo "  STALE: ${manifest} digest does not match the pinned v0.0.72 release asset."
+      echo "  STALE: ${manifest} digest does not match the pinned v${OPENSHELL_RELEASE_VERSION} release asset."
       echo "    pinned:   ${expected}"
       echo "    upstream: ${actual}"
       failures=$((failures + 1))
@@ -145,19 +146,18 @@ check_openshell_release_assets() {
       published_count=$((published_count + 1))
       echo "  OK: ${asset} (${pinned})"
     else
-      echo "  STALE: ${asset} does not match exactly one v0.0.72 checksum entry."
+      echo "  STALE: ${asset} does not match exactly one v${OPENSHELL_RELEASE_VERSION} checksum entry."
       echo "    pinned:   ${pinned}"
       echo "    upstream: ${upstream:-missing}"
       echo "    matches:  ${matches}"
       failures=$((failures + 1))
     fi
   done < <(
-    awk '
+    awk -v marker="v${OPENSHELL_RELEASE_VERSION}:" '
       /^openshell_pinned_sha256\(\)/ { in_function = 1; next }
       in_function && /^}/ { exit }
-      in_function && /v0\.0\.72:/ {
-        asset = $0
-        sub(/^.*v0\.0\.72:/, "", asset)
+      in_function && index($0, marker) {
+        asset = substr($0, index($0, marker) + length(marker))
         sub(/\).*$/, "", asset)
         next
       }
@@ -169,11 +169,11 @@ check_openshell_release_assets() {
   )
 
   if [[ "$count" -ne 8 ]]; then
-    echo "  STALE: expected 8 pinned OpenShell v0.0.72 assets, found ${count}."
+    echo "  STALE: expected 8 pinned OpenShell v${OPENSHELL_RELEASE_VERSION} assets, found ${count}."
     failures=$((failures + 1))
   fi
   if [[ "$published_count" -ne 8 ]]; then
-    echo "  STALE: expected all 8 pinned assets in the v0.0.72 checksum manifests, matched ${published_count}."
+    echo "  STALE: expected all 8 pinned assets in the v${OPENSHELL_RELEASE_VERSION} checksum manifests, matched ${published_count}."
     failures=$((failures + 1))
   fi
   return "$failures"

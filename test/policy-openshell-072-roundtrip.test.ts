@@ -16,6 +16,9 @@ const policies = requireForTest(
 
 const EXISTING_POLICY = {
   version: 1,
+  future_policy: {
+    opaque_setting: { keep: true },
+  },
   network_policies: {
     mcp_server: {
       endpoints: [
@@ -75,6 +78,7 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
       ...EXISTING_POLICY.network_policies,
       pypi_access: expect.any(Object),
     });
+    expect(merged.future_policy).toEqual(EXISTING_POLICY.future_policy);
   });
 
   it("preserves protocol fields across multiple built-in and custom-shaped merges", () => {
@@ -93,6 +97,7 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     const removed = YAML.parse(policies.removePresetFromPolicy(merged, PRESET_ENTRIES));
 
     expect(removed.network_policies).toEqual(EXISTING_POLICY.network_policies);
+    expect(removed.future_policy).toEqual(EXISTING_POLICY.future_policy);
   });
 
   it("drops provider-composed entries from merge and removal mutation payloads", () => {

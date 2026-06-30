@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -30,6 +31,23 @@ function bashBlocks(text: string): string[] {
 }
 
 describe("policy round-trip documentation examples", () => {
+  it("executes the documented extractor against OpenShell 0.0.72 base output", () => {
+    const extractor = "awk 'found { print } /^---$/ { found = 1 } END { if (!found) exit 1 }'";
+    const valid = spawnSync("bash", ["-o", "pipefail", "-c", extractor], {
+      encoding: "utf8",
+      input: "Version: 1\nHash: sha256:test\n---\nversion: 1\nnetwork_policies: {}\n",
+    });
+    expect(valid.status, valid.stderr).toBe(0);
+    expect(valid.stdout).toBe("version: 1\nnetwork_policies: {}\n");
+
+    const missingHeader = spawnSync("bash", ["-o", "pipefail", "-c", extractor], {
+      encoding: "utf8",
+      input: "version: 1\nnetwork_policies: {}\n",
+    });
+    expect(missingHeader.status).not.toBe(0);
+    expect(missingHeader.stdout).toBe("");
+  });
+
   it("keeps raw policy get/set snippets aligned with NemoClaw's OpenShell command builders", () => {
     for (const docPath of DOCS) {
       const text = readDoc(docPath);
