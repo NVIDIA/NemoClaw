@@ -696,7 +696,7 @@ test("common-egress agent classifies pre-contract provider validation skips", ()
 
 describe.sequential("common-egress agent live targets", () => {
   openClawTest(
-    "C1 OpenClaw balanced bundled skill fetches wttr.in",
+    "C1 OpenClaw balanced permits a verified wttr.in curl",
     { timeout: TEST_TIMEOUT_MS },
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
@@ -708,7 +708,7 @@ describe.sequential("common-egress agent live targets", () => {
         contract: [
           "OpenClaw balanced onboarding applies weather common-egress endpoints",
           "balanced scope does not include the broader restcountries public-reference endpoint",
-          "a real OpenClaw agent turn returns the digest of the bundled weather skill curl response",
+          "a real OpenClaw agent turn returns the digest of a stable wttr.in response",
         ],
       });
       await registerSandboxCleanup(cleanup, artifacts, host, sandbox, OPENCLAW_BALANCED_SANDBOX);
@@ -732,7 +732,7 @@ describe.sequential("common-egress agent live targets", () => {
         "restcountries.com",
       );
       const weatherDigestCommand =
-        "body=$(curl -fsS --max-time 30 'https://wttr.in/London?format=3') && test -n \"$body\" && printf '%s' \"$body\" | sha256sum | awk '{print $1}'";
+        "body=$(curl -fsS --max-time 30 'https://wttr.in/:help') && test -n \"$body\" && printf '%s' \"$body\" | sha256sum | awk '{print $1}'";
       const weatherDigestProbe = await sandbox.execShell(
         OPENCLAW_BALANCED_SANDBOX,
         trustedSandboxShellScript(weatherDigestCommand),
@@ -750,7 +750,7 @@ describe.sequential("common-egress agent live targets", () => {
         expected: weatherDigest,
         label: "c1-agent-weather",
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
-        prompt: `Use the installed weather skill and run exactly this shell command:
+        prompt: `Run exactly this shell command to verify the weather host curl path:
 ${weatherDigestCommand}
 Do not use web_fetch, web_search, or any other weather provider.
 After it returns, reply with only the 64-character digest printed by the pipeline. Do not fetch any other URL.`,

@@ -31,6 +31,8 @@ describe("weather policy preset", () => {
     const parsed = YAML.parse(fs.readFileSync(presetPath, "utf8")) as WeatherPreset;
     const endpoints = parsed.network_policies?.weather?.endpoints ?? [];
 
+    // wttr.is remains intentionally excluded until a pinned runtime actually
+    // requires it; weather.yaml records the OpenClaw version review boundary.
     expect(endpoints.map(({ host }) => host).sort()).toEqual([
       "api.open-meteo.com",
       "api.weather.gov",
