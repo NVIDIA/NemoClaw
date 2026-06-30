@@ -358,16 +358,25 @@ describe("classifySandboxCreateFailure", () => {
 
   it("does NOT classify as plugin_install_network_denied when an npm script after the plugin install in the same RUN block emits a network npm error", () => {
     // If `openclaw plugins install` succeeds but a later npm-based command in
-    // the same RUN block fails, the npm error lines appear AFTER the Docker
-    // failed-command boundary. The windowed search only looks at text up to and
-    // including the Docker error block, so post-boundary npm errors are excluded.
+    // the same RUN block fails, its stderr appears before Docker's final failed-
+    // command summary. Correlating the error URL to the requested plugin keeps
+    // the unrelated package failure on the generic recovery path.
     const output = [
+      "npm error code ENOTFOUND",
+      "npm error network request to https://registry.npmjs.org/@openclaw%2Ftools failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
       "The command '/bin/bash -o pipefail -c set -eu;",
       '  openclaw plugins install "npm:@openclaw/brave-plugin@2026.5.27" --pin;',
       "  npm run doctor-fix;",
       "fi' returned a non-zero code: 1",
+    ].join("\n");
+    expect(classifySandboxCreateFailure(output).kind).toBe("unknown");
+  });
+
+  it("does NOT classify package-agnostic npm network output as a plugin install denial", () => {
+    const output = [
       "npm error code ENOTFOUND",
-      "npm error network request to https://registry.npmjs.org/@openclaw%2Ftools failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
+      "npm error network request to https://registry.npmjs.org failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
+      "The command '/bin/bash -c openclaw plugins install npm:@openclaw/brave-plugin@2026.5.27 --pin' returned a non-zero code: 1",
     ].join("\n");
     expect(classifySandboxCreateFailure(output).kind).toBe("unknown");
   });

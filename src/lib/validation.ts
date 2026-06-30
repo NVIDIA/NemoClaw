@@ -136,13 +136,15 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
     return { kind: "gpu_cdi_injection_failed", uploadedToGateway };
   }
   // Require BOTH the failed Docker command block containing the plugin-install
-  // step AND an npm-prefixed network/egress error within the text leading up to
-  // (and including) that block. Searching only the prefix of the output up to
-  // the Docker error boundary prevents a network failure in an unrelated later
-  // RUN block — or a different npm script in the same RUN block that runs after
-  // the plugin install succeeds — from triggering the hint. [^']* matches
-  // newlines in JS character classes, so multi-line command text is handled
-  // correctly. See #4127 / follow-up from #4125.
+  // step AND npm-prefixed network evidence for the same plugin package. Docker
+  // prints subprocess stderr before its final failed-command summary, so a
+  // prefix-only search can misattribute a later npm command in the same RUN
+  // block. Package correlation keeps that failure on the generic recovery path.
+  // OpenShell exposes only combined Docker text here, so this classifier is the
+  // source boundary until callers can consume a structured plugin-install
+  // failure with package identity; remove the text classifier at that point.
+  // [^']* matches newlines in JS character classes, so multi-line command text
+  // is handled correctly. See #4127 / follow-up from #4125.
   const pluginInstallErrorMatch =
     /The command '[^']*(?:openclaw plugins install|npm:@openclaw\/)[^']*'\s*returned a non-zero code/i.exec(
       text,
@@ -152,9 +154,23 @@ export function classifySandboxCreateFailure(output = ""): SandboxCreateFailure 
       0,
       pluginInstallErrorMatch.index + pluginInstallErrorMatch[0].length,
     );
+    const pluginPackages = [
+      ...pluginInstallErrorMatch[0].matchAll(/(?:npm:)?(@openclaw\/[a-z0-9._-]+)/gi),
+    ].map((match) => match[1].toLowerCase());
+    const npmErrorText = segment
+      .split(/\r?\n/)
+      .filter((line) => /^\s*npm error\b/i.test(line))
+      .join("\n")
+      .toLowerCase();
+    const hasMatchingPluginPackage = pluginPackages.some((packageName) =>
+      [packageName, packageName.replace("/", "%2f"), encodeURIComponent(packageName)].some(
+        (candidate) => npmErrorText.includes(candidate.toLowerCase()),
+      ),
+    );
     if (
+      hasMatchingPluginPackage &&
       /npm error.*(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|ESOCKETTIMEDOUT|network request.*failed|getaddrinfo|fetch failed|socket hang up|network timeout)/i.test(
-        segment,
+        npmErrorText,
       )
     ) {
       return { kind: "plugin_install_network_denied", uploadedToGateway };
