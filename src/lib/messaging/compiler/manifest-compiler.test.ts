@@ -1023,7 +1023,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1092,7 +1091,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-config-prompt",
@@ -1176,7 +1174,6 @@ describe("ManifestCompiler", () => {
       credentials: [],
       policyPresets: [],
       render: [],
-      state: {},
       hooks: [],
     } as const satisfies ChannelManifest;
 
@@ -1321,7 +1318,6 @@ describe("ManifestCompiler", () => {
       ],
       policyPresets: ["matrix"],
       render: [],
-      state: {},
       hooks: [
         {
           id: "matrix-enroll",

@@ -244,6 +244,11 @@ describe("patchOpenClawInferenceConfig", () => {
 
   it("is a no-op when OpenClaw already matches the requested route", () => {
     const config: ConfigObject = {
+      _nemoclaw_upstream: {
+        provider: "nvidia-prod",
+        model: "nvidia/model-a",
+        base_url: "https://inference.local/v1",
+      },
       agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } },
       models: {
         mode: "merge",
