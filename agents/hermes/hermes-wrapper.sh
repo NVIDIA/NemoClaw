@@ -6,25 +6,36 @@
 # environment secret boundary for `hermes gateway` (NVIDIA/NemoClaw#4975) and
 # masks credential-shaped values in `hermes config show` output.
 #
-# Source-of-truth note for the `config show` masking layer: the inline provider
-# `api_key` placeholder `sk-OPENSHELL-PROXY-REWRITE` is emitted directly by the
-# build-time config generator (`agents/hermes/config/hermes-config.ts:
-# buildHermesConfig`) into `model`, `providers`, and `custom_providers`, and
-# routed at sandbox startup by the seed pipeline
-# (`agents/hermes/seed-dashboard-config.py:_route_api_key`) so the upstream
-# Hermes CLI must render an `sk-`-prefixed value — the placeholder is later
-# substituted at the OpenShell egress boundary, not in-process. A source-level
-# fix would require Hermes CLI native env-var reference support (an upstream
-# change). Until that lands, this wrapper post-filters `config show` stdout
-# through the Python masker. Remove the `config show` branch and this comment
-# once Hermes CLI redacts credential-shaped fields natively or `buildHermesConfig`
-# stops emitting an inline `api_key` value.
+# Source-of-truth note for the `config show` masking layer.
 #
-# Dashboard parity: the Hermes dashboard is a static web UI seeded by
-# `agents/hermes/seed-dashboard-config.py` — there is no `/api/config` REST
-# surface that emits the resolved config, so the CLI is the only path that
-# can leak `api_key`. If a dashboard config API ships later, mirror this
-# masker on that route or assert the response masks the same fields.
+# - Invalid state: the upstream Hermes CLI emits inline provider `api_key`
+#   values verbatim when asked to print the resolved configuration.
+# - Source boundary: those values are written by the build-time config
+#   generator at `agents/hermes/config/hermes-config.ts:buildHermesConfig`
+#   into the `model`, `providers`, and `custom_providers` sections. The
+#   placeholder `sk-OPENSHELL-PROXY-REWRITE` is later substituted at the
+#   OpenShell egress boundary, not in-process; the seed routing at
+#   `agents/hermes/seed-dashboard-config.py:_route_api_key` requires an
+#   `sk-`-prefixed value for downstream LiteLLM validation.
+# - Source-fix constraint: removing the inline `api_key` would require
+#   either Hermes CLI native env-var reference support (an upstream
+#   change) or a redesigned dashboard/runtime contract that no longer
+#   needs an `sk-`-prefixed placeholder in the rendered config.
+# - Regression test: see `test/hermes-gateway-wrapper.test.ts` —
+#   `masks every api_key emitted by buildHermesConfig ...` derives a
+#   fixture from `buildHermesConfig()` and asserts no raw placeholder
+#   survives in stdout for `config show`.
+# - Removal condition: delete this `config show` branch when Hermes CLI
+#   redacts credential-shaped fields natively or `buildHermesConfig`
+#   stops emitting an inline `api_key` value.
+#
+# Scope note: this masker covers the CLI path only. The Hermes dashboard is
+# upstream-managed (Hermes' own HTTP surface); per the linked report the
+# dashboard already omits provider credentials. NemoClaw vends the dashboard
+# config through `agents/hermes/seed-dashboard-config.py` without exposing a
+# resolved-config REST surface in this repo (grep for `/api/config` returns
+# nothing). If a future NemoClaw-side resolved-config route is added, mirror
+# this masker on that route.
 #
 # The same guard runs in the nemoclaw-start entrypoint
 # (agents/hermes/start.sh: validate_hermes_runtime_env_secret_boundary) and in
