@@ -10,15 +10,10 @@
 // regressionTest: the root policy round-trip and plugin runner policy tests.
 // removalCondition: OpenShell's supported base-policy contract guarantees that
 // provider-composed entries are absent from every mutation read.
-//
-// This CommonJS runtime module is shared by the root CLI package and the
-// separately compiled ESM plugin package. Keeping it outside both TypeScript
-// roots lets their built artifacts resolve the same implementation without
-// reaching across either package's rootDir.
-function withoutProviderComposedPolicies(policies) {
+export function withoutProviderComposedPolicies<T>(
+  policies: Record<string, T>,
+): Record<string, T> {
   return Object.fromEntries(
     Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
   );
 }
-
-module.exports = { withoutProviderComposedPolicies };

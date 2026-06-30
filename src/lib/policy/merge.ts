@@ -3,8 +3,12 @@
 
 import YAML from "yaml";
 
-import { withoutProviderComposedPolicies } from "../../../nemoclaw/shared/openshell-policy-boundary.cjs";
 import type { JsonObject, JsonValue } from "../core/json-types";
+
+const { withoutProviderComposedPolicies } =
+  require("../../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
+    withoutProviderComposedPolicies<T>(policies: Record<string, T>): Record<string, T>;
+  };
 
 function isPolicyObject(value: JsonValue): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);

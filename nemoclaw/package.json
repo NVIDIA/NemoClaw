@@ -46,7 +46,6 @@
   },
   "files": [
     "dist/",
-    "openclaw.plugin.json",
-    "shared/"
+    "openclaw.plugin.json"
   ]
 }

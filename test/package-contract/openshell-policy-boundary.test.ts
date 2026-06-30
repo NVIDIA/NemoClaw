@@ -35,15 +35,24 @@ describe("shared OpenShell policy boundary package contract", () => {
     expect(pluginRunner.actionApply).toBeTypeOf("function");
   });
 
-  it("declares the shared runtime directory in both package manifests", () => {
-    expect(packageFiles(repoRoot)).toContain("nemoclaw/shared/");
-    expect(packageFiles(path.join(repoRoot, "nemoclaw"))).toContain("shared/");
+  it("ships the one compiled TypeScript boundary through both package manifests", () => {
+    expect(packageFiles(repoRoot)).toContain("nemoclaw/dist/");
+    expect(packageFiles(path.join(repoRoot, "nemoclaw"))).toContain("dist/");
 
     expect(
-      fs.existsSync(path.join(repoRoot, "nemoclaw", "shared", "openshell-policy-boundary.cjs")),
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "src", "shared", "openshell-policy-boundary.cts"),
+      ),
     ).toBe(true);
     expect(
-      fs.existsSync(path.join(repoRoot, "nemoclaw", "shared", "openshell-policy-boundary.d.cts")),
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.cjs"),
+      ),
+    ).toBe(true);
+    expect(
+      fs.existsSync(
+        path.join(repoRoot, "nemoclaw", "dist", "shared", "openshell-policy-boundary.d.cts"),
+      ),
     ).toBe(true);
   });
 });
