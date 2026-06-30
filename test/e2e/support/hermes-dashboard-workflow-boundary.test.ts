@@ -38,9 +38,9 @@ describe("Hermes dashboard workflow boundary", () => {
     );
 
     const misplacedDashboardMode = readHermesDashboardWorkflow();
-    misplacedDashboardMode.jobs["hermes-slack-vitest"].env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "1";
+    misplacedDashboardMode.jobs["hermes-e2e"].env!.NEMOCLAW_E2E_HERMES_DASHBOARD = "1";
     expect(validateHermesDashboardWorkflow(misplacedDashboardMode)).toContain(
-      "only hermes-dashboard-vitest may enable Hermes dashboard E2E coverage (found on hermes-slack-vitest)",
+      "only hermes-dashboard may enable Hermes dashboard E2E coverage (found on hermes-e2e)",
     );
 
     const execution = readHermesDashboardWorkflow();

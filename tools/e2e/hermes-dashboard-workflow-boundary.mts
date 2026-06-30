@@ -10,6 +10,13 @@ const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
 const JOB_NAME = "hermes-dashboard";
 
+// Dashboard recovery has a distinct trust boundary: it alone enables the
+// dashboard mode, receives the inference secret at step scope, and must report
+// its result before the PR scorecard is published. Keep those invariants in a
+// focused validator, matching the repository's other security-posture and
+// sandbox-operations workflow-boundary helpers, instead of duplicating them in
+// an untyped YAML-shape assertion.
+
 type WorkflowStep = {
   env?: Record<string, unknown>;
   name?: string;

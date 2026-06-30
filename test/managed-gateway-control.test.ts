@@ -116,6 +116,7 @@ with tempfile.TemporaryDirectory() as root:
             (8642, "/health"),
         }
     )
+    os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"] = "1"
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = system_root
     boundary_path = os.path.join(
         system_root,
@@ -440,6 +441,9 @@ with tempfile.TemporaryDirectory() as root:
     os.environ["NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT"] = "/attacker/root"
     source_proc = control._proc_root()
     source_system = control._system_root()
+    del os.environ["NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST"]
+    disabled_source_proc = control._proc_root()
+    disabled_source_system = control._system_root()
     control.__file__ = control.INSTALLED_HELPER_PATH
     installed_proc = control._proc_root()
     installed_system = control._system_root()
@@ -467,6 +471,7 @@ with tempfile.TemporaryDirectory() as root:
         "public_readiness_retry": [readiness_pid, len(public_health_attempts)],
         "auxiliary_replacement": [auxiliary_replacement, auxiliary_attempts],
         "source_seams": [source_proc, source_system],
+        "disabled_source_seams": [disabled_source_proc, disabled_source_system],
         "installed_seams": [installed_proc, installed_system],
     }))
 `;
@@ -525,6 +530,7 @@ describe("managed gateway root control", () => {
       public_readiness_retry: [43, 2],
       auxiliary_replacement: [44, [43, 44]],
       source_seams: ["/attacker/proc", "/attacker/root"],
+      disabled_source_seams: ["/proc", "/"],
       installed_seams: ["/proc", "/"],
     });
   });

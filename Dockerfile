@@ -97,7 +97,13 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev \
+    && test -f /usr/local/bin/node \
+    && test -d /opt/nemoclaw/node_modules/json5 \
+    && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$node_unsafe" \
+    && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \
+    && test -z "$json5_unsafe"
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
@@ -926,7 +932,10 @@ RUN set -eu; \
 # Newer base images already add both users to the sandbox group, but the
 # derived image must remain build-clean against older sandbox-base:latest
 # tags too. Root membership preserves PID 1 access when CAP_DAC_OVERRIDE is
-# dropped. The `id -nG` checks make this idempotent.
+# dropped. The `id -nG` checks make this idempotent. Remove this block after
+# the minimum supported OpenClaw sandbox base tag is v0.0.71 or newer and
+# Dockerfile.base guarantees both memberships; keep that base contract covered
+# by test/sandbox-provisioning.test.ts.
 # hadolint ignore=DL4006
 RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         if ! id -nG gateway | tr ' ' '\n' | grep -qx sandbox; then \

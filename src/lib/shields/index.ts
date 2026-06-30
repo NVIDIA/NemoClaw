@@ -9,6 +9,15 @@
 // Time-bounded shields-down has automatic restore via a detached timer.
 // The sandbox cannot lower or raise its own shields — all mutations are
 // host-initiated (security invariant).
+//
+// This module intentionally remains the host-side transaction coordinator for
+// policy snapshots, config posture, timer authority, state commits, rollback,
+// and audit ordering. Leaf authority and validation live in the focused lock,
+// timer, seal, and config-guard modules imported below; splitting the coordinator
+// before one typed transaction can own the complete cross-resource rollback
+// would duplicate or weaken the reviewed ordering. New leaf mechanisms belong
+// in those modules, and a later decomposition must preserve the transition and
+// timer-bound lock tests before this facade can shrink safely.
 
 const fs = require("fs");
 const path = require("path");

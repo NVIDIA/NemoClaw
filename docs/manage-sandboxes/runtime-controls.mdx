@@ -110,6 +110,8 @@ The managed controller authenticates the host lifecycle action and prevents PID 
 It cannot prove process provenance against a malicious process running under the same sandbox UID, and it does not create gateway and agent UID isolation.
 Mutable managed config retains the trust and time-of-check/time-of-use limits of managed cold start.
 For Hermes, the managed controller always preflights the secret boundary and verifies the strict root-owned hash when the config and environment are locked.
+This compatibility path remains necessary because the OpenShell-managed PID 1 topology owns the nonroot supervisor and shared gateway-agent UID.
+Remove it only after the minimum supported OpenShell provides a root-owned lifecycle supervisor or a gateway UID distinct from the agent, then migrate both built-in agents to that boundary.
 
 For built-in OpenClaw and Hermes controllers, a successful `recover` or `gateway restart` response supplies the initial authenticated gateway-health proof.
 After the settle window, NemoClaw sends one read-only authenticated `probe` through the same controller before it declares success.

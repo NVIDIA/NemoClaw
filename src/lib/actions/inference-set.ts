@@ -405,6 +405,12 @@ function hasExplicitCustomMetadata(options: InferenceSetOptions): boolean {
   return Boolean(options.endpointUrl || options.credentialEnv || options.inferenceApi);
 }
 
+// TRUST BOUNDARY: host.openshell.internal is the single sandbox-to-host bridge
+// hostname provisioned by OpenShell. It resolves to the Docker host gateway
+// only inside the sandbox network namespace. This exemption is intentionally
+// limited below to HTTP, an explicit unprivileged port, and the exact hostname;
+// do not extend it to HTTPS, wildcard subdomains, localhost, RFC1918 literals,
+// or other internal DNS names.
 const ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS = new Set(["host.openshell.internal"]);
 
 function normalizeEndpointUrlShape(value: string): { url: URL; normalized: string } {

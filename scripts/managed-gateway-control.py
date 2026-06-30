@@ -33,6 +33,12 @@ This helper also cannot manufacture gateway/agent UID isolation: both remain
 host lifecycle action and prevents PID-reuse signaling, but the same sandbox
 UID can already signal its peers.  Full isolation requires a root supervisor
 that launches the gateway under a distinct UID.
+
+This compatibility path cannot fix that upstream process topology locally
+without replacing OpenShell's PID 1 ownership contract.  Remove it when the
+minimum supported OpenShell launches a root-owned lifecycle supervisor or a
+gateway under a UID distinct from the agent, then migrate both built-in agents
+to that source-of-truth boundary.
 """
 
 from __future__ import annotations
@@ -124,14 +130,21 @@ def _source_mode() -> bool:
     return os.path.abspath(__file__) != INSTALLED_HELPER_PATH
 
 
+def _source_test_mode() -> bool:
+    return (
+        _source_mode()
+        and os.environ.get("NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST") == "1"
+    )
+
+
 def _proc_root() -> str:
-    if _source_mode():
+    if _source_test_mode():
         return os.environ.get("NEMOCLAW_MANAGED_CONTROL_PROC_ROOT", "/proc")
     return "/proc"
 
 
 def _system_root() -> str:
-    if _source_mode():
+    if _source_test_mode():
         return os.environ.get("NEMOCLAW_MANAGED_CONTROL_SYSTEM_ROOT", "/")
     return "/"
 
@@ -144,10 +157,7 @@ def _system_path(path: str) -> str:
 
 
 def _require_root() -> None:
-    allow_source_test = (
-        _source_mode()
-        and os.environ.get("NEMOCLAW_MANAGED_CONTROL_ALLOW_NONROOT_TEST") == "1"
-    )
+    allow_source_test = _source_test_mode()
     if os.geteuid() != 0 and not allow_source_test:
         raise ControlError("PRIVILEGED_CONTROL_UNAVAILABLE")
 

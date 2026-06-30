@@ -250,11 +250,15 @@ async function assertForcedGatewayRestart(
     '[ -z "$extra" ] || { echo INVALID_GATEWAY_PID_RECORD >&2; exit 1; }',
     'actual_start=$(python3 -c \'import sys; from pathlib import Path; text=Path(f"/proc/{sys.argv[1]}/stat").read_text(); tail=text.rsplit(")", 1)[1].split(); print(tail[19])\' "$pid")',
     '[ "$actual_start" = "$starttime" ] || { echo GATEWAY_PID_REUSED >&2; exit 1; }',
+    "pid1_argv0=$(tr '\\0' '\\n' </proc/1/cmdline | sed -n '1p')",
+    "pid1_cmdline=$(tr '\\0' ' ' </proc/1/cmdline)",
+    'if [ "$pid1_argv0" = /opt/openshell/bin/openshell-sandbox ]; then expected_user=sandbox; topology=openshell-managed; else case "$pid1_cmdline" in *nemoclaw-start*) expected_user=gateway; topology=direct-root ;; *) echo "UNEXPECTED_PID1=$pid1_cmdline" >&2; exit 1 ;; esac; fi',
     'user=$(ps -p "$pid" -o user= | tr -d " ")',
-    '[ "$user" = gateway ] || { echo "UNEXPECTED_GATEWAY_USER=$user" >&2; exit 1; }',
+    '[ "$user" = "$expected_user" ] || { echo "UNEXPECTED_GATEWAY_USER=$user EXPECTED=$expected_user TOPOLOGY=$topology" >&2; exit 1; }',
     'comm=$(ps -p "$pid" -o comm= | tr -d " ")',
     'case "$comm" in openclaw*) ;; *) echo "UNEXPECTED_GATEWAY_COMM=$comm" >&2; exit 1 ;; esac',
     'python3 -c \'from pathlib import Path; text=Path("/proc/1/stat").read_text(); tail=text.rsplit(")", 1)[1].split(); print("PID1_START=" + tail[19])\'',
+    'printf "TOPOLOGY=%s\\n" "$topology"',
     'printf "GATEWAY=%s:%s:%s\\n" "$user" "$pid" "$starttime"',
   ].join("; ");
   const before = await execInSandbox(
@@ -264,7 +268,7 @@ async function assertForcedGatewayRestart(
     "tc-sbx-08b-gateway-identity-before-forced-restart",
   );
   expectExitZero(before, "OpenClaw gateway identity before forced restart");
-  expect(before.stdout, resultText(before)).toMatch(/GATEWAY=gateway:[0-9]+:[0-9]+/);
+  expect(before.stdout, resultText(before)).toMatch(/GATEWAY=(?:gateway|sandbox):[0-9]+:[0-9]+/);
 
   const restart = await host.nemoclaw([sandboxName, "gateway", "restart"], {
     artifactName: "tc-sbx-08b-openclaw-forced-gateway-restart",
@@ -282,14 +286,17 @@ async function assertForcedGatewayRestart(
     "tc-sbx-08b-gateway-identity-after-forced-restart",
   );
   expectExitZero(after, "OpenClaw gateway identity after forced restart");
-  expect(after.stdout, resultText(after)).toMatch(/GATEWAY=gateway:[0-9]+:[0-9]+/);
+  expect(after.stdout, resultText(after)).toMatch(/GATEWAY=(?:gateway|sandbox):[0-9]+:[0-9]+/);
 
-  const beforeIdentity = before.stdout.match(/GATEWAY=gateway:([0-9]+:[0-9]+)/)?.[1];
-  const afterIdentity = after.stdout.match(/GATEWAY=gateway:([0-9]+:[0-9]+)/)?.[1];
+  const beforeGateway = before.stdout.match(/GATEWAY=(gateway|sandbox):([0-9]+:[0-9]+)/);
+  const afterGateway = after.stdout.match(/GATEWAY=(gateway|sandbox):([0-9]+:[0-9]+)/);
+  const beforeIdentity = beforeGateway?.[2];
+  const afterIdentity = afterGateway?.[2];
   const beforePid1 = before.stdout.match(/PID1_START=([0-9]+)/)?.[1];
   const afterPid1 = after.stdout.match(/PID1_START=([0-9]+)/)?.[1];
   expect(beforeIdentity).toBeTruthy();
   expect(afterIdentity).toBeTruthy();
+  expect(afterGateway?.[1]).toBe(beforeGateway?.[1]);
   expect(afterIdentity).not.toBe(beforeIdentity);
   expect(afterPid1).toBe(beforePid1);
 
@@ -425,17 +432,20 @@ async function assertProcessRecovery(
       '[ -z "$extra" ] || { echo INVALID_GATEWAY_PID_RECORD >&2; exit 1; }',
       'actual_start=$(python3 -c \'import sys; from pathlib import Path; text=Path(f"/proc/{sys.argv[1]}/stat").read_text(); tail=text.rsplit(")", 1)[1].split(); print(tail[19])\' "$pid")',
       '[ "$actual_start" = "$starttime" ] || { echo GATEWAY_PID_REUSED >&2; exit 1; }',
+      "pid1_argv0=$(tr '\\0' '\\n' </proc/1/cmdline | sed -n '1p')",
+      "pid1_cmdline=$(tr '\\0' ' ' </proc/1/cmdline)",
+      'if [ "$pid1_argv0" = /opt/openshell/bin/openshell-sandbox ]; then expected_user=sandbox; else case "$pid1_cmdline" in *nemoclaw-start*) expected_user=gateway ;; *) echo "UNEXPECTED_PID1=$pid1_cmdline" >&2; exit 1 ;; esac; fi',
       'user=$(ps -p "$pid" -o user= | tr -d " ")',
-      '[ "$user" = gateway ] || { echo "UNEXPECTED_GATEWAY_USER=$user" >&2; exit 1; }',
+      '[ "$user" = "$expected_user" ] || { echo "UNEXPECTED_GATEWAY_USER=$user EXPECTED=$expected_user" >&2; exit 1; }',
       'comm=$(ps -p "$pid" -o comm= | tr -d " ")',
       'case "$comm" in openclaw*) ;; *) echo "UNEXPECTED_GATEWAY_COMM=$comm" >&2; exit 1 ;; esac',
       'kill -9 "$pid"',
-      'printf "KILLED_GATEWAY=%s:%s\\n" "$pid" "$starttime"',
+      'printf "KILLED_GATEWAY=%s:%s:%s\\n" "$user" "$pid" "$starttime"',
     ].join("; "),
     "tc-sbx-08-kill-openclaw-gateway",
   );
   expectExitZero(kill, "kill exact OpenClaw gateway identity");
-  expect(kill.stdout, resultText(kill)).toMatch(/KILLED_GATEWAY=[0-9]+:[0-9]+/);
+  expect(kill.stdout, resultText(kill)).toMatch(/KILLED_GATEWAY=(?:gateway|sandbox):[0-9]+:[0-9]+/);
   await new Promise((resolve) => setTimeout(resolve, 5_000));
   const status = await host.nemoclaw([sandboxName, "status"], {
     artifactName: "tc-sbx-08-status-recovers-process",
