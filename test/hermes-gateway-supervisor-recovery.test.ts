@@ -886,6 +886,7 @@ describe("Hermes supervised auxiliary recovery", () => {
       'hermes_role_identity_value() { printf "777"; }',
       "hermes_tracked_role_is_current() { return 0; }",
       'gateway_control_stop_tracked_pid() { trace "stop:$1:$2"; }',
+      'kill() { [ "$1" = "-0" ] && return 1; trace "unexpected-signal:$*"; }',
       'hermes_set_role_identity() { trace "clear:$1:$2"; }',
       extractShellFunction(source, "hermes_stop_tracked_role"),
       "hermes_stop_tracked_role gateway 4242 gateway 18642",
@@ -893,6 +894,7 @@ describe("Hermes supervised auxiliary recovery", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe("stop:4242:777\nclear:gateway:\n");
+    expect(result.stdout).not.toContain("unexpected-signal");
   });
 
   it("does not accept a tracked-stop success while the numeric PID remains live", () => {
