@@ -74,9 +74,11 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to [Use a Local Inference Server](use-local-inference). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
+<Note>
 NVIDIA Endpoints and Hermes Provider use independent model catalogs, so a model can remain available through one provider after it leaves the other's curated list.
 Curated-list updates affect new onboarding choices and do not rewrite existing sandbox configurations.
 Use [Switch Inference Providers](switch-inference-providers) to move an existing sandbox before its configured model becomes unavailable.
+</Note>
 
 ## Model Task-Fit Guide
 
