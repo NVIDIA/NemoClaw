@@ -52,12 +52,13 @@ function isInsideOwnTempDir(configPath: string): boolean {
 export function createCurlAuthConfig(entries: readonly CurlAuthConfigEntry[]): CurlAuthConfig {
   if (entries.length === 0) return EMPTY_CURL_AUTH_CONFIG;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${CURL_AUTH_CONFIG_PREFIX}-`));
+  let succeeded = false;
   try {
     fs.chmodSync(dir, 0o700);
     const configPath = path.join(dir, "auth.conf");
     const body = `${entries.map(formatCurlConfigEntry).join("\n")}\n`;
     fs.writeFileSync(configPath, body, { mode: 0o600, encoding: "utf8" });
-    return {
+    const config: CurlAuthConfig = {
       args: ["--config", configPath],
       trustedConfigFiles: [configPath],
       cleanup() {
@@ -66,9 +67,12 @@ export function createCurlAuthConfig(entries: readonly CurlAuthConfigEntry[]): C
         }
       },
     };
-  } catch (error) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    throw error;
+    succeeded = true;
+    return config;
+  } finally {
+    if (!succeeded) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   }
 }
 
@@ -85,4 +89,17 @@ export function createXApiKeyAuthConfig(token: string): CurlAuthConfig {
 export function createQueryParamAuthConfig(name: string, value: string): CurlAuthConfig {
   if (!value) return EMPTY_CURL_AUTH_CONFIG;
   return createCurlAuthConfig([{ kind: "url-query", name, value }]);
+}
+
+export type OpenAiLikeAuthMode = "bearer" | "query-param";
+
+export function createOpenAiLikeAuthConfig(
+  apiKey: string,
+  authMode?: OpenAiLikeAuthMode,
+): CurlAuthConfig {
+  if (!apiKey) return EMPTY_CURL_AUTH_CONFIG;
+  if (authMode === "query-param") {
+    return createQueryParamAuthConfig("key", apiKey);
+  }
+  return createBearerAuthConfig(apiKey);
 }

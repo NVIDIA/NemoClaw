@@ -4,6 +4,21 @@
 //
 // Inference endpoint probes — validate that a provider's API responds
 // before committing the onboard wizard to a model selection.
+//
+// @ts-nocheck is kept because this module is a CommonJS-style probe driver
+// that bridges to ../credentials/store, ../platform, ../trace,
+// ../validation, ./onboard-host-docker-internal, and the HTTP adapter via
+// require() so the file can be evaluated by both the compiled CLI under
+// dist/ and the source-only Vitest harnesses (test/helpers/onboard-script-
+// mocks.cjs) without an extra build step. TypeScript would not resolve the
+// require()-imported shapes without first migrating the credentials/store,
+// platform, and trace modules to typed ESM exports, which is tracked
+// separately and is intentionally out of scope for this credential-leak
+// fix. The credential-handling surface that this PR introduces lives in
+// the typed auth-config and provider-models modules, both of which are
+// fully type-checked. Removal condition: once credentials/store, platform,
+// and trace expose typed ESM entries, drop this directive and convert the
+// require() calls to imports.
 
 const {
   getCredential,
@@ -18,6 +33,13 @@ const {
   isHijackedDockerInternalUrl,
 } = require("./onboard-host-docker-internal");
 const { isNvcfFunctionNotFoundForAccount, nvcfFunctionNotFoundMessage } = require("../validation");
+const {
+  executeProbeWithHttpRetry,
+  isProbeTimeout,
+  isTimeoutOrConnFailureStatus,
+  RETRIABLE_HTTP_PROBE_STATUSES,
+  runChatCompletionsRetryLoop,
+} = require("./probe-retry");
 
 const {
   getCurlTimingArgs,
@@ -25,16 +47,35 @@ const {
   runChatCompletionsStreamingProbe,
   runStreamingEventProbe,
 } = httpProbe;
-const { createBearerAuthConfig, createCurlAuthConfig, createXApiKeyAuthConfig } = authConfigModule;
-const trace = require("../trace");
+const { createOpenAiLikeAuthConfig, createXApiKeyAuthConfig } = authConfigModule;
 
 function buildOpenAiLikeAuthConfig(apiKey, options = {}) {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
-  if (!normalizedKey) return createCurlAuthConfig([]);
-  if (options.authMode === "query-param") {
-    return createCurlAuthConfig([{ kind: "url-query", name: "key", value: normalizedKey }]);
-  }
-  return createBearerAuthConfig(normalizedKey);
+  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode);
+}
+
+// Convert an exception from the curl auth-config setup boundary (mkdtempSync,
+// chmodSync, writeFileSync) into the same structured probe-failure shape that
+// runCurlProbe surfaces, so a temp-file failure never escapes as an uncaught
+// throw to the onboard wizard. See PR #5975 review note PRA-2.
+function probeFailureFromError(error) {
+  return {
+    ok: false,
+    httpStatus: 0,
+    curlStatus: 0,
+    message: error instanceof Error ? error.message : String(error),
+  };
+}
+
+function openAiLikeFailureFromError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    ok: false,
+    message,
+    failures: [
+      { name: "curl auth config", httpStatus: 0, curlStatus: 0, message, body: "" },
+    ],
+  };
 }
 
 // ── Helpers ──────────────────────────────────────────────────────
@@ -44,8 +85,6 @@ const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
   "qwen/qwen3.5-397b-a17b",
   "deepseek-ai/deepseek-v4-flash",
 ]);
-const CURL_TIMEOUT_STATUS = 28;
-const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
 // Hostnames that are normally meant for the sandbox/container host boundary.
 // host.openshell.internal only resolves inside the OpenShell sandbox network,
@@ -241,91 +280,13 @@ function getProbeProcessTimeoutMs(args) {
   return (getCurlMaxTimeSeconds(args) + 5) * 1000;
 }
 
-// 429 = Too Many Requests; 502/503/504 = upstream gateway/availability flakes
-// (NVIDIA Endpoints and other hosted providers periodically emit these for
-// minutes at a time). All four are transient — retry with backoff before
-// surfacing a hard failure to the wizard. See issues #2980 and #3033.
-const RETRIABLE_HTTP_PROBE_STATUSES = new Set([429, 502, 503, 504]);
-const HTTP_PROBE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000];
-
-function sleepSync(ms) {
-  if (ms <= 0) return;
-  // Skip real waits under vitest so retry-loop coverage doesn't burn 50s of
-  // wall-clock per test. process.env.VITEST is set automatically by the
-  // test runner.
-  if (process.env.VITEST === "true" || process.env.NEMOCLAW_TEST_NO_SLEEP === "1") return;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function shouldRetryHttpProbe(result) {
-  return (
-    result &&
-    !result.ok &&
-    result.curlStatus === 0 &&
-    RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus)
-  );
-}
-
-function isProbeTimeout(result) {
-  return (
-    result &&
-    !result.ok &&
-    (result.curlStatus === CURL_TIMEOUT_STATUS || result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
-  );
-}
-
-function isTimeoutOrConnFailureStatus(curlStatus) {
-  return (
-    curlStatus === CURL_TIMEOUT_STATUS ||
-    curlStatus === NODE_SPAWN_TIMEOUT_STATUS ||
-    curlStatus === 6 ||
-    curlStatus === 7
-  );
-}
-
-function executeProbeWithHttpRetry(probe) {
-  return trace.withTraceSpan(
-    "nemoclaw.inference.validation_probe",
-    { probe_name: probe.name, api: probe.api || null },
-    () => {
-      let attempt = 1;
-      let result = probe.execute();
-      trace.addTraceEvent("probe_result", {
-        attempt,
-        ok: result.ok,
-        http_status: result.httpStatus,
-        curl_status: result.curlStatus,
-      });
-      for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-        if (!shouldRetryHttpProbe(result)) break;
-        console.log(
-          `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
-        );
-        trace.addTraceEvent("probe_retry_sleep", {
-          delay_ms: delayMs,
-          http_status: result.httpStatus,
-        });
-        sleepSync(delayMs);
-        attempt += 1;
-        result = probe.execute();
-        trace.addTraceEvent("probe_result", {
-          attempt,
-          ok: result.ok,
-          http_status: result.httpStatus,
-          curl_status: result.curlStatus,
-        });
-      }
-      return result;
-    },
-  );
-}
-
 // ── Responses API probe ──────────────────────────────────────────
 
 function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+  let authConfig;
   try {
+    authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
     const result = runCurlProbe(
       [
         "-sS",
@@ -373,90 +334,93 @@ function probeResponsesToolCalling(endpointUrl, model, apiKey, options = {}) {
       stderr: result.stderr,
       message: `HTTP ${result.httpStatus}: Responses API did not return a tool call`,
     };
+  } catch (error) {
+    return probeFailureFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 
 function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {}) {
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
-  const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
-  const args = [
-    "-sS",
-    ...timingArgs,
-    "-H",
-    "Content-Type: application/json",
-    ...authConfig.args,
-    "-d",
-    JSON.stringify({
-      model,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
-        },
-        {
-          role: "user",
-          content:
-            "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
-        },
-      ],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "sessions_send",
-            description: "Send a message to the active chat session.",
-            parameters: {
-              type: "object",
-              properties: { message: { type: "string" } },
-              required: ["message"],
-              additionalProperties: false,
-            },
-          },
-        },
-        {
-          type: "function",
-          function: {
-            name: "memory_search",
-            description: "Search memory for relevant prior context.",
-            parameters: {
-              type: "object",
-              properties: { query: { type: "string" } },
-              required: ["query"],
-              additionalProperties: false,
-            },
-          },
-        },
-        {
-          type: "function",
-          function: {
-            name: "web_fetch",
-            description: "Fetch a URL and summarize the result.",
-            parameters: {
-              type: "object",
-              properties: { url: { type: "string" } },
-              required: ["url"],
-              additionalProperties: false,
-            },
-          },
-        },
-      ],
-      tool_choice: "required",
-      temperature: 0,
-      // Bound strict tool-call probes so a slow local model cannot keep
-      // generating until the host-side curl process timeout kills validation.
-      // This strict gate is currently used for Local Ollama; if it expands to
-      // reasoning models, add a thinking-suppression carve-out before lowering
-      // this cap so reasoning traces cannot consume the whole budget (#4537).
-      max_tokens: 256,
-      stream: false,
-    }),
-    `${baseUrl}/chat/completions`,
-  ];
+  let authConfig;
   try {
+    authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+    const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
+    const args = [
+      "-sS",
+      ...timingArgs,
+      "-H",
+      "Content-Type: application/json",
+      ...authConfig.args,
+      "-d",
+      JSON.stringify({
+        model,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a tool-calling assistant. When tools are available and the user asks for an action, call a tool.",
+          },
+          {
+            role: "user",
+            content:
+              "Send hello to the current session. Use the sessions_send tool and do not answer in plain text.",
+          },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "sessions_send",
+              description: "Send a message to the active chat session.",
+              parameters: {
+                type: "object",
+                properties: { message: { type: "string" } },
+                required: ["message"],
+                additionalProperties: false,
+              },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "memory_search",
+              description: "Search memory for relevant prior context.",
+              parameters: {
+                type: "object",
+                properties: { query: { type: "string" } },
+                required: ["query"],
+                additionalProperties: false,
+              },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "web_fetch",
+              description: "Fetch a URL and summarize the result.",
+              parameters: {
+                type: "object",
+                properties: { url: { type: "string" } },
+                required: ["url"],
+                additionalProperties: false,
+              },
+            },
+          },
+        ],
+        tool_choice: "required",
+        temperature: 0,
+        // Bound strict tool-call probes so a slow local model cannot keep
+        // generating until the host-side curl process timeout kills validation.
+        // This strict gate is currently used for Local Ollama; if it expands to
+        // reasoning models, add a thinking-suppression carve-out before lowering
+        // this cap so reasoning traces cannot consume the whole budget (#4537).
+        max_tokens: 256,
+        stream: false,
+      }),
+      `${baseUrl}/chat/completions`,
+    ];
     const result = runCurlProbe(args, {
       timeoutMs: getProbeProcessTimeoutMs(args),
       trustedConfigFiles: authConfig.trustedConfigFiles,
@@ -489,8 +453,10 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       stderr: result.stderr,
       message: `HTTP ${result.httpStatus}: Chat Completions did not return a tool call`,
     };
+  } catch (error) {
+    return probeFailureFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 
@@ -545,15 +511,30 @@ function getChatCompletionsProbePayload(model) {
   return payload;
 }
 
-export function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl: isWslOverride }) {
+// credentialArgs is the curl argument slice that carries the auth credential
+// for the probe — typically ["--config", <tmpfile>] from the auth-config
+// module. The parameter used to be named `authHeader` and used to receive a
+// raw `-H "Authorization: Bearer ..."` slice, but inline credential headers
+// are now rejected by validateCurlProbeArgs. Tests may still pass an
+// inline-header slice (no credential boundary applies to test fakes), so the
+// parameter remains a plain string[]. See PR #5975 review note PRA-4.
+export function getChatCompletionsProbeCurlArgs(opts: {
+  credentialArgs?: readonly string[];
+  authHeader?: readonly string[];
+  model: string;
+  url: string;
+  isWsl?: boolean;
+}) {
+  const { credentialArgs, authHeader, model, url, isWsl: isWslOverride } = opts;
   const platformOptions = typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
   const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
+  const credSlice = credentialArgs ?? authHeader ?? [];
   return [
     "-sS",
     ...timingArgs,
     "-H",
     "Content-Type: application/json",
-    ...authHeader,
+    ...credSlice,
     "-d",
     JSON.stringify(getChatCompletionsProbePayload(model)),
     url,
@@ -561,14 +542,14 @@ export function getChatCompletionsProbeCurlArgs({ authHeader, model, url, isWsl:
 }
 
 function runChatCompletionsProbe({
-  authHeader,
+  credentialArgs,
   model,
   url,
   isWsl: isWslOverride,
   trustedConfigFiles,
 }) {
   const args = getChatCompletionsProbeCurlArgs({
-    authHeader,
+    credentialArgs,
     model,
     url,
     isWsl: isWslOverride,
@@ -581,6 +562,49 @@ function runChatCompletionsProbe({
     return runChatCompletionsStreamingProbe(args, probeOpts);
   }
   return runCurlProbe(args, probeOpts);
+}
+
+// Extracted from probeOpenAiLikeEndpoint so the chat-completions retry path
+// can be tested independently. Doubles the timing args (--connect-timeout,
+// --max-time) and replays through the same backoff schedule as transient HTTP
+// statuses. See PR #5975 review note PRA-8.
+function runDoubledTimeoutChatCompletionsRetry({
+  endpointUrl,
+  model,
+  apiKey,
+  options,
+  baseUrl,
+  authConfig,
+}) {
+  const platformOptions = typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
+  const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
+  const doubledArgs = baseArgs.map((arg) =>
+    /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
+  );
+  const buildRetryArgs = () => [
+    "-sS",
+    ...doubledArgs,
+    "-H",
+    "Content-Type: application/json",
+    ...authConfig.args,
+    "-d",
+    JSON.stringify(getChatCompletionsProbePayload(model)),
+    `${baseUrl}/chat/completions`,
+  ];
+  const runRetryProbe = () =>
+    options.requireChatCompletionsToolCalling === true
+      ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
+          authMode: options.authMode,
+          timingArgs: doubledArgs,
+        })
+      : (() => {
+          const retryArgs = buildRetryArgs();
+          return runCurlProbe(retryArgs, {
+            timeoutMs: getProbeProcessTimeoutMs(retryArgs),
+            trustedConfigFiles: authConfig.trustedConfigFiles,
+          });
+        })();
+  return runChatCompletionsRetryLoop(runRetryProbe);
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
@@ -614,8 +638,9 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   }
 
   const baseUrl = String(endpointUrl).replace(/\/+$/, "");
-  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+  let authConfig;
   try {
+    authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
     const responsesProbe =
       options.requireResponsesToolCalling === true
         ? {
@@ -655,7 +680,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
               authMode: options.authMode,
             })
           : runChatCompletionsProbe({
-              authHeader: authConfig.args,
+              credentialArgs: authConfig.args,
               model,
               url: `${baseUrl}/chat/completions`,
               isWsl: options.isWsl,
@@ -678,6 +703,16 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         // valid non-streaming responses but emit incomplete SSE events in
         // streaming mode. Only run for /responses probes on custom endpoints
         // where probeStreaming was requested.
+        //
+        // Removal condition: once the SGLang Responses API streaming
+        // implementation emits the OpenAI `response.output_text.delta` event
+        // shape (tracked upstream in sgl-project/sglang for the OpenAI-compat
+        // Responses surface), drop this fallback and treat any non-ok
+        // streaming probe as a hard failure. The accompanying integration
+        // test "falls back to chat-completions when /responses streaming
+        // lacks required events" in onboard-probes.test.ts pins the current
+        // fallback shape so a future removal stays observable. See PR #5975
+        // review note PRA-14.
         if (probe.api === "openai-responses" && options.probeStreaming === true) {
           const streamResult = runStreamingEventProbe(
             [
@@ -763,61 +798,22 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     // stack can cause the initial probe to time out before the TLS handshake
     // completes (#987); hosted providers also occasionally drop connections for
     // tens of seconds during incidents (#3033).
-    const isRetriableProbeResult = (result) =>
-      isTimeoutOrConnFailureStatus(result.curlStatus) ||
-      RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
     // Look across every failure entry rather than only failures[0] so a probe
     // ordering like /responses (HTTP error) followed by /chat/completions
     // (curl 28) still triggers the chat-completions retry path.
     let retriedAfterTimeout = false;
     if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
       retriedAfterTimeout = true;
-      const platformOptions =
-        typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
-      const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
-      const doubledArgs = baseArgs.map((arg) =>
-        /^\d+$/.test(arg) ? String(Number(arg) * 2) : arg,
-      );
-      const buildRetryArgs = () => [
-        "-sS",
-        ...doubledArgs,
-        "-H",
-        "Content-Type: application/json",
-        ...authConfig.args,
-        "-d",
-        JSON.stringify(getChatCompletionsProbePayload(model)),
-        `${baseUrl}/chat/completions`,
-      ];
-      const runRetryProbe = () =>
-        options.requireChatCompletionsToolCalling === true
-          ? probeChatCompletionsToolCalling(endpointUrl, model, apiKey, {
-              authMode: options.authMode,
-              timingArgs: doubledArgs,
-            })
-          : (() => {
-              const retryArgs = buildRetryArgs();
-              return runCurlProbe(retryArgs, {
-                timeoutMs: getProbeProcessTimeoutMs(retryArgs),
-                trustedConfigFiles: authConfig.trustedConfigFiles,
-              });
-            })();
-      let retryResult = runRetryProbe();
+      const retryResult = runDoubledTimeoutChatCompletionsRetry({
+        endpointUrl,
+        model,
+        apiKey,
+        options,
+        baseUrl,
+        authConfig,
+      });
       if (retryResult.ok) {
         return { ok: true, api: "openai-completions", label: "Chat Completions API" };
-      }
-      for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-        if (!isRetriableProbeResult(retryResult)) break;
-        const reason = isTimeoutOrConnFailureStatus(retryResult.curlStatus)
-          ? "timed out"
-          : `returned HTTP ${retryResult.httpStatus}`;
-        console.log(
-          `  Chat Completions API validation ${reason}; retrying in ${Math.round(delayMs / 1000)}s...`,
-        );
-        sleepSync(delayMs);
-        retryResult = runRetryProbe();
-        if (retryResult.ok) {
-          return { ok: true, api: "openai-completions", label: "Chat Completions API" };
-        }
       }
       if (options.requireChatCompletionsToolCalling === true) {
         failures.push({
@@ -859,16 +855,19 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       message: baseMessage + wslHint,
       failures,
     };
+  } catch (error) {
+    return openAiLikeFailureFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 
 // ── Anthropic probe ──────────────────────────────────────────────
 
 function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
-  const authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
+  let authConfig;
   try {
+    authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
     const result = runCurlProbe(
       [
         "-sS",
@@ -903,8 +902,10 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
         },
       ],
     };
+  } catch (error) {
+    return openAiLikeFailureFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 

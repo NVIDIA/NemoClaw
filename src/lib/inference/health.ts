@@ -129,7 +129,7 @@ function buildKimiStatusProbeCurlArgs(
 ): string[] {
   const args = useStatusProbeTiming(
     getChatCompletionsProbeCurlArgs({
-      authHeader: [],
+      credentialArgs: [],
       model,
       url: endpoint,
       isWsl,

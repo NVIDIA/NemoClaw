@@ -3,8 +3,9 @@
 
 import {
   type CurlAuthConfig,
+  type OpenAiLikeAuthMode,
   createBearerAuthConfig,
-  createCurlAuthConfig,
+  createOpenAiLikeAuthConfig,
   createXApiKeyAuthConfig,
 } from "../adapters/http/auth-config";
 import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
@@ -22,16 +23,21 @@ export interface ProviderModelOptions {
   /** When "query-param", send the API key as a ?key= URL parameter instead of
    *  an Authorization: Bearer header. Required for Google Gemini which rejects
    *  requests carrying both auth methods. See issue #1960. */
-  authMode?: "bearer" | "query-param";
+  authMode?: OpenAiLikeAuthMode;
 }
 
 function buildOpenAiLikeAuthConfig(apiKey: string, options: ProviderModelOptions): CurlAuthConfig {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";
-  if (!normalizedKey) return createCurlAuthConfig([]);
-  if (options.authMode === "query-param") {
-    return createCurlAuthConfig([{ kind: "url-query", name: "key", value: normalizedKey }]);
-  }
-  return createBearerAuthConfig(normalizedKey);
+  return createOpenAiLikeAuthConfig(normalizedKey, options.authMode);
+}
+
+function fetchResultFromError(error: unknown): ModelCatalogFetchResult {
+  return {
+    ok: false,
+    httpStatus: 0,
+    curlStatus: 0,
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 type ModelCatalogItem = {
@@ -97,8 +103,9 @@ export function fetchNvidiaEndpointModels(
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
   const buildEndpointUrl = options.buildEndpointUrl ?? BUILD_ENDPOINT_URL;
-  const authConfig = createBearerAuthConfig(normalizeCredentialValue(apiKey));
+  let authConfig: CurlAuthConfig | undefined;
   try {
+    authConfig = createBearerAuthConfig(normalizeCredentialValue(apiKey));
     const result = runCurlProbeImpl(
       [
         "-sS",
@@ -112,14 +119,9 @@ export function fetchNvidiaEndpointModels(
     );
     return toModelCatalogFetchResult(result);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 
@@ -156,21 +158,17 @@ export function fetchOpenAiLikeModels(
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
   const baseUrl = `${String(endpointUrl).replace(/\/+$/, "")}/models`;
-  const authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
+  let authConfig: CurlAuthConfig | undefined;
   try {
+    authConfig = buildOpenAiLikeAuthConfig(apiKey, options);
     const result = runCurlProbeImpl(["-sS", ...getCurlTimingArgs(), ...authConfig.args, baseUrl], {
       trustedConfigFiles: authConfig.trustedConfigFiles,
     });
     return toModelCatalogFetchResult(result);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 
@@ -180,8 +178,9 @@ export function fetchAnthropicModels(
   options: ProviderModelOptions = {},
 ): ModelCatalogFetchResult {
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
-  const authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
+  let authConfig: CurlAuthConfig | undefined;
   try {
+    authConfig = createXApiKeyAuthConfig(normalizeCredentialValue(apiKey));
     const result = runCurlProbeImpl(
       [
         "-sS",
@@ -195,14 +194,9 @@ export function fetchAnthropicModels(
     );
     return toModelCatalogFetchResult(result, ["id", "name"]);
   } catch (error) {
-    return {
-      ok: false,
-      httpStatus: 0,
-      curlStatus: 0,
-      message: error instanceof Error ? error.message : String(error),
-    };
+    return fetchResultFromError(error);
   } finally {
-    authConfig.cleanup();
+    authConfig?.cleanup();
   }
 }
 

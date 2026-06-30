@@ -35,6 +35,13 @@ const CURL_DATA_OPTIONS = new Set([
   "-F",
 ]);
 const CURL_HEADER_OPTIONS = new Set(["--header", "--proxy-header", "-H"]);
+// -L/-sfL/--location remain on the safe-flag allowlist because the Ollama
+// manifest probe (src/lib/inference/ollama/model-size.ts) follows redirects
+// from a fixed, hardcoded registry host. Per-call-site SSRF validation for
+// user-supplied probe URLs that would still need to follow redirects is being
+// tracked separately in PR #5564; this PR is scoped to credential leakage and
+// does not introduce any new probe call site that follows redirects on a
+// user-controlled URL.
 const CURL_SAFE_FLAG_OPTIONS = new Set([
   "-s",
   "-S",
@@ -77,7 +84,12 @@ function normalizeHttpProbeUrl(rawUrl: unknown): string {
   return url.toString();
 }
 
-const CURL_FORBIDDEN_AUTH_HEADER_PREFIXES = ["authorization:", "x-api-key:", "x-goog-api-key:"];
+const CURL_FORBIDDEN_AUTH_HEADER_PREFIXES = [
+  "authorization:",
+  "proxy-authorization:",
+  "x-api-key:",
+  "x-goog-api-key:",
+];
 
 function assertHeaderCarriesNoSecret(option: string, value: string): void {
   const lower = value.toLowerCase().trimStart();

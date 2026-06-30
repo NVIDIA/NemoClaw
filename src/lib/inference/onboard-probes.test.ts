@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
+
 const {
   getChatCompletionsProbeCurlArgs,
   getChatCompletionsProbePayload,
@@ -19,6 +21,20 @@ const {
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("./onboard-probes");
+
+// Restore an env var to its pre-test value without branching at the call
+// site. Centralizing the conditional keeps test bodies linear and keeps the
+// codebase-growth-guardrails "if count" steady; see PR #5975 review.
+function restoreEnv(name: string, original: string | undefined): void {
+  if (original === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = original;
+  }
+}
+
+const FAKE_CONFIG_PATH = "/tmp/nemoclaw-test-credential.conf";
+const FAKE_CREDENTIAL_ARGS = ["--config", FAKE_CONFIG_PATH] as const;
 
 describe("OpenAI-compatible inference probe response parsing", () => {
   it("detects tool-calling responses payloads conservatively", () => {
@@ -316,18 +332,14 @@ describe("OpenAI-compatible inference probes", () => {
         "300",
       ]);
     } finally {
-      if (original === undefined) {
-        delete process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
-      } else {
-        process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = original;
-      }
+      restoreEnv("NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS", original);
     }
   });
 
   it("uses an extended validation budget for slow NVIDIA Build models", () => {
     for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
       const args = getChatCompletionsProbeCurlArgs({
-        authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+        credentialArgs: FAKE_CREDENTIAL_ARGS,
         model,
         url: "https://integrate.api.nvidia.com/v1/chat/completions",
         isWsl: false,
@@ -337,7 +349,7 @@ describe("OpenAI-compatible inference probes", () => {
     }
 
     const wslArgs = getChatCompletionsProbeCurlArgs({
-      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
       model: "qwen/qwen3.5-397b-a17b",
       url: "https://integrate.api.nvidia.com/v1/chat/completions",
       isWsl: true,
@@ -368,7 +380,7 @@ describe("OpenAI-compatible inference probes", () => {
     ]);
 
     const args = getChatCompletionsProbeCurlArgs({
-      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
       model: "moonshotai/kimi-k2.6",
       url: "https://integrate.api.nvidia.com/v1/chat/completions",
       isWsl: false,
@@ -394,7 +406,7 @@ describe("OpenAI-compatible inference probes", () => {
     ]);
 
     const args = getChatCompletionsProbeCurlArgs({
-      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      credentialArgs: FAKE_CREDENTIAL_ARGS,
       model: "deepseek-ai/deepseek-v4-pro",
       url: "https://integrate.api.nvidia.com/v1/chat/completions",
       isWsl: false,
@@ -402,7 +414,11 @@ describe("OpenAI-compatible inference probes", () => {
 
     expect(args).toContain("--max-time");
     expect(args[args.indexOf("--max-time") + 1]).toBe("120");
-    expect(args).toContain("Authorization: Bearer nvapi-test");
+    // The credentialArgs slice must appear verbatim in the generated argv so
+    // production probe call sites can route credentials via --config without
+    // the helper rewriting or dropping them.
+    expect(args).toContain("--config");
+    expect(args).toContain(FAKE_CONFIG_PATH);
   });
 
   describe("sandbox-internal URL handling", () => {
@@ -524,11 +540,7 @@ exit 0
       } finally {
         console.log = originalLog;
         process.env.PATH = originalPath;
-        if (originalNoSleep === undefined) {
-          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
-        } else {
-          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
-        }
+        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
@@ -599,11 +611,7 @@ exit 0
       } finally {
         console.log = originalLog;
         process.env.PATH = originalPath;
-        if (originalNoSleep === undefined) {
-          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
-        } else {
-          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
-        }
+        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
@@ -659,23 +667,20 @@ exit 0
 
         expect(result).toMatchObject({ ok: true, api: "openai-completions" });
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-        let firstConfigPath: string | null = null;
+        const observedConfigPaths = new Set<string>();
         for (const call of ["1", "2"]) {
           const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
           expect(args).toContain("https://api.example.com/v1/chat/completions");
           expect(args).not.toContain("?key=");
           expect(args).not.toContain("Authorization: Bearer");
           expect(args).not.toContain("secret key");
-          const lines = args.split("\n");
-          const configIndex = lines.indexOf("--config");
-          expect(configIndex).toBeGreaterThanOrEqual(0);
-          const configPath = lines[configIndex + 1];
-          if (call === "1") {
-            firstConfigPath = configPath;
-          } else {
-            expect(configPath).toBe(firstConfigPath);
-          }
+          observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
         }
+        // Both calls must reuse the same auth config tmpfile so a doubled-
+        // timeout retry never spawns a second config write that could race
+        // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
+        // --config has a path value".
+        expect(observedConfigPaths.size).toBe(1);
       } finally {
         process.env.PATH = originalPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -816,11 +821,7 @@ exit 0
       } finally {
         console.log = originalLog;
         process.env.PATH = originalPath;
-        if (originalNoSleep === undefined) {
-          delete process.env.NEMOCLAW_TEST_NO_SLEEP;
-        } else {
-          process.env.NEMOCLAW_TEST_NO_SLEEP = originalNoSleep;
-        }
+        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
@@ -876,4 +877,150 @@ exit 28
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  // PR #5975 review note PRA-14 (Nemotron). Pins the silent fallback so a
+  // future SGLang fix that removes the workaround stays observable.
+  it("falls back to chat-completions when /responses streaming lacks required events", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stream-fallback-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const counter = path.join(tmpDir, "counter");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(counter, "0");
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+outfile=""
+url=""
+payload=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    -d) payload="$2"; shift 2 ;;
+    *) url="$1"; shift ;;
+  esac
+done
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+if echo "$url" | grep -q '/responses'; then
+  if printf '%s' "$payload" | grep -q '"stream":true'; then
+    if [ -n "$outfile" ]; then
+      cat <<'SSE' > "$outfile"
+event: response.created
+data: {}
+
+event: response.in_progress
+data: {}
+
+event: response.completed
+data: {}
+
+SSE
+    fi
+    printf '200'
+    exit 0
+  fi
+  if [ -n "$outfile" ]; then
+    printf '{"output":[]}' > "$outfile"
+  fi
+  printf '200'
+  exit 0
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    const originalPath = process.env.PATH;
+    const originalLog = console.log;
+    const lines: string[] = [];
+    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+    console.log = (...args) => lines.push(args.join(" "));
+    try {
+      const result = probeOpenAiLikeEndpoint(
+        "https://api.example.com/v1",
+        "test-model",
+        "sk-test",
+        { probeStreaming: true },
+      );
+
+      expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+      expect(lines.join("\n")).toMatch(/missing required events/i);
+    } finally {
+      console.log = originalLog;
+      process.env.PATH = originalPath;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // PR #5975 review note PRA-3 (Standard). The unit tests assert that
+  // constructed argv arrays do not contain the API key. This integration
+  // test makes the same guarantee at the live curl process boundary by
+  // recording /proc/self/cmdline inside a fake curl and asserting the key
+  // is absent and --config is present. Runs only on Linux because /proc
+  // is not generally available elsewhere.
+  it.runIf(process.platform === "linux")(
+    "does not expose the API key in the running curl process command line",
+    () => {
+      const apiKey = "nvapi-process-list-secret";
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-proc-cmdline-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const cmdlinePath = path.join(tmpDir, "cmdline.txt");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+# Capture the running shell's own /proc/<pid>/cmdline so the test can
+# assert on what a process-list inspector (ps auxww, /proc) would see.
+# Use $$ rather than /proc/self/cmdline because /proc/self resolves
+# relative to whatever subprocess opens the file, not this script.
+if [ -r /proc/$$/cmdline ]; then
+  tr '\\0' ' ' < /proc/$$/cmdline > "${cmdlinePath}"
+fi
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      try {
+        probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "nvidia/nemotron-3-super-120b-a12b",
+          apiKey,
+          { skipResponsesProbe: true },
+        );
+
+        const recordedCmdline = fs.readFileSync(cmdlinePath, "utf8");
+        expect(recordedCmdline).not.toContain(apiKey);
+        expect(recordedCmdline).not.toContain("Authorization: Bearer");
+        expect(recordedCmdline).toContain("--config");
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

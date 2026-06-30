@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   createBearerAuthConfig,
   createCurlAuthConfig,
+  createOpenAiLikeAuthConfig,
   createQueryParamAuthConfig,
   createXApiKeyAuthConfig,
 } from "./auth-config";
@@ -22,21 +23,22 @@ describe("curl auth config helper", () => {
 
   it("writes a 0600 curl config tmpfile with a header entry and removes it on cleanup", () => {
     const config = createBearerAuthConfig("nvapi-test-1234");
+    const configPath = config.args[1];
     try {
       expect(config.args[0]).toBe("--config");
-      const [, configPath] = config.args;
       expect(typeof configPath).toBe("string");
-      expect(fs.existsSync(configPath)).toBe(true);
+      // Single readFileSync — readFileSync throws ENOENT synchronously if
+      // the file is missing, which is what we want anyway, and avoids the
+      // "check then use" race CodeQL flagged in PR #5975 review.
+      const contents = fs.readFileSync(configPath, "utf8");
       const stat = fs.statSync(configPath);
       expect(stat.mode & 0o777).toBe(0o600);
-      const contents = fs.readFileSync(configPath, "utf8");
       expect(contents).toContain('header = "Authorization: Bearer nvapi-test-1234"');
       expect(config.trustedConfigFiles).toContain(configPath);
     } finally {
       config.cleanup();
     }
-    const [, configPath] = config.args;
-    expect(fs.existsSync(configPath)).toBe(false);
+    expect(() => fs.statSync(configPath)).toThrow(/ENOENT/);
   });
 
   it("writes a url-query entry instead of a header for query-param auth", () => {
@@ -67,6 +69,26 @@ describe("curl auth config helper", () => {
     try {
       const contents = fs.readFileSync(config.args[1], "utf8");
       expect(contents).toContain('header = "x-api-key: sk-ant-secret"');
+    } finally {
+      config.cleanup();
+    }
+  });
+
+  it("routes the OpenAI-like helper through Bearer auth by default", () => {
+    const config = createOpenAiLikeAuthConfig("sk-test");
+    try {
+      const contents = fs.readFileSync(config.args[1], "utf8");
+      expect(contents).toContain('header = "Authorization: Bearer sk-test"');
+    } finally {
+      config.cleanup();
+    }
+  });
+
+  it("routes the OpenAI-like helper through query-param auth when requested", () => {
+    const config = createOpenAiLikeAuthConfig("AIzaFakeKey123", "query-param");
+    try {
+      const contents = fs.readFileSync(config.args[1], "utf8");
+      expect(contents).toContain('url-query = "key=AIzaFakeKey123"');
     } finally {
       config.cleanup();
     }
