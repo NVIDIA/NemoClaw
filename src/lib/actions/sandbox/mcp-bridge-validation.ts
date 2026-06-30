@@ -9,6 +9,7 @@ import {
   isOpenShellMcpHostAlias,
   MCP_SERVER_URL_MAX_LENGTH,
 } from "../../security/mcp-url-target";
+import { redactStandaloneSecretsFull } from "../../security/redact";
 import type { McpBridgeEntry } from "../../state/registry";
 import { isSubprocessEnvNameAllowed } from "../../subprocess-env";
 import {
@@ -214,6 +215,12 @@ export function normalizeMcpServerUrl(rawUrl: string): string {
   ) {
     throw new McpBridgeError(
       "MCP server URL paths must be literal and canonical; percent escapes, backslashes, semicolons, and glob metacharacters are not supported.",
+      2,
+    );
+  }
+  if (redactStandaloneSecretsFull(parsed.pathname) !== parsed.pathname) {
+    throw new McpBridgeError(
+      "MCP server URL paths must not contain secret-shaped credential material because the full URL is persisted and displayed. Put the bearer credential in --env KEY.",
       2,
     );
   }

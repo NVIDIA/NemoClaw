@@ -344,6 +344,11 @@ assert_no_secret_env_file() {
 assert_no_secret_runtime_env
 assert_no_secret_env_file
 
+if [ "${1:-}" = "--nemoclaw-mcp-capability" ] && [ "$#" -eq 1 ]; then
+  printf '%s\n' 'NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1'
+  exit 0
+fi
+
 case "${1:-}" in
   --version | -v | -V | --help | -h)
     run_dcode "$@"

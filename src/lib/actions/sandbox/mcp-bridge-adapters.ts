@@ -15,6 +15,9 @@ export const MCPORTER_VERSION = "0.7.3";
 // `/sandbox/.mcp.json` is project-level and is intentionally rejected by
 // headless `dcode -n` unless project MCP has been separately trusted.
 export const DEEPAGENTS_MCP_CONFIG_PATH = "/sandbox/.deepagents/.mcp.json";
+const DEEPAGENTS_MCP_CAPABILITY_MARKER = "NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1";
+const DEEPAGENTS_MCP_CAPABILITY_COMMAND =
+  "/usr/local/bin/deepagents-code --nemoclaw-mcp-capability";
 const DEFAULT_AUTH_HEADER = "Authorization";
 const DEFAULT_AUTH_SCHEME = "Bearer";
 const HERMES_MCP_TRANSACTION_HELPER = "/usr/local/lib/nemoclaw/hermes-mcp-config-transaction.py";
@@ -525,6 +528,15 @@ export function assertAgentMcpMutationRuntimeCapability(
   sandboxName: string,
   adapter: AgentMcpAdapter,
 ): void {
+  if (adapter === "deepagents-config") {
+    const result = executeSandboxCommand(sandboxName, DEEPAGENTS_MCP_CAPABILITY_COMMAND);
+    if (result?.status !== 0 || result.stdout.trim() !== DEEPAGENTS_MCP_CAPABILITY_MARKER) {
+      throw new McpBridgeError(
+        `LangChain Deep Agents Code sandbox '${sandboxName}' does not contain the managed MCP-aware launcher. Rebuild the sandbox before changing authenticated MCP state.`,
+      );
+    }
+    return;
+  }
   if (adapter !== "hermes-config") return;
   let lastDetail = "";
   const ready = waitUntil(

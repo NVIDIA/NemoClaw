@@ -210,6 +210,15 @@ describe("MCP CLI parsing", () => {
     expect(() => normalizeMcpServerUrl("https://mcp.example.test/mcp#")).toThrow(
       /must not include a fragment/,
     );
+    for (const token of [
+      "nvapi-abcdefghijklmnop",
+      "ghp_abcdefghijklmnop",
+      "sk-abcdefghijklmnopqrstuvwxyz",
+    ]) {
+      expect(() => normalizeMcpServerUrl(`https://mcp.example.test/mcp/${token}`)).toThrow(
+        /paths must not contain secret-shaped credential material.*full URL is persisted/i,
+      );
+    }
     expect(() => normalizeMcpServerUrl("https://*.example.test/mcp")).toThrow(
       /hosts must be literal/,
     );

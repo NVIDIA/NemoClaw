@@ -290,6 +290,20 @@ describe("LangChain Deep Agents Code image contracts", () => {
     expect(policy).not.toContain("dcode.upstream");
   });
 
+  it("exposes an exact managed MCP capability marker without starting dcode", () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-dcode-mcp-capability-"));
+    try {
+      const { wrapperPath, ranMarker } = makeWrapperFixture(tempDir);
+      const result = runWrapper(wrapperPath, ["--nemoclaw-mcp-capability"], {});
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toBe("NEMOCLAW_DEEPAGENTS_MCP_CAPABILITY=1\n");
+      expect(fs.existsSync(ranMarker)).toBe(false);
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("uses the Deep Agents 0.1.12 user-level MCP discovery path", () => {
     const requirements = readAgentFile("requirements.lock");
     const wrapper = readAgentFile("dcode-wrapper.sh");
