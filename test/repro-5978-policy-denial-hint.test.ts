@@ -32,6 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { NAME_MAX_LENGTH, NAME_VALID_PATTERN } from "../src/lib/name-validation.js";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const START_SCRIPT = path.join(REPO_ROOT, "scripts", "nemoclaw-start.sh");
@@ -233,6 +234,38 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     expect(status).toBe(0);
     expect(stdout).toContain("nemoclaw <name> logs --tail 50");
     expect(stdout).not.toContain(tooLong);
+  });
+
+  it("shell allowlist agrees with NAME_VALID_PATTERN for non-sentinel names (anti-drift) (#5978)", () => {
+    // Anti-drift guard: the shell `case` in nemoclaw-start.sh hand-mirrors
+    // NAME_VALID_PATTERN from src/lib/name-validation.ts. Couple the two by
+    // running a matrix of names through the real shell gate and asserting its
+    // accept/reject decision matches the imported validator, so a future change
+    // to the TS pattern that the shell does not track fails here. Boolean
+    // sentinels (true/false/0/1) are intentionally excluded — the shell maps
+    // them to the placeholder regardless of NAME_VALID_PATTERN because OpenShell
+    // uses them as the "no usable name" signal (covered by the fallback test).
+    const candidates = [
+      "qa-5978",
+      "a",
+      "a1",
+      "web-server-01",
+      "Qa-5978",
+      "qa_5978",
+      "9abc",
+      "-abc",
+      "abc-",
+      "ab c",
+      "ab.c",
+      "a".repeat(NAME_MAX_LENGTH + 1),
+    ];
+    for (const c of candidates) {
+      const tsValid = c.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(c);
+      const { stdout, status } = gate({ OPENSHELL_SANDBOX: c });
+      expect(status).toBe(0);
+      const shellAccepted = stdout.includes(`nemoclaw ${c} logs --tail 50`);
+      expect(shellAccepted).toBe(tsValid);
+    }
   });
 
   it("emits a tool-agnostic breadcrumb naming the 403 signature and `logs --tail 50`", () => {
