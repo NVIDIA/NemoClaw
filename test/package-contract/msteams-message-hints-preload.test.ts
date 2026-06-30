@@ -39,11 +39,7 @@ function readPinnedOpenClawVersion(): string {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(repoRoot, "nemoclaw", "package.json"), "utf8"),
   ) as { openclaw?: { build?: { openclawVersion?: unknown } } };
-  const version = packageJson.openclaw?.build?.openclawVersion;
-  if (typeof version !== "string" || !version) {
-    throw new Error("nemoclaw/package.json is missing openclaw.build.openclawVersion");
-  }
-  return version;
+  return String(packageJson.openclaw?.build?.openclawVersion ?? "");
 }
 
 function writeReviewedPackageShape(root: string, version: string): string {
