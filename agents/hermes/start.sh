@@ -1247,6 +1247,22 @@ ensure_hermes_runtime_api_server_key() {
   echo "[config] Minted Hermes API_SERVER_KEY for this sandbox and refreshed config hash" >&2
 }
 
+# Resolve python3 from trusted absolute paths so a PATH-shadowed python3
+# (via SSH env, compromised sandbox, or malicious entrypoint wrapper) cannot
+# bypass the secret-boundary validator. Mirrors agents/hermes/hermes-wrapper.py
+# _TRUSTED_PYTHON3 and src/lib/agent/hermes-recovery-boundary.ts
+# HERMES_TRUSTED_PYTHON3_PATHS.
+resolve_trusted_python3() {
+  unset _NEMOCLAW_PYTHON3
+  if [ -x /usr/bin/python3 ]; then _NEMOCLAW_PYTHON3=/usr/bin/python3; fi
+  if [ -x /usr/local/bin/python3 ]; then _NEMOCLAW_PYTHON3=/usr/local/bin/python3; fi
+  if [ -x /opt/hermes/.venv/bin/python3 ]; then _NEMOCLAW_PYTHON3=/opt/hermes/.venv/bin/python3; fi
+  if [ -z "${_NEMOCLAW_PYTHON3:-}" ]; then
+    echo "[SECURITY] Refusing Hermes startup: no python3 at a trusted absolute path" >&2
+    return 127
+  fi
+}
+
 validate_hermes_env_secret_boundary() {
   local env_file="${HERMES_DIR}/.env"
   [ -e "$env_file" ] || return 0
@@ -1254,11 +1270,13 @@ validate_hermes_env_secret_boundary() {
     echo "[SECURITY] Refusing Hermes startup because ${env_file} is a symlink" >&2
     return 1
   fi
-  python3 "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
+  resolve_trusted_python3 || return $?
+  "$_NEMOCLAW_PYTHON3" -I "$_HERMES_BOUNDARY_VALIDATOR" env-file "$env_file"
 }
 
 validate_hermes_runtime_env_secret_boundary() {
-  python3 "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
+  resolve_trusted_python3 || return $?
+  "$_NEMOCLAW_PYTHON3" -I "$_HERMES_BOUNDARY_VALIDATOR" runtime-env
 }
 
 # ── Main ─────────────────────────────────────────────────────────
