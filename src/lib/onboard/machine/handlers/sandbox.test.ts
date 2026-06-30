@@ -211,6 +211,8 @@ function baseOptions(
     sandboxName: null,
     model: "model",
     provider: "provider",
+    endpointUrl: null,
+    credentialEnv: null,
     nimContainer: null,
     webSearchConfig: null,
     selectedMessagingChannels: [],
@@ -282,6 +284,29 @@ describe("handleSandboxState", () => {
       updates: undefined,
       metadata: { state: "sandbox", sandboxName: "my-assistant", agent: "openclaw" },
     });
+  });
+
+  it("persists the validated inference route after fresh sandbox creation", async () => {
+    const { deps, calls } = createDeps();
+
+    await handleSandboxState({
+      ...baseOptions(deps),
+      provider: "compatible-endpoint",
+      model: "nvidia/test-model",
+      endpointUrl: "https://inference-api.nvidia.com/v1",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    });
+
+    expect(calls.updateSandbox).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({
+        provider: "compatible-endpoint",
+        model: "nvidia/test-model",
+        endpointUrl: "https://inference-api.nvidia.com/v1",
+        credentialEnv: "COMPATIBLE_API_KEY",
+        preferredInferenceApi: "openai-completions",
+      }),
+    );
   });
 
   it("reuses a completed ready sandbox on resume", async () => {

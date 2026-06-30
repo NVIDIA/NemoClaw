@@ -107,6 +107,8 @@ export function createCoreOnboardFlowPhases<
       sandboxName: context.sandboxName,
       model: context.model,
       provider: context.provider,
+      endpointUrl: context.endpointUrl,
+      credentialEnv: context.credentialEnv,
       nimContainer: context.nimContainer,
       webSearchConfig: context.webSearchConfig,
       selectedMessagingChannels: context.selectedMessagingChannels,

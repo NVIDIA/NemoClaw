@@ -27,6 +27,8 @@ export interface SandboxStateOptions<
   sandboxName: string | null;
   model: string;
   provider: string;
+  endpointUrl: string | null;
+  credentialEnv: string | null;
   nimContainer: string | null;
   webSearchConfig: WebSearchConfig | null;
   selectedMessagingChannels: string[];
@@ -345,9 +347,12 @@ class SandboxStateFlow<
     // image must not stamp it with the current version and hide build drift.
     const { nemoclawVersion: _builtFingerprint, ...agentRegistryFields } =
       this.deps.getSandboxAgentRegistryFields(this.options.agent, !this.options.fromDockerfile);
+    // Preserve the validated route and credential env-var name, never a credential value.
     this.deps.updateSandboxRegistry(sandboxName, {
       model: this.options.model,
       provider: this.options.provider,
+      endpointUrl: this.options.endpointUrl,
+      credentialEnv: this.options.credentialEnv,
       nimContainer: this.options.nimContainer,
       preferredInferenceApi: this.options.preferredInferenceApi,
       ...agentRegistryFields,
