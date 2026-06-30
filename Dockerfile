@@ -233,6 +233,10 @@ RUN set -eu; \
 # Patch 4: drop when OpenClaw defaults bare fetchWithSsrFGuard calls to
 #   trusted_env_proxy in an OpenShell sandbox, or when all sandbox-sensitive
 #   callsites explicitly pass mode: "trusted_env_proxy".
+#   During every OpenClaw version bump, audit omitted-mode fetchWithSsrFGuard
+#   callsites. If any callsite relies on STRICT direct DNS/TLS/mTLS semantics,
+#   drop this patch or make that callsite pass an explicit strict mode before
+#   carrying the compatibility patch forward.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -376,6 +380,9 @@ RUN set -eu; \
                     || patch_fail "Patch 4 verification failed to add sandbox default in $f"; \
                 patched_resolver="$(sed -n '/function resolveGuardedFetchMode(params)/,/nemoclaw: default bare guarded fetches to trusted env proxy/p' "$f")"; \
                 if printf '%s\n' "$patched_resolver" | grep -Fq 'params.proxy === "env"'; then \
+                    patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
+                fi; \
+                if grep -Fq 'params.proxy === "env" && params.dangerouslyAllowEnvProxyWithoutPinnedDns === true' "$f"; then \
                     patch_fail "Patch 4 verification left deprecated proxy env opt-in in $f"; \
                 fi; \
                 if grep -Fq 'dangerouslyAllowEnvProxyWithoutPinnedDns' "$f"; then \
