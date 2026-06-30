@@ -489,5 +489,4 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
       removeTempDir(harness.tmp);
     }
   });
-
 });
