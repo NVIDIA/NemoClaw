@@ -26,8 +26,21 @@ runs:
           [[ -n "$have" ]] && [[ "$(printf '%s\n%s\n' "$min_glibc" "$have" | sort -V | head -n 1)" == "$min_glibc" ]]
         }
 
+        layout_ok() {
+          local ref="$1"
+          docker run --rm --entrypoint sh "$ref" -lc '
+            set -eu
+            for path in /sandbox/.openclaw /sandbox/.hermes-data; do
+              if [ -e "$path" ] || [ -L "$path" ]; then
+                echo "Hermes base image contains retired sandbox state: $path" >&2
+                exit 1
+              fi
+            done
+          '
+        }
+
         try_image() {
-          local ref="$1" version
+          local ref="$1" version digest_ref
           if ! docker pull "$ref" >/dev/null 2>&1; then
             return 1
           fi
@@ -36,7 +49,16 @@ runs:
             echo "::warning::Hermes sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
             return 1
           fi
-          echo "HERMES_BASE_IMAGE=${ref}" >> "$GITHUB_ENV"
+          if ! layout_ok "$ref"; then
+            echo "::warning::Hermes sandbox base image ${ref} contains retired sandbox state; trying another candidate"
+            return 1
+          fi
+          digest_ref="$(docker image inspect "$ref" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep -F -m 1 "${image}@sha256:" || true)"
+          if [[ -z "$digest_ref" ]]; then
+            echo "::warning::Hermes sandbox base image ${ref} did not expose an immutable GHCR repo digest (may be a fresh tag); building locally"
+            return 1
+          fi
+          echo "HERMES_BASE_IMAGE=${digest_ref}" >> "$GITHUB_ENV"
           return 0
         }
 
@@ -57,6 +79,10 @@ runs:
         version="$(glibc_version nemoclaw-hermes-base-local || true)"
         if ! glibc_ok "$version"; then
           echo "::error::Local Hermes sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
+          exit 1
+        fi
+        if ! layout_ok nemoclaw-hermes-base-local; then
+          echo "::error::Local Hermes sandbox base image contains retired sandbox state"
           exit 1
         fi
         echo "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local" >> "$GITHUB_ENV"

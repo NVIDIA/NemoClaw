@@ -136,15 +136,19 @@ describe("classifyPresetProvenance", () => {
     });
   });
 
-  it("normalises preset name casing", () => {
+  it("normalises preset, tier, and agent casing", () => {
     expect(
       classifyPresetProvenance("OPENCLAW-PRICING", {
-        tierName: "balanced",
+        tierName: " BALANCED ",
         agentName: "OpenClaw",
       }),
     ).toEqual({
       source: "agent",
       agent: "openclaw",
+    });
+    expect(classifyPresetProvenance("NPM", { tierName: " BALANCED " })).toEqual({
+      source: "tier",
+      tier: "balanced",
     });
   });
 });

@@ -27,7 +27,7 @@ const PRELOAD_SOURCE = path.join(
 // the bundled @openclaw/whatsapp passes NO `small`, so it defaults to full
 // size. These tests prove the preload patches that real package shape. End-to-
 // end proof that this shrinks a *real* rendered QR lives in
-// test/e2e-scenario/live/whatsapp-qr-compact.test.ts, which drives the actual
+// test/e2e/live/whatsapp-qr-compact.test.ts, which drives the actual
 // upstream renderer at the version bundled in Dockerfile.base. Ref: NemoClaw#4522.
 
 // A fake `qrcode` package (toString + create — the shape the preload keys on)
@@ -204,9 +204,9 @@ describe("WhatsApp compact-QR preload (qrcode package)", () => {
 // is exercised behaviorally rather than by asserting on source text: the guard
 // describe-block below executes the extracted openclaw() function and checks the
 // --require injection, and the end-to-end renderer E2E
-// (test/e2e-scenario/live/whatsapp-qr-compact.test.ts) plus the in-sandbox
-// M-WA6d check in test-messaging-providers.sh prove the wired preload actually
-// shrinks the QR.
+// (test/e2e/live/whatsapp-qr-compact.test.ts) plus the
+// messaging-providers Vitest coverage prove the wired preload actually shrinks
+// the QR.
 
 // Extract the sandbox-side `openclaw()` guard function from the single-quoted
 // heredoc so we can exercise the WhatsApp login branch without a live sandbox.
@@ -347,7 +347,7 @@ describe("WhatsApp pairing guard (channels login --channel whatsapp)", () => {
       preloadPresent: false,
     });
     expect(r.stdout).toContain("FAKE_OPENCLAW_ARGS=channels login --channel whatsapp");
-    expect(r.stdout).not.toContain("--require");
+    expect(r.stdout).not.toContain(r.preloadPath);
     expect(r.stdout).toContain("GUARD_EXIT=0");
   });
 

@@ -7,30 +7,56 @@ const { startGatewayForRecovery } = require("./onboard") as {
     gatewayPort?: number;
   }) => Promise<void>;
 };
+
+import { stripAnsi } from "./adapters/openshell/client";
+import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
 import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "./adapters/openshell/timeouts";
-import { stripAnsi } from "./adapters/openshell/client";
-import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
-import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
 import { GATEWAY_PORT } from "./core/ports";
+import { resolveGatewayName, resolveGatewayPortFromName } from "./onboard/gateway-binding";
 
+/** Whether `gateway info` output names the given NemoClaw gateway. */
 function hasNamedGateway(output = "", gatewayName = "nemoclaw"): boolean {
   return stripAnsi(output).includes(`Gateway: ${gatewayName}`);
 }
 
+/** Parse the active gateway name from `openshell status` output, or null. */
 function getActiveGatewayName(output = ""): string | null {
   const match = stripAnsi(output).match(/^\s*Gateway:\s+(.+?)\s*$/m);
   return match ? match[1].trim() : null;
 }
 
+/**
+ * Classify the lifecycle state of the named gateway (healthy_named,
+ * named_unreachable, named_unhealthy, connected_other, or missing_named) from
+ * `openshell status` and `gateway info`. Pass `ignoreProbeErrors` to keep the
+ * probes non-fatal so a hung/timed-out gateway is classified rather than
+ * exiting the process.
+ */
 export function getNamedGatewayLifecycleState(
   gatewayName: string = resolveGatewayName(GATEWAY_PORT),
+  opts: { ignoreProbeErrors?: boolean } = {},
 ) {
-  const status = captureOpenshell(["status"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS });
+  // #5714: callers that must stay non-fatal (e.g. plain `nemoclaw list`
+  // recovery) opt into `ignoreProbeErrors` so a hung/timed-out `openshell
+  // status` returns a not-healthy classification instead of `process.exit`ing
+  // via captureOpenshell's default error handling. Other callers keep the
+  // existing fatal behavior by default.
+  const ignoreError = opts.ignoreProbeErrors === true;
+  // When ignoring probe errors we must still capture stderr — OpenShell writes
+  // the `Status:`/`Gateway:` lines there, and `ignoreError` would otherwise
+  // drop stderr and break the healthy/connected classification.
+  const status = captureOpenshell(["status"], {
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    ignoreError,
+    includeStderr: ignoreError,
+  });
   const gatewayInfo = captureOpenshell(["gateway", "info", "-g", gatewayName], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+    ignoreError,
+    includeStderr: ignoreError,
   });
   const cleanStatus = stripAnsi(status.output);
   const activeGateway = getActiveGatewayName(status.output);

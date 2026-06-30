@@ -8,7 +8,12 @@ import { describe, expect, it } from "vitest";
 
 import { runWithEnv, writeSandboxRegistry } from "./cli/helpers";
 
-function buildStubOpenshell(home: string, logFile: string, sessionListJson: string): string {
+function buildStubOpenshell(
+  home: string,
+  logFile: string,
+  sessionListJson: string,
+  sessionListStderr = "",
+): string {
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
@@ -22,6 +27,7 @@ function buildStubOpenshell(home: string, logFile: string, sessionListJson: stri
       '  "gateway info -g nemoclaw"*) printf "Gateway: nemoclaw\\n"; exit 0 ;;',
       '  *"openclaw sessions list"*)',
       `    printf '%s\\n' ${JSON.stringify(sessionListJson)}`,
+      `    if [ -n ${JSON.stringify(sessionListStderr)} ]; then printf '%s\\n' ${JSON.stringify(sessionListStderr)} >&2; fi`,
       "    exit 0 ;;",
       '  *"sandbox exec --name alpha -- sh -c"*) exit 0 ;;',
       '  "sandbox download"*)',
@@ -36,6 +42,47 @@ function buildStubOpenshell(home: string, logFile: string, sessionListJson: stri
   );
   return localBin;
 }
+
+describe("sandbox sessions list CLI", () => {
+  it("filters warm-up sessions and preserves OpenClaw stderr", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-list-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify({
+          count: 2,
+          totalCount: 2,
+          sessions: [
+            { key: "agent:main:explicit:warm", sessionId: "nemoclaw-onboard-warmup-1" },
+            { key: "agent:main:explicit:real", sessionId: "sid-real" },
+          ],
+        }),
+        "warning: noisy but non-fatal",
+      );
+
+      const result = runWithEnv("alpha sessions list --json 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(0);
+      expect(result.out).toContain("warning: noisy but non-fatal");
+      expect(result.out).not.toContain("nemoclaw-onboard-warmup-");
+      expect(JSON.parse(result.out.slice(0, result.out.indexOf("\nwarning:")))).toEqual({
+        count: 1,
+        totalCount: 1,
+        sessions: [{ key: "agent:main:explicit:real", sessionId: "sid-real" }],
+      });
+
+      const calls = fs.readFileSync(openshellLog, "utf8");
+      expect(calls).toMatch(/openclaw sessions list --json/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("sandbox sessions export CLI", () => {
   it("enumerates every session via openclaw sessions list when no keys are supplied and tars only the resolved files", () => {
@@ -242,6 +289,40 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
+  it("reports nothing to export and creates no output artifact when only warm-up sessions exist", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-warmup-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([
+          {
+            key: "agent:main:explicit:warm",
+            sessionId: "nemoclaw-onboard-warmup-cli-only",
+          },
+        ]),
+      );
+
+      const outDir = path.join(home, "sessions-alpha");
+      const result = runWithEnv(`alpha sessions export --out ${outDir} 2>&1`, {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(1);
+      expect(result.out).toMatch(/agent 'main' has no sessions to bundle/);
+      expect(fs.existsSync(outDir)).toBe(false);
+
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).toMatch(/openclaw sessions list --agent main --json/);
+      expect(calls).not.toMatch(/-- sh -c/);
+      expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("routes a hermes sandbox to `hermes sessions export` instead of `openclaw sessions list`", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-hermes-"));
     try {
@@ -296,23 +377,121 @@ describe("sandbox sessions export CLI", () => {
     }
   });
 
-  it("rejects positional keys that start with '-' instead of silently exporting all sessions", () => {
+  it("rejects positional keys that start with '-' with actionable, deterministic guidance", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-stray-"));
     try {
       writeSandboxRegistry(home);
       const openshellLog = path.join(home, "openshell-calls.log");
       const localBin = buildStubOpenshell(home, openshellLog, "[]");
 
-      const result = runWithEnv("alpha sessions export -foo --json 2>&1", {
+      const result = runWithEnv("alpha sessions export -mytypo --json 2>&1", {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
       });
-      expect(result.code).not.toBe(0);
-      expect(result.out).toMatch(/Unknown flag or option-shaped key|Nonexistent flag/i);
+      // #5510: oclif must no longer swallow the option-shaped positional as a
+      // NonExistentFlag; the run() guard owns the message instead. The guard
+      // exits 2 (failWithLines(..., 2)); assert it exactly to lock the contract.
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("Unknown flag or option-shaped key: -mytypo");
+      expect(result.out).toContain("Session keys must not start with '-'.");
+      expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export mytypo?");
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
 
       const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
       expect(calls).not.toMatch(/-- sh -c/);
       expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // #5510: exact NVB repro steps — a bare dash-prefixed key with no trailing flags.
+  it("rejects a bare dash-prefixed key (no flags) with exit 2 and a corrected suggestion", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-bare-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "[]");
+
+      const result = runWithEnv("alpha sessions export -mytypo 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("Unknown flag or option-shaped key: -mytypo");
+      expect(result.out).toContain("Session keys must not start with '-'");
+      expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export mytypo?");
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
+
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).not.toMatch(/sandbox download/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // Lock the multi-token de-dash + join behaviour in the suggestion line.
+  it("lists multiple stray dash keys and joins their de-dashed forms in the suggestion", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-multi-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      const localBin = buildStubOpenshell(home, openshellLog, "[]");
+
+      const result = runWithEnv("alpha sessions export -a -b 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+      expect(result.code).toBe(2);
+      expect(result.out).toContain("Unknown flag or option-shaped key: -a, -b");
+      expect(result.out).toContain("Session keys must not start with '-'");
+      expect(result.out).toContain("Did you mean: nemoclaw alpha sessions export a b?");
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("routes a dash-free positional key through the normal session-key path (no regression)", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-dashfree-"));
+    try {
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      // The bare alias `mytypo` resolves to canonical `agent:main:mytypo` via
+      // resolveSelectedFiles -> normaliseToCanonical (default agent `main`).
+      const localBin = buildStubOpenshell(
+        home,
+        openshellLog,
+        JSON.stringify([{ key: "agent:main:mytypo", sessionId: "sid-z" }]),
+      );
+
+      const out = path.join(home, "bundle.tgz");
+      const result = runWithEnv(
+        `alpha sessions export mytypo --format tar --out ${out} --json 2>&1`,
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+      );
+      expect(result.code).toBe(0);
+      // The de-dash guard path must NOT fire for a valid dash-free key.
+      expect(result.out).not.toMatch(/Unknown flag or option-shaped key/);
+      expect(result.out).not.toMatch(/Did you mean/);
+      expect(result.out).not.toMatch(/Nonexistent flag/i);
+
+      const calls = fs.readFileSync(openshellLog, "utf8");
+      expect(calls).toMatch(/openclaw sessions list --agent main --json/);
+      expect(calls).toMatch(/\.\/sid-z\.jsonl/);
+
+      const manifest = JSON.parse(result.out.trim().split("\n").at(-1) as string);
+      expect(manifest).toMatchObject({
+        sandboxName: "alpha",
+        agent: "main",
+        selectedKeys: ["mytypo"],
+        resolvedSessionIds: ["sid-z"],
+        resolvedFiles: ["sid-z.jsonl"],
+        hostDest: out,
+      });
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

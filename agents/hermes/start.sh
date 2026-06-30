@@ -17,6 +17,9 @@
 
 set -euo pipefail
 
+# SECURITY: Lock down PATH before resolving or sourcing root startup helpers.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
 # scripts/nemoclaw-start.sh (OpenClaw). Ref: #2277
@@ -24,16 +27,19 @@ set -euo pipefail
 # Dev fallback: scripts/lib/sandbox-init.sh relative to this script.
 _SANDBOX_INIT="/usr/local/lib/nemoclaw/sandbox-init.sh"
 if [ ! -f "$_SANDBOX_INIT" ]; then
-  _SANDBOX_INIT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../scripts/lib/sandbox-init.sh"
+  _HERMES_START_SOURCE="${BASH_SOURCE[0]}"
+  _HERMES_START_DIR="${_HERMES_START_SOURCE%/*}"
+  if [ "$_HERMES_START_DIR" = "$_HERMES_START_SOURCE" ]; then
+    _HERMES_START_DIR="."
+  fi
+  _SANDBOX_INIT="$(cd "$_HERMES_START_DIR" && pwd)/../../scripts/lib/sandbox-init.sh"
+  unset _HERMES_START_SOURCE _HERMES_START_DIR
 fi
 # shellcheck source=scripts/lib/sandbox-init.sh
 source "$_SANDBOX_INIT"
 
 # Harden RLIMITs (nproc #809 + nofile #4527) as root PID 1, before any step-down.
 harden_resource_limits
-
-# SECURITY: Lock down PATH
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 if [ -d /opt/hermes/hermes_cli/web_dist ]; then
   export HERMES_WEB_DIST="${HERMES_WEB_DIST:-/opt/hermes/hermes_cli/web_dist}"
@@ -181,7 +187,7 @@ if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
   DASHBOARD_INTERNAL_PORT=19120
 fi
 HERMES_DASHBOARD_TUI="${NEMOCLAW_HERMES_DASHBOARD_TUI:-${HERMES_DASHBOARD_TUI:-0}}"
-HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/tmp/hermes-dashboard-home}"
+HERMES_DASHBOARD_HOME="${HERMES_DASHBOARD_HOME:-/sandbox/.hermes/dashboard-home}"
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -201,6 +207,36 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 _HERMES_BOUNDARY_VALIDATOR="/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 if [ ! -f "$_HERMES_BOUNDARY_VALIDATOR" ]; then
   _HERMES_BOUNDARY_VALIDATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/validate-env-secret-boundary.py"
+fi
+
+# Resolve the dashboard config seeder (same install/dev-fallback pattern as the
+# boundary validator above). The Hermes dashboard runs under its own
+# HERMES_DASHBOARD_HOME, so it never sees the model/custom_providers block
+# NemoClaw writes to the gateway config; this script mirrors those routing keys
+# into the dashboard config so the Models page and kanban specifier/dispatcher
+# resolve the routed model.
+_HERMES_DASHBOARD_CONFIG_SEEDER="/usr/local/lib/nemoclaw/seed-hermes-dashboard-config.py"
+if [ ! -f "$_HERMES_DASHBOARD_CONFIG_SEEDER" ]; then
+  _HERMES_DASHBOARD_CONFIG_SEEDER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/seed-dashboard-config.py"
+fi
+
+# Descriptor-safe updater for runtime-mutable Hermes config/env/hash files.
+_HERMES_RUNTIME_CONFIG_GUARD="/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py"
+if [ ! -f "$_HERMES_RUNTIME_CONFIG_GUARD" ]; then
+  _HERMES_RUNTIME_CONFIG_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/runtime-config-guard.py"
+fi
+
+# The seeder imports PyYAML, which ships ONLY in the Hermes venv — not in the
+# base-image python3 that is first on PATH at container boot. (An interactive
+# login shell activates the venv, masking this: `python3` there resolves to
+# /opt/hermes/.venv/bin/python3 and has yaml, but the entrypoint that runs this
+# script does not.) Invoked with bare python3, the seeder hits its "PyYAML
+# unavailable; skipping model seed" branch and returns 0, so the model routing
+# is silently never mirrored into the dashboard home and the Models page shows
+# no models. Resolve the venv interpreter explicitly, falling back to python3.
+_HERMES_PYTHON="/opt/hermes/.venv/bin/python"
+if [ ! -x "$_HERMES_PYTHON" ]; then
+  _HERMES_PYTHON="$(command -v python3 || echo python3)"
 fi
 
 truthy_env() {
@@ -255,6 +291,20 @@ hermes_dashboard_tui_enabled() {
 }
 
 # verify_config_integrity is provided by sandbox-init.sh (parameterized).
+
+verify_hermes_config_integrity() {
+  if [ "$(id -u)" -eq 0 ]; then
+    # Docker may start UID 0 without the supplementary groups declared in
+    # /etc/group, and hardened runtimes can drop CAP_DAC_OVERRIDE before this
+    # entrypoint runs. Verify the root-owned hash through the sandbox identity
+    # that owns the mutable Hermes home.
+    export -f verify_config_integrity
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "verify_config_integrity \"\$1\" \"\$2\"" bash \
+      "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+    return $?
+  fi
+  verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+}
 
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
@@ -446,6 +496,113 @@ ensure_hermes_state_dir() {
   chmod "$mode" "$dir"
 }
 
+repair_hermes_log_permissions() {
+  ensure_hermes_state_dir "${HERMES_DIR}/logs" 2770
+  ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 2770
+
+  NEMOCLAW_HERMES_LOG_DIR="${HERMES_DIR}/logs" \
+    python3 - <<'PYLOGS'
+import errno
+import grp
+import os
+import pwd
+import stat
+import sys
+
+root = os.environ["NEMOCLAW_HERMES_LOG_DIR"]
+mode = 0o660
+
+if not hasattr(os, "O_NOFOLLOW"):
+    print("[SECURITY] Refusing Hermes log repair because O_NOFOLLOW is unavailable", file=sys.stderr)
+    sys.exit(1)
+
+root_real = os.path.realpath(root)
+flags = os.O_RDONLY | os.O_NOFOLLOW
+for optional_flag in ("O_CLOEXEC", "O_NONBLOCK"):
+    flags |= getattr(os, optional_flag, 0)
+
+
+def fail(message: str) -> None:
+    print(f"[SECURITY] Refusing Hermes log repair because {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def describe_unsafe_existing_path(path: str) -> str:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return "could not be opened safely"
+    if stat.S_ISLNK(st.st_mode):
+        return "is a symlink"
+    if not stat.S_ISREG(st.st_mode):
+        return "is not a regular file"
+    return "could not be opened safely"
+
+
+def repair_file(path: str) -> None:
+    try:
+        current = os.lstat(path)
+    except OSError as exc:
+        fail(f"{path} could not be statted safely: {exc.strerror}")
+    if stat.S_ISLNK(current.st_mode):
+        fail(f"{path} is a symlink")
+    if not stat.S_ISREG(current.st_mode):
+        fail(f"{path} is not a regular file")
+
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        reason = describe_unsafe_existing_path(path)
+        detail = exc.strerror or errno.errorcode.get(exc.errno, str(exc.errno))
+        fail(f"{path} {reason}: {detail}")
+
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            fail(f"{path} is not a regular file")
+        if st.st_nlink != 1:
+            fail(f"{path} has hard-link count {st.st_nlink}")
+        current = os.stat(path, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+            fail(f"{path} changed during repair")
+        if os.geteuid() == 0:
+            try:
+                uid = pwd.getpwnam("sandbox").pw_uid
+                gid = grp.getgrnam("sandbox").gr_gid
+            except KeyError as exc:
+                fail(f"sandbox account lookup failed: {exc}")
+            os.fchown(fd, uid, gid)
+        os.fchmod(fd, mode)
+        current = os.stat(path, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (st.st_dev, st.st_ino):
+            fail(f"{path} changed during repair")
+    finally:
+        os.close(fd)
+
+
+def on_walk_error(exc: OSError) -> None:
+    fail(f"{exc.filename} could not be scanned safely: {exc.strerror}")
+
+
+for dirpath, dirnames, filenames in os.walk(root, topdown=True, onerror=on_walk_error, followlinks=False):
+    dir_real = os.path.realpath(dirpath)
+    if os.path.commonpath([root_real, dir_real]) != root_real:
+        fail(f"{dirpath} escapes {root}")
+    for dirname in list(dirnames):
+        entry = os.path.join(dirpath, dirname)
+        try:
+            st = os.lstat(entry)
+        except OSError as exc:
+            fail(f"{entry} could not be statted safely: {exc.strerror}")
+        if stat.S_ISLNK(st.st_mode):
+            fail(f"{entry} is a symlink")
+        if not stat.S_ISDIR(st.st_mode):
+            fail(f"{entry} is not a directory")
+    for filename in filenames:
+        repair_file(os.path.join(dirpath, filename))
+PYLOGS
+}
+
 ensure_hermes_history_file() {
   local file="$1"
   local mode="$2"
@@ -557,8 +714,7 @@ repair_hermes_startup_layout() {
   fi
 
   ensure_hermes_config_root_mode
-  ensure_hermes_state_dir "${HERMES_DIR}/logs" 770
-  ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 770
+  repair_hermes_log_permissions
   ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
   ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
   ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
@@ -632,6 +788,45 @@ build_hermes_dashboard_args() {
 
 prepare_hermes_dashboard_home() {
   local owner="${1:-}"
+  local rc=0
+  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
+    # Root starts the dashboard service, but the dashboard home is sandbox-owned
+    # mutable state. Do every path-touching operation after step-down so root
+    # never follows, creates, chowns, chmods, or deletes through a
+    # sandbox-controlled dashboard-home path. Remove this branch only if
+    # dashboard home creation moves into a trusted image-build step.
+    # shellcheck disable=SC2016  # inner shell expands after sandbox step-down
+    env HERMES_DIR="$HERMES_DIR" \
+      HERMES_DASHBOARD_HOME="$HERMES_DASHBOARD_HOME" \
+      _HERMES_PYTHON="$_HERMES_PYTHON" \
+      _HERMES_DASHBOARD_CONFIG_SEEDER="$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+      "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c '
+        if [ -L "$HERMES_DASHBOARD_HOME" ]; then
+          echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
+          exit 1
+        fi
+        mkdir -p "$HERMES_DASHBOARD_HOME"
+        if [ -L "$HERMES_DASHBOARD_HOME" ] || [ ! -d "$HERMES_DASHBOARD_HOME" ]; then
+          echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
+          exit 1
+        fi
+        chmod 700 "$HERMES_DASHBOARD_HOME"
+        # The dashboard can attempt a gateway restart from its isolated
+        # HERMES_HOME. In NemoClaw the real gateway lives under /sandbox/.hermes,
+        # so a failed dashboard-scoped restart can leave stale startup_failed
+        # state that poisons /api/status even while the real gateway is healthy.
+        rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
+        exec "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+          "${HERMES_DIR}/config.yaml" "${HERMES_DASHBOARD_HOME}/config.yaml" \
+          "${HERMES_DIR}/.env" "${HERMES_DASHBOARD_HOME}/.env"
+      ' || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "[dashboard] ERROR: config seed exited ${rc}; refusing dashboard startup" >&2
+      return "$rc"
+    fi
+    return 0
+  fi
+
   if [ -L "$HERMES_DASHBOARD_HOME" ]; then
     echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is a symlink" >&2
     return 1
@@ -641,10 +836,34 @@ prepare_hermes_dashboard_home() {
     echo "[SECURITY] Refusing Hermes dashboard startup because ${HERMES_DASHBOARD_HOME} is not a safe directory" >&2
     return 1
   fi
-  if [ "$(id -u)" -eq 0 ] && [ -n "$owner" ]; then
-    chown "$owner" "$HERMES_DASHBOARD_HOME"
-  fi
   chmod 700 "$HERMES_DASHBOARD_HOME"
+  seed_hermes_dashboard_config
+}
+
+# Mirror the gateway's model routing and dotenv context into the dashboard's
+# isolated HERMES_HOME so its Models page (/api/model/options), Chat/TUI setup
+# checks, and kanban specifier/dispatcher resolve the routed model. The
+# dashboard runs under HERMES_DASHBOARD_HOME for privilege separation and
+# otherwise only sees a Hermes-default config with an empty model. Idempotent:
+# refreshes the keys on every launch. Missing gateway config is a benign no-op
+# in the seeder; security refusals and write failures abort startup.
+seed_hermes_dashboard_config() {
+  local dst="${HERMES_DASHBOARD_HOME}/config.yaml"
+  local env_dst="${HERMES_DASHBOARD_HOME}/.env"
+  local rc=0
+
+  # Non-root and explicit same-user launches perform cleanup and seeding under
+  # the current service user; root launches run the equivalent block inside
+  # prepare_hermes_dashboard_home after stepping down to the sandbox identity.
+  rm -f "${HERMES_DASHBOARD_HOME}/gateway_state.json" 2>/dev/null || true
+  env "$_HERMES_PYTHON" "$_HERMES_DASHBOARD_CONFIG_SEEDER" \
+    "${HERMES_DIR}/config.yaml" "$dst" \
+    "${HERMES_DIR}/.env" "$env_dst" || rc=$?
+
+  if [ "$rc" -ne 0 ]; then
+    echo "[dashboard] ERROR: config seed exited ${rc}; refusing dashboard startup" >&2
+    return "$rc"
+  fi
 }
 
 start_hermes_dashboard_current_user() {
@@ -676,10 +895,17 @@ start_hermes_dashboard_sandbox_user() {
 wait_for_hermes_gateway_internal() {
   local gateway_pid="$1"
   local attempts=0
-  while [ "$attempts" -lt 45 ]; do
-    if curl -sf --max-time 2 "http://127.0.0.1:${INTERNAL_PORT}/health" >/dev/null 2>&1; then
-      return 0
-    fi
+  local code
+  while [ "$attempts" -lt 60 ]; do
+    # Status-code extraction (not curl -sf) so a 401 counts as alive: Hermes
+    # v0.16.0+ may guard the api_server with API_SERVER_KEY, and the probe is
+    # unauthenticated. A 401 still proves the gateway is bound and serving.
+    # Mirrors GATEWAY_ALIVE_CODES in src/lib/verify-deployment.ts.
+    code=$(curl -so /dev/null -w '%{http_code}' --max-time 2 \
+      "http://127.0.0.1:${INTERNAL_PORT}/health" 2>/dev/null || echo 000)
+    case "$code" in
+      200 | 401) return 0 ;;
+    esac
     if ! kill -0 "$gateway_pid" 2>/dev/null; then
       wait "$gateway_pid"
       return $?
@@ -953,104 +1179,72 @@ migrate_legacy_layout() {
 }
 
 refresh_hermes_provider_placeholders() {
+  local mode="${1:-strict}"
   local env_file="${HERMES_DIR}/.env"
-  local hash_file="${HERMES_HASH_FILE}"
-  local compat_hash="${HERMES_DIR}/.config-hash"
+  local runtime_plan="/usr/local/share/nemoclaw/messaging-runtime-plan.json"
   [ -f "$env_file" ] || return 0
 
-  local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN"
-  local has_scoped_placeholder=0
-  local key value
-  for key in $keys; do
-    value="${!key:-}"
-    case "$value" in
-      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
-    esac
-  done
-  [ "$has_scoped_placeholder" -eq 1 ] || return 0
-
-  if [ -L "$env_file" ] || [ -L "$hash_file" ] || { [ -e "$compat_hash" ] && [ -L "$compat_hash" ]; }; then
-    echo "[SECURITY] Refusing Hermes provider placeholder refresh — config or hash path is a symlink" >&2
-    return 1
+  local args=(
+    "$_HERMES_RUNTIME_CONFIG_GUARD" provider-placeholders
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$HERMES_HASH_FILE"
+    --boundary-validator "$_HERMES_BOUNDARY_VALIDATOR"
+    --mode "$mode"
+  )
+  if [ -f "$runtime_plan" ]; then
+    args+=(--runtime-plan "$runtime_plan")
   fi
+  "$_HERMES_PYTHON" "${args[@]}"
+  validate_hermes_env_secret_boundary
+}
 
-  if [ "$(id -u)" -eq 0 ]; then
-    chown root:sandbox "$env_file" || return 1
-    chmod 640 "$env_file" || return 1
-    chmod u+w "$hash_file" || return 1
-    [ ! -f "$compat_hash" ] || chmod u+w "$compat_hash" 2>/dev/null || true
-  elif [ ! -w "$env_file" ] || [ ! -w "$hash_file" ]; then
-    echo "[config] Hermes provider placeholders supplied by OpenShell runtime env; .env refresh skipped without write access" >&2
-    return 0
+refresh_hermes_runtime_config_hashes() {
+  local mode="${1:-strict}"
+  local cmd=(
+    "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" refresh-hashes
+    --hermes-dir "$HERMES_DIR"
+    --hash-file "$HERMES_HASH_FILE"
+    --mode "$mode"
+  )
+  if [ "$mode" = "compat" ] && [ "$(id -u)" -eq 0 ]; then
+    "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${cmd[@]}"
+    return $?
   fi
+  "${cmd[@]}"
+}
 
-  local _write_rc=0
-  NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
-    python3 - "$env_file" <<'PYPLACEHOLDERS' || _write_rc=$?
-import os
-import sys
+ensure_hermes_runtime_api_server_key() {
+  local mode="${1:-strict}"
+  local env_file="${HERMES_DIR}/.env"
+  [ -f "$env_file" ] || return 0
 
-env_file = sys.argv[1]
-prefix = "openshell:resolve:env:"
-keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
-replacements = {}
+  local result
+  result="$(
+    "$_HERMES_PYTHON" "$_HERMES_RUNTIME_CONFIG_GUARD" ensure-api-key \
+      --hermes-dir "$HERMES_DIR" \
+      --hash-file "$HERMES_HASH_FILE" \
+      --mode "$mode"
+  )" || return $?
 
-for key in keys:
-    value = os.environ.get(key, "")
-    if value.startswith(prefix):
-        replacements[key] = value
-
-if not replacements:
-    sys.exit(0)
-
-with open(env_file, encoding="utf-8") as f:
-    lines = f.readlines()
-
-changed = False
-updated = []
-for line in lines:
-    stripped = line.rstrip("\n")
-    replaced = False
-    for key, value in replacements.items():
-        if stripped.startswith(f"{key}="):
-            new_line = f"{key}={value}\n"
-            updated.append(new_line)
-            changed = changed or new_line != line
-            replaced = True
-            break
-    if not replaced:
-        updated.append(line)
-
-if not changed:
-    sys.exit(0)
-
-with open(env_file, "w", encoding="utf-8") as f:
-    f.writelines(updated)
-
-print("refreshed=" + ",".join(sorted(replacements)))
-PYPLACEHOLDERS
-
-  if [ "$_write_rc" -eq 0 ]; then
-    if sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$hash_file"; then
-      chown root:root "$hash_file" 2>/dev/null || true
-      chmod 444 "$hash_file" 2>/dev/null || true
-      if [ -f "$compat_hash" ]; then
-        sha256sum "${HERMES_DIR}/config.yaml" "${HERMES_DIR}/.env" >"$compat_hash" || _write_rc=$?
-        chown sandbox:sandbox "$compat_hash" 2>/dev/null || true
-        chmod 600 "$compat_hash" 2>/dev/null || true
+  case "$result" in
+    minted=0) return 0 ;;
+    updated=1)
+      if [ "$mode" = "strict" ]; then
+        refresh_hermes_runtime_config_hashes compat
       fi
-      echo "[config] Refreshed Hermes provider placeholders from OpenShell runtime env" >&2
-    else
-      _write_rc=$?
-    fi
-  fi
+      return 0
+      ;;
+    minted=1) ;;
+    *)
+      echo "[config] Unexpected Hermes API key mint result: ${result}" >&2
+      return 1
+      ;;
+  esac
 
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$env_file" 2>/dev/null || true
-    chmod 640 "$env_file" 2>/dev/null || true
+  if [ "$mode" = "strict" ]; then
+    refresh_hermes_runtime_config_hashes compat
   fi
-
-  [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+  echo "[config] Minted Hermes API_SERVER_KEY for this sandbox and refreshed config hash" >&2
 }
 
 validate_hermes_env_secret_boundary() {
@@ -1089,10 +1283,12 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
+  ensure_hermes_runtime_api_server_key compat
   apply_shields_up_runtime_env
   validate_hermes_env_secret_boundary
   validate_hermes_runtime_env_secret_boundary
-  refresh_hermes_provider_placeholders
+  refresh_hermes_provider_placeholders compat
+  refresh_hermes_runtime_config_hashes compat
   configure_messaging_channels
   retry_tirith_marker_if_needed
 
@@ -1138,11 +1334,14 @@ fi
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
-verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
+verify_hermes_config_integrity
+ensure_hermes_config_root_mode
+ensure_hermes_runtime_api_server_key strict
 apply_shields_up_runtime_env
 validate_hermes_env_secret_boundary
 validate_hermes_runtime_env_secret_boundary
-refresh_hermes_provider_placeholders
+refresh_hermes_provider_placeholders strict
+refresh_hermes_runtime_config_hashes compat
 configure_messaging_channels
 retry_tirith_marker_if_needed
 

@@ -87,7 +87,7 @@ runs:
           --coverage.reporter=cobertura \
           --coverage.reportsDirectory=coverage/cli \
           --coverage.include="bin/**/*.js" \
-          --coverage.include="dist/lib/**/*.js" \
+          --coverage.include="src/**/*.ts" \
           --coverage.exclude="test/**/*.js" \
           --coverage.exclude="test/**/*.ts"
         npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"

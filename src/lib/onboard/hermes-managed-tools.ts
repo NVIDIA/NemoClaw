@@ -55,12 +55,18 @@ export const HERMES_TOOL_GATEWAY_PRESETS = [
   },
 ] as const;
 
-for (const preset of HERMES_TOOL_GATEWAY_PRESETS) {
-  if (!HERMES_TOOL_GATEWAY_PRESET_NAMES.has(preset.name)) {
-    throw new Error(
-      `HERMES_TOOL_GATEWAY_PRESETS contains '${preset.name}' which is missing from the canonical name list in hermes-tool-gateway-preset-names.ts. Update the leaf list.`,
-    );
-  }
+const declaredHermesToolGatewayPresetNames = new Set<string>(
+  HERMES_TOOL_GATEWAY_PRESETS.map((preset) => preset.name),
+);
+if (
+  declaredHermesToolGatewayPresetNames.size !== HERMES_TOOL_GATEWAY_PRESET_NAMES.size ||
+  [...HERMES_TOOL_GATEWAY_PRESET_NAMES].some(
+    (presetName) => !declaredHermesToolGatewayPresetNames.has(presetName),
+  )
+) {
+  throw new Error(
+    "The canonical Hermes tool-gateway preset name list must exactly match HERMES_TOOL_GATEWAY_PRESETS. Update both lists together.",
+  );
 }
 
 export function parseHermesToolGatewayPresetEnv(raw: string | null | undefined): string[] {

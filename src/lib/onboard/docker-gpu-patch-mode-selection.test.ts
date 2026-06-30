@@ -9,7 +9,7 @@ import {
   type DockerGpuPatchDeps,
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
-} from "../../../dist/lib/onboard/docker-gpu-patch";
+} from "./docker-gpu-patch";
 
 // Deps that surface an NVIDIA CDI spec at /etc/cdi/nvidia.yaml so
 // `dockerReportsNvidiaCdiDevices` reports CDI as available (the #4948 host

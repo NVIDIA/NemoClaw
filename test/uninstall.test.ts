@@ -19,7 +19,7 @@ describe("uninstall CLI flags", () => {
     }
   }
 
-  it("--help exits 0 and shows usage", () => {
+  it("exits 0 and shows usage for --help", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -33,7 +33,7 @@ describe("uninstall CLI flags", () => {
     expect(output).toMatch(/--delete-models/);
   });
 
-  it("--help uses NemoHermes branding when Hermes is the active agent", () => {
+  it("uses NemoHermes branding for --help when Hermes is active", () => {
     const result = spawnSync("bash", [UNINSTALL_SCRIPT, "--help"], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
@@ -52,7 +52,7 @@ describe("uninstall CLI flags", () => {
     expect(output).not.toMatch(/NemoClaw Uninstaller/);
   });
 
-  it("--yes skips the confirmation prompt and completes successfully", () => {
+  it("skips the confirmation prompt and completes successfully for --yes", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-yes-"));
     const fakeBin = path.join(tmp, "bin");
     writeFakeTools(fakeBin);
@@ -81,7 +81,7 @@ describe("uninstall CLI flags", () => {
     }
   }, 60_000);
 
-  it("--yes uses NemoHermes branding when Hermes is the active agent", () => {
+  it("uses NemoHermes branding for --yes when Hermes is active", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemohermes-uninstall-yes-"));
     const fakeBin = path.join(tmp, "bin");
     writeFakeTools(fakeBin);

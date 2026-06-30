@@ -89,6 +89,24 @@ describe("openshell helpers", () => {
     expect(result).toEqual({ status: 1, output: "hello" });
   });
 
+  it("preserves separated sync streams when includeStreams is true while output honors ignoreError", () => {
+    const result = captureOpenshellCommand("openshell", ["status"], {
+      ignoreError: true,
+      includeStreams: true,
+      spawnSyncImpl: stubSpawnSync({
+        status: 1,
+        stdout: "hello\n",
+        stderr: "boom\n",
+      }),
+    });
+    expect(result).toEqual({
+      status: 1,
+      output: "hello",
+      stdout: "hello\n",
+      stderr: "boom\n",
+    });
+  });
+
   it("returns the spawn result when the command succeeds", () => {
     const result = runOpenshellCommand("openshell", ["status"], {
       spawnSyncImpl: stubSpawnSync({
@@ -100,17 +118,24 @@ describe("openshell helpers", () => {
     expect(result.status).toBe(0);
   });
 
-  it("passes timeout options through to OpenShell spawn calls", () => {
-    const timeouts: Array<number | undefined> = [];
+  it("passes timeout and maxBuffer options through to OpenShell spawn calls", () => {
+    const observedOptions: Array<{ timeout?: number; maxBuffer?: number }> = [];
     const spawnSyncImpl: OpenshellSpawnSync = (_command, _args, options) => {
-      timeouts.push(options.timeout);
+      observedOptions.push({ timeout: options.timeout, maxBuffer: options.maxBuffer });
       return makeSpawnResult({ status: 0, stdout: "ok\n", stderr: "" });
     };
 
     runOpenshellCommand("openshell", ["status"], { timeout: 4321, spawnSyncImpl });
-    captureOpenshellCommand("openshell", ["status"], { timeout: 9876, spawnSyncImpl });
+    captureOpenshellCommand("openshell", ["status"], {
+      timeout: 9876,
+      maxBuffer: 123456,
+      spawnSyncImpl,
+    });
 
-    expect(timeouts).toEqual([4321, 9876]);
+    expect(observedOptions).toEqual([
+      { timeout: 4321, maxBuffer: undefined },
+      { timeout: 9876, maxBuffer: 123456 },
+    ]);
   });
 
   it("returns ignored run timeouts so callers can fall back", () => {
@@ -150,6 +175,31 @@ describe("openshell helpers", () => {
       status: null,
       output: "partial",
       error: expect.objectContaining({ message: expect.stringContaining("ETIMEDOUT") }),
+      signal: "SIGTERM",
+    });
+  });
+
+  it("returns ignored capture buffer failures with partial streams", () => {
+    const result = captureOpenshellCommand("openshell", ["sandbox", "exec"], {
+      ignoreError: true,
+      includeStreams: true,
+      maxBuffer: 1024,
+      spawnSyncImpl: stubSpawnSync({
+        status: null,
+        stdout: "partial\n",
+        stderr: "buffer detail\n",
+        error: Object.assign(new Error("spawnSync openshell ENOBUFS"), { code: "ENOBUFS" }),
+        signal: "SIGTERM",
+      }),
+      exit: exitWithCode,
+    });
+
+    expect(result).toEqual({
+      status: null,
+      output: "partial",
+      stdout: "partial\n",
+      stderr: "buffer detail\n",
+      error: expect.objectContaining({ message: expect.stringContaining("ENOBUFS") }),
       signal: "SIGTERM",
     });
   });
@@ -238,6 +288,25 @@ describe("openshell helpers", () => {
     );
 
     expect(result).toEqual({ status: 1, output: "hello\nboom", signal: null });
+  });
+
+  it("preserves separated async streams when includeStreams is true", async () => {
+    const result = await captureOpenshellCommandAsync(
+      process.execPath,
+      [
+        "-e",
+        "process.stdout.write('hello\\n'); process.stderr.write('boom\\n'); process.exitCode = 1;",
+      ],
+      { ignoreError: true, includeStreams: true },
+    );
+
+    expect(result).toEqual({
+      status: 1,
+      output: "hello",
+      stdout: "hello\n",
+      stderr: "boom\n",
+      signal: null,
+    });
   });
 
   it("uses the injected exit handler on failure", () => {

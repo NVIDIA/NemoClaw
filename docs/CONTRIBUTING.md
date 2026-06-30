@@ -172,7 +172,8 @@ Write like you are explaining something to a colleague. Be direct, specific, and
 
 ### Things to Avoid
 
-These patterns are common in LLM-generated text and erode trust with technical readers. Remove them during review.
+The following patterns are common in LLM-generated text and erode trust with technical readers.
+Remove them during review.
 
 | Pattern | Problem | Fix |
 |---|---|---|

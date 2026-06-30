@@ -39,10 +39,6 @@ on:
 
 permissions:
   contents: read
-  # `actions: write` lets the trusted advisor dispatcher trigger the selected
-  # E2E workflow for eligible NVIDIA-owned PRs after validating the requested
-  # jobs against the target workflow's own selective-dispatch predicates.
-  actions: write
   # `pull-requests: write` is required for the advisor to post (or update) a
   # comment on a PR via POST /repos/:o/:r/issues/:n/comments. Even though the
   # endpoint lives under `/issues/`, for GITHUB_TOKEN the permission that
@@ -72,16 +68,14 @@ jobs:
       # analyzer can write failure artifacts, summaries, and PR comments.
       E2E_ADVISOR_TIMEOUT_MS: "900000"
       E2E_ADVISOR_HEARTBEAT_MS: "60000"
-      # Cap automatic fan-out from noisy/flaky advisor recommendations until
-      # the dispatcher has enough production history to justify a higher limit.
-      E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS: "6"
       # The trusted checkout always lives at this path and is the only source
       # of advisor implementation code executed in this job. The PR content,
       # if any, is mounted as read-only analysis data under PR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor
     steps:
       # Trusted-code boundary: the advisor implementation (analyze.mts,
-      # dispatch.mts, comment.mts, schema.json) is always fetched
+      # targets.mts, comment.mts, target-comment.mts, schema.json, and
+      # targets-schema.json) is always fetched
       # from the main branch of this repo, regardless of what the PR changed.
       # This prevents a future PR from modifying advisor code and executing
       # arbitrary Node in a job that holds API keys and a write-scoped token.
@@ -119,7 +113,7 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: "22"
 
@@ -133,6 +127,18 @@ jobs:
           TARGET_PR: ${{ inputs.target_pr }}
           TARGET_BASE: ${{ inputs.target_base }}
         run: |
+          if [[ ! "$TARGET_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::target_repo must match owner/repo with GitHub-safe characters"
+            exit 1
+          fi
+          if [[ ! "$TARGET_PR" =~ ^[0-9]+$ ]]; then
+            echo "::error::target_pr must be decimal digits"
+            exit 1
+          fi
+          if [[ -z "$TARGET_BASE" || "$TARGET_BASE" == -* || "$TARGET_BASE" == /* || "$TARGET_BASE" == *..* || "$TARGET_BASE" == *:* || "$TARGET_BASE" =~ [[:space:]] || ! "$TARGET_BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::target_base must be a safe branch/ref token"
+            exit 1
+          fi
           TARGET_DIR=/tmp/e2e-advisor-target
           rm -rf "$TARGET_DIR"
           mkdir -p "$TARGET_DIR"
@@ -171,22 +177,22 @@ jobs:
             --schema "$ADVISOR_DIR/tools/e2e-advisor/schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
-      - name: Run scenario E2E advisor
-        id: scenario-analysis
+      - name: Run E2E target advisor
+        id: target-analysis
         continue-on-error: true
         env:
           BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
           HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
-          E2E_SCENARIO_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
-          # Reuse the shared E2E advisor secret. The scenario advisor is a
+          E2E_TARGET_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
+          # Reuse the shared E2E advisor secret. The target advisor is a
           # separate prompt/agent but uses the same model and credential.
           E2E_ADVISOR_API_KEY: ${{ secrets.PI_E2E_ADVISOR_API_KEY }}
         run: |
           cd "$ADVISOR_WORKDIR"
-          node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/scenarios.mts" \
+          node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/targets.mts" \
             --base "$BASE_REF" \
             --head "$HEAD_REF" \
-            --schema "$ADVISOR_DIR/tools/e2e-advisor/scenarios-schema.json" \
+            --schema "$ADVISOR_DIR/tools/e2e-advisor/targets-schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
       - name: Publish job summary
@@ -197,35 +203,8 @@ jobs:
           else
             printf '# E2E Recommendation Advisor\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" ]; then
-            cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Auto-dispatch required E2E jobs
-        if: ${{ always() && github.event_name == 'pull_request' }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          # Optional comma-separated GitHub login allowlist for trusted authors whose
-          # private org membership appears as CONTRIBUTOR in pull_request payloads.
-          E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS: ${{ secrets.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS }}
-        run: |
-          DISPATCH_RESULT="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-result.json"
-          DISPATCH_SUMMARY="$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-summary.md"
-          if [ -f "$ADVISOR_DIR/tools/e2e-advisor/dispatch.mts" ]; then
-            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/dispatch.mts" \
-              --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json" \
-              --workflow nightly-e2e.yaml \
-              --workflow-path "$ADVISOR_DIR/.github/workflows/nightly-e2e.yaml" \
-              --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
-          else
-            echo "Skipping E2E auto-dispatch: trusted main checkout does not yet contain dispatch.mts"
-            mkdir -p "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
-            printf '{\n  "status": "skipped",\n  "reason": "trusted main checkout does not yet contain dispatch.mts",\n  "workflow": "nightly-e2e.yaml"\n}\n' > "$DISPATCH_RESULT"
-            printf '# E2E Advisor Auto-dispatch\n\nStatus: **skipped**\nReason: trusted main checkout does not yet contain dispatch.mts\nWorkflow: `nightly-e2e.yaml`\n' > "$DISPATCH_SUMMARY"
-          fi
-          if [ -f "$DISPATCH_SUMMARY" ]; then
-            cat "$DISPATCH_SUMMARY" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-target-advisor-summary.md" ]; then
+            cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-target-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Post E2E advisor PR comment
@@ -240,7 +219,6 @@ jobs:
             --pr "$PR_NUMBER"
             --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-summary.md"
             --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-final-result.json"
-            --dispatch "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-dispatch-result.json"
           )
           if [ -f "$ADVISOR_DIR/tools/e2e-advisor/comment.mts" ]; then
             node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/comment.mts" "${COMMENT_ARGS[@]}"
@@ -250,21 +228,21 @@ jobs:
             echo "Skipping E2E advisor comment: trusted main checkout does not contain comment.mts or comment.mjs"
           fi
 
-      - name: Post E2E scenario advisor PR comment
+      - name: Post E2E target advisor PR comment
         if: ${{ always() && github.event_name == 'pull_request' }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" ] && [ -f "$ADVISOR_DIR/tools/e2e-advisor/scenario-comment.mts" ]; then
-            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/scenario-comment.mts" \
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-target-advisor-summary.md" ] && [ -f "$ADVISOR_DIR/tools/e2e-advisor/target-comment.mts" ]; then
+            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/target-comment.mts" \
               --repo "$GITHUB_REPOSITORY" \
               --pr "$PR_NUMBER" \
-              --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" \
-              --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-result.json"
+              --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-target-advisor-summary.md" \
+              --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-target-advisor-result.json"
           else
-            echo "Skipping E2E scenario advisor comment: summary or scenario-comment.mts missing"
+            echo "Skipping E2E target advisor comment: summary or target-comment.mts missing"
           fi
 
       - name: Upload advisor artifacts

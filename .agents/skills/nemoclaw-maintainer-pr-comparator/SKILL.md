@@ -67,7 +67,7 @@ scripts/collect-gates.sh <pr-number>
 scripts/check-coderabbit-threads.sh <pr-number>
 ```
 
-Five gates, all mandatory. See `checks/tier-0-gates.md` for the full list and interpretation.
+Six gates, all mandatory. See `checks/tier-0-gates.md` for the full list and interpretation.
 
 ### Step 5: Tier 1 correctness
 

@@ -4,10 +4,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, afterEach } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
-import { buildRuntimePermissivePolicy } from "../dist/lib/shields/permissive-runtime.js";
+import { buildRuntimePermissivePolicy } from "../src/lib/shields/permissive-runtime.js";
 
 const BASE_PERMISSIVE = YAML.stringify({
   filesystem_policy: {

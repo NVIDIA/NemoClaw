@@ -20,7 +20,7 @@ export function classifyPresetProvenance(
   context: PresetProvenanceContext = {},
 ): PresetProvenance {
   const name = presetName.trim().toLowerCase();
-  const tierName = context.tierName ?? null;
+  const tierName = context.tierName?.trim().toLowerCase() || null;
   const agentName = context.agentName?.trim().toLowerCase() ?? null;
   if (tierName) {
     const tierDef = getTier(tierName);

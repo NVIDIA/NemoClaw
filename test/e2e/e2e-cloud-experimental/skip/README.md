@@ -1,6 +1,6 @@
 # Opt-in checks (`skip/`)
 
-Scripts here are **not** picked up by `test/e2e/test-e2e-cloud-experimental.sh` (only `checks/*.sh` runs in Phase 5).
+Scripts here are not part of the default E2E flow.
 
 Use when a check is useful but flaky, slow, or environment-specific — run manually:
 

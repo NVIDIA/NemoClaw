@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPolicyPresets } =
-  require("../dist/lib/onboard") as {
+  require("../src/lib/onboard") as {
     computeSetupPresetSuggestions: (
       tierName: string,
       options: {
@@ -29,13 +29,12 @@ const { computeSetupPresetSuggestions, filterSetupPolicyPresets, getSuggestedPol
       env?: NodeJS.ProcessEnv;
     }) => string[];
   };
-const { filterSetupPolicyPresetsForAgent } =
-  require("../dist/lib/onboard/agent-policy-presets") as {
-    filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
-      presets: T[],
-      agent?: string | null,
-    ) => T[];
-  };
+const { filterSetupPolicyPresetsForAgent } = require("../src/lib/onboard/agent-policy-presets") as {
+  filterSetupPolicyPresetsForAgent: <T extends { name: string }>(
+    presets: T[],
+    agent?: string | null,
+  ) => T[];
+};
 
 describe("onboard policy preset suggestions", () => {
   const known = [

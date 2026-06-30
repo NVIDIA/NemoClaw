@@ -3,10 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import {
-  classifyCustomAnthropicEndpoint,
-  isBedrockRuntimeEndpoint,
-} from "../../../dist/lib/inference/bedrock-runtime";
+import { classifyCustomAnthropicEndpoint, isBedrockRuntimeEndpoint } from "./bedrock-runtime";
 
 describe("Bedrock Runtime endpoint classification", () => {
   it("detects standard Bedrock Runtime hosts", () => {

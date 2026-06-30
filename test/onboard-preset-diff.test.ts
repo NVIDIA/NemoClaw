@@ -8,7 +8,7 @@
 // previously-applied ones that are no longer selected.
 
 import assert from "node:assert/strict";
-import { spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -59,14 +59,14 @@ function buildPreamble({
   policyPresets = "npm",
   alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
 } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
-  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+  const credPath = JSON.stringify(path.join(repoRoot, "src", "lib", "credentials", "store.ts"));
+  const runnerPath = JSON.stringify(path.join(repoRoot, "src", "lib", "runner.ts"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "src", "lib", "state", "registry.ts"));
+  const policiesPath = JSON.stringify(path.join(repoRoot, "src", "lib", "policy", "index.ts"));
   const resolveOpenshellPath = JSON.stringify(
-    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
+    path.join(repoRoot, "src", "lib", "adapters", "openshell", "resolve.ts"),
   );
-  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const onboardPath = JSON.stringify(path.join(repoRoot, "src", "lib", "onboard.ts"));
 
   return String.raw`
 // All stubs MUST be installed before requiring onboard so its module-level
@@ -128,7 +128,7 @@ const { setupPoliciesWithSelection } = require(${onboardPath});
 `;
 }
 
-describe("setupPoliciesWithSelection preset-diff (issue #2177)", () => {
+describe("setupPoliciesWithSelection preset diff (#2177)", () => {
   // In non-interactive mode a user who runs onboard twice — first with Balanced
   // defaults (applies 5 presets), second with NEMOCLAW_POLICY_PRESETS=npm —
   // expects the final sandbox to have ONLY npm. Previously-applied presets

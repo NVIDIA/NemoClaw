@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -153,7 +152,7 @@ function runOpenclawRepairLayoutCase(legacy: boolean) {
   const permissionBlock = dockerRunCommandBetween(
     dockerfile,
     "# Keep the image readable to the root entrypoint",
-    "# System-wide proxy hooks",
+    "# System-wide shell hooks",
   );
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
   const sandboxRoot = path.join(tmp, "sandbox");
@@ -570,7 +569,6 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     // #4952: recent OpenClaw (v0.0.44 / 2026.5.18+) re-execs the long-running
     // gateway into a process whose argv is plain `openclaw` — no `gateway`
     // token at all (see the gateway_pid() helper in
-    // test/e2e/test-issue-2478-crash-loop-recovery.sh). The in-container curl
     // probe fails (connection refused, exit 7) on runtime shapes where the
     // dashboard port lives outside this namespace, so the healthcheck falls
     // back to the in-container gateway-liveness check. A pgrep that only
@@ -898,28 +896,81 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-system-proxy-"));
     const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
     const bashrc = path.join(tmp, "bash.bashrc");
     const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || true`;
 
     try {
       fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+      fs.writeFileSync(rlimitLib, "# rlimit fixture\n");
       fs.writeFileSync(bashrc, "# existing bashrc\n");
       const command = dockerRunCommandBetween(
         dockerfile,
         "# System-wide proxy hooks",
         "# Install OpenClaw CLI + PyYAML",
       )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
         .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
         .replaceAll("/etc/bash.bashrc", bashrc);
 
       const { result } = runLoggedDockerShell(command, tmp);
       expect(result.status).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8").split(rlimitShim).length - 1).toBe(1);
+      expect((fs.statSync(rlimitHook).mode & 0o777).toString(8)).toBe("444");
+      expect((fs.statSync(rlimitLib).mode & 0o777).toString(8)).toBe("444");
       expect(fs.readFileSync(profileHook, "utf-8").split(runtimeEnvShim).length - 1).toBe(1);
       expect((fs.statSync(profileHook).mode & 0o777).toString(8)).toBe("444");
 
       const bashrcContent = fs.readFileSync(bashrc, "utf-8");
+      expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
       expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
       expect(bashrcContent).toContain("# existing bashrc");
+      expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs stale OpenClaw base images with system-wide rlimit hooks", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-thin-rlimits-"));
+    const profileHook = path.join(tmp, "profile.d", "nemoclaw-proxy.sh");
+    const rlimitHook = path.join(tmp, "profile.d", "nemoclaw-rlimits.sh");
+    const rlimitLib = path.join(tmp, "sandbox-rlimits.sh");
+    const bashrc = path.join(tmp, "bash.bashrc");
+    const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
+    const rlimitShim = `[ -f ${rlimitLib} ] && . ${rlimitLib} && harden_resource_limits --quiet && verify_resource_limits --quiet || true`;
+
+    try {
+      fs.mkdirSync(path.dirname(profileHook), { recursive: true });
+      fs.writeFileSync(rlimitLib, "# rlimit fixture\n");
+      fs.writeFileSync(bashrc, "# stale base bashrc\n");
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# System-wide shell hooks",
+        "# Pin config hash at build time",
+      )
+        .replaceAll("/usr/local/lib/nemoclaw/sandbox-rlimits.sh", rlimitLib)
+        .replaceAll("/etc/profile.d/nemoclaw-rlimits.sh", rlimitHook)
+        .replaceAll("/etc/profile.d/nemoclaw-proxy.sh", profileHook)
+        .replaceAll("/etc/bash.bashrc", bashrc);
+
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(rlimitHook, "utf-8").split(rlimitShim).length - 1).toBe(1);
+      expect(fs.readFileSync(profileHook, "utf-8").split(runtimeEnvShim).length - 1).toBe(1);
+
+      const bashrcContent = fs.readFileSync(bashrc, "utf-8");
+      expect(bashrcContent.split(rlimitShim).length - 1).toBe(1);
+      expect(bashrcContent.split(runtimeEnvShim).length - 1).toBe(1);
+      expect(bashrcContent.indexOf(runtimeEnvShim)).toBeLessThan(bashrcContent.indexOf(rlimitShim));
+      expect(bashrcContent.split("\n").slice(0, 2).join("\n")).toContain(runtimeEnvShim);
+      expect(bashrcContent).toContain("# stale base bashrc");
       expect((fs.statSync(bashrc).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
@@ -1113,6 +1164,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "sandbox-rlimits.sh"),
       path.join(localLib, "openclaw_device_approval_policy.py"),
       path.join(localLib, "clean_runtime_shell_env_shim.py"),
       generatorPath,
@@ -1214,7 +1266,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   }
-
   function runHermesUserSetupBlock() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-users-"));
@@ -1232,7 +1283,6 @@ describe("Hermes sandbox provisioning", () => {
     ]);
     return { ...result, tmp, sandboxRoot };
   }
-
   function runHermesLayoutBlock(
     dockerfilePath: string,
     startMarker: string,
@@ -1255,13 +1305,11 @@ describe("Hermes sandbox provisioning", () => {
     const result = runDockerShell(command, sandboxRoot);
     return { ...result, tmp, sandboxRoot };
   }
-
   it("final image validates and runs the manifest-declared hermes binary path", () => {
     const result = runHermesPathValidation();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("hermes manifest version");
   });
-
   function runHermesUvExtrasExpansion() {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
     const extras = dockerfile.match(/^ARG HERMES_UV_EXTRAS="([^"]*)"$/m)?.[1];
@@ -1284,7 +1332,7 @@ describe("Hermes sandbox provisioning", () => {
     return { result, tmp };
   }
 
-  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+  it("installs Hermes' native Anthropic provider dependency (#4230)", () => {
     const { result, tmp } = runHermesUvExtrasExpansion();
     try {
       expect(result.status).toBe(0);
@@ -1303,7 +1351,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");
@@ -1319,7 +1366,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-dashboard-build-"));
@@ -1328,19 +1374,17 @@ describe("Hermes sandbox provisioning", () => {
     const hermesWebDist = path.join(hermesRoot, "hermes_cli", "web_dist");
     fs.mkdirSync(hermesWebDir, { recursive: true });
     fs.writeFileSync(path.join(hermesWebDir, "package.json"), "{}\n");
+    fs.writeFileSync(path.join(hermesWebDir, "package-lock.json"), "{}\n");
     fs.mkdirSync(path.join(hermesWebDir, "node_modules"), { recursive: true });
-
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Published base images can lag Dockerfile.base",
       "# Harden: remove unnecessary build tools",
     ).replaceAll("/opt/hermes", hermesRoot);
-
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
         'npm() { printf "npm %s\\n" "$*" >> "$call_log"; if [ -n "${hermes_web_dist:-}" ] && [ "${1:-}" = "run" ] && [ "${2:-}" = "build" ]; then mkdir -p "$hermes_web_dist"; fi; }',
       ]);
-
       expect(result.status).toBe(0);
       expect(result.stderr).toBe("");
       expect(calls).toContain(`npm ci --prefix ${hermesWebDir}`);
@@ -1351,7 +1395,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {
@@ -1364,7 +1407,6 @@ describe("Hermes sandbox provisioning", () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
-
   it("grants the Hermes gateway group write access to runtime state directories", () => {
     const runs = [
       runHermesLayoutBlock(
@@ -1379,7 +1421,6 @@ describe("Hermes sandbox provisioning", () => {
         { precreateConfig: true },
       ),
     ];
-
     try {
       for (const run of runs) {
         expect(run.result.status).toBe(0);
@@ -1399,6 +1440,10 @@ describe("Hermes sandbox provisioning", () => {
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
+        expect((fs.statSync(path.join(hermesDir, "logs")).mode & 0o7777).toString(8)).toBe("2770");
+        expect(
+          (fs.statSync(path.join(hermesDir, "logs", "curator")).mode & 0o7777).toString(8),
+        ).toBe("2770");
         const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
         expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(

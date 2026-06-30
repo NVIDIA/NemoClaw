@@ -3,8 +3,8 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { assertSandboxPathExistsOrExit } from "../dist/lib/share-command.js";
-import type { ShareCommandDeps } from "../dist/lib/share-command-deps.js";
+import { assertSandboxPathExistsOrExit } from "../src/lib/share-command.js";
+import type { ShareCommandDeps } from "../src/lib/share-command-deps.js";
 
 class ProcessExitError extends Error {
   constructor(readonly code: number) {

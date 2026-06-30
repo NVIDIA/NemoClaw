@@ -205,7 +205,7 @@ function registryHasSandbox(fixture: { nemoclawDir: string; sandboxName: string 
   }
 }
 
-describe("Issue #4497: stale sandbox rebuild recovery", () => {
+describe("stale sandbox rebuild recovery (#4497)", () => {
   it("does NOT abort with 'Cannot back up state' when the live sandbox is gone", {
     timeout: 90_000,
   }, () => {

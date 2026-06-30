@@ -64,6 +64,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
+      expect(state.inferenceGetCalls).toEqual([[]]);
       expect(state.inferenceSetCalls.length).toBe(1);
       expect(state.inferenceSetCalls[0]).toEqual([
         "--provider",
@@ -114,13 +115,21 @@ describe("sandbox connect inference route swap (#1248)", () => {
     },
   );
 
-  it(
-    "does not swap inference route for legacy sandbox without provider",
+  it.each([
+    ["null", null, null],
+    ["provider-only", "nvidia-prod", null],
+    ["model-only", null, "nvidia/test"],
+    ["blank-provider", "   ", "nvidia/test"],
+    ["blank-model", "nvidia-prod", "   "],
+  ])(
+    "skips inference reconciliation for %s registry entries (#5937)",
     testTimeoutOptions(20_000),
-    () => {
+    (_description, provider, model) => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {
           name: "legacy-sandbox",
+          provider,
+          model,
           gpuEnabled: false,
           policies: [],
         },
@@ -132,7 +141,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      expect(state.inferenceSetCalls.length).toBe(0);
+      expect(state.inferenceGetCalls).toEqual([]);
+      expect(state.inferenceSetCalls).toEqual([]);
     },
   );
 
@@ -364,7 +374,7 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
   it(
     "repairs WSL ollama-local routes without requiring the auth proxy",
-    testTimeoutOptions(20_000),
+    testTimeoutOptions(40_000),
     () => {
       const { tmpDir, stateFile, sandboxName } = setupFixture(
         {

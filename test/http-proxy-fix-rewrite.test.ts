@@ -51,7 +51,7 @@ function loadWrapper() {
   require(FIX_PATH);
 }
 
-describe("http-proxy-fix rewrite (deepinfra-style failure, follow-up to #2344)", () => {
+describe("http-proxy-fix rewrite for a deepinfra-style failure (#2344)", () => {
   let origHttpRequest: typeof http.request;
   let httpsSpy: ReturnType<typeof vi.spyOn>;
   let captured: RewrittenOptions | null;

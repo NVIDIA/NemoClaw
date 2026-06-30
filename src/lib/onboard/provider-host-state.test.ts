@@ -4,10 +4,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  detectInferenceProviderHostState,
   type DetectInferenceProviderHostStateDeps,
+  detectInferenceProviderHostState,
   type InferenceProviderHostGpu,
-} from "../../../dist/lib/onboard/provider-host-state";
+} from "./provider-host-state";
 
 const SUPPORTED_WINDOWS_OLLAMA = {
   supported: true,
