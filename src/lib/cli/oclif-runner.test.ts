@@ -156,6 +156,10 @@ describe("runOclifArgv", () => {
   it("keeps a genuine native-route ExitError(0) as a graceful exit (#5974)", async () => {
     // Command.exit(0) / --help on the native route must stay silent and
     // delegate to oclif's handler, which performs the graceful exit 0.
+    // This mocks handleOclif to assert delegation; the runtime counterpart
+    // (real `nemoclaw sandbox --help` → exit 0 through the actual binary) is
+    // locked by test/exit-code-user-error-surfaces.test.ts
+    // ("a native-route --help stays a clean exit 0").
     class ExitError extends Error {
       oclif = { exit: 0 };
     }

@@ -162,6 +162,19 @@ export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions)
     // silently exit 0 — reporting success for a real failure on the native
     // `internal`/`sandbox` routes. Surface the message and force a non-zero
     // exit instead; only a genuine ExitError(0) stays a graceful exit.
+    //
+    // Mechanism asymmetry (why process.exitCode here, exit()/throw in
+    // runOclifCommandById): this native path mirrors oclif's execute() (run →
+    // flush → handle), so for the intercepted case we set process.exitCode and
+    // return rather than delegating to handleOclif() (the non-intercepted
+    // branch below). handleOclif() IS oclif's handle(), which would re-run
+    // Exit.exit(0) for this error and undo the fix, so process.exitCode +
+    // return is the only way to force a non-zero code without re-entering
+    // handle(). runOclifCommandById does not route through handle() at all — it
+    // maps errors to codes by hand (its injected exit() for parse/ExitError, a
+    // re-throw otherwise) — but applies the identical oclif.exit === 0 guard.
+    // Removal condition: drop this guard once @oclif/core's handle() no longer
+    // exits 0 for a non-ExitError that carries oclif.exit === 0.
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0 && !isOclifExitError(error)) {
       const message = formatOclifError(error) || "Command exited with no output.";
