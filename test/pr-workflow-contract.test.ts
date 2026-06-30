@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -134,6 +137,63 @@ function codeFilterMatchesChangedPaths(workflow: CiWorkflow, paths: string[]): b
   });
 }
 
+function runInstallerChangeDetector(detectorScript: string, changedPath: string): string {
+  const repo = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-installer-detector-"));
+  const output = path.join(repo, "github-output.txt");
+  const target = path.join(repo, changedPath);
+  try {
+    execFileSync("git", ["init", "-q"], { cwd: repo });
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, "before\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=NemoClaw CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "base",
+      ],
+      { cwd: repo },
+    );
+    const baseSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+    writeFileSync(target, "after\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "user.name=NemoClaw CI",
+        "-c",
+        "user.email=ci@example.invalid",
+        "commit",
+        "-qm",
+        "head",
+      ],
+      { cwd: repo },
+    );
+    const headSha = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: repo,
+      encoding: "utf8",
+    }).trim();
+    const result = spawnSync("bash", ["-c", detectorScript], {
+      cwd: repo,
+      encoding: "utf8",
+      env: { ...process.env, BASE_SHA: baseSha, GITHUB_OUTPUT: output, HEAD_SHA: headSha },
+    });
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    return readFileSync(output, "utf8").trim();
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+}
+
 describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
@@ -195,6 +255,20 @@ describe("pull request and main workflow contracts", () => {
       "github.event_name != 'pull_request' || steps.installer-changes.outputs.installer == 'true'",
     );
     expect(hashCheck.run).toBe("bash scripts/check-installer-hash.sh");
+  });
+
+  it("sets the installer-change output only for installer-affecting diffs", () => {
+    const detectorScript = requiredWorkflowStep(
+      installerHashWorkflow.jobs["check-hash"],
+      "Detect installer-affecting changes",
+    ).run;
+    expect(detectorScript).toBeTypeOf("string");
+    expect(runInstallerChangeDetector(detectorScript ?? "", "scripts/install-openshell.sh")).toBe(
+      "installer=true",
+    );
+    expect(runInstallerChangeDetector(detectorScript ?? "", "docs/readme.mdx")).toBe(
+      "installer=false",
+    );
   });
 
   it("routes only code-changing PRs through the code-check path", () => {
