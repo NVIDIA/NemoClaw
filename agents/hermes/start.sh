@@ -233,10 +233,19 @@ fi
 # script does not.) Invoked with bare python3, the seeder hits its "PyYAML
 # unavailable; skipping model seed" branch and returns 0, so the model routing
 # is silently never mirrored into the dashboard home and the Models page shows
-# no models. Resolve the venv interpreter explicitly, falling back to python3.
+# no models. Resolve the venv interpreter explicitly; the fallback uses the
+# same trusted absolute-path list as the wrapper / recovery boundary so a
+# PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
+# entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
 _HERMES_PYTHON="/opt/hermes/.venv/bin/python"
 if [ ! -x "$_HERMES_PYTHON" ]; then
-  _HERMES_PYTHON="$(command -v python3 || echo python3)"
+  _HERMES_PYTHON=""
+  for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+    if [ -x "$_candidate" ]; then
+      _HERMES_PYTHON="$_candidate"
+    fi
+  done
+  unset _candidate
 fi
 
 truthy_env() {
