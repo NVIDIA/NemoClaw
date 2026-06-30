@@ -86,12 +86,19 @@
 # matching start.sh's _HERMES_BOUNDARY_VALIDATOR resolution.
 set -u
 
-# Defence-in-depth against attacker-controlled bash startup. The absolute
-# shebang (`#!/bin/bash`) avoids resolving the interpreter through the
-# caller's PATH. Clearing BASH_ENV/ENV/SHELLOPTS here cannot un-source any
-# init file that bash already ran at startup, but it prevents the same
-# vectors from leaking into child processes (real Hermes binary, validator,
-# masker). Sandbox callers should also scrub these in the launching env.
+# Defence against attacker-controlled bash startup. The absolute shebang
+# (`#!/bin/bash`) avoids resolving the interpreter through the caller's
+# PATH. If BASH_ENV/ENV is set in the calling environment, the initial
+# bash exec already sourced it before this line — so we re-exec ourselves
+# via /usr/bin/env with the startup variables unset. The replacement
+# process is a fresh bash with a clean env: the runtime-env guard and the
+# `config show` masker therefore execute under conditions the attacker
+# cannot subvert via BASH_ENV/ENV, regardless of what the transient first
+# bash ran during its startup. We also unset the variables defensively so
+# child processes (real Hermes binary, masker) inherit a clean env.
+if [ -n "${BASH_ENV-}" ] || [ -n "${ENV-}" ]; then
+  exec /usr/bin/env -u BASH_ENV -u ENV -u BASH_XTRACEFD /bin/bash "$0" "$@"
+fi
 unset BASH_ENV ENV BASH_XTRACEFD
 
 # Hard-require Bash 4+. The `config show` branch uses array indexing on
