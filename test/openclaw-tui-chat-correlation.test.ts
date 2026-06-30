@@ -703,6 +703,45 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
     expect(analysis.uncorrelatedReplies).toEqual([]);
   });
 
+  it("treats hosted-model line wrapping inside reply tokens as the same visible reply", () => {
+    const analysis = analyzeIssue2603Trace({
+      sentRuns: [
+        {
+          promptToken: "A2603",
+          replyToken: "A2603-REPLY",
+          runId: "run-a",
+          message:
+            "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        {
+          event: "chat",
+          payload: {
+            runId: "run-a",
+            state: "final",
+            message: { role: "assistant", content: [{ type: "text", text: "A2\n603-REPLY" }] },
+          },
+        },
+      ],
+      historyMessages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(analysis.missingReplies).toEqual([]);
+    expect(analysis.duplicateReplies).toEqual([]);
+    expect(analysis.uncorrelatedReplies).toEqual([]);
+  });
+
   it("only retries the live repro when no chat events were captured", () => {
     expect(
       looksLikeEventCaptureFailure({

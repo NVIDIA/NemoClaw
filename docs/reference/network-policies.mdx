@@ -69,7 +69,7 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather` | Full dev tooling, read-only weather lookups, and web search for agents that support web search. No messaging platform access. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
 | Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
@@ -77,6 +77,11 @@ Tier-default presets are pre-selected; additional presets can be added from the 
 NemoClaw filters tier defaults by the active agent's supported integrations.
 For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 Hermes managed-tool gateway selections can add Hermes-specific presets, such as Nous-hosted web, image, audio, browser, or code tools, without applying unsupported OpenClaw-only presets.
+OpenClaw onboarding also adds the `openclaw-pricing` preset on top of tier defaults so session-cost records can populate from LiteLLM and OpenRouter without manual configuration.
+When the OpenClaw OTEL diagnostics feature is enabled with a local endpoint, NemoClaw adds the `openclaw-diagnostics-otel-local` preset on the same basis.
+The applied set therefore reflects the chosen tier *plus* any agent-required presets, so `policy-list` may show one or more presets that do not appear in the tier table above.
+The `policy-list` provenance tags are inferred from the current tier YAML and the active agent at display time and are not persisted per preset.
+A preset whose name matches an entry in the sandbox's current tier definition is labelled `[from <tier> tier]` even when an operator added it manually with `policy-add` after onboarding; OpenClaw-only and Hermes-only preset names are only labelled `[from <agent> agent]` when the active agent matches.
 Claude Code direct egress is not included in any policy tier.
 If you install and run the Claude Code CLI inside the sandbox with its own credentials, apply the `claude-code` preset explicitly.
 Normal NemoClaw Anthropic inference still routes through the OpenShell gateway.

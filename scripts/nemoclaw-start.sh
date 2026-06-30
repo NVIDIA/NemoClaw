@@ -2197,13 +2197,15 @@ start_auto_pair() {
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
   fi
-  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
+  OPENCLAW_BIN="$OPENCLAW" nohup "${run_prefix[@]}" python3 -u - <<'PYAUTOPAIR' >>/tmp/auto-pair.log 2>&1 &
 import json
 import importlib.util
 import os
 import stat
 import subprocess
 import time
+
+print('[auto-pair] watcher started', flush=True)
 
 APPROVAL_POLICY_FILE = '/usr/local/lib/nemoclaw/openclaw_device_approval_policy.py'
 
@@ -2251,7 +2253,55 @@ def _env_seconds(name, default):
 # embedded mode. Defaults: 8h total, 30s slow-mode cadence.
 FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
 DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
-SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 30)
+# After convergence the watcher polls at SLOW_INTERVAL. A late allowlisted
+# scope upgrade — e.g. `openclaw tui` or `openclaw agent` invoked after the
+# watcher entered slow mode — can wait up to SLOW_INTERVAL before being
+# approved, which is longer than the OpenClaw client's tolerance for `scope
+# upgrade pending approval` and forces a fallback to embedded mode. The
+# default sits well below typical client-side wait windows; raise it through
+# NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS when the gateway connect handler is
+# load-sensitive. When the watcher successfully approves a fresh allowlisted
+# request during slow mode it also bumps a bounded fast-reentry counter
+# (NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS) that drops polling back to 1s for
+# the next few iterations, so cascading upgrades and transient approve
+# failures both clear before the OpenClaw client gives up. The counter is
+# only bumped on the rising edge for each requestId (tracked in
+# FAST_REENTRY_BUMPED_REQUEST_IDS and garbage-collected against the live
+# pending list), so a sticky failing request cannot pin the watcher in fast
+# polling. This is a polling-cadence fix only — non-allowlisted scopes such
+# as `operator.admin` are still rejected by the device approval policy, and
+# requests that need them must be approved through a separate operator path.
+SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 5)
+# SOURCE_OF_TRUTH_REVIEW (auto-pair slow-mode cadence default 30s → 5s):
+#
+#   * Source boundary: the single SLOW_INTERVAL global above is the only
+#     steady-state inter-poll wait for the in-sandbox auto-pair watcher
+#     after browser pairing converges. The watcher's faster pre-converge
+#     cadence (1s) is unaffected.
+#   * Invalid state at the old default: a late
+#     `openclaw tui` / `openclaw agent` allowlisted scope upgrade lands
+#     inside a 30s window and waits up to one full SLOW_INTERVAL before
+#     the watcher polls. Two sibling sandboxes onboarded back-to-back
+#     each hit this window and both fall back to embedded mode (#5343).
+#   * Source-fix constraint: the 5s default is a bounded 6x increase in
+#     steady-state `openclaw devices list --json` calls per sandbox — at
+#     most one extra call per 5s vs. per 30s, which the gateway connect
+#     handler tolerates easily; the bounded fast-reentry counter above
+#     keeps cascading upgrades from exceeding this cadence.
+#   * Migration: operators who relied on the old cadence (load-sensitive
+#     gateways, large multi-sandbox deployments) can restore it by
+#     exporting NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS=30 in the sandbox
+#     environment; the PR body calls this out under "Changes" too.
+#   * Regression test: test/nemoclaw-start.test.ts's late-CLI fixture
+#     covers the new default deterministically; #5343 Phase 5 covers it
+#     end to end.
+#   * Removal condition: when OpenClaw signals scope-upgrade requests via
+#     a push channel rather than a poll, the cadence becomes irrelevant
+#     and the variable retires.
+FAST_REENTRY_POLLS = int(_env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_POLLS', 5))
+FAST_REENTRY_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_REENTRY_INTERVAL_SECS', 1)
+FAST_REENTRY_REMAINING = 0
+FAST_REENTRY_BUMPED_REQUEST_IDS = set()
 QUIET_POLLS = 0
 APPROVED = 0
 SLOW_MODE = False
@@ -2293,15 +2343,39 @@ def run(*args, strip_gateway_env=False):
         print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
         return 124, out.strip(), err.strip()
 
+
+def sleep_for_next_poll(default_seconds, productive=True):
+    # Apply the bounded fast-reentry override before the caller's default
+    # sleep so a recent allowlisted approval (which bumps the remaining
+    # counter) drops polling to FAST_REENTRY_INTERVAL for the next few
+    # iterations. Mutates the global counter so callers do not need to
+    # thread the state through. The override is floored by the caller's
+    # default so it never increases the inter-poll latency (e.g. when the
+    # default is already tighter than FAST_REENTRY_INTERVAL during a
+    # bounded retry pass in fast mode).
+    #
+    # Error-path callers pass productive=False so a string of gateway
+    # errors or JSON-parse failures after a fast-reentry bump does not
+    # silently drain the bounded window before a productive poll observes
+    # the cascading upgrades.
+    global FAST_REENTRY_REMAINING
+    if FAST_REENTRY_REMAINING > 0:
+        if productive:
+            FAST_REENTRY_REMAINING -= 1
+        time.sleep(min(FAST_REENTRY_INTERVAL, default_seconds))
+        return
+    time.sleep(default_seconds)
+
+
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
     try:
         data = json.loads(out)
     except Exception:
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1, productive=False)
         continue
 
     pending = data.get('pending') or []
@@ -2320,11 +2394,16 @@ while time.time() < DEADLINE:
 
     if pending:
         QUIET_POLLS = 0
+        attempted_request_ids = set()
+        pending_request_ids = set()
         for device in pending:
             if not isinstance(device, dict):
                 continue
             request_id = device.get('requestId')
-            if not request_id or request_id in HANDLED:
+            if not request_id:
+                continue
+            pending_request_ids.add(request_id)
+            if request_id in HANDLED:
                 continue
             decision = approval_request_decision(device)
             client_id = decision['client_id']
@@ -2342,6 +2421,7 @@ while time.time() < DEADLINE:
                 scopes = decision['scopes']
                 print(f'[auto-pair] rejected disallowed scopes={sorted(scopes)} client={client_id} mode={client_mode}')
                 continue
+            attempted_request_ids.add(request_id)
             arc, aout, aerr = run(
                 OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
@@ -2371,7 +2451,30 @@ while time.time() < DEADLINE:
                     print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
+        # Drop previously-bumped requestIds that the gateway no longer reports
+        # as pending so a future re-appearance of the same id (very unlikely,
+        # but kept robust) can bump again. The set is otherwise small and
+        # never crosses out of the watcher process.
+        FAST_REENTRY_BUMPED_REQUEST_IDS.intersection_update(pending_request_ids)
+        # Fast-reentry is armed on the rising edge per requestId — once for
+        # each freshly-observed allowlisted attempt. A sticky pending request
+        # that fails approval repeatedly therefore stops bumping the counter
+        # after the first attempt, so it cannot keep the watcher in fast
+        # polling for the rest of DEADLINE; the next slow-cadence poll
+        # decides whether to retry. Cascading approvals from new ids still
+        # bump as they appear, which is the case the override targets.
+        new_attempted_ids = attempted_request_ids - FAST_REENTRY_BUMPED_REQUEST_IDS
+        # Bump in fast mode too: the cadence override is a no-op there
+        # (min(FAST_REENTRY_INTERVAL=1, default=1) = 1) but the requestId
+        # is still recorded in FAST_REENTRY_BUMPED_REQUEST_IDS so the same
+        # sticky id cannot re-arm the counter later when the watcher
+        # transitions into slow mode.
+        if new_attempted_ids and FAST_REENTRY_POLLS > 0:
+            FAST_REENTRY_REMAINING = FAST_REENTRY_POLLS
+            FAST_REENTRY_BUMPED_REQUEST_IDS.update(new_attempted_ids)
+            mode_label = 'slow' if SLOW_MODE else 'fast'
+            print(f'[auto-pair] fast-reentry bumped polls={FAST_REENTRY_POLLS} approved={APPROVED} mode={mode_label}')
+        sleep_for_next_poll(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     QUIET_POLLS += 1
@@ -2402,15 +2505,17 @@ while time.time() < DEADLINE:
 
     # Back off polling: 1s in fast mode while waiting for first pairing,
     # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
-    # (default 30s) after convergence. Slow-mode keepalive lets late CLI
+    # (default 5s) after convergence. Slow-mode keepalive lets late CLI
     # scope upgrades get approved through the rest of DEADLINE without
-    # hammering the gateway.
+    # hammering the gateway. The bounded fast-reentry counter (bumped above
+    # when an allowlisted upgrade was attempted) overrides whichever tier
+    # is selected here so the next few polls catch cascading upgrades.
     if SLOW_MODE:
-        time.sleep(SLOW_INTERVAL)
+        sleep_for_next_poll(SLOW_INTERVAL)
     elif APPROVED > 0 or paired:
-        time.sleep(5)
+        sleep_for_next_poll(5)
     else:
-        time.sleep(1)
+        sleep_for_next_poll(1)
 else:
     print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
@@ -3730,6 +3835,13 @@ gateway_pid_is_openclaw_gateway() {
   printf '%s' "$cmdline" | grep -qE 'openclaw([ -]gateway| gateway run|$)'
 }
 
+# Positive integer guard used by the gateway watchdog env validation. Extracted
+# so a regression test can exercise the regex against trailing-non-digit and
+# zero/garbage inputs without spinning up the whole watcher.
+gateway_watchdog_positive_int_ok() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
 start_gateway_serving_watchdog() {
   (
     local interval refused_threshold armed=0 refused_streak=0 pid last_pid="" rc msg
@@ -3738,20 +3850,16 @@ start_gateway_serving_watchdog() {
     # Both knobs must be positive integers: a zero/garbage interval would
     # busy-loop the probe, and a zero threshold would kill on the first
     # refusal. Fall back to the defaults rather than trusting bad input.
-    case "$interval" in
-      [1-9] | [1-9][0-9]*) ;;
-      *)
-        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
-        interval=30
-        ;;
-    esac
-    case "$refused_threshold" in
-      [1-9] | [1-9][0-9]*) ;;
-      *)
-        echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
-        refused_threshold=4
-        ;;
-    esac
+    # gateway_watchdog_positive_int_ok uses regex (=~), not glob, so trailing
+    # non-digit input like "12x" or "30abc" is rejected, not coerced.
+    if ! gateway_watchdog_positive_int_ok "$interval"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_INTERVAL_SECONDS='${interval}'; defaulting to 30" >&2
+      interval=30
+    fi
+    if ! gateway_watchdog_positive_int_ok "$refused_threshold"; then
+      echo "[gateway-watchdog] invalid NEMOCLAW_GATEWAY_WATCHDOG_REFUSED_THRESHOLD='${refused_threshold}'; defaulting to 4" >&2
+      refused_threshold=4
+    fi
     [ -n "${_DASHBOARD_PORT:-}" ] || exit 0
     while :; do
       sleep "$interval"

@@ -49,9 +49,6 @@ export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
         channel.requireMentionEnvKey,
       ]),
       ...manifestConfigInputs.map((input) => input.envKey),
-      ...BUILT_IN_CHANNEL_MANIFESTS.flatMap(
-        (manifest) => manifest.state.rebuildHydration?.map((hydration) => hydration.env) ?? [],
-      ),
     ].filter((key): key is string => typeof key === "string" && key.length > 0),
   ),
 ];
