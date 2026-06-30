@@ -46,7 +46,11 @@ vi.mock("./tiers", () => ({
   getTier: (name: string): FakeTier | undefined => TIER_FIXTURES[name],
 }));
 
-import { classifyPresetProvenance, formatPresetProvenanceTag } from "./preset-provenance";
+import {
+  classifyPresetProvenance,
+  formatPresetProvenanceSuffix,
+  formatPresetProvenanceTag,
+} from "./preset-provenance";
 
 describe("classifyPresetProvenance", () => {
   it("gives current tier-name matches precedence over fallback sources", () => {
@@ -55,6 +59,16 @@ describe("classifyPresetProvenance", () => {
       tier: "balanced",
     });
     expect(classifyPresetProvenance("brave", { tierName: "balanced" })).toEqual({
+      source: "tier",
+      tier: "balanced",
+    });
+  });
+
+  it("documents current-tier attribution when a user-added preset shadows a tier name", () => {
+    // Application history is not persisted, so the display can only infer
+    // provenance from the current tier. Keep that limitation explicit until
+    // the policy registry stores per-preset source history.
+    expect(classifyPresetProvenance("npm", { tierName: "balanced" })).toEqual({
       source: "tier",
       tier: "balanced",
     });
@@ -171,5 +185,38 @@ describe("formatPresetProvenanceTag", () => {
 
   it("renders the user source as 'user-added'", () => {
     expect(formatPresetProvenanceTag({ source: "user" })).toBe("user-added");
+  });
+});
+
+describe("formatPresetProvenanceSuffix", () => {
+  it("only reports inferred provenance for registry and gateway agreement", () => {
+    expect(
+      formatPresetProvenanceSuffix(
+        "npm",
+        { tierName: "balanced" },
+        { active: true, inRegistry: true, inGateway: true },
+      ),
+    ).toBe(" [from balanced tier]");
+    expect(
+      formatPresetProvenanceSuffix(
+        "npm",
+        { tierName: "balanced" },
+        { active: true, inRegistry: false, inGateway: true },
+      ),
+    ).toBe(" [source unverified]");
+    expect(
+      formatPresetProvenanceSuffix(
+        "npm",
+        { tierName: "balanced" },
+        { active: true, inRegistry: true, inGateway: null },
+      ),
+    ).toBe(" [source unverified (gateway unreachable)]");
+    expect(
+      formatPresetProvenanceSuffix(
+        "npm",
+        { tierName: "balanced" },
+        { active: false, inRegistry: true, inGateway: false },
+      ),
+    ).toBe("");
   });
 });

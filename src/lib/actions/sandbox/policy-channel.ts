@@ -37,10 +37,7 @@ const onboardProviders = require("../../onboard/providers");
 import { filterSetupPolicyPresetsForAgent } from "../../onboard/agent-policy-presets";
 import { getStoredMessagingChannelConfig } from "../../onboard/messaging-config";
 import * as policies from "../../policy";
-import {
-  classifyPresetProvenance,
-  formatPresetProvenanceTag,
-} from "../../policy/preset-provenance";
+import { formatPolicyListPresetRow } from "../../policy/policy-list-display";
 
 const onboardSession =
   require("../../state/onboard-session") as typeof import("../../state/onboard-session");
@@ -284,35 +281,14 @@ export function listSandboxPolicies(sandboxName: string) {
   allPresets.forEach((p: { name: string; description: string }) => {
     const inRegistry = registryPresets.includes(p.name);
     const inGateway = gatewayPresets ? gatewayPresets.includes(p.name) : null;
-
-    let marker;
-    let suffix = "";
-    if (inGateway === null) {
-      // Gateway unreachable — fall back to registry-only display
-      marker = inRegistry ? "●" : "○";
-    } else if (inRegistry && inGateway) {
-      marker = "●";
-    } else if (!inRegistry && !inGateway) {
-      marker = "○";
-    } else if (inGateway && !inRegistry) {
-      marker = "●";
-      suffix = " (active on gateway, missing from local state)";
-    } else {
-      // inRegistry && !inGateway
-      marker = "○";
-      suffix = " (recorded locally, not active on gateway)";
-    }
-
-    let provenanceTag = "";
-    if (marker === "●" && inRegistry && inGateway === true) {
-      provenanceTag = ` [${formatPresetProvenanceTag(
-        classifyPresetProvenance(p.name, provenanceContext),
-      )}]`;
-    } else if (marker === "●") {
-      provenanceTag =
-        inGateway === null ? " [source unverified (gateway unreachable)]" : " [source unverified]";
-    }
-    console.log(`    ${marker} ${p.name}${provenanceTag} — ${p.description}${suffix}`);
+    console.log(
+      formatPolicyListPresetRow({
+        preset: p,
+        provenanceContext,
+        inRegistry,
+        inGateway,
+      }),
+    );
   });
 
   if (gatewayPresets === null) {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "../onboard/hermes-tool-gateway-preset-names";
+import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "../onboard/hermes-managed-tools";
 import { OPENCLAW_ONLY_POLICY_PRESETS } from "../onboard/openclaw-otel-policy-presets";
 import { getTier } from "./tiers";
 
@@ -13,6 +13,12 @@ export type PresetProvenance =
 export interface PresetProvenanceContext {
   tierName?: string | null;
   agentName?: string | null;
+}
+
+export interface PresetVerificationState {
+  active: boolean;
+  inRegistry: boolean;
+  inGateway: boolean | null;
 }
 
 /**
@@ -52,4 +58,19 @@ export function formatPresetProvenanceTag(provenance: PresetProvenance): string 
     case "user":
       return "user-added";
   }
+}
+
+/** Format the display suffix without claiming provenance for unverified state. */
+export function formatPresetProvenanceSuffix(
+  presetName: string,
+  context: PresetProvenanceContext,
+  state: PresetVerificationState,
+): string {
+  if (!state.active) return "";
+  if (state.inRegistry && state.inGateway === true) {
+    return ` [${formatPresetProvenanceTag(classifyPresetProvenance(presetName, context))}]`;
+  }
+  return state.inGateway === null
+    ? " [source unverified (gateway unreachable)]"
+    : " [source unverified]";
 }

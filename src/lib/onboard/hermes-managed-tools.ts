@@ -3,9 +3,6 @@
 
 import type { HermesAuthMethod } from "../hermes-provider-auth";
 import * as hermesProviderAuth from "../hermes-provider-auth";
-import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "./hermes-tool-gateway-preset-names";
-
-export { HERMES_TOOL_GATEWAY_PRESET_NAMES };
 
 type PromptFn = (message: string) => Promise<string>;
 type RawInput = NodeJS.ReadStream & {
@@ -55,19 +52,9 @@ export const HERMES_TOOL_GATEWAY_PRESETS = [
   },
 ] as const;
 
-const declaredHermesToolGatewayPresetNames = new Set<string>(
+export const HERMES_TOOL_GATEWAY_PRESET_NAMES = new Set<string>(
   HERMES_TOOL_GATEWAY_PRESETS.map((preset) => preset.name),
 );
-if (
-  declaredHermesToolGatewayPresetNames.size !== HERMES_TOOL_GATEWAY_PRESET_NAMES.size ||
-  [...HERMES_TOOL_GATEWAY_PRESET_NAMES].some(
-    (presetName) => !declaredHermesToolGatewayPresetNames.has(presetName),
-  )
-) {
-  throw new Error(
-    "The canonical Hermes tool-gateway preset name list must exactly match HERMES_TOOL_GATEWAY_PRESETS. Update both lists together.",
-  );
-}
 
 export function parseHermesToolGatewayPresetEnv(raw: string | null | undefined): string[] {
   const values = String(raw || "")

@@ -90,6 +90,11 @@ interface CleanupAttempt {
   outputTail: string;
 }
 
+interface ActivePolicyPreset {
+  name: string;
+  provenance: string;
+}
+
 function text(result: Pick<ShellProbeResult, "stdout" | "stderr">): string {
   return [result.stdout, result.stderr].filter(Boolean).join("\n");
 }
@@ -353,6 +358,8 @@ async function runOnboard(
     sandboxName: string;
     skip: SkipFn;
     tier: "balanced" | "open";
+    extraEnv?: NemoEnv;
+    extraRedactionValues?: string[];
   },
 ): Promise<ShellProbeResult> {
   const onboard = await host.command(
@@ -369,12 +376,13 @@ async function runOnboard(
       cwd: REPO_ROOT,
       env: commandEnv({
         ...args.hosted.env,
+        ...args.extraEnv,
         NEMOCLAW_AGENT: args.agent,
         NEMOCLAW_POLICY_MODE: "suggested",
         NEMOCLAW_POLICY_TIER: args.tier,
         NEMOCLAW_SANDBOX_NAME: args.sandboxName,
       }),
-      redactionValues: [args.hosted.apiKey],
+      redactionValues: [args.hosted.apiKey, ...(args.extraRedactionValues ?? [])],
       timeoutMs: ONBOARD_TIMEOUT_MS,
     },
   );
@@ -445,7 +453,7 @@ async function listActivePolicyPresets(
   host: HostCliClient,
   sandboxName: string,
   label: string,
-): Promise<string[]> {
+): Promise<ActivePolicyPreset[]> {
   const result = await host.command("node", [CLI_ENTRYPOINT, sandboxName, "policy-list"], {
     artifactName: `policy-list-${label}`,
     env: commandEnv(),
@@ -454,8 +462,13 @@ async function listActivePolicyPresets(
   expect(result.exitCode, text(result)).toBe(0);
   return stripAnsi(text(result))
     .split(/\r?\n/u)
-    .flatMap((line) => line.match(/^\s*●\s+([a-z0-9-]+)/iu)?.[1]?.toLowerCase() ?? [])
-    .sort();
+    .flatMap((line) => {
+      const match = line.match(/^\s*●\s+([a-z0-9-]+)\s+\[([^\]]+)\]/iu);
+      return match?.[1] && match[2]
+        ? [{ name: match[1].toLowerCase(), provenance: match[2].toLowerCase() }]
+        : [];
+    })
+    .sort((left, right) => left.name.localeCompare(right.name));
 }
 
 async function addPolicyPreset(
@@ -737,6 +750,7 @@ describe.sequential("common-egress agent live targets", () => {
     async ({ artifacts, cleanup, host, sandbox, secrets, skip }) => {
       const hosted = await assertPrerequisites(host, secrets, skip);
       const apiKey = hosted.apiKey;
+      const braveApiKey = secrets.required("BRAVE_API_KEY");
       await artifacts.writeJson("target.json", {
         id: "common-egress-agent",
         case: "openclaw-balanced-weather",
@@ -756,11 +770,20 @@ describe.sequential("common-egress agent live targets", () => {
         sandboxName: OPENCLAW_BALANCED_SANDBOX,
         skip,
         tier: "balanced",
+        extraEnv: { BRAVE_API_KEY: braveApiKey },
+        extraRedactionValues: [braveApiKey],
       });
 
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-balanced-initial"),
-      ).toEqual(["brave", "brew", "huggingface", "npm", "openclaw-pricing", "pypi"]);
+      ).toEqual([
+        { name: "brave", provenance: "from balanced tier" },
+        { name: "brew", provenance: "from balanced tier" },
+        { name: "huggingface", provenance: "from balanced tier" },
+        { name: "npm", provenance: "from balanced tier" },
+        { name: "openclaw-pricing", provenance: "from openclaw agent" },
+        { name: "pypi", provenance: "from balanced tier" },
+      ]);
       await assertPolicyAbsent(
         sandbox,
         OPENCLAW_BALANCED_SANDBOX,
@@ -771,7 +794,15 @@ describe.sequential("common-egress agent live targets", () => {
       await addPolicyPreset(host, OPENCLAW_BALANCED_SANDBOX, "weather");
       expect(
         await listActivePolicyPresets(host, OPENCLAW_BALANCED_SANDBOX, "c1-after-weather-add"),
-      ).toEqual(["brave", "brew", "huggingface", "npm", "openclaw-pricing", "pypi", "weather"]);
+      ).toEqual([
+        { name: "brave", provenance: "from balanced tier" },
+        { name: "brew", provenance: "from balanced tier" },
+        { name: "huggingface", provenance: "from balanced tier" },
+        { name: "npm", provenance: "from balanced tier" },
+        { name: "openclaw-pricing", provenance: "from openclaw agent" },
+        { name: "pypi", provenance: "from balanced tier" },
+        { name: "weather", provenance: "user-added" },
+      ]);
       await assertPolicyContains(sandbox, OPENCLAW_BALANCED_SANDBOX, "c1-policy", [
         "api.open-meteo.com",
         "geocoding-api.open-meteo.com",
