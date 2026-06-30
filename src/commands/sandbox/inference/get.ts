@@ -5,6 +5,8 @@ import { InferenceGetError, runInferenceGet } from "../../../lib/actions/inferen
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 
+// Sandbox-first mirror of the global inference:get command; both delegate to
+// the shared runInferenceGet action that reads the gateway-wide route.
 export default class SandboxInferenceGetCommand extends NemoClawCommand {
   static id = "sandbox:inference:get";
   static strict = true;

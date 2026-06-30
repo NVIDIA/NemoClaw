@@ -137,6 +137,70 @@ describe("sandbox inference oclif command adapters (#5977)", () => {
     }
   });
 
+  it("surfaces the 'route not configured' get failure with its message and exit code (#5977)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceGet.mockRejectedValueOnce(
+        new InferenceGetError("OpenShell inference route is not configured.", 1),
+      );
+
+      await expect(SandboxInferenceGetCommand.run(["alpha"], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(1);
+      expect(error).toHaveBeenCalledWith("OpenShell inference route is not configured.");
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("surfaces a typed set validation failure (unsupported provider) with its exit code (#5977)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("Unsupported inference provider 'bogus-provider'.", 2),
+      );
+
+      await expect(
+        SandboxInferenceSetCommand.run(
+          ["alpha", "--provider", "bogus-provider", "--model", "nvidia/model-a"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenCalledWith("Unsupported inference provider 'bogus-provider'.");
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
+  it("surfaces a typed set validation failure (unsafe model id) with its exit code (#5977)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceSet.mockRejectedValueOnce(
+        new InferenceSetError("Unsafe model id 'nvidia/model a'.", 2),
+      );
+
+      await expect(
+        SandboxInferenceSetCommand.run(
+          ["alpha", "--provider", "nvidia-prod", "--model", "nvidia/model a"],
+          rootDir,
+        ),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(2);
+      expect(error).toHaveBeenCalledWith("Unsafe model id 'nvidia/model a'.");
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+    }
+  });
+
   it("records typed inference action failures without throwing oclif ExitError", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const previousExitCode = process.exitCode;

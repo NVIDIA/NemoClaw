@@ -5,20 +5,16 @@ import { Flags } from "@oclif/core";
 
 import { InferenceSetError, runInferenceSet } from "../../../lib/actions/inference-set";
 import { CLI_NAME } from "../../../lib/cli/branding";
+import { nonEmptyFlag } from "../../../lib/cli/flag-helpers";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 import { sandboxNameArg } from "../../../lib/sandbox/command-support";
 
-function nonEmptyFlag(description: string) {
-  return Flags.string({
-    description,
-    parse: async (input: string) => {
-      const trimmed = input.trim();
-      if (!trimmed) throw new Error(`${description} cannot be empty`);
-      return trimmed;
-    },
-  });
-}
-
+// Sandbox-first mirror of the global inference:set command; both delegate to
+// the shared runInferenceSet action. Flags only enforce the non-empty contract
+// here — deep validation (provider allowlist, model id charset, custom endpoint
+// URL/credential/API normalization) is intentionally centralized in
+// runInferenceSet so the global and sandbox-first grammars share one
+// validation surface (covered by test/lib/actions/inference-set.test.ts).
 export default class SandboxInferenceSetCommand extends NemoClawCommand {
   static id = "sandbox:inference:set";
   static strict = true;
