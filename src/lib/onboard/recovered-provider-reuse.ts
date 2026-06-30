@@ -3,6 +3,7 @@
 
 import { type EndpointFlavor, normalizeProviderBaseUrl } from "../core/url-utils";
 import { isSafeModelId } from "../validation";
+import type { GatewayProviderMetadata } from "./gateway-provider-metadata";
 import type { RecordedInferenceRoute } from "./provider-recovery";
 
 const MAX_PROVIDER_LENGTH = 128;
@@ -30,13 +31,6 @@ type EndpointIdentity = {
   selected: string | null | undefined;
   recovered: string | null | undefined;
   otherRecorded: readonly string[] | null;
-};
-
-export type GatewayProviderMetadata = {
-  name: string;
-  type: string;
-  credentialKeys: readonly string[];
-  configKeys: readonly string[];
 };
 
 type RecoveredProviderSelectionState = {

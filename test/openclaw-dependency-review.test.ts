@@ -241,6 +241,8 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("shared archive-installer redesign remains explicitly deferred");
     expect(review).toContain("direct source- and target-traversal vectors");
     expect(review).toContain("Live gateway display output is treated as untrusted text");
+    expect(review).toContain("gateway-provider-metadata.ts");
+    expect(review).toContain("Partial, oversized, duplicated, malformed, or ambiguous output");
     expect(review).toContain("Retained older OpenClaw pins are inactive compatibility/rollback");
     expect(review).toContain("fails closed on unknown or ambiguous formatter shapes");
     expect(review).toContain('OPENCLAW_VERSION="${OPENCLAW_VERSION}"');

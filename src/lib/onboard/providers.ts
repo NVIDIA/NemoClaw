@@ -15,6 +15,7 @@ const {
 } = require("../inference/config");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
+const { readGatewayProviderMetadata } = require("./gateway-provider-metadata");
 
 // ── Constants ────────────────────────────────────────────────────
 
@@ -367,44 +368,6 @@ function providerExistsInGateway(name, _runOpenshell) {
   return result.status === 0;
 }
 
-function parseGatewayProviderMetadata(output) {
-  const text = String(output || "").replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
-  const readField = (label) => {
-    const pattern = new RegExp(`^\\s*${label}:\\s*(.*?)\\s*$`, "gim");
-    const matches = [...text.matchAll(pattern)];
-    return matches.length === 1 ? matches[0][1].trim() : null;
-  };
-  const name = readField("Name");
-  const type = readField("Type");
-  const credentialKeys = readField("Credential keys");
-  const configKeys = readField("Config keys");
-  if (!name || !type || credentialKeys === null || configKeys === null) return null;
-  const parseKeys = (value) =>
-    value === "<none>"
-      ? []
-      : value
-          .split(",")
-          .map((entry) => entry.trim())
-          .filter(Boolean);
-  return {
-    name,
-    type,
-    credentialKeys: parseKeys(credentialKeys),
-    configKeys: parseKeys(configKeys),
-  };
-}
-
-function readGatewayProviderMetadata(name, _runOpenshell) {
-  const result = _runOpenshell(["provider", "get", name], {
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status !== 0) return null;
-  const metadata = parseGatewayProviderMetadata(`${result.stdout || ""}\n${result.stderr || ""}`);
-  return metadata?.name === name ? metadata : null;
-}
-
 /**
  * Create or update an OpenShell provider in the gateway.
  *
@@ -537,7 +500,6 @@ module.exports = {
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
-  parseGatewayProviderMetadata,
   readGatewayProviderMetadata,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
