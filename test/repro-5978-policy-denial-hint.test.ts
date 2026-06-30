@@ -76,7 +76,10 @@ function extractHintStanza(src: string): string {
 // force a high inherited SHLVL here so the stanza's source-time auto-call is
 // always gated out (regardless of the runner's own SHLVL) and only the snippet's
 // explicit invocation decides the outcome. This keeps the tests deterministic
-// even under `env -u SHLVL vitest`.
+// even under `env -u SHLVL vitest`. The forced SHLVL=9 is only the *inherited*
+// value: each snippet then assigns its own SHLVL (e.g. `SHLVL=1`) before calling
+// the gate, and that in-snippet assignment takes precedence — so the inherited
+// 9 only neutralizes the source-time auto-invocation, by design.
 function runInPty(snippet: string, env: NodeJS.ProcessEnv): { stdout: string; status: number } {
   // Write the snippet to a file so its shell quoting survives the
   // script(1) → sh -c → bash layering intact (only the file path crosses it).
@@ -192,6 +195,25 @@ describe("sandbox policy-denial logs breadcrumb (#5978)", () => {
     const { stdout, status } = gate({ OPENSHELL_SANDBOX: "\t" });
     expect(status).toBe(0);
     expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+  });
+
+  it("falls back to <name> for an uppercase-leading OPENSHELL_SANDBOX (matches NAME_VALID_PATTERN)", () => {
+    // NAME_VALID_PATTERN is lowercase-only (RFC-1123 label), so an uppercase
+    // leading letter is never a real sandbox name; reject Qa-5978 rather than
+    // echo the untrusted value into the copyable command.
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "Qa-5978" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    expect(stdout).not.toContain("nemoclaw Qa-5978 logs");
+  });
+
+  it("falls back to <name> for an OPENSHELL_SANDBOX containing an underscore", () => {
+    // Underscore is outside the RFC-1123 label class [a-z0-9-], so qa_5978 is
+    // not a valid sandbox name and must not be interpolated verbatim.
+    const { stdout, status } = gate({ OPENSHELL_SANDBOX: "qa_5978" });
+    expect(status).toBe(0);
+    expect(stdout).toContain("nemoclaw <name> logs --tail 50");
+    expect(stdout).not.toContain("nemoclaw qa_5978 logs");
   });
 
   it("falls back to <name> for a digit-leading OPENSHELL_SANDBOX (matches NAME_VALID_PATTERN)", () => {
