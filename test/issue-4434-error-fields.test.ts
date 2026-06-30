@@ -11,13 +11,9 @@ const DEPENDENCY_REVIEW = path.join(
   REPO_ROOT,
   "docs/security/openclaw-2026.6.9-dependency-review.md",
 );
-const LIVE_BASH_GUARD = path.join(
-  REPO_ROOT,
-  "test/e2e/test-issue-4434-tui-unreachable-inference.sh",
-);
 const LIVE_VITEST_GUARD = path.join(
   REPO_ROOT,
-  "test/e2e-scenario/live/issue-4434-tui-unreachable-inference.test.ts",
+  "test/e2e/live/issue-4434-tui-unreachable-inference.test.ts",
 );
 
 const CURRENT_REVIEWED_OPENCLAW_VERSION = "2026.6.9";
@@ -90,7 +86,6 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
 
   it("keeps the dependency review and live guards tied to the full-field requirement", () => {
     const review = fs.readFileSync(DEPENDENCY_REVIEW, "utf-8");
-    const bashGuard = fs.readFileSync(LIVE_BASH_GUARD, "utf-8");
     const vitestGuard = fs.readFileSync(LIVE_VITEST_GUARD, "utf-8");
     expect(review).toContain("test/issue-4434-error-fields.test.ts");
     expect(review).toContain("scripts/patch-openclaw-issue-4434-diagnostics.ts");
@@ -101,12 +96,10 @@ describe("full OpenClaw TUI error guard (#4434)", () => {
     expect(review).toContain(
       "3/3 fields are missing in the upstream-shaped `openclaw@2026.6.9` output",
     );
-    for (const guard of [bashGuard, vitestGuard]) {
-      expect(guard).toContain("http");
-      expect(guard).toContain("reporting");
-      expect(guard).toContain("recovery");
-      expect(guard).toContain("full #4434 diagnostic fields");
-      expect(guard).not.toContain("tighten both live guards");
-    }
+    expect(vitestGuard).toContain("http");
+    expect(vitestGuard).toContain("reporting");
+    expect(vitestGuard).toContain("recovery");
+    expect(vitestGuard).toContain("full #4434 diagnostic fields");
+    expect(vitestGuard).not.toContain("tighten both live guards");
   });
 });

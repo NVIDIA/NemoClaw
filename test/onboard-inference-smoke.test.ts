@@ -12,7 +12,6 @@ import { testTimeoutOptions } from "./helpers/timeouts";
 
 // Coverage guard for #3253. Onboard must not report installation success until
 // the configured provider/model route has served a real chat completion. This
-// caller-level, mock-driven Vitest test replaces test/e2e/test-onboard-inference-smoke.sh
 // per #5119: direct setupInference() probes belong in test/, not in regression-e2e
 // bash or the scenario framework. Refs #5098, #4349.
 const REPO_ROOT = path.join(import.meta.dirname, "..");

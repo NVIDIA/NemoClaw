@@ -117,11 +117,11 @@ function looksLikeTestFixturePath(text: string): boolean {
     /Dockerfile\.sandbox/.test(normalized) ||
     /(?:^|\/)fixtures?\//.test(normalized) ||
     /\.agents\/skills/.test(normalized) ||
-    // The isolated scenario suite under test/e2e-scenario/ is entirely test
-    // assets and a self-contained runtime: scenario manifests, validation
+    // The isolated E2E suite under test/e2e/ is entirely test
+    // assets and a self-contained runtime: target manifests, validation
     // suite YAMLs, expected-state YAMLs, and the suite's own runner. Reads of
     // these paths are not source-shape coupling to product code.
-    /(?:^|["'`/])test\/e2e-scenario(?:["'`/]|$)/.test(normalized)
+    /(?:^|["'`/])test\/e2e(?:["'`/]|$)/.test(normalized)
   );
 }
 
