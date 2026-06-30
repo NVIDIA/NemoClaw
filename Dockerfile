@@ -11,7 +11,7 @@
 # to all FROM directives. Can be overridden via --build-arg.
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 
-# Stage 1: Build TypeScript plugin from source
+# Stage 1: Build TypeScript plugin and build-time verifier from source
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
@@ -24,6 +24,18 @@ COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /op
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
+COPY scripts/verify-openclaw-fetch-guard-runtime.ts /opt/nemoclaw-verifier-src/verify-openclaw-fetch-guard-runtime.ts
+RUN /opt/nemoclaw/node_modules/.bin/tsc \
+    /opt/nemoclaw-verifier-src/verify-openclaw-fetch-guard-runtime.ts \
+    --target ES2022 \
+    --module ES2022 \
+    --moduleResolution bundler \
+    --types node \
+    --strict \
+    --skipLibCheck \
+    --esModuleInterop \
+    --noEmitOnError \
+    --outDir /opt/nemoclaw-verifier
 
 # Stage 2: Build TypeScript messaging runtime preloads.
 FROM builder AS runtime-preload-builder
@@ -100,8 +112,10 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+COPY --from=builder /opt/nemoclaw-verifier/verify-openclaw-fetch-guard-runtime.js /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+        /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -461,9 +475,14 @@ RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
 # pinned selection-*.js shape changes.
+# The same build layer then imports the npm-installed, compiled fetch guard with
+# an injected fetch implementation (no external request) to prove proxy dispatch,
+# no local DNS, literal SSRF denies, and redirect re-checks after patching.
 # hadolint ignore=DL3059
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
-    /usr/local/lib/node_modules/openclaw/dist
+    /usr/local/lib/node_modules/openclaw/dist \
+    && node /usr/local/lib/nemoclaw/verify-openclaw-fetch-guard-runtime.mjs \
+        /usr/local/lib/node_modules/openclaw/dist
 
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
