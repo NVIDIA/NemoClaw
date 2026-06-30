@@ -110,7 +110,7 @@ nemoclaw_e2e_probe_hosted_inference() {
 
   # This preflight is a network/TLS reachability check only. Do not spend an
   # inference request here: full parallel nightly runs can otherwise burn CI
-  # quota or trip HTTP 429 before the scenario reaches the behavior under test.
+  # quota or trip HTTP 429 before the target reaches the behavior under test.
   # In compatible mode, NEMOCLAW_ENDPOINT_URL is a trusted repo-controlled CI
   # input from nightly workflow env_json; this probe intentionally validates
   # only TCP/TLS/HTTP reachability for that base URL, not provider semantics.

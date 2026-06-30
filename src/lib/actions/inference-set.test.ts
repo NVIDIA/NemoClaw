@@ -1131,10 +1131,10 @@ describe("runInferenceSet", () => {
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
-    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
-    expect(err.message).toMatch(/provider 'openai-api' not found/);
-    expect(err.message).toMatch(/Registered providers: nvidia-prod, anthropic-prod/);
-    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    const message = (err as Error).message;
+    expect(message).toMatch(/provider 'openai-api' not found/);
+    expect(message).toMatch(/Registered providers: nvidia-prod, anthropic-prod/);
+    expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
   });
@@ -1153,12 +1153,12 @@ describe("runInferenceSet", () => {
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
-    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
-    expect(err.message).toMatch(/OpenShell inference route update failed with exit 42/);
-    expect(err.message).toMatch(/network timeout connecting to gateway/);
-    expect(err.message).not.toContain("nvapi-secret-value");
-    expect(err.message).not.toMatch(/Registered providers/);
-    expect(err.message).not.toMatch(/onboard/);
+    const message = (err as Error).message;
+    expect(message).toMatch(/OpenShell inference route update failed with exit 42/);
+    expect(message).toMatch(/network timeout connecting to gateway/);
+    expect(message).not.toContain("nvapi-secret-value");
+    expect(message).not.toMatch(/Registered providers/);
+    expect(message).not.toMatch(/onboard/);
   });
 
   it("shows 'No providers registered' when no sandbox has a provider on provider-not-found (#5924)", async () => {
@@ -1179,9 +1179,9 @@ describe("runInferenceSet", () => {
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
-    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
-    expect(err.message).toMatch(/No providers registered/);
-    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    const message = (err as Error).message;
+    expect(message).toMatch(/No providers registered/);
+    expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
 
   it("omits provider list and still shows onboard tip when listSandboxes throws (#5924)", async () => {
@@ -1201,10 +1201,10 @@ describe("runInferenceSet", () => {
     ).catch((e: Error) => e);
 
     expect(err).toBeInstanceOf(Error);
-    if (!(err instanceof Error)) throw new Error("Expected inference set to fail");
-    expect(err.message).not.toMatch(/Registered providers/);
-    expect(err.message).not.toMatch(/No providers registered/);
-    expect(err.message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
+    const message = (err as Error).message;
+    expect(message).not.toMatch(/Registered providers/);
+    expect(message).not.toMatch(/No providers registered/);
+    expect(message).toMatch(/Tip: register a new provider with `nemoclaw onboard`/);
   });
 
   it("keeps gateway and registry consistent when the sandbox config read fails", async () => {

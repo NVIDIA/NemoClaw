@@ -40,6 +40,18 @@ describe("redactForLog", () => {
     });
   });
 
+  it("redacts generated private-key blocks inside otherwise safe strings", () => {
+    const privateKey = [
+      ["-----BEGIN", "PRIVATE KEY-----"].join(" "),
+      "unknown-generated-private-key-material",
+      ["-----END", "PRIVATE KEY-----"].join(" "),
+    ].join("\\n");
+
+    const result = redactForLog({ snapshot: JSON.stringify({ privateKey }) });
+
+    expect(result).toEqual({ snapshot: '{"privateKey":"<REDACTED>"}' });
+  });
+
   it("does not recurse forever on circular objects", () => {
     const input: Record<string, unknown> = { name: "root" };
     input.self = input;

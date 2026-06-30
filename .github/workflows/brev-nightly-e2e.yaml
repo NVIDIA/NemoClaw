@@ -4,7 +4,7 @@
 name: E2E / Brev Nightly
 
 # Runs Brev launchable validation as a standalone nightly workflow while the
-# main nightly-e2e workflow remains isolated from Brev platform flakiness.
+# main E2E workflow remains isolated from Brev platform flakiness.
 #
 # Suites:
 #   all                 credential-sanitization + telegram-injection
