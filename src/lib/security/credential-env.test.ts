@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { restoreEnvBulk } from "../../../test/helpers/env-test-helpers";
 import {
   buildScrubbedCurlProbeEnv,
   CREDENTIAL_ENV_EXPLICIT_DENY,
@@ -49,13 +50,15 @@ describe("shouldStripCredentialEnv", () => {
 });
 
 describe("buildScrubbedCurlProbeEnv", () => {
-  const saved = { ...process.env };
+  const TOUCHED_ENV = ["NEMOCLAW_TEST_BENIGN", "NEMOCLAW_TEST_API_KEY", "NGC_API_KEY"];
+  const original: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    for (const name of TOUCHED_ENV) original[name] = process.env[name];
+  });
 
   afterEach(() => {
-    for (const key of Object.keys(process.env)) {
-      if (!(key in saved)) delete process.env[key];
-    }
-    Object.assign(process.env, saved);
+    restoreEnvBulk(original);
   });
 
   it("drops credential-shaped process.env vars but keeps benign ones", () => {
