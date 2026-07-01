@@ -12,10 +12,12 @@ const startSource = fs.readFileSync(START_SCRIPT, "utf-8");
 
 function extractShellFunction(name: string): string {
   const match = startSource.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  return `${name}() {${match[1]}\n}`;
+  const body =
+    match?.[1] ??
+    (() => {
+      throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
+    })();
+  return `${name}() {${body}\n}`;
 }
 
 function runBash(script: string) {
