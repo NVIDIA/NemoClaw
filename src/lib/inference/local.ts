@@ -436,7 +436,25 @@ export function probeOllamaAuthProxyHealth(
   }
   const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
-  const authConfig = createBearerAuthConfig(token);
+  const base = {
+    providerLabel: "Ollama auth proxy",
+    endpoint,
+    probeLabel: "auth proxy",
+  };
+  let authConfig: ReturnType<typeof createBearerAuthConfig>;
+  try {
+    authConfig = createBearerAuthConfig(token);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unhealthy",
+      detail:
+        `Ollama auth proxy health could not prepare the persisted token for ${endpoint}. ` +
+        `(${reason})`,
+    };
+  }
   let result: CurlProbeResult;
   try {
     result = runCurlProbeImpl(
@@ -446,12 +464,6 @@ export function probeOllamaAuthProxyHealth(
   } finally {
     authConfig.cleanup();
   }
-
-  const base = {
-    providerLabel: "Ollama auth proxy",
-    endpoint,
-    probeLabel: "auth proxy",
-  };
   if (result.ok) {
     // A 200 from the proxy alone is not a healthy signal — the proxy may be
     // serving a captive HTTP_PROXY page, or its upstream Ollama backend may

@@ -277,7 +277,7 @@ describe("inference health", () => {
       expect(result?.detail).toContain("provider-level /models");
     });
 
-    it("reports Kimi health as not probed when credential lookup fails", () => {
+    it("reports Kimi health as unhealthy when credential lookup fails", () => {
       let called = false;
       const result = probeRemoteProviderHealth("nvidia-prod", {
         model: "moonshotai/kimi-k2.6",
@@ -298,8 +298,9 @@ describe("inference health", () => {
       });
 
       expect(called).toBe(false);
-      expect(result?.ok).toBe(true);
+      expect(result?.ok).toBe(false);
       expect(result?.probed).toBe(false);
+      expect(result?.failureLabel).toBe("unhealthy");
       expect(result?.detail).toContain("credential store unavailable");
     });
   });

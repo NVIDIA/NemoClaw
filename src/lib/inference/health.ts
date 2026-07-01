@@ -172,13 +172,12 @@ function probeNvidiaKimiK26Health(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
-      ok: true,
+      ok: false,
       probed: false,
       providerLabel,
       endpoint,
-      detail:
-        `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
-        `skipping model-specific chat-completions probe. (${reason})`,
+      failureLabel: "unhealthy",
+      detail: `Could not resolve ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health. (${reason})`,
     };
   }
 
@@ -201,13 +200,12 @@ function probeNvidiaKimiK26Health(
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {
-      ok: true,
+      ok: false,
       probed: false,
       providerLabel,
       endpoint,
-      detail:
-        `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health; ` +
-        `skipping model-specific chat-completions probe. (${reason})`,
+      failureLabel: "unhealthy",
+      detail: `Could not prepare ${NVIDIA_HEALTH_CREDENTIAL_ENV} for Kimi K2.6 health. (${reason})`,
     };
   }
 
