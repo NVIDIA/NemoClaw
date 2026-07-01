@@ -760,7 +760,7 @@ function runRuntimeShellEnvBootstrap() {
     const result = spawnSync("bash", [scriptPath], {
       encoding: "utf-8",
       timeout: 5000,
-      env: process.env,
+      env: { ...process.env, AWS_EC2_METADATA_DISABLED: "false" },
     });
     const envFileContent = fs.existsSync(envFile) ? fs.readFileSync(envFile, "utf-8") : "";
     const envFileMode = fs.existsSync(envFile)
@@ -805,6 +805,7 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
     expect(run.envFileContent).toContain('export HERMES_TUI_DIR="/opt/hermes/ui-tui"');
+    expect(run.envFileContent).not.toContain("AWS_EC2_METADATA_DISABLED");
     expect(run.envFileContent).not.toContain('HERMES_TUI_DIR="${HERMES_TUI_DIR:-');
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");

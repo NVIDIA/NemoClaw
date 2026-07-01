@@ -898,7 +898,7 @@ describe("regression guards", () => {
     });
   });
 
-  describe("OpenClaw runtime cache hardening", () => {
+  describe("OpenClaw runtime hardening", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
 
     it("disables jiti filesystem cache in base, runtime, and connect shells", () => {
@@ -912,6 +912,51 @@ describe("regression guards", () => {
       expect(baseSrc).toContain("ENV JITI_FS_CACHE=false");
       expect(runtimeSrc).toContain("ENV JITI_FS_CACHE=false");
       expect(startSrc).toContain('export JITI_FS_CACHE="false"');
+    });
+
+    it("disables EC2 metadata credential discovery across image, startup, and shell boundaries", () => {
+      const baseSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile.base"), "utf-8");
+      const runtimeSrc = fs.readFileSync(path.join(repoRoot, "Dockerfile"), "utf-8");
+      const startSrc = fs.readFileSync(
+        path.join(repoRoot, "scripts", "nemoclaw-start.sh"),
+        "utf-8",
+      );
+      const hermesBaseSrc = fs.readFileSync(
+        path.join(repoRoot, "agents", "hermes", "Dockerfile.base"),
+        "utf-8",
+      );
+      const hermesRuntimeSrc = fs.readFileSync(
+        path.join(repoRoot, "agents", "hermes", "Dockerfile"),
+        "utf-8",
+      );
+      const hermesStartSrc = fs.readFileSync(
+        path.join(repoRoot, "agents", "hermes", "start.sh"),
+        "utf-8",
+      );
+
+      expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+      expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+      for (const [source, stageStart] of [
+        [baseSrc, 0],
+        [runtimeSrc, runtimeSrc.indexOf("# Stage 3: Runtime image")],
+      ] as const) {
+        const fromIndex = source.indexOf("\nFROM ", stageStart);
+        const firstRunIndex = source.indexOf("\nRUN ", fromIndex);
+        const metadataEnvIndex = source.indexOf("ENV AWS_EC2_METADATA_DISABLED=true", fromIndex);
+        expect(metadataEnvIndex).toBeGreaterThan(fromIndex);
+        expect(metadataEnvIndex).toBeLessThan(firstRunIndex);
+      }
+      expect(startSrc).toContain("export AWS_EC2_METADATA_DISABLED=true");
+      expect(startSrc).toContain('export AWS_EC2_METADATA_DISABLED="true"');
+      expect(startSrc.indexOf("export AWS_EC2_METADATA_DISABLED=true")).toBeGreaterThan(
+        startSrc.indexOf('NEMOCLAW_CMD=("$@")'),
+      );
+      expect(startSrc.indexOf("export AWS_EC2_METADATA_DISABLED=true")).toBeLessThan(
+        startSrc.indexOf('OPENCLAW="$(command -v openclaw)"'),
+      );
+      expect(hermesBaseSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+      expect(hermesRuntimeSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
+      expect(hermesStartSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
     });
   });
 

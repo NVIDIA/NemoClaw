@@ -107,6 +107,24 @@ The sandbox blocks all outbound connections unless you explicitly list the endpo
 | Risk if relaxed | Each allowed endpoint is a potential data exfiltration path. The agent can send workspace content, credentials, or conversation history to any reachable host. |
 | Recommendation | Add only endpoints the agent needs for its task. Prefer operator approval for one-off requests over permanently widening the baseline. |
 
+<AgentOnly variant="openclaw">
+
+### EC2 Instance Metadata Credential Discovery
+
+NemoClaw forces `AWS_EC2_METADATA_DISABLED` to `true` for every OpenClaw process because OpenShell blocks the link-local EC2 Instance Metadata Service endpoint.
+This disables only EC2 instance-role credential discovery inside the sandbox.
+Static access keys, bearer tokens, shared profiles, SSO and process credentials, web identity, and ECS container credentials remain eligible.
+NemoClaw's host-local Amazon Bedrock adapter runs outside this sandbox credential-discovery boundary and remains unaffected.
+
+| Aspect | Detail |
+|---|---|
+| Default | OpenClaw images, gateway processes, child processes, cron jobs, and connected shells receive `AWS_EC2_METADATA_DISABLED=true`. |
+| What you can change | This is a NemoClaw sandbox invariant, not a user-facing setting. |
+| Risk if relaxed | Probing `169.254.169.254` cannot succeed through the OpenShell network boundary, and approving the link-local address would weaken SSRF protection. |
+| Recommendation | Do not add `169.254.169.254` to a network policy or override this environment variable. Removing the defense requires a separately designed, brokered IMDS credential flow. |
+
+</AgentOnly>
+
 ### Binary-Scoped Endpoint Rules
 
 Each network policy entry uses the `binaries` field to restrict which executables can reach the endpoint.
