@@ -25,10 +25,16 @@ export interface SizeLookup {
   source: SizeSource;
 }
 
+const OLLAMA_REF_SEGMENT_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
 function splitNamespaceAndTag(model: string): { namespace: string; tag: string } | null {
   const [name, tag = "latest"] = model.split(":", 2);
   if (!name || !tag) return null;
   const namespace = name.includes("/") ? name : `library/${name}`;
+  if (namespace.split("/").some((segment) => !OLLAMA_REF_SEGMENT_PATTERN.test(segment))) {
+    return null;
+  }
+  if (!OLLAMA_REF_SEGMENT_PATTERN.test(tag)) return null;
   return { namespace, tag };
 }
 
