@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { parseVersionFromText } from "../../../src/lib/adapters/openshell/client";
 import { shellQuote } from "../../../src/lib/core/shell-quote";
 import { buildAvailabilityProbeEnv } from "../fixtures/availability-env.ts";
 import { type HostCliClient, resultText } from "../fixtures/clients/index.ts";
@@ -693,7 +694,7 @@ test.skipIf(!shouldRunLiveE2E())(
     expectExitZero(hermesVersion, "Hermes version after rebuild");
     expect(resultText(hermesVersion)).not.toContain(OLD_HERMES_REGISTRY_VERSION);
     const hermesVersionText = resultText(hermesVersion);
-    const actualHermesVersion = hermesVersionText.match(/\((\d+\.\d+\.\d+)\)/)?.[1];
+    const actualHermesVersion = parseVersionFromText(hermesVersionText) ?? undefined;
     expectEqual(
       actualHermesVersion,
       expectedVersion,
