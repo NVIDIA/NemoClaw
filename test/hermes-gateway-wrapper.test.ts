@@ -292,6 +292,52 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
     }
   });
 
+  it("refuses gateway and config show with exit 127 when no trusted python3 interpreter exists", () => {
+    // `_resolve_trusted_python3()` scans a fixed absolute-path list; when
+    // every candidate is missing, `_run_gateway_guard()` and
+    // `_run_config_show()` must exit 127 with a `[SECURITY]` message rather
+    // than fall back to a PATH-resolved python3. Rewrite the tuple to point
+    // at paths guaranteed not to exist, run both entrypoints, and assert
+    // the fail-closed contract stays intact.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrapper-no-python-"));
+    try {
+      const missingA = path.join(dir, "missing-python3-a");
+      const missingB = path.join(dir, "missing-python3-b");
+      const missingC = path.join(dir, "missing-python3-c");
+      const wrapperSrc = fs
+        .readFileSync(WRAPPER, "utf-8")
+        .replace(
+          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
+          `_TRUSTED_PYTHON3 = (${JSON.stringify(missingA)}, ${JSON.stringify(missingB)}, ${JSON.stringify(missingC)})`,
+        );
+      fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
+      fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
+      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const gatewayRun = spawnSync(path.join(dir, "hermes"), ["gateway", "run"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir, SLACK_BOT_TOKEN: "" },
+      });
+      expect(gatewayRun.status).toBe(127);
+      expect(gatewayRun.stderr).toContain("[SECURITY]");
+      expect(gatewayRun.stderr).toContain("no python3 at a trusted absolute path");
+
+      const configRun = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
+        encoding: "utf-8",
+        timeout: 10_000,
+        env: { PATH: process.env.PATH ?? "", HOME: dir },
+      });
+      expect(configRun.status).toBe(127);
+      expect(configRun.stderr).toContain("[SECURITY]");
+      expect(configRun.stderr).toContain("no python3 at a trusted absolute path");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("masks api_key values in `config show` Python dict output", () => {
     const fixture = [
       "◆ Model",
