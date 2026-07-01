@@ -25,7 +25,8 @@ import {
 } from "../../onboard/sandbox-provider-cleanup";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { redact } from "../../security/redact";
-import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
+import { withTimerBoundShieldsMutationLock } from "../../shields/timer-bound-lock";
+import { killTimer as defaultKillShieldsTimer, readTimerMarker } from "../../shields/timer-control";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
@@ -40,7 +41,7 @@ import {
   selectGatewayForSandboxDestroy,
 } from "./destroy-gateway";
 import { getSandboxTargetGatewayName } from "./gateway-target";
-import { wipeSandboxState, type WipeSandboxStateDeps } from "./wipe-state";
+import { type WipeSandboxStateDeps, wipeSandboxState } from "./wipe-state";
 
 type DockerRmi = (tag: string, opts?: { ignoreError?: boolean }) => { status: number | null };
 
@@ -292,10 +293,10 @@ export function cleanupShieldsDestroyArtifacts(
   });
 }
 
+export type { WipeSandboxStateDeps };
 // Re-export so existing callers (tests, downstream code) keep working after
 // the wipe was extracted out of the destroy monolith (#5455 PRA-2).
 export { wipeSandboxState };
-export type { WipeSandboxStateDeps };
 
 export async function destroySandbox(
   sandboxName: string,
@@ -373,31 +374,75 @@ export async function destroySandbox(
   const cleanupGatewayName = getSandboxTargetGatewayName(sandboxName);
   selectGatewayForSandboxDestroy(sandboxName, cleanupGatewayName, runOpenshell);
 
-  // Wipe persistent state AFTER the gateway is selected so the exec targets
-  // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
-  // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
-  // PRA-2's later ask to defer past delete is physically impossible and
-  // contradicts PRA-5; the wipe-state docstring covers the full source-
-  // boundary justification.
-  wipeSandboxState(sandboxName);
+  const destructiveResult = withTimerBoundShieldsMutationLock(
+    sandboxName,
+    "destroy sandbox",
+    () => {
+      // Wipe persistent state AFTER the gateway is selected so the exec targets
+      // the sandbox's recorded gateway (#5455 PRA-5), but BEFORE delete because
+      // `sandbox delete` unmounts the PVC and `rm -rf` could no longer reach it.
+      // Hold the same lock used by the auto-restore timer through wipe, provider
+      // detach, and delete. A timer that is already restoring finishes first;
+      // a waiting timer cannot mutate this sandbox or a same-name replacement.
+      wipeSandboxState(sandboxName);
 
-  const detachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
-    runOpenshell,
-    redact,
-  });
-  const deleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const { output: deleteOutput, alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+      // The wipe needs the timed mutable posture so the sandbox user can
+      // remove manifest state. Convert it back to a verified locked posture
+      // immediately afterward and before delete. The outer owner carries the
+      // timer takeover token throughout, so a deadline/crash during the wipe
+      // can still reclaim it; after shieldsUp succeeds, delete failure or
+      // process death leaves a surviving sandbox hardened.
+      if (readTimerMarker(sandboxName)) {
+        const { shieldsUp: hardenShields } =
+          require("../../shields") as typeof import("../../shields");
+        hardenShields(sandboxName, {
+          throwOnError: true,
+          allowLegacyHermesProtocol: true,
+        });
+      }
 
-  if (deleteResult.status !== 0 && !alreadyGone) {
-    if (deleteOutput) {
-      console.error(`  ${deleteOutput}`);
+      const lockedDetachOutcome = runSandboxProviderPreDeleteCleanup(sandboxName, {
+        runOpenshell,
+        redact,
+      });
+      const lockedDeleteResult = runOpenshell(["sandbox", "delete", sandboxName], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const { output: deleteOutput, alreadyGone: lockedAlreadyGone } =
+        getSandboxDeleteOutcome(lockedDeleteResult);
+
+      if (lockedDeleteResult.status !== 0 && !lockedAlreadyGone) {
+        // Any active timer was cleared only after shieldsUp verified the live
+        // sandbox was hardened. Preserve that locked state on delete failure;
+        // do not remove its local shields record as if deletion had succeeded.
+        return {
+          ok: false as const,
+          deleteOutput,
+          exitCode: lockedDeleteResult.status || 1,
+        };
+      }
+
+      // The live sandbox is now gone while this name remains serialized.
+      // Revoke the timer and local shields state before releasing the lock so
+      // neither can target a subsequently created sandbox with the same name.
+      cleanupShieldsDestroyArtifacts(sandboxName);
+      return {
+        ok: true as const,
+        detachOutcome: lockedDetachOutcome,
+        deleteResult: lockedDeleteResult,
+        alreadyGone: lockedAlreadyGone,
+      };
+    },
+  );
+  if (!destructiveResult.ok) {
+    if (destructiveResult.deleteOutput) {
+      console.error(`  ${destructiveResult.deleteOutput}`);
     }
     console.error(`  Failed to destroy sandbox '${sandboxName}'.`);
-    process.exit(deleteResult.status || 1);
+    process.exit(destructiveResult.exitCode);
   }
+  const { detachOutcome, deleteResult, alreadyGone } = destructiveResult;
 
   const deleteSucceededOrAlreadyGone = deleteResult.status === 0 || alreadyGone;
   const shouldStopHostServices = shouldStopHostServicesAfterDestroy({
@@ -409,7 +454,6 @@ export async function destroySandbox(
   cleanupSandboxServices(sandboxName, {
     stopHostServices: shouldStopHostServices,
   });
-  cleanupShieldsDestroyArtifacts(sandboxName);
   // The sandbox's gateway was captured before the registry entry is removed —
   // post-removal lookups return null and would collapse the cleanup target
   // back to the default gateway.

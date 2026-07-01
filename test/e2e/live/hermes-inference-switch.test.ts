@@ -81,6 +81,8 @@ test.skipIf(!shouldRunLiveE2E())(
       : [];
     const switched = await runHermesInferenceSetWithRetry(host, apiKey, compatibleMetadataArgs);
     expect(switched.exitCode, resultText(switched)).toBe(0);
+    expect(resultText(switched)).not.toContain("writing the in-sandbox config failed");
+    expect(resultText(switched)).toContain(`Inference route synced for '${SANDBOX_NAME}'`);
 
     const pidAfter = await hermesGatewayPid(sandbox, "pid-after");
     maybeAssertPidStable(pidBefore, pidAfter, (actual, expected) => expect(actual).toBe(expected));

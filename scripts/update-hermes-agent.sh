@@ -248,9 +248,9 @@ apply_dockerfile_pins() {
 
 apply_manifest_pin() {
   local manifest="$1"
-  sed -i.bak "s|^expected_version: \".*\"|expected_version: \"${CALVER}\"|" "$manifest"
+  sed -i.bak "s|^expected_version: \".*\"|expected_version: \"${SEMVER}\"|" "$manifest"
   rm -f "${manifest}.bak"
-  grep -q "^expected_version: \"${CALVER}\"$" "$manifest"
+  grep -q "^expected_version: \"${SEMVER}\"$" "$manifest"
 }
 
 # ---------------------------------------------------------------------------
@@ -276,9 +276,10 @@ current_arg() {
 }
 
 CURRENT_TAG="$(current_arg HERMES_VERSION)"
+CURRENT_SEMVER="$(current_arg HERMES_SEMVER)"
 CURRENT_MANIFEST_VERSION="$(sed -n 's|^expected_version: "\(.*\)"|\1|p' "$MANIFEST" | head -1)"
 
-if [[ -z "$CURRENT_TAG" || -z "$CURRENT_MANIFEST_VERSION" ]]; then
+if [[ -z "$CURRENT_TAG" || -z "$CURRENT_SEMVER" || -z "$CURRENT_MANIFEST_VERSION" ]]; then
   echo "ERROR: could not read current pins from ${DOCKERFILE_BASE} / ${MANIFEST}" >&2
   exit 1
 fi
@@ -291,8 +292,8 @@ if [[ "$CHECK_ONLY" == 1 ]]; then
   else
     echo "OK: Dockerfile.base pins Hermes ${TAG}."
   fi
-  if [[ "$CURRENT_MANIFEST_VERSION" != "${CURRENT_TAG#v}" ]]; then
-    echo "DRIFT: manifest expected_version (${CURRENT_MANIFEST_VERSION}) does not match Dockerfile.base (${CURRENT_TAG#v})."
+  if [[ "$CURRENT_MANIFEST_VERSION" != "$CURRENT_SEMVER" ]]; then
+    echo "DRIFT: manifest expected_version (${CURRENT_MANIFEST_VERSION}) does not match Dockerfile.base HERMES_SEMVER (${CURRENT_SEMVER})."
     status=1
   fi
   if [[ "$UPDATE_INSTALLED_COPIES" == 1 ]]; then
@@ -387,7 +388,7 @@ done
 echo ""
 echo "Updated:"
 echo "  ${DOCKERFILE_BASE#"${REPO_ROOT}"/}: HERMES_VERSION=${TAG}, HERMES_SEMVER=${SEMVER}"
-echo "  ${MANIFEST#"${REPO_ROOT}"/}: expected_version=\"${CALVER}\""
+echo "  ${MANIFEST#"${REPO_ROOT}"/}: expected_version=\"${SEMVER}\""
 
 # ---------------------------------------------------------------------------
 # Bring saved installed copies (~/.nemoclaw, ~/.hermes) along, so an
@@ -418,7 +419,7 @@ if [[ "$UPDATE_INSTALLED_COPIES" == 1 ]]; then
         echo "ERROR: failed to update expected_version in installed copy ${installed_manifest}" >&2
         exit 1
       }
-      echo "  installed copy ${installed_manifest}: expected_version=\"${CALVER}\""
+      echo "  installed copy ${installed_manifest}: expected_version=\"${SEMVER}\""
     fi
   done < <(discover_installed_dockerfiles)
 else

@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import YAML from "yaml";
+import { PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -108,29 +109,18 @@ function validateJob(errors: string[], spec: JobSpec, job: WorkflowJob): void {
   }
 }
 
-function validateOpenClawDockerAuth(errors: string[], job: WorkflowJob): void {
-  const configure = job.steps?.find(
-    (step) => step.name === "Configure isolated Docker auth directory",
-  );
+function validateOpenClawDockerAuthOrder(errors: string[], job: WorkflowJob): void {
   const cleanup = job.steps?.find((step) => step.name === "Clean up Docker auth");
-  const matrixPath = "docker-config-openclaw-inference-switch-${{ matrix.mode }}";
-  if (!configure?.run?.includes(matrixPath)) {
-    errors.push("openclaw-inference-switch Docker auth path must identify its mode");
-  }
-  if (!cleanup?.run?.includes(matrixPath) || !cleanup.run.includes('rm -rf "${docker_config}"')) {
-    errors.push("openclaw-inference-switch must always remove its mode-specific Docker auth");
-  }
   if (cleanup?.if !== "always()") {
     errors.push("openclaw-inference-switch Docker auth cleanup must always run");
   }
 
   const stepOrder = [
-    "Build CLI",
-    "Configure isolated Docker auth directory",
     "Authenticate to Docker Hub",
+    PREPARE_E2E_STEP,
     "Run OpenClaw inference switch live test",
-    "Clean up Docker auth",
     "Upload OpenClaw inference switch artifacts",
+    "Clean up Docker auth",
   ].map((name) => job.steps?.findIndex((step) => step.name === name) ?? -1);
   if (
     stepOrder.some(
@@ -138,7 +128,7 @@ function validateOpenClawDockerAuth(errors: string[], job: WorkflowJob): void {
     )
   ) {
     errors.push(
-      "openclaw-inference-switch must build, authenticate, test, clean credentials, then upload",
+      "openclaw-inference-switch must authenticate, prepare, test, upload artifacts, then clean credentials",
     );
   }
 }
@@ -152,7 +142,7 @@ export function readInferenceSwitchWorkflow(
 export function validateInferenceSwitchWorkflow(workflow: InferenceSwitchWorkflow): string[] {
   const errors: string[] = [];
   for (const spec of JOBS) validateJob(errors, spec, workflow.jobs[spec.job] ?? {});
-  validateOpenClawDockerAuth(errors, workflow.jobs["openclaw-inference-switch"] ?? {});
+  validateOpenClawDockerAuthOrder(errors, workflow.jobs["openclaw-inference-switch"] ?? {});
   return errors;
 }
 

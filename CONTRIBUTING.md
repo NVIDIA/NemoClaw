@@ -61,7 +61,7 @@ That section is a planning aid, not a commitment that a specific issue or featur
 Install the following before you begin.
 
 - Node.js 22.16+ and npm 10+
-- Python 3.11+ (for blueprint and documentation builds)
+- Python 3.11+ (for documentation tooling)
 - Docker (running)
 - [uv](https://docs.astral.sh/uv/) (for Python dependency management)
 - [hadolint](https://github.com/hadolint/hadolint) (Dockerfile linter — `brew install hadolint` on macOS)
@@ -77,9 +77,21 @@ npm install
 # Install and build the TypeScript plugin
 cd nemoclaw && npm install && npm run build && cd ..
 
-# Install Python deps for the blueprint
-cd nemoclaw-blueprint && uv sync && cd ..
+# Install Python documentation dependencies from the repository root
+uv sync
 ```
+
+Verify that the checkout is ready for contributor work:
+
+```bash
+npm run dev:doctor
+```
+
+The contributor doctor is read-only.
+It checks the toolchain, dependencies, build artifacts, Git hooks, contributor identity and signing, GitHub authentication, Docker availability, and the locally linked NemoClaw CLI.
+It does not install packages, change configuration, start services, or create a sandbox.
+It complements the end-user installer and coding-agent starter prompt; those paths install and operate NemoClaw but do not prepare a source checkout for contribution.
+Fix any reported failures, then run the command again before creating a feature branch.
 
 ## Building
 
@@ -116,6 +128,7 @@ These are the primary `make` and `npm` targets for day-to-day development:
 
 | Task | Purpose |
 |------|---------|
+| `npm run dev:doctor` | Run read-only contributor environment readiness checks |
 | `make check` | Run all linters (TypeScript + Python) |
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |

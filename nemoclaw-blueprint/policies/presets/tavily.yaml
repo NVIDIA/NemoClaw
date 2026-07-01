@@ -17,9 +17,10 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
+      # OpenShell attributes Deep Agents Code Tavily requests to this managed
+      # Python venv, which its strict Landlock policy mounts read-only.
       - { path: /opt/venv/bin/python3* }
-      - { path: /usr/bin/python3* }
-      - { path: /usr/local/bin/python3* }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+      - { path: /usr/local/bin/curl }
       - { path: /usr/bin/curl }

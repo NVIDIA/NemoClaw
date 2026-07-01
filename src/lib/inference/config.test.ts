@@ -29,7 +29,6 @@ describe("inference selection config", () => {
       "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-ultra-550b-a55b",
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-      "z-ai/glm-5.1",
       "minimaxai/minimax-m2.7",
       "moonshotai/kimi-k2.6",
       "openai/gpt-oss-120b",
@@ -52,6 +51,11 @@ describe("inference selection config", () => {
       "openai/gpt-5.5",
     ]);
     expect(HERMES_PROVIDER_MODEL_OPTIONS.length).toBeGreaterThan(10);
+  });
+
+  it("retires GLM 5.1 only from the NVIDIA Endpoints picker", () => {
+    expect(CLOUD_MODEL_OPTIONS.map((option) => option.id)).not.toContain("z-ai/glm-5.1");
+    expect(HERMES_PROVIDER_MODEL_OPTIONS).toContain("z-ai/glm-5.1");
   });
 
   it("maps ollama-local to the sandbox inference route and default model", () => {
