@@ -339,6 +339,12 @@ function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditio
     : {};
   const output: UnknownRecord = {};
 
+  // Forward-compatibility contract: parseOpenShellPolicy has already parsed a
+  // single valid YAML document. Unknown top-level OpenShell fields may be
+  // mappings, sequences, or scalars, so preserve their parsed values without
+  // reinterpretation. Only network_policies requires mapping validation because
+  // this function merges entries inside that field; YAML.stringify safely
+  // serializes the other parsed YAML values.
   for (const [key, value] of Object.entries(current)) {
     if (key !== "version" && key !== "network_policies") {
       output[key] = value;

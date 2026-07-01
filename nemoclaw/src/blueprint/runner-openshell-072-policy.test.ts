@@ -46,6 +46,8 @@ const BASE_POLICY = `version: 1
 future_policy:
   opaque_setting:
     keep: true
+future_mode: strict
+future_features: [audit, attribution]
 filesystem_policy:
   default: deny
   roots: [/sandbox]
@@ -159,7 +161,7 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
     vi.restoreAllMocks();
   });
 
-  it("preserves MCP and JSON-RPC fields without round-tripping provider entries", async () => {
+  it("preserves MCP, JSON-RPC, and unknown YAML values without provider entries", async () => {
     await actionApply("default", blueprint());
 
     expect(mockExeca).toHaveBeenCalledWith(
@@ -175,11 +177,15 @@ describe("OpenShell 0.0.72 blueprint policy round-trip", () => {
 
     const merged = mergedPolicy() as {
       future_policy: { opaque_setting: { keep: boolean } };
+      future_mode: string;
+      future_features: string[];
       filesystem_policy: { default: string; roots: string[] };
       metadata: { future_schema: string; preserve: boolean };
       network_policies: Record<string, unknown>;
     };
     expect(merged.future_policy).toEqual({ opaque_setting: { keep: true } });
+    expect(merged.future_mode).toBe("strict");
+    expect(merged.future_features).toEqual(["audit", "attribution"]);
     expect(merged.filesystem_policy).toEqual({ default: "deny", roots: ["/sandbox"] });
     expect(merged.metadata).toEqual({ future_schema: "opaque", preserve: true });
     expect(merged.network_policies).toEqual({

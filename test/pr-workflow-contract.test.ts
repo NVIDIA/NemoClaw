@@ -57,6 +57,10 @@ const trustedCheckoutAction = "actions/checkout@df4cb1c069e1874edd31b4311f188417
 const trustedSetupNodeAction = "actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e";
 const installerHashBootstrapCommit = "6571063796e1f31648dfd63c7aee91d22612020d";
 const installerHashBootstrapTree = "4594dfb2d7bd451e36a3d42b3e5403ae448bf94b";
+const installerHashBootstrapScriptSha256 =
+  "6acd28ee1102abed17f050d931714f56c4012333ab668b648505b99b1232e5f0";
+const installerHashBootstrapActionSha256 =
+  "9c48c64cc934032c99a0aa9aa08b1164757988dc2842e1df88d1b7252ce1183f";
 const installerHashBootstrapCreatedAt = "2026-06-30T23:26:13Z";
 const installerHashBootstrapExpiresAt = "2026-12-27T23:26:13Z";
 
@@ -167,6 +171,10 @@ describe("pull request and main workflow contracts", () => {
   const prWorkflow = readYaml<CiWorkflow>(".github/workflows/pr.yaml");
   const mainWorkflow = readYaml<CiWorkflow>(".github/workflows/main.yaml");
   const installerHashWorkflow = readYaml<CiWorkflow>(".github/workflows/installer-hash-check.yaml");
+  const installerHashWorkflowSource = readFileSync(
+    ".github/workflows/installer-hash-check.yaml",
+    "utf8",
+  );
   const installerHashAction = readYaml<InstallerHashAction>(
     ".github/actions/ci-installer-hash-check/action.yaml",
   );
@@ -273,6 +281,9 @@ describe("pull request and main workflow contracts", () => {
     expect(bootstrapTreeVerification.if).toBe(bootstrapCheckout.if);
     expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapCommit);
     expect(bootstrapTreeVerification.run).toContain(installerHashBootstrapTree);
+    expect(installerHashWorkflowSource).toContain("manualReviewEvidence: on 2026-07-01");
+    expect(installerHashWorkflowSource).toContain(installerHashBootstrapScriptSha256);
+    expect(installerHashWorkflowSource).toContain(installerHashBootstrapActionSha256);
     expect(
       requiredWorkflowStepIndex(job, "Enforce immutable installer hash bootstrap expiry"),
     ).toBeLessThan(requiredWorkflowStepIndex(job, "Checkout immutable installer hash bootstrap"));
