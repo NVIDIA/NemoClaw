@@ -102,6 +102,12 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     });
   });
 
+  it("rejects malformed preset entries instead of text-merging an invalid policy", () => {
+    expect(() =>
+      policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), "  malformed: [unterminated"),
+    ).toThrow(/preset network_policies entries must be a valid YAML mapping/);
+  });
+
   it("preserves MCP and JSON-RPC fields when removing a merged preset", () => {
     const merged = policies.mergePresetIntoPolicy(YAML.stringify(EXISTING_POLICY), PRESET_ENTRIES);
     const removed = YAML.parse(policies.removePresetFromPolicy(merged, PRESET_ENTRIES));
