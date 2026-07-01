@@ -362,8 +362,8 @@ function registryVersion(): unknown {
 
 function registrySandbox(): Record<string, unknown> {
   const sandbox = readJsonFile<RegistryData>(REGISTRY_FILE, {}).sandboxes?.[SANDBOX_NAME];
-  if (!sandbox) throw new Error(`registry entry missing for ${SANDBOX_NAME}`);
-  return sandbox;
+  expect(sandbox, `registry entry missing for ${SANDBOX_NAME}`).toBeDefined();
+  return sandbox as Record<string, unknown>;
 }
 
 test.skipIf(!shouldRunLiveE2E())(
