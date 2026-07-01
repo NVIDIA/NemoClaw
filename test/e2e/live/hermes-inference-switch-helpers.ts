@@ -34,7 +34,7 @@ export const SWITCH_PROVIDER =
   (USE_COMPATIBLE_HOSTED ? "compatible-endpoint" : "nvidia-prod");
 export const SWITCH_MODEL =
   process.env.NEMOCLAW_SWITCH_MODEL ??
-  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "z-ai/glm-5.1");
+  (USE_COMPATIBLE_HOSTED ? DEFAULT_COMPAT_MODEL : "nvidia/nemotron-3-super-120b-a12b");
 export const SWITCH_API = process.env.NEMOCLAW_SWITCH_INFERENCE_API ?? "openai-completions";
 const SWITCH_MOCK_ANTHROPIC = process.env.NEMOCLAW_SWITCH_MOCK_ANTHROPIC ?? "0";
 const SWITCH_MOCK_PORT = Number.parseInt(process.env.NEMOCLAW_SWITCH_MOCK_PORT ?? "0", 10);

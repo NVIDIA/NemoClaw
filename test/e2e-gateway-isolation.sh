@@ -216,6 +216,7 @@ ROOT_CONTROL_OUT=$(run_as_root '
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/state-dir-guard.py)" = "root:root 500" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/openclaw-config-guard.py)" = "root:root 500" ]
   [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
+  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/normalize_mutable_config_perms.py)" = "root:root 555" ]
   echo META_OK
   id -nG gateway | tr " " "\n" | grep -qx sandbox
   id -nG root | tr " " "\n" | grep -qx sandbox
@@ -604,6 +605,228 @@ if echo "$OUT" | grep -q "NOOP_OK"; then
   pass "no override applied when env var is unset"
 else
   fail "config changed unexpectedly without override: $OUT"
+fi
+
+# ── Test 30: One-shot cleanup repairs post-Doctor DAC modes ──────
+# PID 1 drops CAP_DAC_OVERRIDE, so root cannot traverse a sandbox-owned 0700
+# config directory. Exercise the supervised helper from the built image: a
+# permanently dropped owner child repairs the tree, then transfers its pinned
+# directory descriptor to the root-only baseline lock.
+
+info "30. One-shot cleanup repairs 700/600 without CAP_DAC_OVERRIDE"
+OUT=$(docker run --rm --cap-drop DAC_OVERRIDE --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  test -s /tmp/normalize.sh
+  source /tmp/normalize.sh
+  capsh --has-p=cap_setgid
+  capsh --has-p=cap_setuid
+  gosu sandbox sh -c "printf baseline > /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; chmod 600 /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  gosu sandbox chmod 700 /sandbox/.openclaw
+  normalize_mutable_config_perms
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw)\" = 2770"
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/openclaw.json)\" = 660"
+  gosu sandbox sh -c "test \"\$(stat -c %a /sandbox/.openclaw/.config-hash)\" = 660"
+  gosu sandbox sh -c "test \"\$(stat -c \"%a %U:%G\" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)\" = \"440 root:sandbox\""
+  gosu gateway sh -c "printf \" \" >>/sandbox/.openclaw/openclaw.json"
+  printf "ONESHOT_DAC_REPAIR_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "ONESHOT_DAC_REPAIR_OK"; then
+  pass "owner-UID repair restores 2770/660 and gateway-user writes"
+else
+  fail "one-shot DAC repair failed: $OUT"
+fi
+
+# ── Test 30a: Mutable repair rejects a non-sandbox tree owner ─────
+
+info "30a. One-shot cleanup rejects a mutable tree owned by another UID"
+OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  test -s /tmp/normalize.sh
+  source /tmp/normalize.sh
+  chown -R gateway:gateway /sandbox/.openclaw
+  before=$(stat -c "%u %a" /sandbox/.openclaw)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  after=$(stat -c "%u %a" /sandbox/.openclaw)
+  [ "$rc" -eq 1 ]
+  [ "$before" = "$after" ]
+  printf "OWNER_UID_REFUSAL_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "OWNER_UID_REFUSAL_OK" \
+  && echo "$OUT" | grep -q "does not match sandbox UID"; then
+  pass "owner-UID repair refuses a non-sandbox config tree without changing it"
+else
+  fail "owner-UID mismatch was not rejected safely: $OUT"
+fi
+
+# ── Test 30b: Baseline lock fails closed without CAP_SETGID ──────
+
+info "30b. One-shot cleanup reports a missing CAP_SETGID precondition"
+OUT=$(docker run --rm --user 0:0 --cap-drop DAC_OVERRIDE --cap-drop SETGID --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start >/tmp/normalize.sh
+  test -s /tmp/normalize.sh
+  source /tmp/normalize.sh
+  sandbox_gid=$(id -g sandbox)
+  python3 - "$sandbox_gid" <<"PY_ASSERT_GROUP_ABSENT"
+import os
+import sys
+
+assert int(sys.argv[1]) not in os.getgroups()
+PY_ASSERT_GROUP_ABSENT
+  before=$(stat -c "%u %g %a" /sandbox/.openclaw)
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  after=$(stat -c "%u %g %a" /sandbox/.openclaw)
+  [ "$rc" -eq 1 ]
+  [ "$before" = "$after" ]
+  printf "CAP_SETGID_REFUSAL_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "CAP_SETGID_REFUSAL_OK" \
+  && echo "$OUT" | grep -q "CAP_SETGID is required"; then
+  pass "baseline lock fails closed with an actionable CAP_SETGID diagnostic"
+else
+  fail "missing CAP_SETGID was not reported safely: $OUT"
+fi
+
+# ── Test 30c: Post-override capture severs hardlink aliases ─────
+
+info "30c. Post-override capture freshens a hardlinked recovery baseline"
+OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  {
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^write_openclaw_config_baseline() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/normalize.sh
+  test -s /tmp/normalize.sh
+  source /tmp/normalize.sh
+  rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline
+  normalize_mutable_config_perms
+  gosu sandbox sh -c "rm -f /sandbox/.openclaw/openclaw.json.nemoclaw-baseline; printf \"{\\\"safe\\\":true}\\n\" > /sandbox/baseline-hardlink-target; chmod 640 /sandbox/baseline-hardlink-target; ln /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline"
+  before=$(stat -c "%u %g %a" /sandbox/baseline-hardlink-target)
+  [ "$(stat -c "%h" /sandbox/baseline-hardlink-target)" -eq 2 ]
+  write_openclaw_config_baseline
+  after=$(stat -c "%u %g %a" /sandbox/baseline-hardlink-target)
+  [ "$before" = "$after" ]
+  [ "$(stat -c "%h" /sandbox/baseline-hardlink-target)" -eq 1 ]
+  [ "$(stat -c "%a %U:%G %h" /sandbox/.openclaw/openclaw.json.nemoclaw-baseline)" = "440 root:sandbox 1" ]
+  ! cmp -s /sandbox/baseline-hardlink-target /sandbox/.openclaw/openclaw.json.nemoclaw-baseline
+  cmp -s /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/openclaw.json.nemoclaw-baseline
+  printf "HARDLINK_PROMOTION_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "HARDLINK_PROMOTION_OK"; then
+  pass "baseline promotion leaves an external hardlink inode untouched"
+else
+  fail "hardlinked baseline was not promoted safely: $OUT"
+fi
+
+# ── Test 30d: Pinned owner descriptor rejects path replacement ──
+
+info "30d. One-shot cleanup rejects replacement after owner normalization"
+OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  python3 - <<"PY_INJECT_HANDOFF_RACE"
+from pathlib import Path
+
+source = Path("/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py").read_text()
+needle = "            rights_fds = [root_fd]\n"
+replacement = """            for required_name in ("openclaw.json", ".config-hash"):
+                os.unlink(os.path.join(config_dir, required_name))
+            os.rmdir(config_dir)
+            os.mkdir(config_dir, 0o700)
+            for name, content in (("openclaw.json", "{}\\n"), (".config-hash", "hash\\n")):
+                path = os.path.join(config_dir, name)
+                with open(path, "w", encoding="utf-8") as replacement_file:
+                    replacement_file.write(content)
+                os.chmod(path, 0o600)
+            rights_fds = [root_fd]
+"""
+if source.count(needle) != 1:
+    raise SystemExit("handoff injection point changed")
+Path("/tmp/normalizer-handoff-race.py").write_text(source.replace(needle, replacement))
+PY_INJECT_HANDOFF_RACE
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
+    | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/normalizer-handoff-race.py#" \
+    >/tmp/normalize.sh
+  source /tmp/normalize.sh
+  find /sandbox/.openclaw -mindepth 1 -delete
+  gosu sandbox sh -c "printf \"{}\\n\" > /sandbox/.openclaw/openclaw.json; printf \"hash\\n\" > /sandbox/.openclaw/.config-hash"
+  gosu sandbox chmod 600 /sandbox/.openclaw/openclaw.json /sandbox/.openclaw/.config-hash
+  gosu sandbox chmod 700 /sandbox/.openclaw
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ "$(stat -c "%a" /sandbox/.openclaw)" = "700" ]
+  [ "$(stat -c "%a" /sandbox/.openclaw/openclaw.json)" = "600" ]
+  [ ! -e /sandbox/.openclaw/openclaw.json.nemoclaw-baseline ]
+  printf "HANDOFF_SWAP_REFUSAL_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "HANDOFF_SWAP_REFUSAL_OK"; then
+  pass "pinned owner descriptor prevents root action on a replacement tree"
+else
+  fail "owner-to-root descriptor handoff accepted a replacement: $OUT"
+fi
+
+# ── Test 30e: Empty-config recovery never follows sandbox links ─
+
+info "30e. Empty-config recovery refuses a protected-target symlink"
+OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  {
+    sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+    sed -n "/^recover_openclaw_config_if_empty() {$/,/^}$/p" /usr/local/bin/nemoclaw-start
+  } >/tmp/recover.sh
+  source /tmp/recover.sh
+  printf "protected\n" >/sandbox/recovery-protected
+  chmod 600 /sandbox/recovery-protected
+  chown root:root /sandbox/recovery-protected
+  gosu sandbox rm -f /sandbox/.openclaw/openclaw.json
+  gosu sandbox ln -s /sandbox/recovery-protected /sandbox/.openclaw/openclaw.json
+  before=$(stat -c "%U:%G:%a" /sandbox/recovery-protected):$(cat /sandbox/recovery-protected)
+  rc=0
+  recover_openclaw_config_if_empty || rc=$?
+  after=$(stat -c "%U:%G:%a" /sandbox/recovery-protected):$(cat /sandbox/recovery-protected)
+  [ "$rc" -eq 1 ]
+  [ "$before" = "$after" ]
+  [ -L /sandbox/.openclaw/openclaw.json ]
+  printf "RECOVERY_LINK_REFUSAL_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "RECOVERY_LINK_REFUSAL_OK" \
+  && echo "$OUT" | grep -q "descriptor-safe repair detected an unsafe link"; then
+  pass "empty-config recovery leaves a protected symlink target untouched"
+else
+  fail "empty-config recovery followed a sandbox-controlled link: $OUT"
+fi
+
+# ── Test 30f: Root never falls back to an environment helper ────
+
+info "30f. Root repair rejects an environment-selected helper"
+OUT=$(docker run --rm --entrypoint bash "$IMAGE" -lc '
+  set -euo pipefail
+  cat >/tmp/untrusted-normalizer.py <<"PY_UNTRUSTED_NORMALIZER"
+from pathlib import Path
+
+Path("/tmp/untrusted-normalizer-ran").write_text("unsafe\n")
+PY_UNTRUSTED_NORMALIZER
+  sed -n "/^normalize_mutable_config_perms() {$/,/^}$/p" /usr/local/bin/nemoclaw-start \
+    | sed "s#/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py#/tmp/missing-normalizer.py#" \
+    >/tmp/normalize.sh
+  source /tmp/normalize.sh
+  export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=/tmp/untrusted-normalizer.py
+  rc=0
+  normalize_mutable_config_perms || rc=$?
+  [ "$rc" -eq 1 ]
+  [ ! -e /tmp/untrusted-normalizer-ran ]
+  printf "ROOT_HELPER_FALLBACK_REFUSAL_OK\n"
+' 2>&1 || true)
+if echo "$OUT" | grep -q "ROOT_HELPER_FALLBACK_REFUSAL_OK" \
+  && echo "$OUT" | grep -q "trusted normalizer is missing"; then
+  pass "root repair fails closed when the installed helper is missing"
+else
+  fail "root repair executed an environment-selected helper: $OUT"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────

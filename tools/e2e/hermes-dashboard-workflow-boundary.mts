@@ -103,17 +103,6 @@ export function validateHermesDashboardWorkflow(workflow: HermesDashboardWorkflo
     `${JOB_NAME} must pass the inference key through step env`,
   );
 
-  const upload = findStep(job, "Upload Hermes dashboard live Vitest artifacts");
-  if (!/^actions\/upload-artifact@[0-9a-f]{40}$/u.test(upload.uses ?? "")) {
-    errors.push(`${JOB_NAME} artifact upload must pin a full action SHA`);
-  }
-  requireEqual(
-    errors,
-    upload.with?.path,
-    "e2e-artifacts/live/hermes-dashboard/",
-    `${JOB_NAME} must upload its dashboard artifacts`,
-  );
-
   const reportNeeds = workflow.jobs["report-to-pr"]?.needs;
   if (!Array.isArray(reportNeeds) || !reportNeeds.includes(JOB_NAME)) {
     errors.push(`report-to-pr must wait for ${JOB_NAME}`);

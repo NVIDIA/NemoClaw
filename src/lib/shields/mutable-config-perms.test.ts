@@ -161,14 +161,20 @@ describe("inspectMutableConfigPerms (#4538)", () => {
       throw new Error("should not stat for hermes");
     });
     expect(result.applies).toBe(false);
-    if (!result.applies) expect(result.reason).toContain("hermes");
+    if (!result.applies) {
+      expect(result.skipReason).toBe("agent");
+      expect(result.reason).toContain("hermes");
+    }
   });
 
   it("does not apply (and never stats) when shields are up", () => {
     const stat = vi.fn(() => "700 root:root");
     const result = inspectMutableConfigPerms(OPENCLAW_TARGET, "locked", stat);
     expect(result.applies).toBe(false);
-    if (!result.applies) expect(result.reason).toContain("locked");
+    if (!result.applies) {
+      expect(result.skipReason).toBe("locked");
+      expect(result.reason).toContain("locked");
+    }
     expect(stat).not.toHaveBeenCalled();
   });
 
@@ -177,7 +183,10 @@ describe("inspectMutableConfigPerms (#4538)", () => {
       throw new Error("container is not running");
     });
     expect(result.applies).toBe(false);
-    if (!result.applies) expect(result.reason).toContain("could not stat");
+    if (!result.applies) {
+      expect(result.skipReason).toBe("unavailable");
+      expect(result.reason).toContain("could not stat");
+    }
   });
 
   it("flags sensitive-file drift the user-facing check would otherwise miss", () => {

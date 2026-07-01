@@ -467,6 +467,7 @@ nemohermes my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
 Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+
 The exit code is the remote command's exit code.
 
 | Flag | Description |
@@ -713,8 +714,10 @@ nemohermes my-assistant doctor [--json]
 ### `nemohermes <name> exec`
 
 Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
+The command runs as the sandbox user with `HOME=/sandbox`.
 Use `--` to separate `exec` options from the command you want to run inside the sandbox.
+
+The command exits with the remote command's exit code.
 
 ```bash
 nemohermes my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
@@ -1701,6 +1704,27 @@ Values are not printed.
 ```bash
 nemohermes credentials list
 ```
+
+### `nemohermes credentials add <PROVIDER>`
+
+Register a provider credential with the OpenShell gateway by name and type.
+Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv.
+Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them.
+After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+
+Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes).
+If you want a provider available to only some sandboxes, scope it with `nemohermes credentials reset <PROVIDER>` once those sandboxes finish using it.
+
+```bash
+nemohermes credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
+| `--config <K=V>` | Provider configuration pair. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state |
 
 ### `nemohermes credentials reset <PROVIDER>`
 

@@ -12,13 +12,20 @@
  * shields are up (root-owned), startup must not weaken the lock.
  */
 
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const MUTABLE_CONFIG_NORMALIZER = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "normalize_mutable_config_perms.py",
+);
 const OPENCLAW_CONFIG_GUARD = "/usr/local/lib/nemoclaw/openclaw-config-guard.py";
 const STATE_DIR_GUARD = "/usr/local/lib/nemoclaw/state-dir-guard.py";
 const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-config-guard.py";
@@ -43,17 +50,54 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  return [
-    extractShellFunctionFromSource(startScript, "lock_openclaw_config_baseline_if_present"),
-    extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
-      'local config_dir="/sandbox/.openclaw"',
-      `local config_dir=${JSON.stringify(configDir)}`,
-    ),
-  ].join("\n");
+  return extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
+    'local config_dir="/sandbox/.openclaw"',
+    `local config_dir=${JSON.stringify(configDir)}`,
+  );
 }
 
 function modeBits(filePath: string): number {
   return fs.statSync(filePath).mode;
+}
+
+function runMutableConfigNormalizer(configDir: string, ownedPaths: string[]) {
+  const testRoot = path.dirname(configDir);
+  const normalizerPath = path.join(testRoot, "normalize_mutable_config_perms.py");
+  fs.copyFileSync(MUTABLE_CONFIG_NORMALIZER, normalizerPath);
+  fs.chmodSync(normalizerPath, 0o755);
+  const spawnOptions: SpawnSyncOptionsWithStringEncoding = {
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      BASH_ENV: "",
+      HOME: testRoot,
+      NEMOCLAW_MUTABLE_CONFIG_NORMALIZER: normalizerPath,
+    },
+    timeout: 5000,
+  };
+  switch (process.getuid?.()) {
+    case 0: {
+      const unprivilegedId = 65534;
+      for (const ownedPath of [...ownedPaths, normalizerPath]) {
+        fs.chownSync(ownedPath, unprivilegedId, unprivilegedId);
+      }
+      spawnOptions.uid = unprivilegedId;
+      spawnOptions.gid = unprivilegedId;
+      break;
+    }
+  }
+  return spawnSync(
+    "bash",
+    [
+      "-c",
+      [
+        "set -euo pipefail",
+        normalizeMutableConfigPermsFor(configDir),
+        "normalize_mutable_config_perms",
+      ].join("\n"),
+    ],
+    spawnOptions,
+  );
 }
 
 function withMockedDockerExecFileSync<T>(
@@ -250,22 +294,15 @@ describe("mutable agent config permissions", () => {
       fs.chmodSync(nestedDir, 0o700);
       fs.chmodSync(configFile, 0o600);
 
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          [
-            "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
-            normalizeMutableConfigPermsFor(configDir),
-            "normalize_mutable_config_perms",
-          ].join("\n"),
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
+      const result = runMutableConfigNormalizer(configDir, [
+        tmpDir,
+        configDir,
+        path.join(configDir, "agents"),
+        nestedDir,
+        configFile,
+      ]);
 
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       expect(modeBits(configDir) & 0o7777).toBe(0o2770);
       expect(modeBits(configFile) & 0o7777).toBe(0o660);
       expect(modeBits(configDir) & 0o070).toBe(0o070);
@@ -305,22 +342,16 @@ describe("mutable agent config permissions", () => {
       expect(modeBits(configDir) & 0o7777).toBe(0o700);
       expect(modeBits(configFile) & 0o7777).toBe(0o600);
 
-      const result = spawnSync(
-        "bash",
-        [
-          "-c",
-          [
-            "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
-            normalizeMutableConfigPermsFor(configDir),
-            "normalize_mutable_config_perms",
-          ].join("\n"),
-        ],
-        { encoding: "utf-8", timeout: 5000 },
-      );
+      const result = runMutableConfigNormalizer(configDir, [
+        tmpDir,
+        configDir,
+        path.join(configDir, "agents"),
+        nestedDir,
+        configFile,
+        hashFile,
+      ]);
 
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr).toBe(0);
       // Mutable contract restored: setgid + group rwx dir, group rw files.
       expect(modeBits(configDir) & 0o7777).toBe(0o2770);
       expect(modeBits(configFile) & 0o7777).toBe(0o660);
@@ -328,6 +359,33 @@ describe("mutable agent config permissions", () => {
       expect(modeBits(configDir) & 0o2000).toBe(0o2000);
       expect(modeBits(nestedDir) & 0o2000).toBe(0o2000);
       expect(modeBits(nestedDir) & 0o070).toBe(0o070);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a hardlinked fixed config before changing either alias mode", () => {
+    const tmpDir = mkdtempOnPosixFs("nemoclaw-6047-hardlink-");
+    const configDir = path.join(tmpDir, ".openclaw");
+    const configFile = path.join(configDir, "openclaw.json");
+    const earlierTreeAlias = path.join(configDir, ".a");
+    const externalAlias = path.join(tmpDir, "external-config");
+
+    try {
+      fs.mkdirSync(configDir, { mode: 0o700 });
+      fs.writeFileSync(externalAlias, "{}\n", { mode: 0o600 });
+      fs.chmodSync(externalAlias, 0o600);
+      fs.linkSync(externalAlias, earlierTreeAlias);
+      fs.linkSync(externalAlias, configFile);
+
+      const result = runMutableConfigNormalizer(configDir, [tmpDir, configDir, externalAlias]);
+
+      expect(result.status).not.toBe(0);
+      expect(fs.statSync(configFile).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(fs.statSync(earlierTreeAlias).ino).toBe(fs.statSync(externalAlias).ino);
+      expect(modeBits(configFile) & 0o7777).toBe(0o600);
+      expect(modeBits(earlierTreeAlias) & 0o7777).toBe(0o600);
+      expect(modeBits(externalAlias) & 0o7777).toBe(0o600);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -645,8 +703,9 @@ process.stdout.write(JSON.stringify(calls));
           "-c",
           [
             "set -euo pipefail",
-            'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
-            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "root\\n"; else command stat "$@"; fi; }',
+            // Model the descriptor observing root ownership without requiring
+            // the test runner itself to own this fixture as root.
+            'python3() { if [ "${2:-}" != "-" ]; then printf "unexpected helper invocation\\n" >&2; return 68; fi; cat >/dev/null; printf "0\\n"; }',
             'chmod() { printf "CHMOD %s\\n" "$*" >&2; exit 66; }',
             'find() { printf "FIND %s\\n" "$*" >&2; exit 67; }',
             normalizeMutableConfigPermsFor(configDir),
