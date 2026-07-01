@@ -6137,137 +6137,6 @@ jobs:
             rm -rf -- "${DOCKER_CONFIG}"
           fi
 
-  # ── Scheduled failure routing ──────────────────────────────────────────────
-  notify-on-failure:
-    runs-on: ubuntu-latest
-    needs:
-      [
-        generate-matrix,
-        live,
-        openshell-version-pin,
-        openshell-gateway-auth-contract,
-        onboard-negative-paths,
-        skill-agent,
-        openclaw-skill-cli,
-        docs-validation,
-        inference-routing,
-        cloud-inference,
-        gpu-e2e,
-        agent-turn-latency,
-        kimi-inference-compat,
-        hermes-inference-switch,
-        brave-search,
-        ollama-auth-proxy,
-        cron-preflight-inference-local,
-        credential-sanitization,
-        credential-migration,
-        sessions-agents-cli,
-        runtime-overrides,
-        hermes-e2e,
-        hermes-dashboard,
-        hermes-slack,
-        hermes-discord,
-        hermes-root-entrypoint-smoke,
-        hermes-sandbox-secret-boundary,
-        network-policy,
-        common-egress-agent,
-        shields-config,
-        rebuild-openclaw,
-        rebuild-hermes,
-        rebuild-hermes-stale-base,
-        sandbox-rebuild,
-        sandbox-rlimits-connect,
-        overlayfs-autofix,
-        state-backup-restore,
-        upgrade-stale-sandbox,
-        openshell-gateway-upgrade,
-        token-rotation,
-        messaging-compatible-endpoint,
-        messaging-providers,
-        launchable-smoke,
-        double-onboard,
-        jetson-nvmap-gpu,
-        concurrent-gateway-ports,
-        full-e2e,
-        security-posture,
-        cloud-onboard,
-        gpu-double-onboard,
-        onboard-repair,
-        issue-4462-scope-upgrade-approval,
-        onboard-resume,
-        model-router-provider-routed-inference,
-        sandbox-operations,
-        sandbox-survival,
-        diagnostics,
-        snapshot-commands,
-        gateway-drift-preflight,
-        openclaw-tui-chat-correlation,
-        gateway-guard-recovery,
-        issue-4434-tui-unreachable-inference,
-        openclaw-inference-switch,
-        bedrock-runtime-compatible-anthropic,
-        issue-2478-crash-loop-recovery,
-        gateway-health-honest,
-        device-auth-health,
-        channels-add-remove,
-        tunnel-lifecycle,
-        telegram-injection,
-        openclaw-discord-pairing,
-        openclaw-slack-pairing,
-        channels-stop-start,
-        spark-install,
-      ]
-    if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-    permissions:
-      issues: write
-    steps:
-      - name: Create or update scheduled E2E failure issue
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
-        with:
-          script: |
-            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            // Preserve the existing issue thread and its historical title.
-            const title = 'Nightly E2E failed';
-            const needs = ${{ toJSON(needs) }};
-            const failed = Object.entries(needs)
-              .filter(([, value]) => value.result === 'failure')
-              .map(([name]) => name);
-            const cancelled = Object.entries(needs)
-              .filter(([, value]) => value.result === 'cancelled')
-              .map(([name]) => name);
-            const summary = [
-              failed.length ? `**Failed:** ${failed.join(', ')}` : '',
-              cancelled.length ? `**Cancelled:** ${cancelled.join(', ')}` : '',
-            ].filter(Boolean).join('\n');
-            const body = `**Run:** ${runUrl}\n${summary}\n**Artifacts:** Check the run artifacts for target logs and structured evidence.`;
-
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'CI/CD',
-              per_page: 100,
-            });
-            const match = existing.find(
-              (issue) => !issue.pull_request && issue.title.startsWith(title),
-            );
-            if (match) {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: match.number,
-                body: `Failed again on ${new Date().toISOString().split('T')[0]}.\n\n${body}`,
-              });
-            } else {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `${title} — ${new Date().toISOString().split('T')[0]}`,
-                body: `The scheduled E2E pipeline failed.\n\n${body}`,
-                labels: ['bug', 'CI/CD'],
-              });
-            }
-
   # ── PR result comment ─────────────────────────────────────────────────────
   # Posts a results table on the open PR for the dispatching branch (or the
   # PR identified by `inputs.pr_number`). `if: always()` so the comment lands
@@ -6357,7 +6226,8 @@ jobs:
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
-      issues: write
+      # The issue-comment endpoint accepts pull request write permission for PR comments.
+      # Keep issues: write absent so this job cannot restore general issue routing.
       pull-requests: write
     steps:
       - name: Post E2E target results to PR
@@ -6680,7 +6550,6 @@ jobs:
                 : 'Scheduled E2E';
             const metaJobs = [
               'generate-matrix',
-              'notify-on-failure',
               'report-to-pr',
               'scorecard',
             ];
