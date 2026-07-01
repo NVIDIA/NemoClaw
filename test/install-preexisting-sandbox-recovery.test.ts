@@ -27,6 +27,9 @@ function runRecoveryBeforeOnboard(
     `#!/usr/bin/env bash
 printf 'restore=%s argv=%s\n' "\${NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE:-}" "$*" >> "${callLog}"
 if [ "\${1:-}" = "upgrade-sandboxes" ]; then
+  if [ ${recoveryExitCode} -ne 0 ]; then
+    printf "Failed to recover 'broken-box': prepared backup restore failed\n" >&2
+  fi
   exit ${recoveryExitCode}
 fi
 exit 0
@@ -95,6 +98,7 @@ describe("install.sh pre-existing sandbox recovery ordering (#6114)", () => {
 
     expect(result.status).toBe(1);
     expect(result.calls).toEqual(["restore=1 argv=upgrade-sandboxes --auto"]);
+    expect(result.output).toContain("Failed to recover 'broken-box'");
     expect(result.output).toContain("Generic onboarding will not run");
     expect(result.output).toContain(
       "Installation incomplete: one or more existing sandboxes failed to upgrade",

@@ -6,11 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-const ORIGINAL_HOME = process.env.HOME;
 const TMP_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-recovery-validation-"));
-process.env.HOME = TMP_HOME;
+vi.stubEnv("HOME", TMP_HOME);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const sandboxState = (await import(
   pathToFileURL(path.join(REPO_ROOT, "src", "lib", "state", "sandbox.ts")).href
@@ -45,8 +44,7 @@ function writeBackup(
 }
 
 afterAll(() => {
-  delete process.env.HOME;
-  Object.assign(process.env, ORIGINAL_HOME === undefined ? {} : { HOME: ORIGINAL_HOME });
+  vi.unstubAllEnvs();
   fs.rmSync(TMP_HOME, { recursive: true, force: true });
 });
 
@@ -81,6 +79,35 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
         timestamp: "2026-07-01T06-50-42-044Z",
       }),
     });
+  });
+
+  it("rejects a persisted manifest that disappears or becomes malformed after discovery", () => {
+    const candidate = writeBackup("alpha", "2026-07-01T06-50-42-044Z", {
+      agentVersion: "2026.5.27",
+      expectedVersion: "2026.5.27",
+    });
+    const manifestPath = path.join(
+      BACKUPS_ROOT,
+      "alpha",
+      "2026-07-01T06-50-42-044Z",
+      "rebuild-manifest.json",
+    );
+
+    fs.unlinkSync(manifestPath);
+    expect(sandboxState.validateRebuildRecoveryManifest("alpha", null, candidate as never)).toEqual(
+      {
+        ok: false,
+        reason: "latest backup manifest is missing, malformed, or unsupported",
+      },
+    );
+
+    fs.writeFileSync(manifestPath, "{malformed");
+    expect(sandboxState.validateRebuildRecoveryManifest("alpha", null, candidate as never)).toEqual(
+      {
+        ok: false,
+        reason: "latest backup manifest is missing, malformed, or unsupported",
+      },
+    );
   });
 
   it("rejects sandbox, agent, and backup-path identity mismatches", () => {

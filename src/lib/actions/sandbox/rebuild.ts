@@ -579,7 +579,7 @@ async function reapplyMessagingManifestAfterOpenClawDoctor(
  * `Dockerfile.base` changes fail before destructive work and are applied to the
  * recreated sandbox image.
  */
-export interface RebuildSandboxExecutionOptions {
+interface RebuildSandboxExecutionOptions {
   throwOnError?: boolean;
   /** Internal installer recovery input; never exposed as a CLI option. */
   recoveryManifest?: sandboxState.RebuildManifest;

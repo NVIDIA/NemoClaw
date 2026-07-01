@@ -185,6 +185,15 @@ export async function upgradeSandboxes(
     { currentNemoclawVersion: resolveCurrentNemoclawVersion() },
   );
 
+  // Source boundary (#6114): a v0.0.55/legacy-OpenShell install can leave its
+  // already-registered sandboxes in Provisioning/Error after the host upgrade.
+  // That state comes from the already-installed legacy CLI/gateway and cannot be
+  // prevented at its source by this candidate. install.sh exports this signal only
+  // after that CLI completes backup-all, or after an operator asserts prepared
+  // upgrade state. upgrade-sandboxes-recovery.test.ts and
+  // install-preexisting-sandbox-recovery.test.ts guard the handoff. Remove this
+  // bridge with onboard's matching consumer once pre-fingerprint upgrades are no
+  // longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
   const backupRecoveryAssessments = recoverPreparedBackups
     ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)
@@ -193,8 +202,8 @@ export async function upgradeSandboxes(
   const rejectedRecoveries = backupRecoveryAssessments.filter(
     (candidate): candidate is RejectedBackupRecovery => !isPreparedBackupRecovery(candidate),
   );
-  const preparedRecoveryNames = new Set(
-    preparedRecoveries.map((candidate) => candidate.sandbox.name),
+  const assessedRecoveryNames = new Set(
+    backupRecoveryAssessments.map((candidate) => candidate.sandbox.name),
   );
 
   if (
@@ -259,12 +268,12 @@ export async function upgradeSandboxes(
   }
 
   const { rebuildable, stopped } = splitRebuildableSandboxes(stale);
-  const stoppedWithoutPreparedBackup = stopped.filter(
-    (sandbox) => !preparedRecoveryNames.has(sandbox.name),
+  const notObservedReadyOrNonReady = stopped.filter(
+    (sandbox) => !assessedRecoveryNames.has(sandbox.name),
   );
-  if (stoppedWithoutPreparedBackup.length > 0 && !recoverPreparedBackups) {
+  if (notObservedReadyOrNonReady.length > 0) {
     console.log(
-      `  ${D}Skipping ${stoppedWithoutPreparedBackup.length} stopped sandbox(es) — start them first.${R}`,
+      `  ${D}Skipping ${notObservedReadyOrNonReady.length} sandbox(es) not observed on the selected gateway — verify their recorded gateway or start them first.${R}`,
     );
   }
   if (
@@ -303,7 +312,8 @@ export async function upgradeSandboxes(
       rebuilt++;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      console.error(`  ${YW}⚠${R} Failed to rebuild '${sandbox.name}': ${errorMessage}`);
+      const verb = manifest ? "recover" : "rebuild";
+      console.error(`  ${YW}⚠${R} Failed to ${verb} '${sandbox.name}': ${errorMessage}`);
       failed++;
     }
   }

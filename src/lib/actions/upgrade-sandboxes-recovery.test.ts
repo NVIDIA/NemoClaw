@@ -9,7 +9,6 @@ type UpgradeSandboxes = typeof import("./upgrade-sandboxes")["upgradeSandboxes"]
 
 const requireDist = createRequire(import.meta.url);
 const upgradeModulePath = "./upgrade-sandboxes.js";
-const originalRecoverySignal = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
 
 // Warm the CommonJS source graph outside the first test's timeout. Each harness
 // still reloads the entry module after installing its dependency spies.
@@ -52,7 +51,7 @@ function createRecoveryHarness(
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
 } {
   delete require.cache[requireDist.resolve(upgradeModulePath)];
-  process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE = "1";
+  vi.stubEnv("NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE", "1");
 
   const gatewayDrift = requireDist("../adapters/openshell/gateway-drift.js");
   const coreVersion = requireDist("../core/version.js");
@@ -119,14 +118,8 @@ function createRecoveryHarness(
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   delete require.cache[requireDist.resolve(upgradeModulePath)];
-  delete process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE;
-  Object.assign(
-    process.env,
-    originalRecoverySignal === undefined
-      ? {}
-      : { NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE: originalRecoverySignal },
-  );
 });
 
 describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
@@ -155,6 +148,9 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     expect(harness.rebuildSpy).toHaveBeenCalledTimes(2);
     expect(harness.rebuildSpy.mock.calls.map((call) => call[0])).toEqual(["alpha", "beta"]);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to recover 'alpha': alpha failed"),
+    );
   });
 
   it("fails closed without rebuilding a legacy custom-image backup", async () => {
@@ -169,11 +165,12 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
   });
 
-  it("does not recover a registered sandbox absent from the selected gateway", async () => {
+  it("warns and does not recover a stale registered sandbox absent from the selected gateway", async () => {
     const harness = createRecoveryHarness(["registered-elsewhere"], {
       gatewayNames: { "registered-elsewhere": "gateway-b" },
       liveOutput: "selected-gateway-box Ready",
       latestBackup: null,
+      staleNames: ["registered-elsewhere"],
     });
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
@@ -183,6 +180,9 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
 
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
     expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("Skipping 1 sandbox(es) not observed on the selected gateway"),
+    );
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
@@ -206,7 +206,10 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
   });
 
   it("fails closed for a live Error sandbox with no latest backup", async () => {
-    const harness = createRecoveryHarness(["broken-box"], { latestBackup: null });
+    const harness = createRecoveryHarness(["broken-box"], {
+      latestBackup: null,
+      staleNames: ["broken-box"],
+    });
     vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
@@ -214,6 +217,10 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("broken-box"));
+    expect(console.log).not.toHaveBeenCalledWith(
+      expect.stringContaining("verify their recorded gateway or start them first"),
+    );
   });
 
   it("continues after one live sandbox's backup assessment throws", async () => {

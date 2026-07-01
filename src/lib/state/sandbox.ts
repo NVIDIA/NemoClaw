@@ -1705,9 +1705,14 @@ export function validateRebuildRecoveryManifest(
 
 /**
  * Confirm that a backup came from a NemoClaw-managed image. Current registry
- * entries carry a build fingerprint; v0.0.55 managed images predate that field
- * but carry the same non-empty agent version in the registry and backup. Legacy
- * custom images intentionally carry neither signal.
+ * entries carry a build fingerprint. The v0.0.55 source boundary predates that
+ * field: onboard registered `agentVersion` only when `fromDockerfile` was false,
+ * and backup copied that registry value into the manifest. Therefore an exact,
+ * non-empty legacy version match is positive managed-image evidence, while a
+ * `--from` custom image has a null registry version and fails closed.
+ *
+ * Remove the legacy version fallback once upgrades from releases without the
+ * `nemoclawVersion` fingerprint are no longer supported.
  */
 export function hasPositiveManagedImageEvidence(
   sandbox: Pick<registry.SandboxEntry, "agentVersion" | "nemoclawVersion">,
