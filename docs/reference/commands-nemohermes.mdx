@@ -1085,16 +1085,28 @@ nemohermes my-assistant channels start telegram
 
 ### `nemohermes <name> channels status`
 
-Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+Run messaging channel status checks.
+Without `--channel`, the command prints a compact summary for every configured channel, including registration, policy coverage, and non-secret rendered config comparisons.
+With `--channel`, it prints the detailed status for that channel.
+
+For WhatsApp, `--channel whatsapp` also probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy coverage.
+A paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+The detailed WhatsApp probe stays focused on QR/session runtime diagnostics and does not include rendered-config comparison lines.
+
+For registered non-WhatsApp channel details and the compact summary, the status output compares non-secret config inputs from the sandbox registry against the values rendered into the agent config, such as Telegram group policy in `openclaw.json` or mention mode in Hermes config.
+Secret inputs, including tokens, are not printed.
+If the registry contains a non-secret expected value but NemoClaw cannot read or check the rendered source, the comparison is a warning and the detail includes `(not checked)`.
+Optional unset inputs remain informational.
 
 ```bash
+nemohermes my-assistant channels status
 nemohermes my-assistant channels status --channel whatsapp
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--channel <channel>` | Channel to inspect; defaults to `whatsapp` when registered |
-| `--json` | Emit the diagnostic report as JSON (exit non-zero when the verdict is not `healthy` or `unknown`) |
+| `--channel <channel>` | Channel to inspect in detail |
+| `--json` | Emit the status report as JSON (for the detailed WhatsApp probe, exit non-zero when the verdict is not `healthy` or `unknown`) |
 
 The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
 

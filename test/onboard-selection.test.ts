@@ -36,7 +36,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 # Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
@@ -85,7 +85,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -640,7 +640,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -738,7 +738,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -2477,7 +2477,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/models$'; then
@@ -2662,7 +2662,7 @@ args="$*"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -2850,7 +2850,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$' && echo "$body_arg" | grep -q 'good-model'; then
@@ -2967,7 +2967,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3067,7 +3067,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3168,7 +3168,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3358,7 +3358,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/messages$' && echo "$body_arg" | grep -q 'good-claude'; then
@@ -3735,7 +3735,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q 'api.openai.com'; then
@@ -4158,7 +4158,7 @@ while [ "$#" -gt 0 ]; do
       fi
       shift 2
       ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
@@ -4772,7 +4772,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then
@@ -4876,7 +4876,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then

@@ -873,6 +873,41 @@ Instead:
 2. If you build NemoClaw from source, bump the pinned `openclaw` version in `Dockerfile.base` and rebuild the sandbox base image.
 3. Run `$$nemoclaw <name> rebuild` to recreate the sandbox with the updated image. The rebuild command automatically backs up workspace state before destroying the old sandbox and restores it afterward.
 
+<AgentOnly variant="openclaw">
+
+### AWS EC2 Instance-Role Credential Discovery Is Unavailable
+
+This is expected in an OpenClaw sandbox.
+NemoClaw forces `AWS_EC2_METADATA_DISABLED=true` because OpenShell blocks the link-local EC2 Instance Metadata Service endpoint.
+Existing sandboxes must use a current NemoClaw image before they receive this environment invariant.
+
+Upgrade NemoClaw and rebuild the sandbox:
+
+```bash
+$$nemoclaw update --yes
+$$nemoclaw <name> rebuild --yes
+```
+
+Reconnect and verify the value:
+
+```bash
+$$nemoclaw <name> connect
+printenv AWS_EC2_METADATA_DISABLED
+```
+
+Expected output:
+
+```text
+true
+```
+
+Only EC2 instance-role discovery is disabled.
+Static access keys, bearer tokens, shared profiles, SSO and process credentials, web identity, and ECS container credentials remain eligible.
+NemoClaw's host-local Amazon Bedrock adapter is outside the sandbox credential-discovery boundary and remains available.
+Do not add `169.254.169.254` to a network policy or override the variable.
+
+</AgentOnly>
+
 ### Inference requests time out
 
 Verify that the inference provider endpoint is reachable from the host.
