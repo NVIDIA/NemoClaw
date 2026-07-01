@@ -143,12 +143,17 @@ describe("Brev nightly workflow contract", () => {
 
   it("does not expose stale published-launchable controls", () => {
     const dispatchInputs = Object.keys(nightly.on?.workflow_dispatch?.inputs ?? {});
+    const reusableInputs = Object.keys(branchValidation.on?.workflow_call?.inputs ?? {});
     const callerInputs = Object.values(nightly.jobs ?? {}).flatMap((job) =>
       Object.keys(job.with ?? {}),
     );
+    const validation = branchValidation.jobs?.["e2e-branch-validation"];
+    const run = validation?.steps?.find((step) => step.name === "Run ephemeral Brev E2E");
 
     expect(dispatchInputs).not.toContain("launchable_id");
+    expect(reusableInputs).not.toContain("setup_script_url");
     expect(callerInputs).not.toContain("launchable_id");
     expect(callerInputs).not.toContain("use_published_launchable");
+    expect(run?.env).not.toHaveProperty("LAUNCHABLE_SETUP_SCRIPT");
   });
 });

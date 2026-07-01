@@ -118,10 +118,6 @@ on:
         required: false
         type: boolean
         default: true
-      setup_script_url:
-        required: false
-        type: string
-        default: ""
       keep_alive:
         required: false
         type: boolean
@@ -264,7 +260,6 @@ jobs:
           INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
-          LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
           BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
           BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
           BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}

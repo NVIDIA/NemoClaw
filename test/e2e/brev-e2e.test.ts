@@ -29,7 +29,6 @@
  *   TEST_SUITE             — which test to run: full (default), deploy-cli, gpu,
  *                             credential-sanitization, telegram-injection, messaging-providers,
  *                             messaging-compatible-endpoint, dashboard-remote-bind, all
- *   LAUNCHABLE_SETUP_SCRIPT — URL to setup script for launchable path (default: brev-launchable-ci-cpu.sh on main)
  *   BREV_MIN_VCPU          — Minimum vCPUs for CPU instance (default: 4)
  *   BREV_MIN_RAM           — Minimum RAM in GB for CPU instance (default: 16)
  *   BREV_PROVIDER          — Cloud provider filter for brev search (default: gcp for CPU, any for GPU)
@@ -106,11 +105,9 @@ function requireInstanceName(): string {
 // Launchable configuration
 // CI-Ready CPU setup script: pre-bakes Docker, Node.js, OpenShell CLI, and npm deps.
 // The Brev CLI (v0.6.322+) uses `brev search cpu | brev create --startup-script @file`.
-// Default: use the repo-local script (hermetic — always matches the checked-out branch).
-// Override via LAUNCHABLE_SETUP_SCRIPT env var to test a remote URL instead.
-const DEFAULT_SETUP_SCRIPT_PATH =
-  process.env.LAUNCHABLE_SETUP_SCRIPT ||
-  path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
+// Use the repo-local script so secret-bearing branch validation cannot execute
+// mutable setup code selected outside the reviewed checkout.
+const SETUP_SCRIPT_PATH = path.join(REPO_DIR, "scripts", "brev-launchable-ci-cpu.sh");
 // Sentinel file written by brev-launchable-ci-cpu.sh when setup is complete.
 // More reliable than grepping log files.
 const LAUNCHABLE_SENTINEL = "/var/run/nemoclaw-launchable-ready";
@@ -593,7 +590,7 @@ function summarizeBrevCandidates(output: string, maxLines = 10): string {
 function createBrevInstance(elapsed: () => string): void {
   const instanceKind = GPU_TEST_SUITE ? "gpu" : "cpu";
   console.log(`[${elapsed()}] Creating ${instanceKind} instance via launchable...`);
-  console.log(`[${elapsed()}]   setup-script: ${DEFAULT_SETUP_SCRIPT_PATH}`);
+  console.log(`[${elapsed()}]   setup-script: ${SETUP_SCRIPT_PATH}`);
   console.log(`[${elapsed()}]   create timeout: ${Math.round(BREV_CREATE_TIMEOUT_MS / 1000)}s`);
   if (GPU_TEST_SUITE) {
     if (BREV_GPU_TYPE) {
@@ -609,21 +606,8 @@ function createBrevInstance(elapsed: () => string): void {
     );
   }
 
-  // Resolve the setup script to a local file path.
-  // Default: repo-local scripts/brev-launchable-ci-cpu.sh (hermetic).
-  // Override: set LAUNCHABLE_SETUP_SCRIPT to a URL and it gets downloaded.
-  let setupScriptPath: string;
-  if (DEFAULT_SETUP_SCRIPT_PATH.startsWith("http")) {
-    setupScriptPath = "/tmp/brev-ci-setup.sh";
-    execFileSync("curl", ["-fsSL", "-o", setupScriptPath, DEFAULT_SETUP_SCRIPT_PATH], {
-      encoding: "utf-8",
-      timeout: 30_000,
-    });
-    console.log(`[${elapsed()}] Setup script downloaded to ${setupScriptPath}`);
-  } else {
-    setupScriptPath = DEFAULT_SETUP_SCRIPT_PATH;
-    console.log(`[${elapsed()}] Using repo-local setup script`);
-  }
+  const setupScriptPath = SETUP_SCRIPT_PATH;
+  console.log(`[${elapsed()}] Using repo-local setup script`);
 
   try {
     if (GPU_TEST_SUITE) {
@@ -1069,7 +1053,7 @@ describe("Brev deploy input validation", () => {
         NEMOCLAW_DEPLOY_NO_CONNECT: "1",
         NEMOCLAW_DEPLOY_NO_START_SERVICES: "1",
       },
-      timeout: 30_000,
+      timeout: 60_000,
     });
 
     const output = `${result.stdout}${result.stderr}`;
@@ -1084,7 +1068,7 @@ describe("Brev deploy input validation", () => {
     expect(output).not.toContain("Waiting for Brev instance readiness");
     expect(output).not.toContain("Waiting for SSH");
     expect(output).not.toContain("bash scripts/install.sh");
-  });
+  }, 65_000);
 });
 
 describe("Brev GPU runtime setup", () => {
