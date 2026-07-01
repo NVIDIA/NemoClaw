@@ -51,7 +51,7 @@ function runRuntimeEnvValidator(envOverrides: Record<string, string>) {
   });
 }
 
-describe("agents/hermes/validate-env-secret-boundary API_SERVER_KEY contract", () => {
+describe("agents/hermes/validate-hermes-env-secret-boundary API_SERVER_KEY contract", () => {
   it("allows generated API_SERVER_KEY values in Hermes .env files", () => {
     const envFileResult = runEnvFileValidator(
       [
