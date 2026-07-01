@@ -26,23 +26,19 @@ body='{"error":{"message":"forbidden"}}'
 status="403"
 outfile=""
 auth=""
-config_auth=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) config_auth="$(cat "$2" 2>/dev/null)"; shift 2 ;;
     -H)
       if echo "$2" | grep -q '^Authorization: Bearer '; then
         auth="$2"
       fi
       shift 2
       ;;
-    http://*|https://*) url="$1"; shift ;;
-    *) shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
-# Auth may travel in the curl --config tmpfile instead of argv; read it there too.
 # Also extract auth from ?key= query parameter (Gemini uses this instead of Bearer header)
 url_auth=""
 if echo "$url" | grep -q '[?&]key='; then
@@ -53,10 +49,10 @@ url_path=$(echo "$url" | sed 's/?.*//')
 if echo "$url_path" | grep -q '/models$'; then
   body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
   status="200"
-elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}' || echo "$config_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/responses$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}' || echo "$config_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/chat/completions$'; then
+elif (echo "$auth" | grep -q '${goodToken}' || echo "$url_auth" | grep -q '${goodToken}') && echo "$url_path" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -79,26 +75,23 @@ body='{"error":{"message":"forbidden"}}'
 status="403"
 outfile=""
 auth=""
-config_auth=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) config_auth="$(cat "$2" 2>/dev/null)"; shift 2 ;;
     -H)
       if echo "$2" | grep -q '^x-api-key: '; then
         auth="$2"
       fi
       shift 2
       ;;
-    http://*|https://*) url="$1"; shift ;;
-    *) shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
   body='{"data":[${models.map((model) => `{"id":"${model}"}`).join(",")}]}'
   status="200"
-elif (echo "$auth" | grep -q '${goodToken}' || echo "$config_auth" | grep -q '${goodToken}') && echo "$url" | grep -q '/v1/messages$'; then
+elif echo "$auth" | grep -q '${goodToken}' && echo "$url" | grep -q '/v1/messages$'; then
   body='{"id":"msg_123","content":[{"type":"text","text":"OK"}]}'
   status="200"
 fi
@@ -647,7 +640,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -745,7 +738,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -2484,7 +2477,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/models$'; then
@@ -2669,7 +2662,7 @@ args="$*"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models$'; then
@@ -2857,7 +2850,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$' && echo "$body_arg" | grep -q 'good-model'; then
@@ -2974,7 +2967,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3074,7 +3067,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3175,7 +3168,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/responses$'; then
@@ -3365,7 +3358,7 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
     -d) body_arg="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/messages$' && echo "$body_arg" | grep -q 'good-claude'; then
@@ -3742,7 +3735,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q 'api.openai.com'; then
@@ -4155,26 +4148,23 @@ body='{"error":{"message":"forbidden"}}'
 status="403"
 outfile=""
 auth=""
-config_auth=""
 url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    --config) config_auth="$(cat "$2" 2>/dev/null)"; shift 2 ;;
     -H)
       if echo "$2" | grep -q '^Authorization: Bearer '; then
         auth="$2"
       fi
       shift 2
       ;;
-    http://*|https://*) url="$1"; shift ;;
-    *) shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
-if (echo "$auth" | grep -q 'nvapi-good' || echo "$config_auth" | grep -q 'nvapi-good') && echo "$url" | grep -q '/responses$'; then
+if echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/responses$'; then
   body='{"id":"resp_123"}'
   status="200"
-elif (echo "$auth" | grep -q 'nvapi-good' || echo "$config_auth" | grep -q 'nvapi-good') && echo "$url" | grep -q '/chat/completions$'; then
+elif echo "$auth" | grep -q 'nvapi-good' && echo "$url" | grep -q '/chat/completions$'; then
   body='{"id":"chatcmpl-123"}'
   status="200"
 fi
@@ -4782,7 +4772,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then
@@ -4886,7 +4876,7 @@ url=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
-    *) url="$1"; shift ;;
+    --config) auth="$(cat "$2" 2>/dev/null)"; shift 2 ;; *) url="$1"; shift ;;
   esac
 done
 if echo "$url" | grep -q '/v1/models'; then
