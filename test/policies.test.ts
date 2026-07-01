@@ -722,9 +722,16 @@ exit 1
 
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-disclosure-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", "/usr/bin/true");
+      vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
       try {
         try {
           policies.applyPreset("test-sandbox", "npm");
@@ -741,6 +748,7 @@ exit 1
         logSpy.mockRestore();
         errSpy.mockRestore();
         vi.unstubAllEnvs();
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
 
@@ -863,7 +871,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
 
       origHome = process.env.HOME;
       origPath = process.env.PATH;
@@ -1002,7 +1014,6 @@ exit 1
     const CUSTOM = "network_policies:\n  example:\n    host: example.com\n";
     const DEGRADED =
       '#!/bin/sh\nif [ "$1" = "policy" ] && [ "$2" = "get" ]; then echo "error: gateway is restarting"; fi\nexit 0\n';
-    const EMPTY_OK = "#!/bin/sh\nexit 0\n";
 
     let tmpHome: string;
     let fakeOpenshell: string;
@@ -1059,25 +1070,6 @@ exit 1
       }
     });
 
-    it("still applies applyPresetContent when policy get returns an empty policy (fresh sandbox)", () => {
-      fs.writeFileSync(fakeOpenshell, EMPTY_OK, { mode: 0o755 });
-      const logs: string[] = [];
-      const logSpy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
-        logs.push(a.map((x) => String(x)).join(" "));
-      });
-      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-      try {
-        const result = policies.applyPresetContent("alpha", "my-custom", CUSTOM, {
-          custom: { sourcePath: "/tmp/x.yaml" },
-        });
-        expect(result).toBe(true);
-        expect(logs.join("\n")).toContain("Applied preset:");
-      } finally {
-        logSpy.mockRestore();
-        errSpy.mockRestore();
-      }
-    });
-
     it("aborts applyPresets (returns false) when policy get exits 0 with degraded output", () => {
       fs.writeFileSync(fakeOpenshell, DEGRADED, { mode: 0o755 });
       const errs: string[] = [];
@@ -1115,7 +1107,11 @@ exit 1
       const localBin = path.join(tmpHome, ".local", "bin");
       fs.mkdirSync(localBin, { recursive: true });
       fakeOpenshell = path.join(localBin, "openshell");
-      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(
+        fakeOpenshell,
+        "#!/bin/sh\nprintf 'version: 1\\nnetwork_policies: {}\\n'\nexit 0\n",
+        { mode: 0o755 },
+      );
       origHome = process.env.HOME;
       process.env.HOME = tmpHome;
       resolveSpy = vi

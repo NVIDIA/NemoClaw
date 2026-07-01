@@ -314,6 +314,16 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
  * metadata header (Version, Hash, etc.) followed by `---` and then the actual
  * YAML.
  */
+// invalidState: metadata-only, diagnostic, malformed, or empty CLI output is
+// not a policy and must remain distinguishable from a parsed YAML mapping.
+// sourceBoundary: OpenShell owns CLI output; the canonical parser owns what
+// NemoClaw admits as policy YAML.
+// whyNotSourceFix: NemoClaw supports CLI releases whose process output is the
+// only available boundary, including versionless compatibility bodies.
+// regressionTest: nemoclaw/src/shared/openshell-policy-boundary.test.ts and
+// test/policy-mutation-read-failure.test.ts.
+// removalCondition: remove this fail-soft adapter when every caller consumes a
+// typed OpenShell policy API and no longer needs versionless CLI compatibility.
 function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
   if (!raw) return "";
   try {
@@ -751,7 +761,9 @@ function applyPresetContent(
   }
 
   const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
-  if (rawPolicy === null || (rawPolicy.trim() && !currentPolicy)) {
+  // A live mutation requires a usable policy; empty is an invalid read, not a
+  // fresh sandbox whose unknown policy may be replaced with a scaffold.
+  if (!currentPolicy) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
     );
@@ -870,7 +882,9 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   }
 
   let merged = parseCurrentPolicyOrEmpty(rawPolicy);
-  if (rawPolicy === null || (rawPolicy.trim() && !merged)) {
+  // Keep the batch entrypoint on the same fail-closed source boundary as
+  // applyPresetContent: an unusable successful read is still a failed read.
+  if (!merged) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
     );

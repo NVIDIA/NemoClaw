@@ -128,6 +128,11 @@ function stageOptimizedSandboxBuildContext(
   normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
+  fs.mkdirSync(path.join(stagedScriptsDir, "checks"), { recursive: true });
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+    path.join(stagedScriptsDir, "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+  );
   fs.copyFileSync(
     path.join(rootDir, "scripts", "nemoclaw-start.sh"),
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),

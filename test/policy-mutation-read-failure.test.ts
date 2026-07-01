@@ -47,5 +47,40 @@ describe("OpenShell policy mutation read failures", () => {
       expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
       expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
     });
+
+    for (const [outputName, emitOutput] of [
+      ["empty", ":"],
+      ["whitespace-only", "printf '   \\n'"],
+    ] as const) {
+      it(`${mutation} refuses to set policy when the successful base-policy read is ${outputName}`, () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-empty-read-"));
+        tempDirs.push(tempDir);
+        const callsPath = path.join(tempDir, "calls.log");
+        const fakeOpenshell = path.join(tempDir, "openshell");
+        fs.writeFileSync(
+          fakeOpenshell,
+          [
+            "#!/bin/sh",
+            `printf '%s\\n' "$*" >>${JSON.stringify(callsPath)}`,
+            emitOutput,
+            "exit 0",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+        vi.stubEnv("NEMOCLAW_OPENSHELL_BIN", fakeOpenshell);
+        const policyTempPrefix = path.join(os.tmpdir(), "nemoclaw-policy-");
+        const mkdtempSpy = vi.spyOn(fs, "mkdtempSync");
+        const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+        expect(apply()).toBe(false);
+        const calls = fs.readFileSync(callsPath, "utf-8").trim().split("\n");
+        expect(calls).toEqual(["policy get --base alpha"]);
+        expect(calls.some((call) => call.startsWith("policy set "))).toBe(false);
+        expect(
+          mkdtempSpy.mock.calls.filter(([prefix]) => String(prefix).startsWith(policyTempPrefix)),
+        ).toEqual([]);
+        expect(consoleError).toHaveBeenCalledWith(expect.stringContaining("refusing to apply"));
+      });
+    }
   }
 });

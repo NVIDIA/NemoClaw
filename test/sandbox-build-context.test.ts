@@ -78,6 +78,9 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "openclaw-config-guard.py"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.mts"));
+    writeFixture(
+      path.join("scripts", "checks", "verify-openshell-policy-boundary-dependencies.mts"),
+    );
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "lib", "gateway-supervisor.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-rlimits.sh"));
