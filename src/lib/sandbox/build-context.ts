@@ -133,6 +133,22 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "nemoclaw-start.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "gateway-control.sh"),
+    path.join(stagedScriptsDir, "gateway-control.sh"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "managed-gateway-control.py"),
+    path.join(stagedScriptsDir, "managed-gateway-control.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "state-dir-guard.py"),
+    path.join(stagedScriptsDir, "state-dir-guard.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "openclaw-config-guard.py"),
+    path.join(stagedScriptsDir, "openclaw-config-guard.py"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "codex-acp-wrapper.sh"),
     path.join(stagedScriptsDir, "codex-acp-wrapper.sh"),
   );
@@ -147,6 +163,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(stagedScriptsDir, "lib", "sandbox-init.sh"),
   );
   fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "gateway-supervisor.sh"),
+    path.join(stagedScriptsDir, "lib", "gateway-supervisor.sh"),
+  );
+  fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "sandbox-rlimits.sh"),
     path.join(stagedScriptsDir, "lib", "sandbox-rlimits.sh"),
   );
@@ -157,6 +177,10 @@ function stageOptimizedSandboxBuildContext(
   fs.copyFileSync(
     path.join(rootDir, "scripts", "lib", "clean_runtime_shell_env_shim.py"),
     path.join(stagedScriptsDir, "lib", "clean_runtime_shell_env_shim.py"),
+  );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "lib", "normalize_mutable_config_perms.py"),
+    path.join(stagedScriptsDir, "lib", "normalize_mutable_config_perms.py"),
   );
   // Build-time messaging applier used by OpenClaw and Hermes Dockerfiles.
   fs.cpSync(

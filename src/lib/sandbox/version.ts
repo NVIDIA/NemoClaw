@@ -13,19 +13,52 @@ import { spawnSync } from "child_process";
 import {
   captureSandboxSshConfigCommand,
   parseVersionFromText,
-  versionGte,
 } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { loadAgent } from "../agent/defs.js";
 import * as registry from "../state/registry.js";
 import { createTempSshConfig } from "./temp-ssh-config.js";
+import { evaluateStaleness } from "./version-scheme.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
   expectedVersion: string | null;
+  /**
+   * True when the sandbox should be rebuilt. This includes scheme-mismatch
+   * cases, which are fail-closed: an incomparable pair is treated as stale so
+   * the rebuild flow realigns the runtime and cache.
+   */
   isStale: boolean;
-  detectionMethod: "registry" | "ssh-exec" | "unavailable";
+  /**
+   * True whenever the check could not observe a runtime version — probe
+   * failed, no expected version, or opted-out probing. Callers should render
+   * an "unable to verify" state rather than treat `isStale === false` as a
+   * positive signal. Scheme mismatches do NOT set this: they set
+   * `schemeMismatch` and `isStale`.
+   */
+  verificationFailed: boolean;
+  /**
+   * How the staleness verdict was reached.
+   * - `"registry"` / `"ssh-exec"`: `isStale` is authoritative for this sandbox
+   *   as long as `verificationFailed` is `false`.
+   * - `"unavailable"`: no staleness check was attempted (missing expected
+   *   version, or the caller opted out of probing).
+   * - `"unknown"`: a probe was attempted but the runtime version could not be
+   *   inspected — callers should treat this as "unable to verify", not
+   *   "verified current".
+   */
+  detectionMethod: "registry" | "ssh-exec" | "unavailable" | "unknown";
+  /**
+   * `true` when the runtime and expected versions use different schemes
+   * (semver vs calendar). In that case `isStale` is forced to `true` so the
+   * normal rebuild flow realigns the runtime with the current manifest; the
+   * flag lets callers distinguish this fail-closed path from a numeric
+   * comparison that observed a genuinely older version.
+   */
+  schemeMismatch?: boolean;
+  /** Categorises why the result could not be computed, so callers can surface a distinct state. */
+  unavailableReason?: "no-expected-version" | "skip-probe" | "probe-failed";
 }
 
 /**
@@ -110,20 +143,35 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion: null,
       isStale: false,
+      verificationFailed: true,
       detectionMethod: "unavailable",
+      unavailableReason: "no-expected-version",
     };
   }
 
   const sb = registry.getSandbox(sandboxName);
 
-  // Fast path: version already cached in registry
+  // Fast path: version already cached in registry. A scheme mismatch here
+  // means the cached value predates the current expected-version scheme
+  // (e.g. a calendar tag left over before Hermes moved to semver, #6049).
+  // `evaluateStaleness` fails closed with `isStale: true` in that case, so
+  // the sandbox is routed through the normal rebuild flow — no cache write
+  // and no follow-up probe race — and the rebuild itself repopulates the
+  // cache with a matching-scheme value.
   if (sb?.agentVersion && !opts?.forceProbe) {
-    const isStale = !versionGte(sb.agentVersion, expectedVersion);
+    const verdict = evaluateStaleness(
+      sandboxName,
+      agent.versionScheme ?? null,
+      sb.agentVersion,
+      expectedVersion,
+    );
     return {
       sandboxVersion: sb.agentVersion,
       expectedVersion,
-      isStale,
+      isStale: verdict.isStale,
+      verificationFailed: false,
       detectionMethod: "registry",
+      schemeMismatch: verdict.schemeMismatch,
     };
   }
 
@@ -132,7 +180,9 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion,
       isStale: false,
+      verificationFailed: true,
       detectionMethod: "unavailable",
+      unavailableReason: "skip-probe",
     };
   }
 
@@ -148,16 +198,25 @@ export function checkAgentVersion(
       sandboxVersion: null,
       expectedVersion,
       isStale: false,
-      detectionMethod: "unavailable",
+      verificationFailed: true,
+      detectionMethod: "unknown",
+      unavailableReason: "probe-failed",
     };
   }
 
-  const isStale = !versionGte(probed, expectedVersion);
+  const verdict = evaluateStaleness(
+    sandboxName,
+    agent.versionScheme ?? null,
+    probed,
+    expectedVersion,
+  );
   return {
     sandboxVersion: probed,
     expectedVersion,
-    isStale,
+    isStale: verdict.isStale,
+    verificationFailed: false,
     detectionMethod: "ssh-exec",
+    schemeMismatch: verdict.schemeMismatch,
   };
 }
 

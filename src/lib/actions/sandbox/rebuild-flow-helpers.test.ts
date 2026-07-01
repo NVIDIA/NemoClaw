@@ -4,6 +4,7 @@
 import { createRequire } from "node:module";
 
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { testTimeoutOptions } from "../../../../test/helpers/timeouts";
 
 type RebuildFlowHelpersModule = typeof import("./rebuild-flow-helpers");
 type SandboxStateModule = typeof import("../../state/sandbox");
@@ -98,32 +99,40 @@ describe("backupSandboxStateForRebuild — user-managed file warning", () => {
     vi.restoreAllMocks();
   });
 
-  it("emits warning when user-managed files exist in the sandbox", () => {
-    probeSpy.mockReturnValue({
-      declared: [".env", ".mcp.json"],
-      existing: [".env", ".mcp.json"],
-    });
+  it(
+    "emits warning when user-managed files exist in the sandbox",
+    testTimeoutOptions(15_000),
+    () => {
+      probeSpy.mockReturnValue({
+        declared: [".env", ".mcp.json"],
+        existing: [".env", ".mcp.json"],
+      });
 
-    const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
-    const result = backupSandboxStateForRebuild(
-      "alpha",
-      makeSandboxEntry(),
-      false,
-      () => undefined,
-      () => true,
-      makeBail(),
-    );
+      const { backupSandboxStateForRebuild } = loadRebuildFlowHelpers();
+      const result = backupSandboxStateForRebuild(
+        "alpha",
+        makeSandboxEntry(),
+        false,
+        () => undefined,
+        () => true,
+        makeBail(),
+      );
 
-    expect(result).toBeTruthy();
-    expect(backupSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledOnce();
-    expect(probeSpy).toHaveBeenCalledWith("alpha");
+      expect(result).toBeTruthy();
+      expect(backupSpy).toHaveBeenCalledOnce();
+      expect(probeSpy).toHaveBeenCalledOnce();
+      expect(probeSpy).toHaveBeenCalledWith("alpha");
 
-    const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
-    expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes(".env, .mcp.json"))).toBe(true);
-    expect(warnLines.some((line: string) => line.includes("Re-add them after rebuild"))).toBe(true);
-  });
+      const warnLines = warnSpy.mock.calls.map((args: unknown[]) => String(args[0]));
+      expect(warnLines.some((line: string) => line.includes("not preserved by rebuild"))).toBe(
+        true,
+      );
+      expect(warnLines.some((line: string) => line.includes(".env, .mcp.json"))).toBe(true);
+      expect(warnLines.some((line: string) => line.includes("Re-add them after rebuild"))).toBe(
+        true,
+      );
+    },
+  );
 
   it("emits no warning when probe returns no existing user-managed files", () => {
     probeSpy.mockReturnValue({

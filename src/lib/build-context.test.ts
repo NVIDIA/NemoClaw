@@ -203,6 +203,25 @@ describe("printSandboxCreateRecoveryHints", () => {
     expect(out).toContain("NEMOCLAW_SANDBOX_GPU=0");
     expect(out).toContain("onboard --resume --no-gpu");
   });
+
+  it("prints plugin-install network-policy guidance when the Docker build fails at the OpenClaw plugin install step", () => {
+    const output = [
+      "npm error code ENOTFOUND",
+      "npm error network request to https://registry.npmjs.org/@openclaw%2Fbrave-plugin failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org",
+      "Docker stream error: The command '/bin/bash -o pipefail -c set -eu;",
+      '  openclaw plugins install "npm:@openclaw/brave-plugin@2026.5.27" --pin;',
+      "fi' returned a non-zero code: 1",
+    ].join("\n");
+    printSandboxCreateRecoveryHints(output);
+
+    const out = stderr();
+    expect(out).toContain("OpenClaw plugin-install step");
+    expect(out).toContain("ClawHub");
+    expect(out).toContain("npm registry");
+    expect(out).toContain("network policy");
+    expect(out).toContain("NEMOCLAW_WEB_SEARCH_ENABLED=0");
+    expect(out).toContain("onboard --resume");
+  });
 });
 
 describe("reconstructImageRefCreateCommand", () => {

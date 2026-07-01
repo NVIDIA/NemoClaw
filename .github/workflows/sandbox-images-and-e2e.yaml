@@ -91,7 +91,8 @@ jobs:
       - name: Run Hermes sandbox secret boundary test
         env:
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
-        run: bash test/e2e/test-hermes-sandbox-secret-boundary.sh
+          NEMOCLAW_RUN_LIVE_E2E: "1"
+        run: npx vitest run --project e2e-live test/e2e/live/hermes-sandbox-secret-boundary.test.ts --silent=false --reporter=default
 
       - name: Upload Hermes sandbox secret boundary log on failure
         if: failure()
@@ -112,13 +113,13 @@ jobs:
 
       - name: Run Hermes root entrypoint smoke Vitest test
         env:
-          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/vitest/hermes-root-entrypoint-smoke
+          E2E_ARTIFACT_DIR: ${{ github.workspace }}/e2e-artifacts/live/hermes-root-entrypoint-smoke
           NEMOCLAW_HERMES_TEST_IMAGE: nemoclaw-hermes-production
-          NEMOCLAW_RUN_E2E_SCENARIOS: "1"
+          NEMOCLAW_RUN_LIVE_E2E: "1"
         run: |
           set -euo pipefail
-          npx vitest run --project e2e-scenarios-live \
-            test/e2e-scenario/live/hermes-root-entrypoint-smoke.test.ts \
+          npx vitest run --project e2e-live \
+            test/e2e/live/hermes-root-entrypoint-smoke.test.ts \
             --silent=false --reporter=default
 
       - name: Upload Hermes root entrypoint smoke artifacts
@@ -126,7 +127,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-root-entrypoint-smoke-artifacts
-          path: e2e-artifacts/vitest/hermes-root-entrypoint-smoke/
+          path: e2e-artifacts/live/hermes-root-entrypoint-smoke/
           include-hidden-files: false
           if-no-files-found: ignore
           retention-days: 14

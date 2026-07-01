@@ -58,5 +58,9 @@
   {
     "name": "NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL",
     "reason": "Legacy E2E-only model override used by cloud and hosted-inference live test scripts. Not a supported production configuration knob."
+  },
+  {
+    "name": "NEMOCLAW_FORWARD_RECOVERY_WAIT_MS",
+    "reason": "Internal Vitest-only override that shortens the bounded post-start forward-settle poll in subprocess fixtures. Production uses the built-in three-second window."
   }
 ]

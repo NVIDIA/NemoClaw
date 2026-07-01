@@ -2,12 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { HERMES_TOOL_GATEWAY_PRESET_NAMES } from "./hermes-managed-tools";
-import { isOpenclawAgent, OPENCLAW_OTEL_LOCAL_POLICY_PRESET } from "./openclaw-otel-policy-presets";
+import { isOpenclawAgent, OPENCLAW_ONLY_POLICY_PRESETS } from "./openclaw-otel-policy-presets";
 
-const OPENCLAW_ONLY_POLICY_PRESETS = new Set<string>([
-  "openclaw-pricing",
-  OPENCLAW_OTEL_LOCAL_POLICY_PRESET,
-]);
+export { OPENCLAW_ONLY_POLICY_PRESETS };
 
 function isHermesAgent(agent: string | null | undefined): boolean {
   return typeof agent === "string" && agent.trim().toLowerCase() === "hermes";

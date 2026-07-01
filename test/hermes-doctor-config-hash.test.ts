@@ -12,6 +12,81 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const HERMES_DOCKERFILE = path.join(ROOT, "agents", "hermes", "Dockerfile");
 
 describe("Hermes doctor and config hash boundary", () => {
+  it("locks trusted gateway recovery preloads as image-owned read-only files", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-preload-lock-"));
+    const binDir = path.join(tmp, "usr-local-bin");
+    const libDir = path.join(tmp, "usr-local-lib-nemoclaw");
+    const preloadsDir = path.join(libDir, "preloads");
+    const nestedDir = path.join(preloadsDir, "nested");
+    const profileDir = path.join(tmp, "etc-profile.d");
+    const bashrcPath = path.join(tmp, "bash.bashrc");
+    const chownLogPath = path.join(tmp, "chown.log");
+    const mode = (entry: string) => (fs.statSync(entry).mode & 0o777).toString(8);
+
+    try {
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(nestedDir, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(profileDir, { recursive: true });
+      for (const relativePath of [
+        path.join(binDir, "nemoclaw-start"),
+        path.join(binDir, "nemoclaw-gateway-control"),
+        path.join(libDir, "sandbox-init.sh"),
+        path.join(libDir, "gateway-supervisor.sh"),
+        path.join(libDir, "validate-hermes-env-secret-boundary.py"),
+        path.join(libDir, "seed-hermes-dashboard-config.py"),
+        path.join(libDir, "hermes-runtime-config-guard.py"),
+        path.join(libDir, "state-dir-guard.py"),
+        path.join(libDir, "managed-gateway-control.py"),
+        path.join(libDir, "sandbox-rlimits.sh"),
+        path.join(preloadsDir, "gateway-safety-net.js"),
+        path.join(nestedDir, "ciao-preload.js"),
+        bashrcPath,
+      ]) {
+        fs.mkdirSync(path.dirname(relativePath), { recursive: true });
+        fs.writeFileSync(relativePath, "test\n", { mode: 0o666 });
+      }
+
+      const lockCommand = dockerRunCommandBetween(
+        dockerfile,
+        "# Dockerfile.base is the source of truth for rlimit hooks.",
+        "# Flatten stale published base images",
+      )
+        .replaceAll("/usr/local/bin", binDir)
+        .replaceAll("/usr/local/lib/nemoclaw", libDir)
+        .replaceAll("/etc/profile.d", profileDir)
+        .replaceAll("/etc/bash.bashrc", bashrcPath);
+      const script = [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `chown_log=${JSON.stringify(chownLogPath)}`,
+        'chown() { printf "%s\\n" "$*" >> "$chown_log"; }',
+        lockCommand,
+      ].join("\n");
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe("");
+      expect(fs.readFileSync(chownLogPath, "utf-8")).toBe(
+        [
+          `root:root ${path.join(binDir, "nemoclaw-gateway-control")} ${path.join(libDir, "gateway-supervisor.sh")} ${path.join(libDir, "state-dir-guard.py")} ${path.join(libDir, "managed-gateway-control.py")}`,
+          `-R 0:0 ${preloadsDir}`,
+          "",
+        ].join("\n"),
+      );
+      expect(mode(path.join(binDir, "nemoclaw-gateway-control"))).toBe("700");
+      expect(mode(path.join(libDir, "gateway-supervisor.sh"))).toBe("444");
+      expect(mode(path.join(libDir, "state-dir-guard.py"))).toBe("500");
+      expect(mode(path.join(libDir, "managed-gateway-control.py"))).toBe("500");
+      expect(mode(preloadsDir)).toBe("755");
+      expect(mode(nestedDir)).toBe("755");
+      expect(mode(path.join(preloadsDir, "gateway-safety-net.js"))).toBe("444");
+      expect(mode(path.join(nestedDir, "ciao-preload.js"))).toBe("444");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("keeps upstream doctor changes out of generated config hash inputs", () => {
     const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-doctor-lock-"));
@@ -66,6 +141,11 @@ describe("Hermes doctor and config hash boundary", () => {
       "# Pin config hash at build time",
       "# Backward-compatible marker",
     ).replaceAll("/etc/nemoclaw", etcDir);
+    const compatHashCommand = dockerRunCommandBetween(
+      dockerfile,
+      "# Backward-compatible marker",
+      "# OpenShell's macOS VM backend",
+    );
 
     try {
       const doctorAndGenerate = spawnSync("bash", ["-c", doctorAndGenerateCommand], {
@@ -93,6 +173,17 @@ describe("Hermes doctor and config hash boundary", () => {
         timeout: 5000,
       });
       expect(verifyHash.status).toBe(0);
+
+      const compatHash = runDockerShell(compatHashCommand, sandboxRoot);
+      expect(compatHash.result.status).toBe(0);
+      expect(compatHash.result.stderr).toBe("");
+      expect(mode(path.join(hermesDir, ".config-hash"))).toBe("640");
+      const verifyCompatHash = spawnSync(
+        "sha256sum",
+        ["-c", path.join(hermesDir, ".config-hash")],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      expect(verifyCompatHash.status).toBe(0);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
