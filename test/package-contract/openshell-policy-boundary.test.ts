@@ -91,10 +91,10 @@ describe("OpenShell policy boundary package contract", () => {
       parseCurrentPolicy: (raw: string | null | undefined) => string;
     };
     const canonical = require("../../nemoclaw/dist/shared/openshell-policy-boundary.cjs") as {
-      parseOpenShellPolicy: (
-        raw: string,
-        options?: { allowUnmarkedPolicyBody?: boolean },
-      ) => { yamlBody: string; policy: Record<string, unknown> };
+      parseOpenShellPolicy: (raw: string) => {
+        yamlBody: string;
+        policy: Record<string, unknown>;
+      };
     };
     const policyBody = "version: 1\nnetwork_policies:\n  safe: {}";
     const policyOutput = ["Version: 1", "Hash: sha256:test", "---", policyBody].join("\n");
@@ -106,7 +106,7 @@ describe("OpenShell policy boundary package contract", () => {
     });
 
     const versionlessBody = "some_key:\n  keep: true";
-    expect(cliPolicy.parseCurrentPolicy(versionlessBody)).toBe(versionlessBody);
+    expect(cliPolicy.parseCurrentPolicy(versionlessBody)).toBe("");
     expect(() => canonical.parseOpenShellPolicy(versionlessBody)).toThrow(
       /does not contain a policy YAML document/,
     );
@@ -115,6 +115,11 @@ describe("OpenShell policy boundary package contract", () => {
       /does not contain a policy YAML document/,
     );
     expect(cliPolicy.parseCurrentPolicy("version: [unterminated")).toBe("");
+
+    const versionlessNetworkPolicies = "network_policies:\n  safe: {}";
+    expect(cliPolicy.parseCurrentPolicy(versionlessNetworkPolicies)).toBe(
+      versionlessNetworkPolicies,
+    );
   });
 
   it("ships the generated canonical CJS boundary through both package manifests", () => {

@@ -300,15 +300,15 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
 // sourceBoundary: OpenShell owns CLI output; the canonical parser owns what
 // NemoClaw admits as policy YAML.
 // whyNotSourceFix: NemoClaw supports CLI releases whose process output is the
-// only available boundary, including versionless compatibility bodies.
+// only available boundary, including versionless network_policies bodies.
 // regressionTest: nemoclaw/src/shared/openshell-policy-boundary.test.ts and
 // test/policy-mutation-read-failure.test.ts.
 // removalCondition: remove this fail-soft adapter when every caller consumes a
-// typed OpenShell policy API and no longer needs versionless CLI compatibility.
+// typed OpenShell policy API.
 function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
   if (!raw) return "";
   try {
-    return parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true }).yamlBody;
+    return parseOpenShellPolicy(raw).yamlBody;
   } catch {
     return "";
   }
