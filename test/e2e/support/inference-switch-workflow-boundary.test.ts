@@ -72,8 +72,28 @@ describe("inference switch workflow boundary", () => {
     );
     [steps[cleanupIndex], steps[uploadIndex]] = [steps[uploadIndex], steps[cleanupIndex]];
     expect(validateInferenceSwitchWorkflow(lingeringCredentials)).toContain(
-      "openclaw-inference-switch must build, authenticate, test, clean credentials, then upload",
+      "openclaw-inference-switch must authenticate, build, test, upload artifacts, then clean credentials",
     );
+  });
+
+  it("accepts shared guarded Docker authentication without mode-specific auth scripts", () => {
+    const workflow = readInferenceSwitchWorkflow();
+    const steps = workflow.jobs["openclaw-inference-switch"].steps!;
+    const configureIndex = steps.findIndex(
+      (step) => step.name === "Configure isolated Docker auth directory",
+    );
+    if (configureIndex >= 0) steps.splice(configureIndex, 1);
+
+    const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
+    const authIndex = steps.indexOf(authenticate);
+    steps.splice(authIndex, 1);
+    steps.splice(1, 0, authenticate);
+    authenticate.run = "shared guarded Docker Hub login";
+
+    const cleanup = steps.find((step) => step.name === "Clean up Docker auth")!;
+    cleanup.run = "shared guarded Docker auth cleanup";
+
+    expect(validateInferenceSwitchWorkflow(workflow)).toEqual([]);
   });
 
   it("keeps the mode ratchet in the central workflow check", () => {

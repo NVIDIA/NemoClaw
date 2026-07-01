@@ -36,39 +36,28 @@ describe("release gate workflow resource contracts", () => {
     expect(liveTest).toContain("timeoutMs: 55 * 60_000");
   });
 
-  it("authenticates Spark image pulls with an isolated Docker config", () => {
+  it("authenticates Spark image pulls through the shared guarded steps", () => {
     const steps = e2eWorkflow.jobs["spark-install"].steps ?? [];
     const stepIndex = (name: string) => steps.findIndex((step) => step.name === name);
-    const configure = steps.find(
-      (step) => step.name === "Configure isolated Docker auth directory",
-    );
     const auth = steps.find((step) => step.name === "Authenticate to Docker Hub");
     const cleanup = steps.find((step) => step.name === "Clean up Docker auth");
 
-    expect(configure?.run).toBe(
-      'echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-spark-install" >> "$GITHUB_ENV"',
+    expect(steps.some((step) => step.name === "Configure isolated Docker auth directory")).toBe(
+      false,
     );
-    expect(auth?.uses).toBe("docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee");
-    expect(auth?.if).toBe("github.ref == 'refs/heads/main'");
-    expect(auth?.["continue-on-error"]).toBe(true);
-    expect(auth?.with).toMatchObject({
-      registry: "docker.io",
-      username: "${{ secrets.DOCKERHUB_USERNAME }}",
-      password: "${{ secrets.DOCKERHUB_TOKEN }}",
-    });
-    expect(auth?.env).toBeUndefined();
-    expect(auth?.run).toBeUndefined();
-    expect(stepIndex("Configure isolated Docker auth directory")).toBeLessThan(
-      stepIndex("Authenticate to Docker Hub"),
-    );
+    expect(auth?.uses).toBeUndefined();
+    expect(auth?.if).toBeUndefined();
+    expect(auth?.["continue-on-error"]).toBeUndefined();
+    expect(auth?.env).toHaveProperty("DOCKERHUB_AUTH_REQUIRED");
+    expect(auth?.run).toEqual(expect.any(String));
+    expect(stepIndex("Authenticate to Docker Hub")).toBeLessThan(stepIndex("Set up Node"));
     expect(stepIndex("Authenticate to Docker Hub")).toBeLessThan(
       stepIndex("Run Spark install live test"),
     );
     expect(cleanup?.if).toBe("always()");
-    expect(cleanup?.run).toContain(
-      '"${DOCKER_CONFIG}" == "${RUNNER_TEMP}/docker-config-spark-install"',
+    expect(cleanup?.run).toBe("bash .github/scripts/docker-auth-cleanup.sh");
+    expect(stepIndex("Run Spark install live test")).toBeLessThan(
+      stepIndex("Clean up Docker auth"),
     );
-    expect(cleanup?.run).toContain("docker logout docker.io || true");
-    expect(cleanup?.run).toContain('rm -rf -- "${DOCKER_CONFIG}"');
   });
 });
