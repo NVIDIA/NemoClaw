@@ -6,6 +6,9 @@
 # The request directory is root-only. Requests are written by the host through
 # the registry-scoped privileged Docker exec path; sandbox processes cannot
 # submit or alter them.
+# Byte-exact character class matching — macOS UTF-8 locale makes [a-f] case-
+# insensitive, which would allow uppercase hex nonces to bypass the nonce check.
+export LC_ALL=C
 
 NEMOCLAW_GATEWAY_CONTROL_DIR="${NEMOCLAW_GATEWAY_CONTROL_DIR:-/run/nemoclaw/gateway-control}"
 NEMOCLAW_GATEWAY_CONTROL_REQUEST="${NEMOCLAW_GATEWAY_CONTROL_DIR}/request"

@@ -8,6 +8,9 @@ set -eu
 # it must not inherit command resolution from the container environment. Use a
 # fixed interpreter and trusted system PATH before invoking any external tool.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+# Byte-exact character class matching — macOS UTF-8 locale makes [a-f] case-
+# insensitive, which would allow uppercase hex nonces to pass the [!0-9a-f] check.
+export LC_ALL=C
 
 INSTALLED_CONTROL_HELPER="/usr/local/bin/nemoclaw-gateway-control"
 if [ "$0" = "$INSTALLED_CONTROL_HELPER" ]; then

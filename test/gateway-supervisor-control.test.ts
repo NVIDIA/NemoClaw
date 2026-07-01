@@ -158,6 +158,7 @@ describe("gateway supervisor tracked PID handling", () => {
   it("terminates only the exact tracked child PID", () => {
     const result = runSupervisorLibrary(
       [
+        "set +m",
         "sleep 30 & target_pid=$!",
         "sleep 30 & sibling_pid=$!",
         'cleanup_children() { kill "$target_pid" "$sibling_pid" 2>/dev/null || true; }',
@@ -172,7 +173,9 @@ describe("gateway supervisor tracked PID handling", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
+    // macOS bash 3.2 reports SIGTERM job-control notifications to stderr
+    // (e.g. "Terminated: 15  sleep 30") despite set +m; filter them out.
+    expect(result.stderr.replace(/^[^\n]*(?:Terminated|Killed)[^\n]*\n?/gm, "")).toBe("");
     expect(result.stdout).toMatch(/^\d+$/);
   });
 
@@ -341,6 +344,7 @@ describe("root-only gateway control helper", () => {
           temporaryDirectory("nemoclaw-gateway-helper-invalid-"),
           "absent",
         ),
+        NEMOCLAW_TEST_GATEWAY_CONTROL_CALLER_UID: "0",
       },
     });
 
