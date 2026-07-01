@@ -1089,7 +1089,7 @@ describe("NC-2227-05: shields timer marker behavior", () => {
   });
 });
 
-describe("#6126: shields relock recovery hint is driver-neutral", () => {
+describe("shields relock recovery hint stays driver-neutral (#6126)", () => {
   const loadHint = async () => {
     const sourceModulePath = path.join(process.cwd(), "src", "lib", "shields", "index.ts");
     const { manualRelockRecoveryHint } = await import(sourceModulePath);
