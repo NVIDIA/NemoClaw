@@ -2155,11 +2155,11 @@ exit 1
       expect(result).not.toContain("pypi");
     });
 
-    it("returns policy unchanged when network_policies is a legacy array", () => {
+    it("rejects removal when network_policies is a legacy array", () => {
       const current = "version: 1\n\nnetwork_policies:\n  - host: pypi.org\n    allow: true\n";
-      const result = policies.removePresetFromPolicy(current, pypiEntries);
-      expect(result).toContain("pypi.org");
-      expect(result).toContain("allow: true");
+      expect(() => policies.removePresetFromPolicy(current, pypiEntries)).toThrow(
+        /current policy is not a valid YAML mapping/i,
+      );
     });
   });
 

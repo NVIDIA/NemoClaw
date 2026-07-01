@@ -191,14 +191,14 @@ describe("OpenShell 0.0.72 policy round-trip compatibility", () => {
     }
   });
 
-  it("replaces a legacy network_policies array without serializing array entries as keys", () => {
+  it("rejects a legacy network_policies array instead of replacing its entries", () => {
     const legacy = YAML.stringify({
       version: 1,
       network_policies: [{ host: "legacy.example.com", access: "full" }],
     });
-    const merged = YAML.parse(policies.mergePresetIntoPolicy(legacy, PRESET_ENTRIES));
 
-    expect(merged.network_policies).toEqual({ pypi_access: expect.any(Object) });
-    expect(merged.network_policies).not.toHaveProperty("0");
+    expect(() => policies.mergePresetIntoPolicy(legacy, PRESET_ENTRIES)).toThrow(
+      /current policy is not a valid YAML mapping/i,
+    );
   });
 });
