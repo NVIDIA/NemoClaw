@@ -6,55 +6,43 @@ import { describe, expect, it } from "vitest";
 import { decideNonInteractiveNotReadyAction } from "./not-ready-recreate";
 
 describe("decideNonInteractiveNotReadyAction", () => {
-  it("returns exit when no installer restore intent is set", () => {
-    const decision = decideNonInteractiveNotReadyAction({
-      sandboxName: "my-assistant",
-      installerRestoreOnRecreate: false,
-      latestBackupPath:
-        "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z",
-    });
-
-    expect(decision).toEqual({ kind: "exit" });
+  it("returns exit when installer restore intent is unset", () => {
+    expect(
+      decideNonInteractiveNotReadyAction({
+        sandboxName: "my-assistant",
+        installerRestoreOnRecreate: false,
+        latestBackupPath:
+          "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z",
+      }),
+    ).toEqual({ kind: "exit" });
   });
 
-  it("returns exit when installer restore intent is unset even if a backup exists", () => {
-    const decision = decideNonInteractiveNotReadyAction({
-      sandboxName: "my-assistant",
-      installerRestoreOnRecreate: false,
-      latestBackupPath: null,
-    });
-
-    expect(decision).toEqual({ kind: "exit" });
-  });
-
-  it("returns recreate with the pre-upgrade backup path when installer restore intent and a backup are present", () => {
+  it("returns recreate with the pre-upgrade backup path when installer intent and a backup are present", () => {
     const backupPath = "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-07-01T06-50-40-925Z";
-    const decision = decideNonInteractiveNotReadyAction({
-      sandboxName: "my-assistant",
-      installerRestoreOnRecreate: true,
-      latestBackupPath: backupPath,
+    expect(
+      decideNonInteractiveNotReadyAction({
+        sandboxName: "my-assistant",
+        installerRestoreOnRecreate: true,
+        latestBackupPath: backupPath,
+      }),
+    ).toMatchObject({
+      kind: "recreate",
+      restoreBackupPath: backupPath,
+      note: expect.stringMatching(/my-assistant.*recreating and restoring pre-upgrade backup/),
     });
-
-    expect(decision.kind).toBe("recreate");
-    if (decision.kind === "recreate") {
-      expect(decision.restoreBackupPath).toBe(backupPath);
-      expect(decision.note).toContain("my-assistant");
-      expect(decision.note).toContain("recreating and restoring pre-upgrade backup");
-    }
   });
 
-  it("returns recreate without a backup when installer restore intent is set but no backup exists", () => {
-    const decision = decideNonInteractiveNotReadyAction({
-      sandboxName: "preserve-oc",
-      installerRestoreOnRecreate: true,
-      latestBackupPath: null,
+  it("returns recreate without a backup when installer intent is set but no backup exists", () => {
+    expect(
+      decideNonInteractiveNotReadyAction({
+        sandboxName: "preserve-oc",
+        installerRestoreOnRecreate: true,
+        latestBackupPath: null,
+      }),
+    ).toMatchObject({
+      kind: "recreate",
+      restoreBackupPath: null,
+      note: expect.stringMatching(/preserve-oc.*no pre-upgrade backup found/),
     });
-
-    expect(decision.kind).toBe("recreate");
-    if (decision.kind === "recreate") {
-      expect(decision.restoreBackupPath).toBeNull();
-      expect(decision.note).toContain("preserve-oc");
-      expect(decision.note).toContain("no pre-upgrade backup found");
-    }
   });
 });

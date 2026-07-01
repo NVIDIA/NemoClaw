@@ -993,7 +993,6 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
 
 const {
   pruneStaleSandboxEntry,
-  shouldRestoreLatestBackupOnRecreate,
   confirmRecreateForSelectionDrift,
   isOpenclawReady,
 } = sandboxLifecycle.createSandboxLifecycleHelpers({
@@ -2638,6 +2637,7 @@ async function createSandbox(
   // post-creation restore (the sandbox create path runs after the block).
   let pendingStateRestore: BackupResult | null = null;
   let pendingStateRestoreBackupPath: string | null = null;
+  let notReadyRecreateInProgress = false;
 
   pendingStateRestoreBackupPath = notReadyRecreate.selectPreUpgradeBackupForCreate({
     liveExists,
@@ -2785,6 +2785,7 @@ async function createSandbox(
             return sandboxName;
           }
         } else {
+          notReadyRecreateInProgress = true;
           pendingStateRestoreBackupPath = notReadyRecreate.applyNonInteractiveNotReadyDecision(
             sandboxName,
             note,
@@ -2880,7 +2881,11 @@ async function createSandbox(
     policyPresetCarry.applyRecreatePolicyCarryForward(sandboxName, isNonInteractive(), note);
 
     const noRestorePending = pendingStateRestore === null && pendingStateRestoreBackupPath === null;
-    if (noRestorePending && !shouldSkipPreRecreateBackup(process.env)) {
+    if (
+      noRestorePending &&
+      !notReadyRecreateInProgress &&
+      !shouldSkipPreRecreateBackup(process.env)
+    ) {
       note("  Backing up workspace state before recreating sandbox...");
       const result = backupSandboxBeforeRecreate({ sandboxName });
       if (!result.ok) {
