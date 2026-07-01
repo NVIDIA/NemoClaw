@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
-import { runOpenshellProviderCommand } from "../../lib/actions/global";
+import { forgetExtraProvider, runOpenshellProviderCommand } from "../../lib/actions/global";
 import { OPENSHELL_OPERATION_TIMEOUT_MS } from "../../lib/adapters/openshell/timeouts";
 import { CLI_NAME } from "../../lib/cli/branding";
 import { yesFlag } from "../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 import { isBridgeProviderName, recoverGatewayOrExit } from "../../lib/credentials/command-support";
-import { prompt as askPrompt } from "../../lib/credentials/store";
+import { KNOWN_CREDENTIAL_ENV_KEYS, prompt as askPrompt } from "../../lib/credentials/store";
+import { redact } from "../../lib/security/redact";
+
+const KNOWN_CREDENTIAL_ENV_KEY_SET = new Set(KNOWN_CREDENTIAL_ENV_KEYS);
 
 export default class CredentialsResetCommand extends NemoClawCommand {
   static id = "credentials:reset";
@@ -66,13 +69,28 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     if (result.status === 0) {
+      forgetExtraProvider(key);
       this.log(`  Removed provider '${key}' from the OpenShell gateway.`);
       this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
       return;
     }
 
+    const rawStderr = String(result.stderr || "").trim();
+    const looksLikeEnvName = KNOWN_CREDENTIAL_ENV_KEY_SET.has(key);
+    const alreadyAbsent = /not found|does not exist|already absent/i.test(rawStderr);
+    if (alreadyAbsent && !looksLikeEnvName) {
+      const removedLocal = forgetExtraProvider(key);
+      this.log(
+        removedLocal
+          ? `  Provider '${key}' is already absent from the OpenShell gateway. Local state was cleaned up.`
+          : `  Provider '${key}' is already absent from the OpenShell gateway.`,
+      );
+      this.log(`  Re-run '${CLI_NAME} onboard' to enter a new value.`);
+      return;
+    }
+
     const lines = [`  Could not remove provider '${key}'.`];
-    if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
+    if (looksLikeEnvName) {
       lines.push(
         "",
         `  '${key}' looks like a credential env variable name.`,
@@ -81,7 +99,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
         "  registered providers, then retry with one of those names.",
       );
     }
-    const stderr = String(result.stderr || "").trim();
+    const stderr = redact(rawStderr);
     if (stderr) lines.push(`  ${stderr}`);
     this.failWithLines(lines);
   }
