@@ -9,7 +9,7 @@ import {
   type LockObservation,
   type McpLifecycleLockIdentityProbes,
   type McpLifecycleLockOwner,
-} from "../src/lib/state/mcp-lifecycle-lock-identity";
+} from "../../src/lib/state/mcp-lifecycle-lock-identity";
 
 const PROPERTY_TIMEOUT_MS = 15_000;
 const PROPERTY_PARAMETERS = { numRuns: 250, seed: 0x5876c0de } as const;

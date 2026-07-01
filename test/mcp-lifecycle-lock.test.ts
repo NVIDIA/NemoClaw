@@ -10,6 +10,8 @@ import path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import "./helpers/mcp-lifecycle-lock-properties";
+
 type LifecycleLockModule = typeof import("../src/lib/state/mcp-lifecycle-lock");
 
 const requireDist = createRequire(import.meta.url);
