@@ -254,6 +254,7 @@ NEMOCLAW_CMD=("$@")
 # Internal test seam shared by the PID writer and watchdog. This is deliberately
 # not documented as a public env API; production always keeps the default path.
 GATEWAY_PID_FILE=/tmp/nemoclaw-gateway.pid
+GATEWAY_WATCHDOG_KILL_FILE="${_NEMOCLAW_GATEWAY_WATCHDOG_KILL_FILE:-/tmp/nemoclaw-gateway-watchdog-kill}"
 
 # A numeric PID is not a process identity: Linux may reuse it immediately
 # after the child is reaped.  Capture `/proc/<pid>/stat` field 22 (starttime)
@@ -358,6 +359,19 @@ record_gateway_pid() {
 
 clear_gateway_pid_record() {
   printf '' | _nemoclaw_safe_replace_tmp_file "$GATEWAY_PID_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+record_gateway_watchdog_kill() {
+  printf '%s\n' "${1:-}" \
+    | _nemoclaw_safe_replace_tmp_file "$GATEWAY_WATCHDOG_KILL_FILE" 600 "" best-effort 2>/dev/null || true
+}
+
+consume_gateway_watchdog_kill() {
+  local expected="$1" marked=""
+  [ -f "$GATEWAY_WATCHDOG_KILL_FILE" ] || return 1
+  IFS= read -r marked <"$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  rm -f "$GATEWAY_WATCHDOG_KILL_FILE" 2>/dev/null || true
+  [ -n "$marked" ] && [ "$marked" = "$expected" ]
 }
 
 _chat_ui_url_port() {
@@ -4117,6 +4131,7 @@ start_gateway_serving_watchdog() {
       # _NEMOCLAW_GATEWAY_LOG is a test seam; production always appends to
       # /tmp/gateway.log alongside the gateway's own output.
       echo "$msg" >>"${_NEMOCLAW_GATEWAY_LOG:-/tmp/gateway.log}" 2>/dev/null || true
+      record_gateway_watchdog_kill "$tracked_identity"
       kill -TERM "$pid" 2>/dev/null || true
       for _ in 1 2 3 4 5 6 7 8 9 10; do
         openclaw_supervised_pid_is_live "$pid" "$start_identity" || break
@@ -4794,9 +4809,11 @@ if [ "$(id -u)" -ne 0 ]; then
     # non-zero, defeating the respawn loop entirely.
     RC=0
     EXITED_GATEWAY_PID="$GATEWAY_PID"
+    EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
     wait "$EXITED_GATEWAY_PID" || RC=$?
     mark_openclaw_gateway_stopped
-    if [ "$RC" -eq 0 ]; then
+    if [ "$RC" -eq 0 ] \
+      && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
       exit 0
     fi
     NOW=$(date +%s)
@@ -5067,6 +5084,7 @@ while :; do
   fi
 
   EXITED_GATEWAY_PID="$GATEWAY_PID"
+  EXITED_GATEWAY_START_IDENTITY="$GATEWAY_PID_START_IDENTITY"
   REAP_STATUS=0
   openclaw_reap_exited_gateway || REAP_STATUS=$?
   if [ "$REAP_STATUS" -eq 3 ]; then
@@ -5081,7 +5099,8 @@ while :; do
     handle_openclaw_gateway_control_request || true
     continue
   fi
-  if [ "$RC" -eq 0 ]; then
+  if [ "$RC" -eq 0 ] \
+    && ! consume_gateway_watchdog_kill "${EXITED_GATEWAY_PID}:${EXITED_GATEWAY_START_IDENTITY}"; then
     exit 0
   fi
   NOW=$(date +%s)
