@@ -1797,7 +1797,7 @@ seal_hermes_restart_inputs() {
   HERMES_RESTART_SEALED=0
   install_hermes_restart_seal_traps
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
+    ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" seal-restart \
       --hermes-dir "$HERMES_DIR" \
       --hash-file "$HERMES_HASH_FILE" \
       --state-file "$HERMES_RESTART_SEAL_STATE" \
@@ -1814,7 +1814,7 @@ seal_hermes_restart_inputs() {
     # gateway.
     original_failure_code="$HERMES_RESTART_FAILURE_CODE"
     if owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" \
         --lock-token "$GATEWAY_CONTROL_NONCE" 2>&1
@@ -1857,7 +1857,7 @@ unseal_hermes_restart_inputs() {
   HERMES_RESTART_UNSEALING=1
   trap 'HERMES_RESTART_SIGNAL_PENDING=1' SIGTERM SIGINT HUP
   if ! output="$(
-    "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
+    ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" unseal-restart \
       --hermes-dir "$HERMES_DIR" \
       --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
   )"; then
@@ -1991,7 +1991,7 @@ recover_startup_hermes_mutation() {
 
   while [ -e "$HERMES_CONFIG_MUTATION_LOCK" ] || [ -e "$HERMES_RESTART_SEAL_STATE" ]; do
     if ! owner_output="$(
-      "${_HERMES_GUARD_TIMEOUT[@]}" "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
+      ${_HERMES_GUARD_TIMEOUT[@]+"${_HERMES_GUARD_TIMEOUT[@]}"} "$_HERMES_PYTHON" -I "$_HERMES_RUNTIME_CONFIG_GUARD" inspect-mutation-owner \
         --hermes-dir "$HERMES_DIR" \
         --state-file "$HERMES_RESTART_SEAL_STATE" 2>&1
     )"; then
@@ -2475,13 +2475,13 @@ hermes_managed_controller_is_live() {
   first_start="$(gateway_control_pid_start_identity "$pid")" || return 1
   first_state="$(gateway_control_pid_state "$pid")" || return 1
   first_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
-  mapfile -d '' -t first_argv <"${proc_root}/${pid}/cmdline" || return 1
+  while IFS= read -r -d "" elem; do first_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
   hermes_managed_controller_argv_is_expected "${first_argv[@]}" || return 1
 
   second_start="$(gateway_control_pid_start_identity "$pid")" || return 1
   second_state="$(gateway_control_pid_state "$pid")" || return 1
   second_uids="$(awk '/^Uid:/ { print $2 ":" $3 ":" $4 ":" $5; exit }' "${proc_root}/${pid}/status")" || return 1
-  mapfile -d '' -t second_argv <"${proc_root}/${pid}/cmdline" || return 1
+  while IFS= read -r -d "" elem; do second_argv+=("$elem"); done <"${proc_root}/${pid}/cmdline" || return 1
   hermes_managed_controller_argv_is_expected "${second_argv[@]}" || return 1
 
   [ "$first_start" = "$expected_start_identity" ] \
@@ -2499,7 +2499,6 @@ hermes_managed_gateway_exit_was_host_authorized() {
   local marker dir_metadata marker_metadata
   local version marker_pid marker_start_identity controller_pid controller_start_identity extra
   local trailing=""
-  local marker_fd
 
   case "$pid" in
     '' | 0 | 1 | *[!0-9]*) return 1 ;;
@@ -2518,18 +2517,17 @@ hermes_managed_gateway_exit_was_host_authorized() {
   marker_metadata="$(stat -c '%u:%g %a %h' "$marker" 2>/dev/null || true)"
   [ "$marker_metadata" = "0:0 444 1" ] || return 1
 
-  exec {marker_fd}<"$marker" || return 1
-  if ! IFS=' ' read -r \
-    version marker_pid marker_start_identity controller_pid controller_start_identity extra \
-    <&"$marker_fd"; then
-    exec {marker_fd}<&-
-    return 1
-  fi
-  if IFS= read -r trailing <&"$marker_fd" || [ -n "$trailing" ]; then
-    exec {marker_fd}<&-
-    return 1
-  fi
-  exec {marker_fd}<&-
+  # bash 4.1+ named FDs ({var}<file) are not available on bash 3.2 (macOS).
+  # Use a grouped redirect instead — variables assigned inside {} remain in scope.
+  {
+    if ! IFS=' ' read -r \
+      version marker_pid marker_start_identity controller_pid controller_start_identity extra; then
+      return 1
+    fi
+    if IFS= read -r trailing || [ -n "$trailing" ]; then
+      return 1
+    fi
+  } <"$marker" || return 1
 
   [ "$version" = "v1" ] \
     && [ "$marker_pid" = "$pid" ] \
