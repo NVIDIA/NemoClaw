@@ -102,6 +102,11 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
+# The builder-stage verify-openshell-policy-boundary-dependencies.mts check is
+# the primary security gate: it enforces the generated boundary's strict module
+# dependency allowlist before this stage copies it. The node check below is
+# defense in depth only and proves the copied runtime still exports the function
+# the plugin needs; function availability does not replace dependency lockdown.
 RUN npm ci --omit=dev \
     && test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
