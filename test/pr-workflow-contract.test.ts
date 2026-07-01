@@ -55,7 +55,7 @@ const trustedActionDirs = [
   ".github/actions/ci-installer-integration",
 ] as const;
 
-const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
+const cliShardMatrix = [1, 2, 3, 4, 5, 6, 7] as const;
 const cliShardCount = String(cliShardMatrix.length);
 
 function stepRuns(jobOrAction: WorkflowJob | CompositeAction): string[] {
