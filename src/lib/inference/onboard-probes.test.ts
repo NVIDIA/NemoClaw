@@ -7,6 +7,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { captureAuthConfigPath } from "../adapters/http/auth-config-test-helpers";
+import {
+  HARNESS_COUNTER,
+  HARNESS_TMPDIR,
+  makeFakeCurlScript,
+  withFakeCurlProbe,
+} from "./onboard-probes-curl-harness";
 
 const {
   getChatCompletionsProbeCurlArgs,
@@ -482,25 +488,9 @@ describe("OpenAI-compatible inference probes", () => {
     });
 
     it("recovers when an upstream 502 clears on retry (#2980)", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-502-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const counter = path.join(tmpDir, "counter");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(counter, "0");
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) shift ;;
-  esac
-done
-n=$(cat "${counter}")
+      const body = `n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
+echo "$n" > "${HARNESS_COUNTER}"
 if [ "$n" -lt 2 ]; then
   if [ -n "$outfile" ]; then
     printf '<html>502 Bad Gateway</html>' > "$outfile"
@@ -515,45 +505,29 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-        { mode: 0o755 },
+`;
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(body),
+          dirPrefix: "nemoclaw-502-probe-",
+        },
+        ({ lines, counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://integrate.api.nvidia.com/v1",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvapi-test",
+            { skipResponsesProbe: true },
+          );
+
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(lines.join("\n")).toContain("HTTP 502");
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        },
       );
-
-      const originalPath = process.env.PATH;
-      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
-      const originalLog = console.log;
-      const lines: string[] = [];
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
-      console.log = (...args) => lines.push(args.join(" "));
-      try {
-        const result = probeOpenAiLikeEndpoint(
-          "https://integrate.api.nvidia.com/v1",
-          "nvidia/nemotron-3-super-120b-a12b",
-          "nvapi-test",
-          { skipResponsesProbe: true },
-        );
-
-        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-        expect(lines.join("\n")).toContain("HTTP 502");
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-      } finally {
-        console.log = originalLog;
-        process.env.PATH = originalPath;
-        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
     });
 
     it("retries chat-completions when /responses errors then chat-completions times out", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-mixed-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const counter = path.join(tmpDir, "counter");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(counter, "0");
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 while [ "$#" -gt 0 ]; do
@@ -563,9 +537,9 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-n=$(cat "${counter}")
+n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
+echo "$n" > "${HARNESS_COUNTER}"
 if echo "$url" | grep -q '/responses'; then
   if [ -n "$outfile" ]; then
     printf '404 page not found' > "$outfile"
@@ -587,18 +561,8 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-        { mode: 0o755 },
-      );
-
-      const originalPath = process.env.PATH;
-      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
-      const originalLog = console.log;
-      const lines: string[] = [];
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
-      console.log = (...args) => lines.push(args.join(" "));
-      try {
+`;
+      withFakeCurlProbe({ script, dirPrefix: "nemoclaw-mixed-probe-" }, ({ counter }) => {
         const result = probeOpenAiLikeEndpoint(
           "https://api.example.com/v1",
           "test-model",
@@ -608,28 +572,16 @@ exit 0
         expect(result).toMatchObject({ ok: true, api: "openai-completions" });
         // /responses (404) + /chat/completions (28) + chat-completions retry (200)
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
-      } finally {
-        console.log = originalLog;
-        process.env.PATH = originalPath;
-        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
+      });
     });
 
     it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-query-retry-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const counter = path.join(tmpDir, "counter");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(counter, "0");
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
-n=$(cat "${counter}")
+n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
-printf '%s\\n' "$@" > "${tmpDir}/args-$n.txt"
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s\\n' "$@" > "${HARNESS_TMPDIR}/args-$n.txt"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) outfile="$2"; shift 2 ;;
@@ -651,51 +603,39 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-        { mode: 0o755 },
+`;
+      withFakeCurlProbe(
+        { script, dirPrefix: "nemoclaw-query-retry-probe-" },
+        ({ counter, tmpDir }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://api.example.com/v1",
+            "test-model",
+            "secret key",
+            { skipResponsesProbe: true, authMode: "query-param" },
+          );
+
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+          const observedConfigPaths = new Set<string>();
+          for (const call of ["1", "2"]) {
+            const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
+            expect(args).toContain("https://api.example.com/v1/chat/completions");
+            expect(args).not.toContain("?key=");
+            expect(args).not.toContain("Authorization: Bearer");
+            expect(args).not.toContain("secret key");
+            observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
+          }
+          // Both calls must reuse the same auth config tmpfile so a doubled-
+          // timeout retry never spawns a second config write that could race
+          // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
+          // --config has a path value".
+          expect(observedConfigPaths.size).toBe(1);
+        },
       );
-
-      const originalPath = process.env.PATH;
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      try {
-        const result = probeOpenAiLikeEndpoint(
-          "https://api.example.com/v1",
-          "test-model",
-          "secret key",
-          { skipResponsesProbe: true, authMode: "query-param" },
-        );
-
-        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-        const observedConfigPaths = new Set<string>();
-        for (const call of ["1", "2"]) {
-          const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
-          expect(args).toContain("https://api.example.com/v1/chat/completions");
-          expect(args).not.toContain("?key=");
-          expect(args).not.toContain("Authorization: Bearer");
-          expect(args).not.toContain("secret key");
-          observedConfigPaths.add(captureAuthConfigPath(args.split("\n")));
-        }
-        // Both calls must reuse the same auth config tmpfile so a doubled-
-        // timeout retry never spawns a second config write that could race
-        // with cleanup. PR #5975 review note PRA-9 / CodeRabbit "assert
-        // --config has a path value".
-        expect(observedConfigPaths.size).toBe(1);
-      } finally {
-        process.env.PATH = originalPath;
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
     });
 
     it("keeps timeout retries strict when chat-completions tool calling is required", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-retry-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const counter = path.join(tmpDir, "counter");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(counter, "0");
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
+      const script = `#!/usr/bin/env bash
 outfile=""
 payload=""
 while [ "$#" -gt 0 ]; do
@@ -706,10 +646,10 @@ while [ "$#" -gt 0 ]; do
     *) shift ;;
   esac
 done
-n=$(cat "${counter}")
+n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
-printf '%s' "$payload" > "${tmpDir}/request-$n.json"
+echo "$n" > "${HARNESS_COUNTER}"
+printf '%s' "$payload" > "${HARNESS_TMPDIR}/request-$n.json"
 if [ "$n" -eq 1 ]; then
   if [ -n "$outfile" ]; then
     : > "$outfile"
@@ -724,57 +664,36 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-        { mode: 0o755 },
+`;
+      withFakeCurlProbe(
+        { script, dirPrefix: "nemoclaw-strict-retry-probe-" },
+        ({ counter, tmpDir }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://api.example.com/v1",
+            "test-model",
+            "sk-test",
+            { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
+          );
+
+          expect(result).toMatchObject({ ok: false });
+          expect(result.message).toContain("did not return a tool call");
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+          const retryPayload = JSON.parse(
+            fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
+          );
+          expect(retryPayload).toMatchObject({
+            tool_choice: "required",
+            max_tokens: 256,
+            stream: false,
+          });
+        },
       );
-
-      const originalPath = process.env.PATH;
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      try {
-        const result = probeOpenAiLikeEndpoint(
-          "https://api.example.com/v1",
-          "test-model",
-          "sk-test",
-          { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
-        );
-
-        expect(result).toMatchObject({ ok: false });
-        expect(result.message).toContain("did not return a tool call");
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-        const retryPayload = JSON.parse(
-          fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
-        );
-        expect(retryPayload).toMatchObject({
-          tool_choice: "required",
-          max_tokens: 256,
-          stream: false,
-        });
-      } finally {
-        process.env.PATH = originalPath;
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
     });
 
     it("keeps retrying when initial timeout is followed by a transient 502", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-timeout-502-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const counter = path.join(tmpDir, "counter");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(counter, "0");
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) shift ;;
-  esac
-done
-n=$(cat "${counter}")
+      const body = `n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
+echo "$n" > "${HARNESS_COUNTER}"
 if [ "$n" -eq 1 ]; then
   if [ -n "$outfile" ]; then
     : > "$outfile"
@@ -796,99 +715,63 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-        { mode: 0o755 },
+`;
+      withFakeCurlProbe(
+        {
+          script: makeFakeCurlScript(body),
+          dirPrefix: "nemoclaw-timeout-502-probe-",
+        },
+        ({ lines, counter }) => {
+          const result = probeOpenAiLikeEndpoint(
+            "https://integrate.api.nvidia.com/v1",
+            "nvidia/nemotron-3-super-120b-a12b",
+            "nvapi-test",
+            { skipResponsesProbe: true },
+          );
+
+          expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+          expect(lines.join("\n")).toContain("HTTP 502");
+          expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
+        },
       );
-
-      const originalPath = process.env.PATH;
-      const originalNoSleep = process.env.NEMOCLAW_TEST_NO_SLEEP;
-      const originalLog = console.log;
-      const lines: string[] = [];
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
-      console.log = (...args) => lines.push(args.join(" "));
-      try {
-        const result = probeOpenAiLikeEndpoint(
-          "https://integrate.api.nvidia.com/v1",
-          "nvidia/nemotron-3-super-120b-a12b",
-          "nvapi-test",
-          { skipResponsesProbe: true },
-        );
-
-        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
-        expect(lines.join("\n")).toContain("HTTP 502");
-        expect(fs.readFileSync(counter, "utf8").trim()).toBe("3");
-      } finally {
-        console.log = originalLog;
-        process.env.PATH = originalPath;
-        restoreEnv("NEMOCLAW_TEST_NO_SLEEP", originalNoSleep);
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
     });
   });
 
   it("continues with openai-completions when DeepSeek V4 Pro stream validation times out", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-deepseek-probe-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
-outfile=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) shift ;;
-  esac
-done
-if [ -n "$outfile" ]; then
+    const body = `if [ -n "$outfile" ]; then
   : > "$outfile"
 fi
 printf '000'
 exit 28
-`,
-      { mode: 0o755 },
+`;
+    withFakeCurlProbe(
+      {
+        script: makeFakeCurlScript(body),
+        dirPrefix: "nemoclaw-deepseek-probe-",
+      },
+      ({ lines }) => {
+        const result = probeOpenAiLikeEndpoint(
+          "https://integrate.api.nvidia.com/v1",
+          "deepseek-ai/deepseek-v4-pro",
+          "nvapi-test",
+          { skipResponsesProbe: true },
+        );
+
+        expect(result).toMatchObject({
+          ok: true,
+          api: "openai-completions",
+          label: "Chat Completions API",
+          validated: false,
+        });
+        expect(lines.join("\n")).toContain("DeepSeek V4 Pro validation timed out");
+      },
     );
-
-    const originalPath = process.env.PATH;
-    const originalLog = console.log;
-    const lines: string[] = [];
-    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-    console.log = (...args) => lines.push(args.join(" "));
-    try {
-      const result = probeOpenAiLikeEndpoint(
-        "https://integrate.api.nvidia.com/v1",
-        "deepseek-ai/deepseek-v4-pro",
-        "nvapi-test",
-        { skipResponsesProbe: true },
-      );
-
-      expect(result).toMatchObject({
-        ok: true,
-        api: "openai-completions",
-        label: "Chat Completions API",
-        validated: false,
-      });
-      expect(lines.join("\n")).toContain("DeepSeek V4 Pro validation timed out");
-    } finally {
-      console.log = originalLog;
-      process.env.PATH = originalPath;
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
   });
 
   // PR #5975 review note PRA-14 (Nemotron). Pins the silent fallback so a
   // future SGLang fix that removes the workaround stays observable.
   it("falls back to chat-completions when /responses streaming lacks required events", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-stream-fallback-"));
-    const fakeBin = path.join(tmpDir, "bin");
-    const counter = path.join(tmpDir, "counter");
-    fs.mkdirSync(fakeBin, { recursive: true });
-    fs.writeFileSync(counter, "0");
-    fs.writeFileSync(
-      path.join(fakeBin, "curl"),
-      `#!/usr/bin/env bash
+    const script = `#!/usr/bin/env bash
 outfile=""
 url=""
 payload=""
@@ -900,9 +783,9 @@ while [ "$#" -gt 0 ]; do
     *) url="$1"; shift ;;
   esac
 done
-n=$(cat "${counter}")
+n=$(cat "${HARNESS_COUNTER}")
 n=$((n + 1))
-echo "$n" > "${counter}"
+echo "$n" > "${HARNESS_COUNTER}"
 if echo "$url" | grep -q '/responses'; then
   if printf '%s' "$payload" | grep -q '"stream":true'; then
     if [ -n "$outfile" ]; then
@@ -934,16 +817,8 @@ JSON
 fi
 printf '200'
 exit 0
-`,
-      { mode: 0o755 },
-    );
-
-    const originalPath = process.env.PATH;
-    const originalLog = console.log;
-    const lines: string[] = [];
-    process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-    console.log = (...args) => lines.push(args.join(" "));
-    try {
+`;
+    withFakeCurlProbe({ script, dirPrefix: "nemoclaw-stream-fallback-" }, ({ lines }) => {
       const result = probeOpenAiLikeEndpoint(
         "https://api.example.com/v1",
         "test-model",
@@ -953,11 +828,7 @@ exit 0
 
       expect(result).toMatchObject({ ok: true, api: "openai-completions" });
       expect(lines.join("\n")).toMatch(/missing required events/i);
-    } finally {
-      console.log = originalLog;
-      process.env.PATH = originalPath;
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
+    });
   });
 
   // PR #5975 review notes PRA-3 (Standard) and PRA-2 (Required). The unit
