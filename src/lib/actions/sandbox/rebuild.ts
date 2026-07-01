@@ -654,10 +654,10 @@ function revalidatePreparedRecoveryBeforeDelete(
       bail,
     );
   }
-  if (!sandboxState.hasPositiveManagedImageEvidence(currentEntry, validation.manifest)) {
+  if (!sandboxState.hasPositiveManagedImageEvidence(currentEntry)) {
     return failPreparedRecoveryPreDelete(
-      "backup no longer has positive NemoClaw-managed image evidence",
-      "Recovery backup is not proven to come from a NemoClaw-managed image.",
+      "registry no longer has a NemoClaw-managed image fingerprint",
+      "Recovery registry entry has no NemoClaw-managed image fingerprint.",
       bail,
     );
   }
@@ -705,14 +705,16 @@ export async function rebuildSandbox(
       bail(`Invalid recovery manifest: ${validation.reason}`);
       return;
     }
-    if (!sandboxState.hasPositiveManagedImageEvidence(sb, validation.manifest)) {
+    if (!sandboxState.hasPositiveManagedImageEvidence(sb)) {
       console.error("");
       console.error(
-        `  ${_RD}Recovery preflight failed:${R} backup has no positive NemoClaw-managed image evidence.`,
+        `  ${_RD}Recovery preflight failed:${R} registry has no NemoClaw-managed image fingerprint.`,
       );
-      console.error("  Legacy custom-image sandboxes are not recreated automatically.");
+      console.error(
+        "  Pre-fingerprint and custom-image sandboxes are not recreated automatically.",
+      );
       console.error("  Sandbox is untouched — no data was lost.");
-      bail("Recovery backup is not proven to come from a NemoClaw-managed image.");
+      bail("Recovery registry entry has no NemoClaw-managed image fingerprint.");
       return;
     }
     recoveryManifest = validation.manifest;

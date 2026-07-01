@@ -142,23 +142,9 @@ describe("prepared rebuild backup recovery validation (#6114)", () => {
     });
   });
 
-  it("requires a build fingerprint or matching legacy managed-agent versions", () => {
-    const legacyManaged = { agentVersion: "2026.5.27", nemoclawVersion: null };
-    const legacyCustom = { agentVersion: null, nemoclawVersion: null };
-    const manifest = { agentVersion: "2026.5.27" };
-
-    expect(sandboxState.hasPositiveManagedImageEvidence(legacyManaged, manifest)).toBe(true);
-    expect(
-      sandboxState.hasPositiveManagedImageEvidence(
-        { agentVersion: null, nemoclawVersion: "0.0.71" },
-        { agentVersion: null },
-      ),
-    ).toBe(true);
-    expect(sandboxState.hasPositiveManagedImageEvidence(legacyCustom, manifest)).toBe(false);
-    expect(
-      sandboxState.hasPositiveManagedImageEvidence(legacyManaged, {
-        agentVersion: "different-version",
-      }),
-    ).toBe(false);
+  it("requires a non-empty managed-image fingerprint", () => {
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "0.0.71" })).toBe(true);
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: null })).toBe(false);
+    expect(sandboxState.hasPositiveManagedImageEvidence({ nemoclawVersion: "  " })).toBe(false);
   });
 });

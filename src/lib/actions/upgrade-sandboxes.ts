@@ -106,11 +106,11 @@ function prepareBackupRecovery(
     if (!validation.ok) {
       return { sandbox, reason: validation.reason };
     }
-    if (!sandboxState.hasPositiveManagedImageEvidence(sandbox, validation.manifest)) {
+    if (!sandboxState.hasPositiveManagedImageEvidence(sandbox)) {
       return {
         sandbox,
         reason:
-          "backup has no positive NemoClaw-managed image evidence (legacy custom images are not auto-recreated)",
+          "registry has no NemoClaw-managed image fingerprint (pre-fingerprint and custom images are not auto-recreated)",
       };
     }
     return { sandbox, manifest: validation.manifest };
@@ -190,10 +190,12 @@ export async function upgradeSandboxes(
   // That state comes from the already-installed legacy CLI/gateway and cannot be
   // prevented at its source by this candidate. install.sh exports this signal only
   // after that CLI completes backup-all, or after an operator asserts prepared
-  // upgrade state. upgrade-sandboxes-recovery.test.ts and
+  // upgrade state. Recovery remains limited to registry entries with a managed-image
+  // fingerprint; pre-fingerprint entries cannot prove provenance and fail closed.
+  // upgrade-sandboxes-recovery.test.ts and
   // install-preexisting-sandbox-recovery.test.ts guard the handoff. Remove this
-  // bridge with onboard's matching consumer once pre-fingerprint upgrades are no
-  // longer supported.
+  // bridge with onboard's matching consumer once prepared-backup installer recovery
+  // is no longer supported.
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
   const backupRecoveryAssessments = recoverPreparedBackups
     ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)

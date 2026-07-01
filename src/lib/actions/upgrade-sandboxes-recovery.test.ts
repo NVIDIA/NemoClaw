@@ -42,7 +42,16 @@ function createRecoveryHarness(
     gatewayNames?: Record<string, string>;
     liveOutput?: string;
     latestBackup?: ReturnType<typeof makeManifest> | null;
+    registryOverrides?: Record<
+      string,
+      Partial<{
+        agent: "openclaw" | "hermes" | null;
+        agentVersion: string | null;
+        nemoclawVersion: string | null;
+      }>
+    >;
     staleNames?: string[];
+    useRealManagedEvidence?: boolean;
   } = {},
 ): {
   upgradeSandboxes: UpgradeSandboxes;
@@ -81,6 +90,7 @@ function createRecoveryHarness(
       agentVersion: "2026.5.27",
       gatewayName: options.gatewayNames?.[name],
       nemoclawVersion: "0.0.71",
+      ...options.registryOverrides?.[name],
     })),
   });
   vi.spyOn(sandboxVersion, "checkAgentVersion").mockImplementation((...args: unknown[]) => {
@@ -103,9 +113,8 @@ function createRecoveryHarness(
       manifest: args[2] as ReturnType<typeof makeManifest>,
     }),
   );
-  const managedEvidenceSpy = vi
-    .spyOn(sandboxState, "hasPositiveManagedImageEvidence")
-    .mockReturnValue(true);
+  const managedEvidenceSpy = vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence");
+  if (!options.useRealManagedEvidence) managedEvidenceSpy.mockReturnValue(true);
   const rebuildSpy = vi.spyOn(rebuild, "rebuildSandbox").mockResolvedValue(undefined);
 
   return {
@@ -153,16 +162,38 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     );
   });
 
-  it("fails closed without rebuilding a legacy custom-image backup", async () => {
-    const harness = createRecoveryHarness(["custom-box"]);
-    harness.managedEvidenceSpy.mockReturnValue(false);
-    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+  it("fails closed for a probed v0.0.55 custom image with matching backup agent version", async () => {
+    const probedAgentVersion = "2026.5.27";
+    const harness = createRecoveryHarness(["custom-box"], {
+      latestBackup: {
+        ...makeManifest("custom-box"),
+        agentVersion: probedAgentVersion,
+      },
+      registryOverrides: {
+        "custom-box": {
+          agentVersion: probedAgentVersion,
+          nemoclawVersion: null,
+        },
+      },
+      useRealManagedEvidence: true,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`process.exit(${code})`);
     }) as never);
 
     await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
+    expect(harness.managedEvidenceSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentVersion: probedAgentVersion,
+        nemoclawVersion: null,
+      }),
+    );
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining("registry has no NemoClaw-managed image fingerprint"),
+    );
   });
 
   it("warns and does not recover a stale registered sandbox absent from the selected gateway", async () => {
