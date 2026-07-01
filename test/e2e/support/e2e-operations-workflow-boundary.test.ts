@@ -78,11 +78,13 @@ describe("E2E operations workflow boundary", () => {
       expect.arrayContaining([
         "notify-on-failure must remain retired",
         "E2E workflow must not grant top-level issues: write",
+        "E2E workflow must not grant top-level pull-requests: write",
         "notify-on-failure must not hold issues: write",
         "notify-on-failure must not mutate GitHub issues",
         "scorecard must not hold issues: write",
         "scorecard must not mutate GitHub issues",
         "cloud-onboard must not hold issues: write",
+        "cloud-onboard must not hold pull-requests: write",
         "report-to-pr must not hold issues: write",
         "report-to-pr must hold only pull-requests: write",
         "report-to-pr must run only for manual workflow dispatches",
@@ -129,6 +131,62 @@ describe("E2E operations workflow boundary", () => {
 
     expect(validateE2eOperationsWorkflow(workflow)).toContain(
       "scorecard must not mutate GitHub issues",
+    );
+  });
+
+  it.each([
+    [
+      "an aliased generic REST request",
+      'const request = github.request; await request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a destructured generic REST request",
+      'const { request: callApi } = github; await callApi("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "an indirect GitHub alias",
+      'const client = github; await client.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a nested destructured request",
+      'const { request } = github.rest; await request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "an optional-chained request",
+      'await github?.request("POST /repos/{owner}/{repo}/issues/1/comments", {});',
+    ],
+    [
+      "a fetch call",
+      "await fetch('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
+    ],
+    [
+      "an aliased fetch call",
+      "const send = fetch; await send('https://api.github.com/repos/NVIDIA/NemoClaw/issues/1/comments', { method: 'POST' });",
+    ],
+    ["a gh api call", "gh api repos/NVIDIA/NemoClaw/issues/1/comments -f body=failed"],
+  ])("rejects %s outside the PR reporter", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs.scorecard.steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not use unvalidated generic write surfaces",
+    );
+  });
+
+  it("reserves pull-request write permission for the validated PR reporter", () => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.permissions = { "pull-requests": "write" };
+    workflow.jobs.scorecard.permissions = {
+      actions: "read",
+      contents: "read",
+      "pull-requests": "write",
+    };
+
+    expect(validateE2eOperationsWorkflow(workflow)).toEqual(
+      expect.arrayContaining([
+        "E2E workflow must not grant top-level pull-requests: write",
+        "scorecard must not hold pull-requests: write",
+      ]),
     );
   });
 

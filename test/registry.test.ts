@@ -507,6 +507,33 @@ describe("registry", () => {
     registry.registerSandbox({ name: "cp5" });
     expect(registry.getCustomPolicies("cp5")).toEqual([]);
   });
+
+  describe("extra providers", () => {
+    it("starts with an empty extra-provider list", () => {
+      expect(registry.listExtraProviders()).toEqual([]);
+    });
+
+    it("addExtraProvider persists a sorted, deduplicated list", () => {
+      expect(registry.addExtraProvider("tavily-search")).toBe(true);
+      expect(registry.addExtraProvider("custom-provider")).toBe(true);
+      expect(registry.addExtraProvider("tavily-search")).toBe(false);
+      expect(registry.listExtraProviders()).toEqual(["custom-provider", "tavily-search"]);
+    });
+
+    it("removeExtraProvider clears the entry and drops the field when empty", () => {
+      registry.addExtraProvider("tavily-search");
+      expect(registry.removeExtraProvider("tavily-search")).toBe(true);
+      expect(registry.listExtraProviders()).toEqual([]);
+      const raw = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+      expect("extraProviders" in raw).toBe(false);
+      expect(registry.removeExtraProvider("tavily-search")).toBe(false);
+    });
+
+    it("survives a registry round-trip through disk", () => {
+      registry.addExtraProvider("tavily-search");
+      expect(registry.listExtraProviders()).toEqual(["tavily-search"]);
+    });
+  });
 });
 
 describe("atomic writes", () => {

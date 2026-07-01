@@ -61,6 +61,42 @@ describe("sandbox operations workflow boundary", () => {
     );
   });
 
+  it("accepts shared guarded Docker authentication without a job-specific configure step", () => {
+    const workflow = readSandboxOperationsWorkflow();
+    const steps = workflow.jobs["sandbox-operations"].steps!;
+    expect(steps.some((step) => step.name === "Configure isolated Docker auth directory")).toBe(
+      false,
+    );
+
+    const authenticate = steps.find((step) => step.name === "Authenticate to Docker Hub")!;
+    authenticate.env = {
+      DOCKERHUB_AUTH_REQUIRED:
+        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}",
+      DOCKERHUB_USERNAME:
+        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_USERNAME || '' }}",
+      DOCKERHUB_TOKEN:
+        "${{ github.repository == 'NVIDIA/NemoClaw' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && secrets.DOCKERHUB_TOKEN || '' }}",
+    };
+    authenticate.run = [
+      'docker_config="$(mktemp -d "${RUNNER_TEMP}/docker-config-${GITHUB_JOB}-XXXXXX")"',
+      'echo "DOCKER_CONFIG=${docker_config}" >> "$GITHUB_ENV"',
+      "echo shared guarded login",
+    ].join("\n");
+
+    const authIndex = steps.indexOf(authenticate);
+    steps.splice(authIndex, 1);
+    steps.splice(1, 0, authenticate);
+
+    const cleanup = steps.find((step) => step.name === "Clean up Docker auth")!;
+    cleanup.run = [
+      'docker_config="${DOCKER_CONFIG:-}"',
+      "docker logout docker.io >/dev/null 2>&1 || true",
+      'rm -rf -- "${docker_config}"',
+    ].join("\n");
+
+    expect(validateSandboxOperationsWorkflow(workflow)).toEqual([]);
+  });
+
   it("rejects workspace-scoped auth, unsanitized installs, and broad inference secrets", () => {
     const jobMarker = ['      E2E_JOB: "1"', '      E2E_TARGET_ID: "sandbox-operations"', ""].join(
       "\n",
@@ -197,19 +233,25 @@ describe("sandbox operations workflow boundary", () => {
       expected: "sandbox-operations step 'Build CLI' must not write persistent environment",
     },
     {
-      label: "workspace override in the configure step",
+      label: "a persistent workspace Docker config outside shared auth",
       mutate: (source: string) =>
-        mutateSandboxOperationsJob(source, (jobSource) =>
-          jobSource.replace(
-            '        run: echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations" >> "$GITHUB_ENV"',
+        mutateSandboxOperationsJob(source, (jobSource) => {
+          const buildMarker = "      - name: Build CLI\n";
+          expect(jobSource).toContain(buildMarker);
+          return jobSource.replace(
+            buildMarker,
             [
+              "      - name: Persist workspace Docker config",
               "        run: |",
-              '          echo "DOCKER_CONFIG=${RUNNER_TEMP}/docker-config-sandbox-operations" >> "$GITHUB_ENV"',
               '          echo "DOCKER_CONFIG=${{ github.workspace }}/docker" >> "$GITHUB_ENV"',
+              "",
+              buildMarker.trimEnd(),
+              "",
             ].join("\n"),
-          ),
-        ),
-      expected: "sandbox-operations Docker auth directory must not use the checkout workspace",
+          );
+        }),
+      expected:
+        "sandbox-operations step 'Persist workspace Docker config' must not write persistent environment",
     },
   ])("rejects $label", ({ expected, mutate }) => {
     expect(validateCentralWorkflowMutation(mutate)).toContain(expected);
