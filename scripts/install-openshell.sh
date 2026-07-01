@@ -67,6 +67,15 @@ else
 fi
 
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
+  # invalidState: a mutable dev artifact is consumed as if it were a verified
+  # stable release. sourceBoundary: OpenShell owns the moving dev tag; NemoClaw
+  # owns this explicit compatibility-only opt-in. whyNotSourceFix: NemoClaw
+  # cannot make that upstream tag immutable. regressionTest:
+  # test/install-openshell-version-check.test.ts covers rejection without the
+  # opt-in and acceptance with it. removalCondition: remove this path when dev
+  # compatibility testing ends or OpenShell publishes an independently
+  # verifiable immutable development channel. See the v0.0.72 compatibility
+  # review's "Dev Channel Opt-In" section.
   if [ "${NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL:-}" != "1" ]; then
     fail "Dev channel install skips SHA-256 verification. Set NEMOCLAW_ACCEPT_DEV_UNVERIFIED_INSTALL=1 to explicitly accept an unverified OpenShell dev-channel install."
   fi

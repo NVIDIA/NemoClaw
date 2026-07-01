@@ -89,12 +89,17 @@ function componentBuildVersionsMatch(left: string, right: string): boolean {
   );
 }
 
-// OpenShell current main has no structured installed-feature response. This is
-// an artifact/install-repair preflight only; it never authorizes an MCP
-// mutation. The running supervisor is validated by applying and exact-matching
-// the actual generated MCP policy with `policy set --wait` before provider
-// credentials are created or updated. Version alone is insufficient for
-// mixed-component installations.
+// invalidState: a mixed or stale OpenShell installation appears feature-ready
+// from version text alone. sourceBoundary: OpenShell owns component identity
+// and the future native capability response; this scanner is an artifact and
+// install-repair preflight only and never authorizes an MCP mutation.
+// whyNotSourceFix: v0.0.72 has no structured installed-feature response.
+// regressionTest: openshell-feature-gate.test.ts covers mixed roots, symlink
+// farms, stale components, unreadable binaries, and the pinned sandbox digest.
+// removalCondition: replace this scan when OpenShell exposes a versioned native
+// capability command. Until then the running supervisor remains authoritative:
+// MCP applies and exact-matches the generated policy with `policy set --wait`
+// before provider credentials are created or updated.
 
 export function hasRequiredOpenshellMessagingFeatures(options: {
   openshellBin: string | null;

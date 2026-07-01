@@ -131,9 +131,15 @@ export function upsertMcpProvider(
   // mutation kind is known. The immediate reinspection below closes races
   // that occur while those fail-closed prerequisites are being prepared.
   options.prepareMutation?.(action);
-  // Close as much of the inspect-to-mutate window as OpenShell current main's
-  // name-based provider CLI permits. Re-read immutable identity immediately
-  // before and after every mutation; main does not expose provider CAS flags.
+  // invalidState: another OpenShell client replaces a mutable provider name
+  // between inspection and mutation. sourceBoundary: OpenShell owns provider
+  // compare-and-swap; v0.0.72 exposes no provider CAS flags. whyNotSourceFix:
+  // NemoClaw cannot atomically mutate the upstream store, so it uses randomized
+  // names, a lifecycle mutex, and immutable-ID/resource-version reinspection.
+  // regressionTest: mcp-provider-ownership.test.ts simulates a concurrent
+  // resource-version writer and requires the ambiguous update to fail closed.
+  // removalCondition: use native immutable provider IDs/CAS once OpenShell
+  // exposes them, then remove this inspect-mutate-inspect compensation.
   const beforeMutation = inspectMcpProvider(providerName);
   if (action === "create" && beforeMutation.exists !== false) {
     const detail =

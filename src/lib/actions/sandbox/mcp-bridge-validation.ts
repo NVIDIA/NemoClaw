@@ -24,9 +24,16 @@ export { MCP_SERVER_URL_MAX_LENGTH } from "../../security/mcp-url-target";
 const VALID_SERVER_RE = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const VALID_ENV_RE = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const VALID_SANDBOX_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
-// OpenShell deliberately materializes these keys in fresh sandbox children.
-// Keep the boundary pinned to the shipped source commit rather than a hand-
-// maintained duplicate that can drift independently of compatibility review.
+// invalidState: an MCP bearer name aliases a child-visible or process-control
+// key and exposes or executes the provider value outside the intended request.
+// sourceBoundary: the versioned JSON manifest pins OpenShell-owned keys to the
+// shipped source commit; NemoClaw owns host and agent runtime-control rejects.
+// whyNotSourceFix: v0.0.72 exposes provider keys to every fresh sandbox exec
+// and does not advertise safe credential-name capabilities at runtime.
+// regressionTest: mcp-bridge-input.test.ts checks every pinned and runtime key;
+// package/workflow contracts require the manifest version to track OpenShell.
+// removalCondition: replace these rejects when OpenShell offers endpoint-only
+// credentials plus a machine-readable child-environment capability manifest.
 const OPENSHELL_RAW_CHILD_ENV_KEYS = new Set(childVisibleCredentialManifest.rawChildValueKeys);
 const OPENSHELL_REWRITTEN_CHILD_ENV_KEYS = new Set(
   childVisibleCredentialManifest.rewrittenChildValueKeys,
@@ -275,6 +282,17 @@ function validateMcpServerUrlTarget(parsed: URL): void {
 }
 
 export async function validateMcpServerUrlResolvedTarget(parsed: URL): Promise<string[]> {
+  // invalidState: a hostname is public at add time but later rebinds to an
+  // unpinned address. sourceBoundary: NemoClaw pins the add-time public answers;
+  // OpenShell v0.0.72 resolves, validates every answer against allowed_ips, and
+  // connects with that same SocketAddr list. whyNotSourceFix: duplicating DNS
+  // resolution here before each remote connection would create a second,
+  // non-authoritative TOCTOU boundary outside OpenShell's data plane.
+  // regressionTest: e2e/support/mcp-bridge-sandbox.test.ts pins the exact
+  // upstream source contract, and live/mcp-bridge.test.ts remaps DNS and proves
+  // a 403 plus zero upstream requests for all three adapters.
+  // removalCondition: revisit only when the pinned OpenShell implementation or
+  // its allowed_ips resolve-validate-connect contract changes.
   rejectUnsupportedOpenShellMcpHostAlias(parsed.hostname);
   if (isBlockedMcpUrlTargetHost(parsed.hostname)) {
     validateMcpServerUrlTarget(parsed);
