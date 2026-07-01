@@ -24,6 +24,7 @@ describe("secret redaction consistency (#1736)", () => {
       name: "GitHub PAT (fine-grained)",
       token: "github_pat_" + "d".repeat(50),
     },
+    { name: "Tavily API key", token: "tvly-" + "e".repeat(30) },
   ];
 
   // Tokens added for messaging integrations (#2336). They are covered by
@@ -183,6 +184,12 @@ describe("secret redaction consistency (#1736)", () => {
       const text = redactSensitiveText("NEMOCLAW_PROVIDER_KEY=sk-test-inference-hub-key");
       expect(text).not.toContain("sk-test-inference-hub-key");
       expect(text).toBe("NEMOCLAW_PROVIDER_KEY=<REDACTED>");
+    });
+
+    it("redacts TAVILY_API_KEY env-var assignments", () => {
+      const text = redactSensitiveText("TAVILY_API_KEY=tvly-redaction-regression-12345");
+      expect(text).not.toContain("tvly-redaction-regression-12345");
+      expect(text).toBe("TAVILY_API_KEY=<REDACTED>");
     });
   });
 });

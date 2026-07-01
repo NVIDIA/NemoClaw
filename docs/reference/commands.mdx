@@ -2065,6 +2065,27 @@ Values are not printed.
 $$nemoclaw credentials list
 ```
 
+### `$$nemoclaw credentials add <PROVIDER>`
+
+Register a provider credential with the OpenShell gateway by name and type.
+Each `--credential` takes the env variable name whose value the gateway should read; export the value first so it is not placed in argv.
+Pass either repeatable `--credential <ENV_NAME>` or `--from-existing`, but do not combine them.
+After the gateway accepts the provider, rebuild the target sandbox so the new provider is attached.
+
+Registered providers attach to every sandbox you build or rebuild after the call (the gateway is one process serving all sandboxes).
+If you want a provider available to only some sandboxes, scope it with `nemoclaw credentials reset <PROVIDER>` once those sandboxes finish using it.
+
+```bash
+$$nemoclaw credentials add tavily-search --type tavily --credential TAVILY_API_KEY
+```
+
+| Flag | Description |
+|------|-------------|
+| `--type <TYPE>` | Provider type (e.g. `tavily`, `nvidia`, `openai`, `anthropic`, `generic`) |
+| `--credential <ENV_NAME>` | Env variable name whose value holds the credential. Repeatable |
+| `--config <K=V>` | Provider configuration pair. Repeatable |
+| `--from-existing` | Load credentials and config from existing local state |
+
 ### `$$nemoclaw credentials reset <PROVIDER>`
 
 Remove a provider credential from the OpenShell gateway by provider name.
