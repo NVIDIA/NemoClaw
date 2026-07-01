@@ -11,7 +11,11 @@ export interface ParsedOpenShellPolicy {
 }
 
 export interface ParseOpenShellPolicyOptions {
-  /** Preserve the root CLI's legacy acceptance of versionless policy mappings. */
+  /**
+   * Preserve only the root CLI's legacy acceptance of versionless policy
+   * mappings. The plugin mutation path remains strict; all marked, malformed,
+   * scalar, sequence, version, and network-policy shapes have parity.
+   */
   readonly allowUnmarkedPolicyBody?: boolean;
 }
 
@@ -62,7 +66,31 @@ export function parseOpenShellPolicy(
   if (!isMapping(parsed)) {
     throw new Error("Current policy from openshell policy get --base must be a YAML mapping");
   }
+  if (
+    parsed.version !== undefined &&
+    (typeof parsed.version !== "number" ||
+      !Number.isInteger(parsed.version) ||
+      parsed.version < 1)
+  ) {
+    throw new Error(
+      "Current policy from openshell policy get --base version must be a positive integer",
+    );
+  }
+  if (parsed.network_policies !== undefined && !isMapping(parsed.network_policies)) {
+    throw new Error("Current policy network_policies must be a YAML mapping");
+  }
 
+  // invalidState: a legacy root-CLI response contains a valid versionless
+  // mapping, while relaxing the plugin path would admit an unmarked document at
+  // a security-sensitive mutation boundary.
+  // sourceBoundary: the root CLI owns its legacy output compatibility; the
+  // plugin owns strict acceptance of marked OpenShell policy output.
+  // whyNotSourceFix: supported CLI outputs can predate the marker contract, so
+  // removing compatibility here would break those root-CLI mutations.
+  // regressionTest: canonical and package-contract tests prove parity for every
+  // input class except the explicitly accepted legacy versionless mapping.
+  // removalCondition: remove this option when all supported OpenShell CLI
+  // versions emit marked policy documents and the root compatibility path ends.
   if (options.allowUnmarkedPolicyBody) {
     if (!/^[a-z_][a-z0-9_]*\s*:/m.test(yamlBody)) {
       throw new Error(MISSING_POLICY_DOCUMENT);
