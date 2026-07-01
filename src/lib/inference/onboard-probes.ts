@@ -48,7 +48,7 @@ const {
   runChatCompletionsStreamingProbe,
   runStreamingEventProbe,
 } = httpProbe;
-const { createOpenAiLikeAuthConfig, createXApiKeyAuthConfig } = authConfigModule;
+const { createOpenAiLikeAuthConfig } = authConfigModule;
 
 function buildOpenAiLikeAuthConfig(apiKey, options = {}) {
   const normalizedKey = apiKey ? normalizeCredentialValue(apiKey) : "";

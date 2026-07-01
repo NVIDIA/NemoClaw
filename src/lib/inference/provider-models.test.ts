@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  captureAuthConfigPath,
   expectTrustedConfig,
   readAuthConfigContents,
 } from "../adapters/http/auth-config-test-helpers";
