@@ -122,8 +122,8 @@ describe("tunnel lifecycle workflow boundary", () => {
           "step 'Install and verify cloudflared prerequisite' run script must include sudo dpkg -i",
           "step 'Install and verify cloudflared prerequisite' run script must include cloudflared version ${CLOUDFLARED_VERSION}",
           "tunnel-lifecycle live E2E step must not run cloudflared APT installation with NVIDIA_INFERENCE_API_KEY in scope",
-          "artifact upload path must include e2e-artifacts/live/tunnel-lifecycle/",
-          "tunnel-lifecycle artifact upload must set include-hidden-files: false",
+          "tunnel-lifecycle upload-e2e-artifacts invocation must not override its contract",
+          "tunnel-lifecycle upload-e2e-artifacts must use the action defaults",
         ]),
       );
     } finally {
