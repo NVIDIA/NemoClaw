@@ -4,9 +4,18 @@
 // Behavioural tests for the Hermes recovery boundary guards. These spawn `bash`
 // on the synthesised shell snippets or full recovery scripts with stubbed
 // `python3`/`pkill`/`pgrep`/`curl`/`hermes` binaries and assert real exit codes,
-// kill invocations, and persisted `/tmp/gateway-recovery.log` contents. Pure
-// generated-shell shape assertions live in
-// runtime-hermes-secret-boundary-shape.test.ts.
+// kill invocations, and persisted `/tmp/gateway-recovery.log` contents.
+//
+// File-scope split:
+//   - Pure generated-shell shape assertions:
+//     runtime-hermes-secret-boundary-shape.test.ts.
+//   - PATH-shadowing / trusted-python3 resolution refusal:
+//     runtime-hermes-secret-boundary-path-shadowing.test.ts.
+//   - Runtime-env, recovery-source-env, and stale-fallback recovery cases:
+//     runtime-hermes-secret-boundary-recovery.test.ts.
+// Keep the per-file boundaries above so this file remains the behavioural
+// landing page for guard snippet + full recovery execution without growing
+// past the test-monolith threshold the advisor flagged at +20 lines.
 
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -32,17 +41,6 @@ function removeTempDir(dir: string) {
   fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 
-// Rewrite every trusted python3 absolute path embedded in the generated
-// recovery snippet so each one resolves to the test's stub python3 binary.
-// Mirrors HERMES_TRUSTED_PYTHON3_PATHS in src/lib/agent/hermes-recovery-boundary.ts
-// — keep in sync if that list changes.
-function rewriteTrustedPython3Paths(snippet: string, stubPython3: string): string {
-  return snippet
-    .replace(/\/usr\/local\/bin\/python3/g, stubPython3)
-    .replace(/\/usr\/bin\/python3/g, stubPython3)
-    .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, stubPython3);
-}
-
 describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
   function runGuard(opts: { guard: string; pythonExit: 0 | 1; validatorExists: boolean }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-guard-"));
@@ -61,7 +59,20 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     writeStub(
       stubsDir,
       "python3",
-      `printf '[SECURITY] stub validator stderr for %s\\n' "$*" >&2\nexit ${opts.pythonExit}`,
+      // Stand in for both modes the production wrapper invokes:
+      //   validator: `python3 -I <validator.py> <args...>`
+      //   log-tee:   `python3 -I -c <pysrc> <logpath>`
+      // The log-tee branch mimics `tee -a -- <logpath>` so the stubbed
+      // validator's `[SECURITY]` stderr still reaches the recovery log and
+      // the caller's stderr (via the outer `>&2` redirect).
+      [
+        'if [ "$1" = "-I" ] && [ "$2" = "-c" ]; then',
+        '  tee -a -- "$4"',
+        "  exit 0",
+        "fi",
+        `printf '[SECURITY] stub validator stderr for %s\\n' "$*" >&2`,
+        `exit ${opts.pythonExit}`,
+      ].join("\n"),
     );
     writeStub(stubsDir, "pkill", `printf '%s\\n' "$*" >> ${JSON.stringify(pkillLog)}\nexit 0`);
     writeStub(stubsDir, "sleep", "exit 0");
@@ -217,56 +228,10 @@ describe("Hermes secret-boundary guard — guard snippet behaviour", () => {
     expect(result.pkillCalls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("refuses recovery when no python3 exists at a trusted absolute path even if a PATH-shadowed python3 is present", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-guard-shadow-"));
-    const stubsDir = path.join(tmp, "bin");
-    const validatorRoot = path.join(tmp, "usr-local-lib-nemoclaw");
-    const recoveryLogPath = path.join(tmp, "gateway-recovery.log");
-    fs.mkdirSync(stubsDir, { recursive: true });
-    fs.mkdirSync(validatorRoot, { recursive: true });
-    fs.writeFileSync(
-      path.join(validatorRoot, "validate-hermes-env-secret-boundary.py"),
-      "#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n",
-    );
-    writeStub(stubsDir, "python3", "exit 0");
-    writeStub(stubsDir, "pkill", "exit 0");
-    writeStub(stubsDir, "sleep", "exit 0");
-
-    const validatorPath = path.join(validatorRoot, "validate-hermes-env-secret-boundary.py");
-    const stubbed = __testing
-      .buildHermesEnvFileBoundaryGuard()
-      .replace(new RegExp(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH, "g"), validatorPath)
-      .replace(/\/tmp\/gateway-recovery\.log/g, recoveryLogPath)
-      .replace(/\/usr\/local\/bin\/python3/g, path.join(tmp, "no-such-python3-a"))
-      .replace(/\/usr\/bin\/python3/g, path.join(tmp, "no-such-python3-b"))
-      .replace(/\/opt\/hermes\/\.venv\/bin\/python3/g, path.join(tmp, "no-such-python3-c"));
-    const scriptPath = path.join(tmp, "guard.sh");
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -u",
-        `export PATH=${JSON.stringify(stubsDir)}:/usr/bin:/bin`,
-        stubbed,
-        'printf "REACHED_LAUNCH\\n"',
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-
-    try {
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        timeout: 10_000,
-        env: { PATH: `${stubsDir}:/usr/bin:/bin`, HOME: tmp },
-      });
-      expect(result.status).toBe(127);
-      expect(result.stdout).toContain("SECRET_BOUNDARY_PYTHON3_MISSING");
-      expect(result.stdout).not.toContain("REACHED_LAUNCH");
-      expect(result.stderr).toContain("no python3 at a trusted absolute path");
-    } finally {
-      removeTempDir(tmp);
-    }
-  });
+  // PATH-shadowing refusal lives in
+  // runtime-hermes-secret-boundary-path-shadowing.test.ts so this behavioural
+  // file stays under the test-monolith threshold while keeping the
+  // trusted-python3 resolution boundary covered.
 });
 
 describe("Hermes secret-boundary guard — full recovery script behaviour", () => {
@@ -378,7 +343,17 @@ describe("Hermes secret-boundary guard — full recovery script behaviour", () =
     writeStub(
       harness.stubsDir,
       "python3",
-      'printf "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env contains raw secret-shaped values.\\n" >&2\nprintf "[SECURITY]   TELEGRAM_BOT_TOKEN (line 2)\\n" >&2\nexit 1',
+      [
+        // Forward the log-tee invocation through `tee -a` so the stubbed
+        // validator's `[SECURITY]` stderr still reaches the recovery log.
+        'if [ "$1" = "-I" ] && [ "$2" = "-c" ]; then',
+        '  tee -a -- "$4"',
+        "  exit 0",
+        "fi",
+        'printf "[SECURITY] Refusing Hermes startup because /sandbox/.hermes/.env contains raw secret-shaped values.\\n" >&2',
+        'printf "[SECURITY]   TELEGRAM_BOT_TOKEN (line 2)\\n" >&2',
+        "exit 1",
+      ].join("\n"),
     );
     stubBaselineUtilities(harness.stubsDir, harness.pkillLog, harness.hermesLaunchMarker);
 

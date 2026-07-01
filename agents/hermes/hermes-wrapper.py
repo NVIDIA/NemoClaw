@@ -79,10 +79,18 @@ import sys
 _INSTALLED_REAL = "/usr/local/bin/hermes.real"
 _INSTALLED_GUARD = "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py"
 _GUARD_FILENAME = "validate-hermes-env-secret-boundary.py"
+# Trusted absolute paths for the python3 interpreter, ordered most-preferred
+# first. The resolver returns the first executable match (first-wins); the
+# same priority is mirrored by `agents/hermes/start.sh:resolve_trusted_python3`
+# and `src/lib/agent/hermes-recovery-boundary.ts:buildTrustedPython3Picker`
+# so all three entry points pick the same interpreter when several are
+# present. Venv first matches the security principle of preferring the most
+# controlled environment; fall back to system python3 when the sandbox image
+# has no venv yet.
 _TRUSTED_PYTHON3 = (
-    "/usr/bin/python3",
-    "/usr/local/bin/python3",
     "/opt/hermes/.venv/bin/python3",
+    "/usr/local/bin/python3",
+    "/usr/bin/python3",
 )
 
 

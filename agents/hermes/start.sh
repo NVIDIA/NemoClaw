@@ -235,16 +235,21 @@ fi
 # Pick the venv interpreter from a fixed trusted absolute-path list so a
 # PATH-shadowed python3 (via SSH env, compromised sandbox, or malicious
 # entrypoint wrapper) cannot bypass the runtime-config-guard security checks.
-# The list scans last-wins so the most-preferred path (the venv python3) is
-# selected when present and falls back to system python3 when the sandbox
-# image has no venv yet. The deprecated `/opt/hermes/.venv/bin/python`
-# symlink path is intentionally not consulted: it is a symlink an attacker
-# with write access to /opt/hermes/.venv could repoint, while the regular
-# files in the trusted list cannot be substituted without breaking the image.
+# The list scans first-wins ordered most-preferred first (venv > local >
+# system) so the venv python3 is selected when present and falls back to
+# system python3 when the sandbox image has no venv yet. The same priority
+# is mirrored in `agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3` and
+# `src/lib/agent/hermes-recovery-boundary.ts:buildTrustedPython3Picker` so
+# all three entry points pick the same interpreter when several are present.
+# The deprecated `/opt/hermes/.venv/bin/python` symlink path is intentionally
+# not consulted: it is a symlink an attacker with write access to
+# /opt/hermes/.venv could repoint, while the regular files in the trusted
+# list cannot be substituted without breaking the image.
 _HERMES_PYTHON=""
-for _candidate in /usr/bin/python3 /usr/local/bin/python3 /opt/hermes/.venv/bin/python3; do
+for _candidate in /opt/hermes/.venv/bin/python3 /usr/local/bin/python3 /usr/bin/python3; do
   if [ -x "$_candidate" ]; then
     _HERMES_PYTHON="$_candidate"
+    break
   fi
 done
 unset _candidate

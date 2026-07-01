@@ -22,14 +22,20 @@ import { shellQuote } from "../runner";
 export const HERMES_SECRET_BOUNDARY_VALIDATOR_PATH =
   "/usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py";
 
-// Trusted absolute paths for the python3 interpreter that runs the validator.
-// Mirrors agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3 so the recovery
-// path cannot be bypassed by an attacker who controls PATH in the recovery
-// shell — bare `python3` would resolve via PATH and could be shadowed.
+// Trusted absolute paths for the python3 interpreter that runs the validator,
+// ordered most-preferred first. The picker selects the first executable match
+// (first-wins) so the recovery path picks the same interpreter as
+// `agents/hermes/hermes-wrapper.py:_TRUSTED_PYTHON3` and
+// `agents/hermes/start.sh:resolve_trusted_python3` when several are present.
+// Mirroring the wrapper's list also prevents an attacker who controls PATH in
+// the recovery shell from bypassing the validator — bare `python3` would
+// resolve via PATH and could be shadowed. Venv first matches the security
+// principle of preferring the most controlled environment; fall back to
+// system python3 when the sandbox image has no venv yet.
 const HERMES_TRUSTED_PYTHON3_PATHS = [
-  "/usr/bin/python3",
-  "/usr/local/bin/python3",
   "/opt/hermes/.venv/bin/python3",
+  "/usr/local/bin/python3",
+  "/usr/bin/python3",
 ];
 
 export const SECRET_BOUNDARY_REFUSED_MARKER = "SECRET_BOUNDARY_REFUSED";
@@ -38,9 +44,13 @@ export const SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER = "SECRET_BOUNDARY_VALIDAT
 export const SECRET_BOUNDARY_PYTHON3_MISSING_MARKER = "SECRET_BOUNDARY_PYTHON3_MISSING";
 
 function buildTrustedPython3Picker(): string {
+  // Emit a single `case` block that selects the first executable candidate
+  // from HERMES_TRUSTED_PYTHON3_PATHS (first-wins, most-preferred first) so
+  // the wrapper, start.sh, and this recovery snippet pick the same
+  // interpreter when several are present.
   const branches = HERMES_TRUSTED_PYTHON3_PATHS.map(
     (candidate) =>
-      `if [ -x ${shellQuote(candidate)} ]; then _NEMOCLAW_PYTHON3=${shellQuote(candidate)}; fi;`,
+      `if [ -z "\${_NEMOCLAW_PYTHON3:-}" ] && [ -x ${shellQuote(candidate)} ]; then _NEMOCLAW_PYTHON3=${shellQuote(candidate)}; fi;`,
   ).join(" ");
   return `unset _NEMOCLAW_PYTHON3; ${branches}`;
 }
@@ -53,6 +63,44 @@ const HERMES_GATEWAY_PROC_PATTERN = "[h]ermes[[:space:]]+gateway([[:space:]]|$)"
 const HERMES_DASHBOARD_PROC_PATTERN = "[h]ermes[[:space:]]+dashboard([[:space:]]|$)";
 const HERMES_BOUNDARY_RECOVERY_LOG = "/tmp/gateway-recovery.log";
 
+// Append-tee helper that opens the destination log with `O_NOFOLLOW`. Coreutils
+// `tee -a` cannot pass that flag, so a symlink swapped in at the log path
+// during the TOCTOU window between the `[ -L ... ]` precheck and the
+// validator's first stderr line would let an attacker redirect the
+// validator's `[SECURITY]` output to an attacker-chosen file. Running this
+// through the same trusted python3 the picker resolved makes the open()
+// itself reject the symlink atomically; if it does, the helper still
+// streams stdin to stdout so the user-facing `[SECURITY]` lines surface
+// even when the log write is refused.
+const HERMES_LOG_TEE_NOFOLLOW_PYTHON = `import os, sys
+src = sys.stdin.buffer
+out = sys.stdout.buffer
+err = sys.stderr.buffer
+log_fd = -1
+try:
+    log_fd = os.open(sys.argv[1], os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+except OSError as exc:
+    err.write(f"[SECURITY] Refusing recovery log write to {sys.argv[1]}: {exc.strerror}\\n".encode("utf-8", "replace"))
+    err.flush()
+while True:
+    chunk = src.read(4096)
+    if not chunk:
+        break
+    if log_fd >= 0:
+        try:
+            os.write(log_fd, chunk)
+        except OSError:
+            log_fd = -1
+    out.write(chunk)
+    out.flush()
+if log_fd >= 0:
+    os.close(log_fd)
+`;
+
+function buildLogTeeNoFollow(): string {
+  return `"$_NEMOCLAW_PYTHON3" -I -c ${shellQuote(HERMES_LOG_TEE_NOFOLLOW_PYTHON)} ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)}`;
+}
+
 function buildHermesBoundaryKillSnippet(): string {
   return [
     `pkill -TERM -f ${shellQuote(HERMES_GATEWAY_PROC_PATTERN)} 2>/dev/null || true;`,
@@ -64,37 +112,36 @@ function buildHermesBoundaryKillSnippet(): string {
 }
 
 /**
- * Pipe a validator invocation's stderr through `tee` so the detailed `[SECURITY]`
- * lines emitted by `validate-hermes-env-secret-boundary.py` are persisted to
- * `/tmp/gateway-recovery.log` inside the sandbox AND mirrored back onto stderr.
- * The recovery caller currently treats the command result as a boolean, so
- * without this duplication the documented `[SECURITY] Refusing Hermes startup ...`
- * line and the offending key never surface anywhere a user can inspect after
- * the sandbox recovers — failing the issue's log-acceptance clause even when
- * relaunch is correctly refused.
+ * Pipe a validator invocation's stderr through an O_NOFOLLOW append-tee so the
+ * detailed `[SECURITY]` lines emitted by `validate-hermes-env-secret-boundary.py`
+ * are persisted to `/tmp/gateway-recovery.log` inside the sandbox AND mirrored
+ * back onto stderr. The recovery caller currently treats the command result as
+ * a boolean, so without this duplication the documented
+ * `[SECURITY] Refusing Hermes startup ...` line and the offending key never
+ * surface anywhere a user can inspect after the sandbox recovers — failing the
+ * issue's log-acceptance clause even when relaunch is correctly refused.
  *
- * SECURITY: `tee -a` cannot itself open the log file with `O_NOFOLLOW`, so a
- * symlink swapped in at the log path could redirect the validator's `[SECURITY]`
- * lines to an attacker-chosen file. To close that gap without depending on the
- * `buildGatewayLogSetup` preamble (which runs later, after validator-driven
- * refusal could already have written to a redirected log), the snippet first
- * refuses the recovery run when the log path is itself a symlink. The sandbox
- * user owns `/tmp` in the non-OpenClaw recovery path that consumes this
- * snippet, so a same-uid symlink race is not credible, but the explicit
- * `[ -L ... ]` check makes the boundary observable in tests and survives if
- * this snippet is ever moved to a root-exec context.
+ * SECURITY: coreutils `tee -a` cannot itself open the log file with
+ * `O_NOFOLLOW`, so a symlink swapped in at the log path could redirect the
+ * validator's `[SECURITY]` lines to an attacker-chosen file. The replacement
+ * helper runs the trusted python3 the picker resolved and opens the log with
+ * `O_WRONLY|O_APPEND|O_CREAT|O_NOFOLLOW`; the kernel refuses to follow a
+ * symlink at the final path component, closing the TOCTOU race the
+ * `[ -L ... ]` precheck alone could not. The `[ -L ... ]` check is retained
+ * as a fast-fail with a specific message so the refusal stays observable in
+ * tests and surfaces a clear cause for users.
  */
 function buildRecoveryLogSymlinkGuard(): string {
   return `if [ -L ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} ]; then echo '[SECURITY] Refusing Hermes recovery: ${HERMES_BOUNDARY_RECOVERY_LOG} is a symlink' >&2; exit 1; fi;`;
 }
 
 function buildHermesValidatorInvocation(args: string): string {
-  return `"$_NEMOCLAW_PYTHON3" -I ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2)`;
+  return `"$_NEMOCLAW_PYTHON3" -I ${shellQuote(HERMES_SECRET_BOUNDARY_VALIDATOR_PATH)} ${args} 2> >(${buildLogTeeNoFollow()} >&2)`;
 }
 
 function buildHermesValidatorMissingLog(): string {
   const message = `[gateway-recovery] REFUSING: secret-boundary validator script ${HERMES_SECRET_BOUNDARY_VALIDATOR_PATH} is missing on this sandbox image; recovery cannot verify /sandbox/.hermes/.env. Re-image the sandbox with a current Hermes build.`;
-  return `printf '%s\\n' ${shellQuote(message)} | tee -a ${shellQuote(HERMES_BOUNDARY_RECOVERY_LOG)} >&2;`;
+  return `printf '%s\\n' ${shellQuote(message)} | ${buildLogTeeNoFollow()} >&2;`;
 }
 
 // Missing-validator recovery is fail-closed: the host CLI cannot prove the

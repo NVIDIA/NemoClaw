@@ -35,6 +35,14 @@ function waitForPath(filePath: string, timeoutMs = 1000) {
 }
 
 const SHARED_PYTHON_STUB_BY_MODE = [
+  // Forward the production log-tee invocation
+  // (`python3 -I -c <pysrc> <logpath>`) through coreutils `tee -a` so the
+  // stubbed validator's `[SECURITY]` stderr still reaches the recovery log
+  // and the caller's stderr (via the outer `>&2` redirect).
+  'if [ "$1" = "-I" ] && [ "$2" = "-c" ]; then',
+  '  tee -a -- "$4"',
+  "  exit 0",
+  "fi",
   'if [ "$1" = "-c" ]; then',
   "  exit 0",
   "fi",

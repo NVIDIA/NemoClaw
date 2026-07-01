@@ -153,7 +153,13 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # wrapper in its place; the wrapper reuses the same validator and execs the real
 # binary for every non-gateway subcommand. Re-assert --version through the
 # wrapper so a broken relocation fails the build.
+#
+# The wrapper's shebang pins `/usr/bin/python3 -I` (isolated mode); fail the
+# build if that absolute path is missing or non-executable so a base-image
+# upgrade that drops it cannot ship a wrapper that ENOEXECs at runtime.
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
+RUN test -x /usr/bin/python3 \
+    || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
 RUN mv /usr/local/bin/hermes /usr/local/bin/hermes.real \
     && install -m 0755 /usr/local/lib/nemoclaw/hermes-wrapper.py /usr/local/bin/hermes \
     && chmod 755 /usr/local/bin/hermes.real \
