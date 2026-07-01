@@ -188,8 +188,11 @@ process.exit(2);
           original: {
             requestId: "upgrade-1",
             deviceId: "device-1",
+            publicKey: "public-key-1",
             clientId: "openclaw-cli",
             clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.write"],
           },
         }),
@@ -199,6 +202,11 @@ process.exit(2);
         JSON.stringify({
           "device-1": {
             deviceId: "device-1",
+            publicKey: "public-key-1",
+            clientId: "openclaw-cli",
+            clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.pairing"],
             approvedScopes: ["operator.pairing"],
             tokens: { operator: { role: "operator", scopes: ["operator.pairing"] } },
@@ -210,8 +218,11 @@ process.exit(2);
           {
             requestId: "upgrade-1",
             deviceId: "device-1",
+            publicKey: "public-key-1",
             clientId: "openclaw-cli",
             clientMode: "cli",
+            role: "operator",
+            roles: ["operator"],
             scopes: ["operator.write"],
           },
         ],
