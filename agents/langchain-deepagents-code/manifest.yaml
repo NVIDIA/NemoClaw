@@ -19,7 +19,7 @@ install_method: pip
 binary_path: /usr/local/bin/dcode
 version_command: "dcode --version"
 expected_version: "0.1.12"
-
+version_scheme: semver
 runtime:
   kind: terminal
   interactive_command: "dcode"

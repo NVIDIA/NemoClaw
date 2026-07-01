@@ -9,6 +9,7 @@ import type {
   AgentInference,
   AgentMcpCapability,
   AgentStateFile,
+  AgentVersionScheme,
   ManifestRecord,
   ManifestValue,
   StringMap,
@@ -48,6 +49,12 @@ export function readString(record: ManifestRecord, key: string): string | undefi
 export function readBoolean(record: ManifestRecord, key: string): boolean | undefined {
   const value = record[key];
   return typeof value === "boolean" ? value : undefined;
+}
+
+export function readVersionScheme(record: ManifestRecord): AgentVersionScheme | undefined {
+  const value = record.version_scheme;
+  if (value === "semver" || value === "calendar") return value;
+  return undefined;
 }
 
 export function readObject(record: ManifestRecord, key: string): ManifestRecord | undefined {

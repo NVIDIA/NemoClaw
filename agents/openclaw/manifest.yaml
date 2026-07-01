@@ -20,6 +20,7 @@ install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
 version_command: "openclaw --version"
 expected_version: "2026.5.27"
+version_scheme: calendar
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────

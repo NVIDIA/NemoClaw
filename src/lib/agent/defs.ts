@@ -24,6 +24,7 @@ import type {
   AgentLegacyPaths,
   AgentMcpCapability,
   AgentStateFile,
+  AgentVersionScheme,
 } from "./definition-types";
 import {
   loadManifestRecord,
@@ -39,6 +40,7 @@ import {
   readStringArray,
   readStringMap,
   readUserManagedFiles,
+  readVersionScheme,
 } from "./manifest-readers";
 import { type AgentRuntime, readAgentRuntime } from "./runtime-manifest";
 import { type AgentWebAuth, readWebAuth } from "./web-auth";
@@ -57,6 +59,7 @@ export type {
   AgentMcpSupport,
   AgentStateFile,
   AgentStateFileStrategy,
+  AgentVersionScheme,
 } from "./definition-types";
 export type { AgentRuntime, AgentRuntimeKind } from "./runtime-manifest";
 export { getAgentRuntimeKind, isTerminalAgent } from "./runtime-manifest";
@@ -119,6 +122,7 @@ export function loadAgent(name: string): AgentDefinition {
   const binaryPath = readString(raw, "binary_path");
   const versionCommand = readString(raw, "version_command");
   const expectedVersion = readString(raw, "expected_version");
+  const versionScheme = readVersionScheme(raw);
   const gatewayCommand = readString(raw, "gateway_command");
   const runtime = readAgentRuntime(raw);
   const forwardPorts = readPortArray(raw, "forward_ports");
@@ -143,6 +147,7 @@ export function loadAgent(name: string): AgentDefinition {
     binary_path: binaryPath,
     version_command: versionCommand,
     expected_version: expectedVersion,
+    version_scheme: versionScheme,
     gateway_command: gatewayCommand,
     runtime,
     device_pairing: readBoolean(raw, "device_pairing"),
@@ -230,6 +235,10 @@ export function loadAgent(name: string): AgentDefinition {
 
     get expectedVersion(): string | null {
       return expectedVersion ?? null;
+    },
+
+    get versionScheme(): AgentVersionScheme | null {
+      return versionScheme ?? null;
     },
 
     get hasDevicePairing(): boolean {

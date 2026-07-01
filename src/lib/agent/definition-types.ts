@@ -62,6 +62,8 @@ export interface AgentLegacyPaths {
   plugin: string | null;
 }
 
+export type AgentVersionScheme = "semver" | "calendar";
+
 export interface AgentDefinition {
   name: string;
   description?: string;
@@ -69,6 +71,7 @@ export interface AgentDefinition {
   binary_path?: string;
   version_command?: string;
   expected_version?: string;
+  version_scheme?: AgentVersionScheme;
   gateway_command?: string;
   runtime?: AgentRuntime;
   device_pairing?: boolean;
@@ -98,6 +101,7 @@ export interface AgentDefinition {
   readonly userManagedFiles: string[];
   readonly versionCommand: string;
   readonly expectedVersion: string | null;
+  readonly versionScheme?: AgentVersionScheme | null;
   readonly hasDevicePairing: boolean;
   readonly phoneHomeHosts: string[];
   readonly dockerfileBasePath: string | null;
