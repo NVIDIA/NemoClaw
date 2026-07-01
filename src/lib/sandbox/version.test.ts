@@ -262,16 +262,31 @@ describe("checkAgentVersion", () => {
     expect(result.isStale).toBe(true);
   });
 
-  it("does not flag an update when the expected calendar version and runtime semver differ in scheme", () => {
+  it("invalidates a cross-scheme cached agent version and re-probes over ssh so the runtime scheme wins (#6049)", () => {
     registry.registerSandbox({
       name: "hermes-sb",
       agent: "hermes-calendar-pin",
       agentVersion: "0.17.0",
     });
 
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
+      status: 0,
+      output: "Host openshell-hermes-sb\n  HostName 127.0.0.1\n",
+    });
+    vi.mocked(spawnSync).mockReturnValue({
+      status: 0,
+      stdout: "hermes 2026.6.19\n",
+      stderr: "",
+      pid: 4321,
+      output: [],
+      signal: null,
+    });
+
     const result = checkAgentVersion("hermes-sb");
-    expect(result.sandboxVersion).toBe("0.17.0");
+    expect(result.detectionMethod).toBe("ssh-exec");
+    expect(result.sandboxVersion).toBe("2026.6.19");
     expect(result.isStale).toBe(false);
+    expect(result.verificationFailed).toBe(false);
   });
 
   it("treats a semver with a four-digit major that does not start with 20 as semver, not calendar (#6049)", () => {
@@ -284,7 +299,7 @@ describe("checkAgentVersion", () => {
     const result = checkAgentVersion("high-major-sb");
     expect(result.detectionMethod).toBe("registry");
     expect(result.sandboxVersion).toBe("1000.0.0");
-    expect(result.schemeMismatch).toBe(false);
+    expect(result.verificationFailed).toBe(false);
     expect(result.isStale).toBe(false);
   });
 
@@ -296,19 +311,26 @@ describe("checkAgentVersion", () => {
     });
 
     const result = checkAgentVersion("high-major-sb");
-    expect(result.schemeMismatch).toBe(false);
+    expect(result.verificationFailed).toBe(false);
     expect(result.isStale).toBe(true);
   });
 
-  it("marks a scheme mismatch on the returned result so callers can render a distinct state", () => {
+  it("returns an unknown verdict when the cross-scheme cache is invalidated and ssh cannot re-probe", () => {
     registry.registerSandbox({
       name: "hermes-sb",
       agent: "hermes-calendar-pin",
       agentVersion: "0.17.0",
     });
 
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
+      status: 1,
+      output: "",
+    });
+
     const result = checkAgentVersion("hermes-sb");
-    expect(result.schemeMismatch).toBe(true);
+    expect(result.detectionMethod).toBe("unknown");
+    expect(result.unavailableReason).toBe("probe-failed");
+    expect(result.verificationFailed).toBe(true);
     expect(result.isStale).toBe(false);
   });
 
