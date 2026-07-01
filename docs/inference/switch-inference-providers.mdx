@@ -158,6 +158,11 @@ $$nemoclaw inference set --provider anthropic-prod --model claude-sonnet-4-6 --n
 
 </AgentOnly>
 
+Before you switch provider families, the target provider must already be registered through onboarding.
+If OpenShell cannot find the requested provider, NemoClaw leaves the route and sandbox state unchanged.
+The error includes a redacted OpenShell detail, lists the registered providers when available, and tells you to run onboarding.
+Run `$$nemoclaw onboard` to register the provider, then retry `$$nemoclaw inference set`.
+
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 
 ## Tune Model Metadata
