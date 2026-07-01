@@ -581,7 +581,7 @@ const req = https.get("https://api.telegram.org/", (res) => {
   console.log("HTTP_" + res.statusCode);
   res.resume();
 });
-req.on("error", (e) => console.log("ERROR: " + e.message));
+req.on("error", (e) => console.log("ERROR: " + (e.code ? e.code + " " : "") + e.message));
 req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
 '`,
       "telegram-reachability-messaging-providers",
@@ -596,6 +596,19 @@ req.setTimeout(15000, () => { req.destroy(); console.log("TIMEOUT"); });
         artifacts,
         skips,
         `M12: api.telegram.org unreachable from this network (${telegramReach.slice(0, 160)})`,
+      );
+    } else if (
+      /ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
+        telegramReach,
+      )
+    ) {
+      // Proxy wiring is correct; the upstream OpenShell gateway denied the CONNECT
+      // by policy (HTTP 403/407). That is not a reachability failure, so skip
+      // rather than fail (see issue #3836).
+      await skipNote(
+        artifacts,
+        skips,
+        `M12: proxy wiring is correct; upstream proxy policy blocked the CONNECT to api.telegram.org (${telegramReach.slice(0, 200)})`,
       );
     } else {
       check(
@@ -656,7 +669,7 @@ for (const [name, url] of targets) {
   });
   req.on("error", (error) => {
     failed = true;
-    console.log(\`\${name}:ERROR_\${error.message}\`);
+    console.log(\`\${name}:ERROR_\${error.code ? error.code + " " : ""}\${error.message}\`);
     done();
   });
   req.setTimeout(15000, () => {
@@ -681,6 +694,19 @@ NODE`,
         artifacts,
         skips,
         `M13: live Discord unreachable from this network (${discordReach.slice(0, 200)})`,
+      );
+    } else if (
+      /ERR_PROXY_TUNNEL|tunneling socket could not be established|statusCode=40[37]/i.test(
+        discordReach,
+      )
+    ) {
+      // Proxy wiring is correct; the upstream OpenShell gateway denied the CONNECT
+      // by policy (HTTP 403/407). That is not a reachability failure, so skip
+      // rather than fail (see issue #3836).
+      await skipNote(
+        artifacts,
+        skips,
+        `M13: proxy wiring is correct; upstream proxy policy blocked the CONNECT to Discord API/CDN (${discordReach.slice(0, 200)})`,
       );
     } else {
       check(false, `M13: Node.js could not reach Discord API/CDN (${discordReach.slice(0, 200)})`);
