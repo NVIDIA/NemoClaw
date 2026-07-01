@@ -55,6 +55,7 @@ function runFixtureCheck(options: { pinnedVersion: string; latestVersion: string
   const releasePath = path.join(tempDir, "release.json");
   const assetPath = path.join(tempDir, "cloudflared-linux-amd64.deb");
   const curlPath = path.join(tempDir, "curl");
+  const callLogPath = path.join(tempDir, "curl-calls.txt");
   const asset = Buffer.from("fixture cloudflared linux-amd64 package\n", "utf8");
   const latestSha = crypto.createHash("sha256").update(asset).digest("hex");
   const pinnedSha = options.pinnedVersion === options.latestVersion ? latestSha : "0".repeat(64);
@@ -86,6 +87,7 @@ while (( $# > 0 )); do
     *) url="$1"; shift ;;
   esac
 done
+printf '%s\n' "$url" >> "$FAKE_CALL_LOG"
 case "$url" in
   "$FAKE_API_URL") cp "$FAKE_RELEASE_JSON" "$output" ;;
   "$FAKE_ASSET_URL") cp "$FAKE_ASSET" "$output" ;;
@@ -107,19 +109,19 @@ esac
       FAKE_API_URL: apiUrl,
       FAKE_ASSET: assetPath,
       FAKE_ASSET_URL: assetUrl,
+      FAKE_CALL_LOG: callLogPath,
       FAKE_RELEASE_JSON: releasePath,
       RUNNER_TEMP: tempDir,
     },
   });
 
-  return { result, latestSha, tempDir };
+  return { apiUrl, assetUrl, callLogPath, result, latestSha, tempDir };
 }
 
 describe("cloudflared update-check workflow contract", () => {
   const workflow = readYaml<CloudflaredUpdateWorkflow>(
     ".github/workflows/cloudflared-update-check.yaml",
   );
-  const script = fs.readFileSync(CHECK_SCRIPT, "utf8");
   const e2e = fs.readFileSync(E2E_WORKFLOW, "utf8");
 
   it("runs weekly and manually with read-only permissions and a credential-free checkout", () => {
@@ -147,20 +149,19 @@ describe("cloudflared update-check workflow contract", () => {
     expect(new Set(hashes).size).toBe(1);
     expect(versions[0]).toMatch(/^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$/u);
     expect(hashes[0]).toMatch(/^[0-9a-f]{64}$/u);
-    expect(script).toContain('[[ "${#version_pins[@]}" -eq 3 ]]');
-    expect(script).toContain('[[ "${#sha_pins[@]}" -eq 3 ]]');
-    expect(script).toContain("CLOUDFLARED_VERSION pins diverge");
-    expect(script).toContain("CLOUDFLARED_DEB_SHA256 pins diverge");
   });
 
   it("queries the upstream latest release and verifies its exact linux-amd64 asset", () => {
-    expect(script).toContain("https://api.github.com/repos/cloudflare/cloudflared/releases/latest");
-    expect(script).toContain("https://github.com/cloudflare/cloudflared/releases/download");
-    expect(script).toContain('select(.name == "cloudflared-linux-amd64.deb")');
-    expect(script).toContain('[[ "${asset_url}" == "${expected_asset_url}" ]]');
-    expect(script).toContain('latest_sha="$("${SHA256SUM_BIN}"');
-    expect(script).toContain('"${SHA256SUM_BIN}" -c -');
-    expect(script).not.toMatch(/(?:apt-get|dnf|yum|brew|npm|pip)\s+install/u);
+    const fixture = runFixtureCheck({ pinnedVersion: "2026.7.1", latestVersion: "2026.7.1" });
+    try {
+      expect(fixture.result.status, fixture.result.stderr).toBe(0);
+      expect(fs.readFileSync(fixture.callLogPath, "utf8").trim().split("\n")).toEqual([
+        fixture.apiUrl,
+        fixture.assetUrl,
+      ]);
+    } finally {
+      fs.rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
   });
 
   it("passes only when the latest release asset matches the reviewed SHA256", () => {
