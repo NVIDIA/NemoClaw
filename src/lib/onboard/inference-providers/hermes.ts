@@ -5,7 +5,7 @@
 // Extracted verbatim from onboard.setupInference (#767).
 
 import type { HermesAuthMethod } from "../hermes-auth";
-import { isPrivateHostname } from "../../private-networks";
+import { rewriteConfigUrlsWithDnsPinning } from "../../sandbox/config";
 import type { HermesDeps, SetupInferenceResult } from "./types";
 
 export async function setupHermesProviderInference(
@@ -29,6 +29,11 @@ export async function setupHermesProviderInference(
     hermesAuthMethod,
     hermesToolGateways,
   } = args;
+  // A null/absent endpointUrl is intentionally accepted: the Hermes
+  // managed/OAuth path supplies the endpoint later (using the default managed
+  // inference route), so SSRF validation only applies to an explicitly-supplied
+  // custom endpoint.
+  let resolvedEndpointUrl = endpointUrl;
   if (endpointUrl) {
     let parsedEndpoint: URL;
     try {
@@ -46,9 +51,17 @@ export async function setupHermesProviderInference(
         `Inference endpoint URL must not contain credentials. Remove the username and password from the URL.`,
       );
     }
-    if (isPrivateHostname(parsedEndpoint.hostname)) {
+    // DNS-resolving + pinning validation closes the DNS-rebinding gap a
+    // string-only hostname check leaves open. For http this returns the
+    // pinned-IP URL; for https it returns the original hostname (preserving TLS
+    // SNI/cert validation).
+    try {
+      const validated = await rewriteConfigUrlsWithDnsPinning(endpointUrl, deps.lookup);
+      resolvedEndpointUrl = typeof validated === "string" ? validated : endpointUrl;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       throw new Error(
-        `Inference endpoint URL points to a private or internal address "${parsedEndpoint.hostname}". Use a public endpoint.`,
+        `Inference endpoint URL points to a private or internal address, or could not be resolved: ${message}`,
       );
     }
   }
@@ -112,12 +125,12 @@ export async function setupHermesProviderInference(
           ? await hermesProviderAuth.ensureHermesProviderApiKeyCredentials(targetSandbox, {
               apiKey: resolveHermesNousApiKey(),
               runOpenshell,
-              baseUrl: endpointUrl || undefined,
+              baseUrl: resolvedEndpointUrl || undefined,
             })
           : await hermesProviderAuth.ensureHermesProviderOAuthCredentials(targetSandbox, {
               allowInteractiveLogin: !isNonInteractive(),
               runOpenshell,
-              baseUrl: endpointUrl || undefined,
+              baseUrl: resolvedEndpointUrl || undefined,
               toolGatewayPresets: hermesToolGateways,
             });
       if (!state) {
@@ -153,7 +166,7 @@ export async function setupHermesProviderInference(
   }
 
   verifyInferenceRoute(provider, model);
-  verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
+  verifyOnboardInferenceSmoke({ provider, model, endpointUrl: resolvedEndpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }

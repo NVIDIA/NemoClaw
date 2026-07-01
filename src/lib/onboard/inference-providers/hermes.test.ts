@@ -38,6 +38,22 @@ function makeDeps(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeArgs(endpointUrl: string | null) {
+  return {
+    sandboxName: "alpha",
+    model: "m",
+    provider: "p",
+    endpointUrl,
+    credentialEnv: null,
+    hermesAuthMethod: null,
+    hermesToolGateways: [] as string[],
+  };
+}
+
+function publicLookup() {
+  return vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]);
+}
+
 describe("setupHermesProviderInference SSRF guard (#6072)", () => {
   it("rejects loopback address", async () => {
     await expect(
@@ -194,37 +210,61 @@ describe("setupHermesProviderInference SSRF guard (#6072)", () => {
     expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 
-  it("accepts a public HTTPS endpoint", async () => {
-    const deps = makeDeps();
-    await setupHermesProviderInference(
-      {
-        sandboxName: "alpha",
-        model: "m",
-        provider: "p",
-        endpointUrl: "https://integrate.api.nvidia.com/v1",
-        credentialEnv: null,
-        hermesAuthMethod: null,
-        hermesToolGateways: [],
-      },
-      deps as never,
-    );
+  it("accepts a public HTTPS endpoint (#6072)", async () => {
+    const deps = makeDeps({ lookup: publicLookup() });
+    await expect(
+      setupHermesProviderInference(makeArgs("https://integrate.api.nvidia.com/v1"), deps as never),
+    ).resolves.toEqual({ ok: true });
     expect(deps.runOpenshell).toHaveBeenCalled();
   });
 
-  it("skips SSRF check when endpointUrl is null", async () => {
-    const deps = makeDeps();
-    await setupHermesProviderInference(
-      {
-        sandboxName: "alpha",
-        model: "m",
-        provider: "p",
-        endpointUrl: null,
-        credentialEnv: null,
-        hermesAuthMethod: null,
-        hermesToolGateways: [],
-      },
-      deps as never,
-    );
+  it("accepts a public hostname that resolves to a public IP (#6073)", async () => {
+    const deps = makeDeps({
+      lookup: vi.fn(async () => [{ address: "8.8.8.8", family: 4 }]),
+    });
+    await expect(
+      setupHermesProviderInference(makeArgs("https://api.public.example.test/v1"), deps as never),
+    ).resolves.toEqual({ ok: true });
     expect(deps.runOpenshell).toHaveBeenCalled();
+  });
+
+  it("rejects a public hostname that resolves to a private IP (DNS rebinding) (#6073)", async () => {
+    const deps = makeDeps({
+      lookup: vi.fn(async () => [{ address: "10.0.0.5", family: 4 }]),
+    });
+    await expect(
+      setupHermesProviderInference(
+        makeArgs("https://public-looking.example.test/v1"),
+        deps as never,
+      ),
+    ).rejects.toThrow(/private or internal/);
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
+  });
+
+  it("skips SSRF check when endpointUrl is null (#6072)", async () => {
+    const deps = makeDeps();
+    await expect(setupHermesProviderInference(makeArgs(null), deps as never)).resolves.toEqual({
+      ok: true,
+    });
+    expect(deps.runOpenshell).toHaveBeenCalled();
+  });
+
+  it.each([
+    "http://127.0.0.1/v1",
+    "http://169.254.169.254/latest/meta-data/",
+    "http://10.0.0.1/v1",
+    "http://192.168.1.1/v1",
+    "http://172.16.0.1/v1",
+    "http://[::1]/v1",
+    "http://[fc00::1]/v1",
+    "http://localhost/v1",
+    "http://foo.internal/v1",
+    "http://foo.local/v1",
+  ])("rejects private/reserved endpoint %s (#6073)", async (endpointUrl) => {
+    const deps = makeDeps();
+    await expect(
+      setupHermesProviderInference(makeArgs(endpointUrl), deps as never),
+    ).rejects.toThrow(/private or internal/);
+    expect(deps.runOpenshell).not.toHaveBeenCalled();
   });
 });

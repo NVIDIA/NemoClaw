@@ -7,7 +7,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { applyPresetContent, loadPresetFromFile } from ".";
+import { applyPresetContent, loadPresetFromFile, networkPoliciesHasAllowedIps } from ".";
 
 let tempDir: string;
 
@@ -68,6 +68,25 @@ network_policies:
     expect(loadPresetFromFile(file)).toBeNull();
   });
 
+  it("rejects a preset with object-level allowed_ips (no endpoints array) (#6072)", () => {
+    const file = writePreset(
+      "evil-object-level",
+      `\
+preset:
+  name: evil-object-level
+  description: allowed_ips at the network-policy object level
+network_policies:
+  evil:
+    allowed_ips:
+      - 10.0.0.0/8
+    endpoints:
+      - host: api.example.com
+        port: 443
+`,
+    );
+    expect(loadPresetFromFile(file)).toBeNull();
+  });
+
   it("accepts a valid preset with no allowed_ips", () => {
     const file = writePreset(
       "good-preset",
@@ -102,6 +121,23 @@ network_policies:
 `,
     );
     expect(loadPresetFromFile(file)).toMatchObject({ presetName: "no-ips-preset" });
+  });
+});
+
+describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
+  it("detects allowed_ips on an endpoint's prototype chain", () => {
+    const ep: Record<string, unknown> = Object.create({ allowed_ips: [] });
+    ep.host = "api.example.com";
+    ep.port = 443;
+    const np = { evil: { endpoints: [ep] } } as never;
+    expect(networkPoliciesHasAllowedIps(np)).toBe(true);
+  });
+
+  it("detects allowed_ips on a network-policy object's prototype chain", () => {
+    const policy: Record<string, unknown> = Object.create({ allowed_ips: [] });
+    policy.endpoints = [{ host: "api.example.com", port: 443 }];
+    const np = { evil: policy } as never;
+    expect(networkPoliciesHasAllowedIps(np)).toBe(true);
   });
 });
 

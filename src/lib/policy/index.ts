@@ -111,10 +111,14 @@ function parseNetworkPolicies(content: string | null | undefined): PolicyObject 
 function networkPoliciesHasAllowedIps(np: PolicyObject): boolean {
   for (const policyVal of Object.values(np)) {
     if (!isPolicyObject(policyVal)) continue;
+    // Detect `allowed_ips` declared at the network-policy object level, not just
+    // inside an `endpoints` array. Use `in` (not `Object.hasOwn`) so an
+    // inherited/prototype-chain `allowed_ips` can't bypass the guard (#6072).
+    if ("allowed_ips" in policyVal) return true;
     const endpoints = (policyVal as PolicyObject).endpoints;
     if (!Array.isArray(endpoints)) continue;
     for (const ep of endpoints) {
-      if (isPolicyObject(ep) && Object.hasOwn(ep, "allowed_ips")) return true;
+      if (isPolicyObject(ep) && "allowed_ips" in ep) return true;
     }
   }
   return false;
@@ -1347,6 +1351,7 @@ export {
   loadPresetFromFile,
   mergePresetIntoPolicy,
   mergePresetNamesIntoPolicy,
+  networkPoliciesHasAllowedIps,
   PERMISSIVE_POLICY_PATH,
   PRESETS_DIR,
   parseCurrentPolicy,
