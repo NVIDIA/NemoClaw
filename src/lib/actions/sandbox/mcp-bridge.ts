@@ -3,10 +3,7 @@
 
 import type { McpBridgeEntry } from "../../state/registry";
 import { addMcpBridge as addMcpBridgeLifecycle } from "./mcp-bridge-add-restart";
-import {
-  type McpBridgeAddOptions,
-  McpBridgeError,
-} from "./mcp-bridge-contracts";
+import { type McpBridgeAddOptions, McpBridgeError } from "./mcp-bridge-contracts";
 import {
   finalizeMcpBridgesAfterSandboxDelete as finalizeMcpBridgesAfterSandboxDeleteLifecycle,
   prepareMcpBridgesForAbsentSandboxDestroy as prepareMcpBridgesForAbsentSandboxDestroyLifecycle,
