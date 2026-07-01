@@ -169,6 +169,7 @@ RUN test -x /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
 # with `sha256sum agents/hermes/{hermes-wrapper.py,validate-env-secret-boundary.py}`.
 ARG NEMOCLAW_HERMES_WRAPPER_SHA256=03e0afbe00e352d0dfcf14b99ea1821f9fd29f87dad49ce19add2ec96d1941cc
 ARG NEMOCLAW_HERMES_VALIDATOR_SHA256=d8ebac7143ce79061a86fefb79f2be9fb1d73f41229dc7144a1c157384947fd1
+# hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_VALIDATOR_SHA256" /usr/local/lib/nemoclaw/validate-hermes-env-secret-boundary.py \
     | sha256sum -c - \
@@ -188,6 +189,7 @@ RUN printf '%s  %s\n' \
 COPY agents/hermes/hermes-wrapper.py /usr/local/lib/nemoclaw/hermes-wrapper.py
 RUN test -x /usr/bin/python3 \
     || { echo "ERROR: /usr/bin/python3 missing or not executable; hermes-wrapper shebang would ENOEXEC" >&2; exit 1; }
+# hadolint ignore=DL4006
 RUN printf '%s  %s\n' \
         "$NEMOCLAW_HERMES_WRAPPER_SHA256" /usr/local/lib/nemoclaw/hermes-wrapper.py \
     | sha256sum -c - \
