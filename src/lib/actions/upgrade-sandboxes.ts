@@ -24,7 +24,7 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../openshell-sandbox-list";
-import { parseReadySandboxNames } from "../runtime-recovery";
+import { parseLiveSandboxEntries, parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
@@ -92,27 +92,32 @@ type RejectedBackupRecovery = {
 function prepareBackupRecovery(
   sandbox: registry.SandboxEntry,
 ): PreparedBackupRecovery | RejectedBackupRecovery {
-  const latest = sandboxState.getLatestBackup(sandbox.name);
-  if (!latest) {
-    return { sandbox, reason: "no validated pre-upgrade backup was found" };
-  }
+  try {
+    const latest = sandboxState.getLatestBackup(sandbox.name);
+    if (!latest) {
+      return { sandbox, reason: "no validated pre-upgrade backup was found" };
+    }
 
-  const validation = sandboxState.validateRebuildRecoveryManifest(
-    sandbox.name,
-    sandbox.agent,
-    latest,
-  );
-  if (!validation.ok) {
-    return { sandbox, reason: validation.reason };
+    const validation = sandboxState.validateRebuildRecoveryManifest(
+      sandbox.name,
+      sandbox.agent,
+      latest,
+    );
+    if (!validation.ok) {
+      return { sandbox, reason: validation.reason };
+    }
+    if (!sandboxState.hasPositiveManagedImageEvidence(sandbox, validation.manifest)) {
+      return {
+        sandbox,
+        reason:
+          "backup has no positive NemoClaw-managed image evidence (legacy custom images are not auto-recreated)",
+      };
+    }
+    return { sandbox, manifest: validation.manifest };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { sandbox, reason: `backup recovery assessment failed: ${detail}` };
   }
-  if (!sandboxState.hasPositiveManagedImageEvidence(sandbox, validation.manifest)) {
-    return {
-      sandbox,
-      reason:
-        "backup has no positive NemoClaw-managed image evidence (legacy custom images are not auto-recreated)",
-    };
-  }
-  return { sandbox, manifest: validation.manifest };
 }
 
 function isPreparedBackupRecovery(
@@ -159,6 +164,16 @@ export async function upgradeSandboxes(
     process.exit(liveResult.status || 1);
   }
   const liveNames = parseReadySandboxNames(liveResult.output || "");
+  // Absence from the selected gateway is not evidence of failure: a registered
+  // sandbox may be Ready on another recorded gateway. Only an explicitly
+  // observed, known non-Ready phase is eligible for prepared-backup recovery.
+  const nonReadyLiveNames = new Set(
+    parseLiveSandboxEntries(liveResult.output || "")
+      .filter(
+        (entry) => entry.phase !== null && entry.phase !== "Ready" && entry.phase !== "Running",
+      )
+      .map((entry) => entry.name),
+  );
 
   // Classify sandboxes as stale, unknown, or current. Pass the running NemoClaw
   // build so a NemoClaw image/build change is detected even when the agent
@@ -172,7 +187,7 @@ export async function upgradeSandboxes(
 
   const recoverPreparedBackups = process.env.NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE === "1";
   const backupRecoveryAssessments = recoverPreparedBackups
-    ? sandboxes.filter((sandbox) => !liveNames.has(sandbox.name)).map(prepareBackupRecovery)
+    ? sandboxes.filter((sandbox) => nonReadyLiveNames.has(sandbox.name)).map(prepareBackupRecovery)
     : [];
   const preparedRecoveries = backupRecoveryAssessments.filter(isPreparedBackupRecovery);
   const rejectedRecoveries = backupRecoveryAssessments.filter(

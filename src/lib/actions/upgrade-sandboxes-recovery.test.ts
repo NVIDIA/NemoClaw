@@ -37,9 +37,17 @@ function makeManifest(sandboxName: string) {
   };
 }
 
-function createRecoveryHarness(names: string[]): {
+function createRecoveryHarness(
+  names: string[],
+  options: {
+    gatewayNames?: Record<string, string>;
+    liveOutput?: string;
+    latestBackup?: ReturnType<typeof makeManifest> | null;
+  } = {},
+): {
   upgradeSandboxes: UpgradeSandboxes;
   rebuildSpy: ReturnType<typeof vi.fn>;
+  latestBackupSpy: ReturnType<typeof vi.spyOn>;
   managedEvidenceSpy: ReturnType<typeof vi.spyOn>;
 } {
   delete require.cache[requireDist.resolve(upgradeModulePath)];
@@ -61,7 +69,7 @@ function createRecoveryHarness(names: string[]): {
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
     result: {
       status: 0,
-      output: names.map((name) => `${name} Error`).join("\n"),
+      output: options.liveOutput ?? names.map((name) => `${name} Error`).join("\n"),
     },
     recoveryAttempted: false,
     recoverySucceeded: false,
@@ -71,6 +79,7 @@ function createRecoveryHarness(names: string[]): {
       name,
       agent: null,
       agentVersion: "2026.5.27",
+      gatewayName: options.gatewayNames?.[name],
       nemoclawVersion: "0.0.71",
     })),
   });
@@ -80,9 +89,11 @@ function createRecoveryHarness(names: string[]): {
     isStale: false,
     detectionMethod: "registry",
   });
-  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation((...args: unknown[]) =>
-    makeManifest(String(args[0])),
-  );
+  const latestBackupSpy = vi
+    .spyOn(sandboxState, "getLatestBackup")
+    .mockImplementation((...args: unknown[]) =>
+      options.latestBackup === undefined ? makeManifest(String(args[0])) : options.latestBackup,
+    );
   vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
     (...args: unknown[]) => ({
       ok: true as const,
@@ -97,6 +108,7 @@ function createRecoveryHarness(names: string[]): {
   return {
     upgradeSandboxes: requireDist(upgradeModulePath).upgradeSandboxes,
     rebuildSpy,
+    latestBackupSpy,
     managedEvidenceSpy,
   };
 }
@@ -151,5 +163,53 @@ describe("upgrade-sandboxes prepared backup recovery (#6114)", () => {
     await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
 
     expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not recover a Ready sandbox registered on a different gateway", async () => {
+    const harness = createRecoveryHarness(["ready-on-gateway-b"], {
+      gatewayNames: { "ready-on-gateway-b": "gateway-b" },
+      liveOutput: "No sandboxes found.",
+      latestBackup: null,
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).resolves.toBeUndefined();
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+    expect(harness.latestBackupSpy).not.toHaveBeenCalled();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for a live Error sandbox with no latest backup", async () => {
+    const harness = createRecoveryHarness(["broken-box"], { latestBackup: null });
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).not.toHaveBeenCalled();
+  });
+
+  it("continues after one live sandbox's backup assessment throws", async () => {
+    const harness = createRecoveryHarness(["alpha", "beta"]);
+    harness.latestBackupSpy
+      .mockImplementationOnce(() => {
+        throw new Error("ENOTDIR: unreadable backup root");
+      })
+      .mockImplementationOnce((name: string) => makeManifest(name));
+    vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
+      throw new Error(`process.exit(${code})`);
+    }) as never);
+
+    await expect(harness.upgradeSandboxes({ auto: true })).rejects.toThrow("process.exit(1)");
+
+    expect(harness.rebuildSpy).toHaveBeenCalledOnce();
+    expect(harness.rebuildSpy).toHaveBeenCalledWith("beta", ["--yes"], {
+      throwOnError: true,
+      recoveryManifest: expect.objectContaining({ sandboxName: "beta" }),
+    });
   });
 });
