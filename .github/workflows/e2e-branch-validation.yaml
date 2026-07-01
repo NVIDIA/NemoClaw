@@ -125,7 +125,7 @@ on:
       keep_alive:
         required: false
         type: boolean
-        default: true
+        default: false
       brev_provider:
         required: false
         type: string
@@ -304,7 +304,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: brev-debug-bundle-${{ inputs.test_suite }}
+          name: brev-debug-bundle-${{ inputs.test_suite }}-${{ github.run_attempt }}
           path: brev-debug-bundle/
           if-no-files-found: ignore
 
@@ -312,7 +312,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-branch-validation-logs-${{ inputs.test_suite }}
+          name: e2e-branch-validation-logs-${{ inputs.test_suite }}-${{ github.run_attempt }}
           path: /tmp/brev-e2e-*.log
           if-no-files-found: ignore
 
@@ -329,7 +329,7 @@ jobs:
           fi
 
           for attempt in 1 2 3; do
-            if output="$(brev delete "$INSTANCE" 2>&1)"; then
+            if output="$(timeout 30s brev delete "$INSTANCE" 2>&1)"; then
               printf '%s\n' "$output"
               echo "Brev deletion requested for ${INSTANCE}."
               exit 0
@@ -337,9 +337,23 @@ jobs:
               status=$?
             fi
 
-            if grep -Eqi 'not found|does not exist|no (such )?(workspace|instance)' <<<"$output"; then
-              echo "Brev instance ${INSTANCE} is already absent."
-              exit 0
+            if list_json="$(timeout 30s brev ls --json 2>/dev/null)" && \
+               jq -e '
+                 (type == "array" and all(.[]; type == "object")) or
+                 (type == "object" and
+                  ((.workspaces? // null) | type == "array") and
+                  all(.workspaces[]; type == "object"))
+               ' \
+                 <<<"$list_json" >/dev/null; then
+              if ! jq -e --arg name "$INSTANCE" '
+                (if type == "array" then . else .workspaces end)
+                | any(.[];
+                    ((.name // .workspaceName // .instanceName // .Name // "") | tostring)
+                    == $name)
+              ' <<<"$list_json" >/dev/null; then
+                echo "Brev instance ${INSTANCE} is already absent."
+                exit 0
+              fi
             fi
 
             if [ "$attempt" -eq 3 ]; then
@@ -349,7 +363,7 @@ jobs:
             fi
 
             echo "::warning::Brev delete attempt ${attempt} failed; refreshing before retry."
-            brev refresh >/dev/null 2>&1 || true
+            timeout 30s brev refresh >/dev/null 2>&1 || true
             sleep "$((attempt * 5))"
           done
 

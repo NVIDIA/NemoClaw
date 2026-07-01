@@ -140,14 +140,23 @@ describe("Brev nightly workflow contract", () => {
     const uploadLogs = steps.find((step) => step.name === "Upload test logs");
     const cleanup = steps.find((step) => step.name === "Delete Brev instance");
 
+    expect(branchValidation.on?.workflow_call?.inputs?.keep_alive).toMatchObject({
+      default: false,
+    });
     expect(run?.env?.[BREV_WORKFLOW_OWNERSHIP_ENV]).toBe("1");
     expect(cleanup?.if).toBe("always() && !inputs.keep_alive");
     expect(cleanup?.env?.INSTANCE).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
-    expect(uploadDebug?.with?.name).toBe("brev-debug-bundle-${{ inputs.test_suite }}");
-    expect(uploadLogs?.with?.name).toBe("e2e-branch-validation-logs-${{ inputs.test_suite }}");
+    expect(uploadDebug?.with?.name).toBe(
+      "brev-debug-bundle-${{ inputs.test_suite }}-${{ github.run_attempt }}",
+    );
+    expect(uploadLogs?.with?.name).toBe(
+      "e2e-branch-validation-logs-${{ inputs.test_suite }}-${{ github.run_attempt }}",
+    );
     expect(cleanup?.run).toContain("for attempt in 1 2 3");
-    expect(cleanup?.run).toContain('brev delete "$INSTANCE"');
-    expect(cleanup?.run).toContain("not found|does not exist");
+    expect(cleanup?.run).toContain('timeout 30s brev delete "$INSTANCE"');
+    expect(cleanup?.run).toContain("timeout 30s brev ls --json");
+    expect(cleanup?.run).toContain("timeout 30s brev refresh");
+    expect(cleanup?.run).not.toMatch(/grep.*not found/);
     expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
       steps.indexOf(collect as NonNullable<typeof collect>),
     );
