@@ -77,12 +77,14 @@ function shouldStripCurlProbeEnv(name: string): boolean {
 
 function buildScrubbedCurlProbeEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const scrubbed: NodeJS.ProcessEnv = {};
-  for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined && !shouldStripCurlProbeEnv(name)) {
-      scrubbed[name] = value;
+  for (const source of [process.env, extra]) {
+    for (const [name, value] of Object.entries(source)) {
+      if (value !== undefined && !shouldStripCurlProbeEnv(name)) {
+        scrubbed[name] = value;
+      }
     }
   }
-  return { ...scrubbed, ...extra };
+  return scrubbed;
 }
 
 function resolveCurlProbeSpawnEnv(opts: CurlProbeOptions): NodeJS.ProcessEnv {

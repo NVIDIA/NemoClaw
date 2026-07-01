@@ -420,6 +420,29 @@ describe("http-probe helpers", () => {
     }
   });
 
+  it("strips credential-shaped opts.env entries when trustedConfigFiles is supplied", () => {
+    const configPath = path.join(os.tmpdir(), "nemoclaw-trusted-curl.conf");
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    runCurlProbe(["-sS", "--config", configPath, "https://example.test/models"], {
+      trustedConfigFiles: [configPath],
+      env: { NVIDIA_API_KEY: "nvapi-should-not-leak", MY_BENIGN_VAR: "should-survive" },
+      spawnSyncImpl: (_command, _args, options) => {
+        spawnedEnv = options.env as NodeJS.ProcessEnv;
+        return {
+          pid: 1,
+          output: [],
+          stdout: "200",
+          stderr: "",
+          status: 0,
+          signal: null,
+        };
+      },
+    });
+
+    expect(spawnedEnv?.NVIDIA_API_KEY).toBeUndefined();
+    expect(spawnedEnv?.MY_BENIGN_VAR).toBe("should-survive");
+  });
+
   it("keeps the parent env intact when trustedConfigFiles is not supplied", () => {
     const original = process.env.MY_PROBE_PARITY_KEY_VAR;
     process.env.MY_PROBE_PARITY_KEY_VAR = "stays";
