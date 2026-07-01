@@ -29,12 +29,7 @@ export interface VersionCheckResult {
   /** True only when the check ran and the sandbox is definitively current. */
   schemeMismatch?: boolean;
   /** Categorises why the result could not be computed, so callers can surface a distinct state. */
-  unavailableReason?:
-    | "no-expected-version"
-    | "skip-probe"
-    | "openshell-missing"
-    | "ssh-config-failure"
-    | "ssh-exec-failure";
+  unavailableReason?: "no-expected-version" | "skip-probe" | "probe-failed";
 }
 
 /**
@@ -55,27 +50,6 @@ function resolveAgentForSandbox(sandboxName: string): ReturnType<typeof loadAgen
   return loadAgent(agentName);
 }
 
-const warnedProbeKeys = new Set<string>();
-
-function warnProbeFailure(
-  sandboxName: string,
-  reason: string,
-  detail: Record<string, unknown> = {},
-): void {
-  const key = `${sandboxName}|${reason}`;
-  if (warnedProbeKeys.has(key)) return;
-  warnedProbeKeys.add(key);
-  const payload = JSON.stringify({
-    event: "sandbox_version_probe_failed",
-    sandbox: sandboxName,
-    reason,
-    ...detail,
-  });
-  process.stderr.write(
-    `warning: sandbox '${sandboxName}' version probe unavailable (${reason}). ${payload}\n`,
-  );
-}
-
 /**
  * Probe the live agent version inside a sandbox via SSH.
  * Returns the parsed version string or null on failure.
@@ -84,23 +58,14 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const agent = resolveAgentForSandbox(sandboxName);
 
   const openshellBinary = resolveOpenshell();
-  if (!openshellBinary) {
-    warnProbeFailure(sandboxName, "openshell-missing");
-    return null;
-  }
+  if (!openshellBinary) return null;
 
   const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
-  if (sshConfigResult.status !== 0) {
-    warnProbeFailure(sandboxName, "ssh-config-status", { status: sshConfigResult.status });
-    return null;
-  }
-  if (!sshConfigResult.output.trim()) {
-    warnProbeFailure(sandboxName, "ssh-config-empty");
-    return null;
-  }
+  if (sshConfigResult.status !== 0) return null;
+  if (!sshConfigResult.output.trim()) return null;
 
   const tmpSshConfig = createTempSshConfig(sshConfigResult.output, "nemoclaw-ver-");
   try {
@@ -122,25 +87,9 @@ export function probeAgentVersion(sandboxName: string): string | null {
       ],
       { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 15000 },
     );
-    if (result.status !== 0) {
-      warnProbeFailure(sandboxName, "ssh-exec-status", {
-        status: result.status,
-        signal: result.signal,
-        stderr: (result.stderr ?? "").trim().slice(0, 200),
-      });
-      return null;
-    }
-    const parsed = parseVersionFromText(result.stdout);
-    if (parsed === null) {
-      warnProbeFailure(sandboxName, "version-parse-failure", {
-        stdout: (result.stdout ?? "").trim().slice(0, 200),
-      });
-    }
-    return parsed;
-  } catch (error) {
-    warnProbeFailure(sandboxName, "ssh-exec-exception", {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    if (result.status !== 0) return null;
+    return parseVersionFromText(result.stdout);
+  } catch {
     return null;
   } finally {
     tmpSshConfig.cleanup();
@@ -271,7 +220,7 @@ export function checkAgentVersion(
       expectedVersion,
       isStale: false,
       detectionMethod: "unavailable",
-      unavailableReason: "ssh-exec-failure",
+      unavailableReason: "probe-failed",
     };
   }
 
