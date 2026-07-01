@@ -332,6 +332,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"
+          if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then
+            echo "::error::Refusing to sanitize unexpected raw trace path" >&2
+            exit 1
+          fi
           python3 scripts/e2e/sanitize-trace-timing.py \
             "${NEMOCLAW_TRACE_DIR}" \
             "${E2E_ARTIFACT_DIR}/${TARGET_ID}"

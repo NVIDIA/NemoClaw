@@ -1064,6 +1064,39 @@ jobs:
     }
   });
 
+  it("rejects live trace sanitizer without the workflow-owned source guard", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    const workflow = readWorkflow() as {
+      jobs: Record<string, { steps: Array<Record<string, unknown>> }>;
+    };
+    const sanitizeStep = workflow.jobs.live?.steps.find(
+      (step) => step.name === "Build trusted live E2E timing summary",
+    );
+    expect(sanitizeStep?.run).toEqual(expect.any(String));
+    sanitizeStep!.run = String(sanitizeStep!.run)
+      .replace('expected_trace_dir="${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}"\n', "")
+      .replace(
+        'if [ -z "${RUNNER_TEMP}" ] || [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]; then\n' +
+          '  echo "::error::Refusing to sanitize unexpected raw trace path" >&2\n' +
+          "  exit 1\n" +
+          "fi\n",
+        "",
+      );
+    fs.writeFileSync(workflowPath, YAML.stringify(workflow));
+
+    try {
+      expect(validateE2eWorkflowBoundary(workflowPath)).toEqual(
+        expect.arrayContaining([
+          "step 'Build trusted live E2E timing summary' run script must include ${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}",
+          'step \'Build trusted live E2E timing summary\' run script must include [ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+        ]),
+      );
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("requires snapshot commands workflow boundary coverage", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");

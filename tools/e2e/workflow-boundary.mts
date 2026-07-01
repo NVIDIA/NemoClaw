@@ -3859,6 +3859,12 @@ export function validateE2eWorkflowBoundary(workflowPath = DEFAULT_E2E_WORKFLOW_
   if (sanitizeTraceEnv.TARGET_ID !== "${{ matrix.id }}") {
     errors.push("live trace sanitizer must pass matrix.id through TARGET_ID env");
   }
+  requireRunContains(errors, sanitizeTrace, "${RUNNER_TEMP}/nemoclaw-e2e-traces/${TARGET_ID}");
+  requireRunContains(
+    errors,
+    sanitizeTrace,
+    '[ "${NEMOCLAW_TRACE_DIR}" != "${expected_trace_dir}" ]',
+  );
   requireRunContains(errors, sanitizeTrace, "scripts/e2e/sanitize-trace-timing.py");
   requireRunContains(errors, sanitizeTrace, '"${NEMOCLAW_TRACE_DIR}"');
   requireRunContains(errors, sanitizeTrace, '"${E2E_ARTIFACT_DIR}/${TARGET_ID}"');
