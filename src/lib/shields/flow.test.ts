@@ -27,6 +27,7 @@ setTimeout(() => {}, 5000);
 
 type ShieldsHarness = {
   auditSpy: MockInstance;
+  errorSpy: MockInstance;
   logSpy: MockInstance;
   runSpy: MockInstance;
   shieldsDown: typeof import("./index.js").shieldsDown;
@@ -39,7 +40,20 @@ type ShieldsHarness = {
 let tmpDir: string;
 
 type HarnessOptions = {
+  directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
+  failOpenClawGuardActions?: Array<"lock" | "unlock">;
+  invokedAs?: "nemoclaw" | "nemohermes";
+  openClawGuardFailure?: {
+    code: string;
+    path: string;
+    detail: string;
+  };
+  openClawGuardFailures?: Array<{
+    code: string;
+    path: string;
+    detail: string;
+  }>;
   fork?: () => {
     pid: number;
     disconnect: () => void;
@@ -50,13 +64,19 @@ type HarnessOptions = {
   run?: (cmd: unknown) => { status: number };
 };
 
+function throwHarnessError(error: Error): never {
+  throw error;
+}
+
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
+  vi.stubEnv("NEMOCLAW_INVOKED_AS", options.invokedAs ?? "nemoclaw");
   delete require.cache[requireDist.resolve(shieldsModulePath)];
   delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
   delete require.cache[requireDist.resolve("./transition-lock.js")];
   delete require.cache[requireDist.resolve("../sandbox/privileged-exec.js")];
+  delete require.cache[requireDist.resolve("../cli/branding.js")];
   const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
-  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
   const runner = requireDist("../runner.js");
@@ -91,26 +111,58 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "openclaw", openshellDriver: "docker" });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  const directSandboxUnavailableError = new Error(
+    "No running direct OpenShell sandbox container found for 'openclaw' (driver: docker). Expected a running container named openshell-openclaw or openshell-openclaw-*. Is the sandbox running?",
+  );
+  vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(
+    Boolean(options.directSandboxUnavailable),
+  );
   vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-    (_sandboxName: unknown, cmd: unknown) => [
-      "exec",
-      "--user",
-      "root",
-      "openshell-openclaw",
-      ...(Array.isArray(cmd) ? cmd.map(String) : []),
-    ],
+    (_sandboxName: unknown, cmd: unknown) =>
+      options.directSandboxUnavailable
+        ? throwHarnessError(directSandboxUnavailableError)
+        : [
+            "exec",
+            "--user",
+            "root",
+            "openshell-openclaw",
+            ...(Array.isArray(cmd) ? cmd.map(String) : []),
+          ],
   );
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
     const action = ["preflight", "lock", "unlock"].find((candidate) => args.includes(candidate));
     const openClawGuard = args.some((arg) => arg.endsWith("openclaw-config-guard.py"));
-    openClawPosture =
-      openClawGuard && action === "lock"
+    const shouldFailOpenClawGuard = Boolean(
+      openClawGuard &&
+        (action === "lock" || action === "unlock") &&
+        options.failOpenClawGuardActions?.includes(action),
+    );
+    const failures = options.openClawGuardFailures ?? [
+      options.openClawGuardFailure ?? {
+        code: "startup-not-ready",
+        path: "/run/nemoclaw/openclaw-config-ready.json",
+        detail: "OpenClaw startup is not ready for host config mutations",
+      },
+    ];
+    const failureResult = {
+      status: 1,
+      signal: null,
+      stdout: `${failures
+        .map((failure) => JSON.stringify({ type: "issue", ...failure }))
+        .join("\n")}\n${JSON.stringify({ type: "result", action, status: "failed" })}\n`,
+      stderr: "",
+      pid: 0,
+      output: [],
+    };
+    openClawPosture = shouldFailOpenClawGuard
+      ? openClawPosture
+      : openClawGuard && action === "lock"
         ? "locked"
         : openClawGuard && action === "unlock"
           ? "mutable"
           : openClawPosture;
-    return {
+    const successResult = {
       status: 0,
       signal: null,
       stdout: action
@@ -130,7 +182,8 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
       stderr: "",
       pid: 0,
       output: [],
-    } as never;
+    };
+    return (shouldFailOpenClawGuard ? failureResult : successResult) as never;
   });
   vi.spyOn(dockerExec, "dockerExecFileSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
@@ -156,9 +209,11 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
 
   const shields = requireDist(shieldsModulePath);
   logSpy.mockClear();
+  errorSpy.mockClear();
   auditSpy.mockClear();
   return {
     auditSpy,
+    errorSpy,
     logSpy,
     runSpy,
     shieldsDown: shields.shieldsDown,
@@ -167,6 +222,22 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
     isShieldsDown: shields.isShieldsDown,
     synchronizeAutoRestoreWithShieldsDown: shields.synchronizeAutoRestoreWithShieldsDown,
   };
+}
+
+function expectStagedDriverNeutralRecovery(
+  errorSpy: MockInstance,
+  sandboxName: string,
+  cliName = "nemoclaw",
+): string {
+  const output = errorSpy.mock.calls.flat().map(String).join("\n");
+  expect(output).toContain(
+    `Recovery: confirm the sandbox is running and ready, then retry \`${cliName} ${sandboxName} shields up\`.`,
+  );
+  expect(output).toContain(
+    `If the retry still fails, rebuild a known-good baseline with \`${cliName} ${sandboxName} rebuild --yes\`.`,
+  );
+  expect(output).not.toMatch(/kubectl/i);
+  return output;
 }
 
 describe("shields command flow", () => {
@@ -182,6 +253,7 @@ describe("shields command flow", () => {
     delete require.cache[requireDist.resolve(shieldsModulePath)];
     delete require.cache[requireDist.resolve("./timer-bound-lock.js")];
     delete require.cache[requireDist.resolve("./transition-lock.js")];
+    delete require.cache[requireDist.resolve("../cli/branding.js")];
   });
 
   it("shieldsDown captures policy, unlocks config, saves state, and skips timer on request", () => {
@@ -207,7 +279,7 @@ describe("shields command flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Config unlocked for openclaw (no auto-lockdown timer",
     );
-  });
+  }, 15_000);
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
@@ -575,6 +647,195 @@ describe("shields command flow", () => {
     expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
       "Saved policy snapshot is missing",
     );
+  });
+
+  it("reports staged driver-neutral recovery when shields-down rollback cannot re-lock (#6126)", () => {
+    const harness = createHarness({ failOpenClawGuardActions: ["unlock", "lock"] });
+
+    expect(() =>
+      harness.shieldsDown("openclaw", {
+        timeout: "5m",
+        reason: "recovery-hint coverage",
+        skipTimer: true,
+        throwOnError: true,
+      }),
+    ).toThrow(/startup-not-ready/);
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain("Rolling back — restoring policy from snapshot");
+    expect(output).toContain("Config remains unlocked — manual intervention required");
+  });
+
+  it("reports staged driver-neutral recovery when snapshot restoration fails (#6126)", () => {
+    const harness = createHarness({ run: () => ({ status: 1 }) });
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    const snapshotPath = path.join(stateDir, "policy-snapshot-failed-restore.yaml");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(snapshotPath, "version: 1\nnetwork_policies: {}\n");
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: true,
+        shieldsDownAt: new Date().toISOString(),
+        shieldsDownTimeout: 300,
+        shieldsDownReason: "recovery-hint coverage",
+        shieldsDownPolicy: "permissive",
+        shieldsPolicySnapshotPath: snapshotPath,
+      }),
+    );
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      "policy restore exited with status 1",
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain("Config remains unlocked — manual intervention required");
+  });
+
+  it("reports staged driver-neutral recovery when the initial config lock fails (#6126)", () => {
+    const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /startup-not-ready/,
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+    expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
+    expect(output).not.toContain(
+      "OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox",
+    );
+  });
+
+  it("uses the invoked nemohermes alias in staged recovery commands (#6126)", () => {
+    const harness = createHarness({
+      failOpenClawGuardActions: ["lock"],
+      invokedAs: "nemohermes",
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /startup-not-ready/,
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw", "nemohermes");
+    expect(output).not.toContain("`nemoclaw openclaw shields up`");
+    expect(output).not.toContain("`nemoclaw openclaw rebuild --yes`");
+  });
+
+  it("reports staged recovery when a stopped sandbox prevents config relock (#6126)", () => {
+    const harness = createHarness({ directSandboxUnavailable: true });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /No running direct OpenShell sandbox container found/,
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+    expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
+  });
+
+  it("retains critical recovery for non-transient OpenClaw rollback failures (#6126)", () => {
+    const harness = createHarness({
+      failOpenClawGuardActions: ["lock"],
+      openClawGuardFailure: {
+        code: "unsafe-config-path",
+        path: "/sandbox/.openclaw/openclaw.json",
+        detail: "canonical config path is not a safe regular file",
+      },
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /unsafe-config-path/,
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain(
+      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
+    );
+    expect(output).not.toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+  });
+
+  it("retains critical recovery for structural startup-not-ready diagnostics (#6126)", () => {
+    const harness = createHarness({
+      failOpenClawGuardActions: ["lock"],
+      openClawGuardFailure: {
+        code: "startup-not-ready",
+        path: "/run/nemoclaw/openclaw-config-ready.json",
+        detail: "installed config guard requires NemoClaw PID 1",
+      },
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /requires NemoClaw PID 1/,
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain(
+      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
+    );
+    expect(output).not.toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+  });
+
+  it("retains critical recovery when a transient diagnostic is followed by another issue (#6126)", () => {
+    const harness = createHarness({
+      failOpenClawGuardActions: ["lock"],
+      openClawGuardFailures: [
+        {
+          code: "startup-not-ready",
+          path: "/run/nemoclaw/openclaw-config-ready.json",
+          detail: "OpenClaw startup is not ready for host config mutations",
+        },
+        {
+          code: "unsafe-config-path",
+          path: "/sandbox/.openclaw/openclaw.json",
+          detail: "canonical config path is not a safe regular file",
+        },
+      ],
+    });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /unsafe-config-path/,
+    );
+
+    const output = harness.errorSpy.mock.calls.flat().map(String).join("\n");
+    expect(output).toContain(
+      "CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox.",
+    );
+    expect(output).not.toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+  });
+
+  it("reports staged driver-neutral recovery when drift remediation cannot re-lock (#6126)", () => {
+    const harness = createHarness({ failOpenClawGuardActions: ["lock"] });
+    const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(stateDir, "shields-openclaw.json"),
+      JSON.stringify({
+        shieldsDown: false,
+        chattrApplied: false,
+        fileHashes: {
+          "/sandbox/.openclaw/openclaw.json": "a".repeat(64),
+          "/sandbox/.openclaw/.config-hash": "a".repeat(64),
+        },
+      }),
+    );
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /startup-not-ready/,
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain("Config remains drifted — manual intervention required");
   });
 
   it("retains the bounded auto-restore owner when manual shields-up fails", () => {

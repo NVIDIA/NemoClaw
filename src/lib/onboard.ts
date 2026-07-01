@@ -26,6 +26,7 @@ const {
 const {
   applyCloudFallbackSelection,
   clearNimContainerBeforeRetry,
+  createNvidiaFeaturedModelSession,
   createRemoteModelValidator,
   requireProviderChoice,
   resolveCompatibleEndpointInput,
@@ -2939,7 +2940,6 @@ async function createSandbox(
   // can be deregistered — if inline cleanup fails, we leave the handler
   // armed so the temp dir is still removed on process exit.
   process.on("exit", cleanupBuildCtx);
-
   const defaultPolicyPath = path.join(
     ROOT,
     "nemoclaw-blueprint",
@@ -2964,6 +2964,7 @@ async function createSandbox(
     messagingTokenDefs,
     reusableMessagingChannels,
     reusableMessagingProviders,
+    extraProviders: registry.listExtraProviders(),
     hermesToolGateways,
     sandboxGpuConfig: effectiveSandboxGpuConfig,
     dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
@@ -3369,7 +3370,6 @@ async function selectAndValidateOllamaModel(
 
 type SetupNimSelectionState =
   import("./onboard/setup-nim-selection").SetupNimSelectionState<HermesAuthMethod>;
-
 type SetupNimSelectionResult = "selected" | "retry-selection";
 
 // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
@@ -3770,14 +3770,12 @@ async function handleRemoteProviderSelection(args: RemoteProviderSelectionArgs, 
     } else {
       await ensureApiKey();
     }
-    const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
-    state.model =
-      requestedModel ||
-      (recoveredFromSandbox && recoveredModel) ||
-      (isNonInteractive()
-        ? DEFAULT_CLOUD_MODEL
-        : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
-      DEFAULT_CLOUD_MODEL;
+    state.model = await state.nvidiaFeaturedModels!.select(
+      requestedModel,
+      recoveredFromSandbox ? recoveredModel : null,
+      isNonInteractive(),
+      process.env.NEMOCLAW_MODEL,
+    );
     if (isBackToSelection(state.model)) {
       console.log("  Returning to provider selection.");
       console.log("");
@@ -3931,6 +3929,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
   let compatibleEndpointReasoning: string | null = null;
   let allowToolsIncompatible = false;
   let reuseGatewayCredential = false;
+  const nvidiaFeaturedModels = createNvidiaFeaturedModelSession();
 
   const providerHostState = detectInferenceProviderHostState({
     gpu,
@@ -4064,6 +4063,7 @@ async function setupNim(gpu: ReturnType<typeof nim.detectGpu>, sandboxName: stri
           compatibleEndpointReasoning,
           nimContainer,
           allowToolsIncompatible,
+          nvidiaFeaturedModels,
         };
         // biome-ignore format: keep src/lib/onboard.ts net-neutral for growth guardrail.
         const recoveredRegistryRoute = rebuildRegistryInferenceRoute?.sandboxName === sandboxName && rebuildRegistryInferenceRoute.route.source === "registry" ? rebuildRegistryInferenceRoute.route : null;

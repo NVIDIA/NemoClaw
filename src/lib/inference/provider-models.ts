@@ -28,10 +28,16 @@ type ModelCatalogResponse = {
   data?: Array<ModelCatalogItem | null>;
 };
 
+/**
+ * Parses a provider catalog response body as JSON.
+ */
 function parseJson<T>(text: string): T {
   return JSON.parse(text);
 }
 
+/**
+ * Extracts safe string model IDs from an OpenAI-compatible catalog response.
+ */
 function parseModelIds(body: string, itemKeys: Array<keyof ModelCatalogItem> = ["id"]): string[] {
   const parsed = parseJson<ModelCatalogResponse>(body);
   if (!Array.isArray(parsed.data)) {
@@ -51,6 +57,9 @@ function parseModelIds(body: string, itemKeys: Array<keyof ModelCatalogItem> = [
     .filter((value): value is string => Boolean(value));
 }
 
+/**
+ * Converts a curl probe result into NemoClaw's model catalog result shape.
+ */
 function toModelCatalogFetchResult(
   result: CurlProbeResult,
   itemKeys: Array<keyof ModelCatalogItem> = ["id"],
@@ -76,6 +85,9 @@ function toModelCatalogFetchResult(
   }
 }
 
+/**
+ * Fetches available NVIDIA Endpoint model IDs using the provided API key.
+ */
 export function fetchNvidiaEndpointModels(
   apiKey: string,
   options: ProviderModelOptions = {},
@@ -103,6 +115,9 @@ export function fetchNvidiaEndpointModels(
   }
 }
 
+/**
+ * Validates that a selected model appears in the NVIDIA Endpoints catalog.
+ */
 export function validateNvidiaEndpointModel(
   model: string,
   apiKey: string,
@@ -129,6 +144,9 @@ export function validateNvidiaEndpointModel(
   };
 }
 
+/**
+ * Fetches model IDs from an OpenAI-compatible `/models` endpoint.
+ */
 export function fetchOpenAiLikeModels(
   endpointUrl: string,
   apiKey: string,
@@ -160,6 +178,9 @@ export function fetchOpenAiLikeModels(
   }
 }
 
+/**
+ * Fetches Anthropic-compatible model IDs from a Messages API provider.
+ */
 export function fetchAnthropicModels(
   endpointUrl: string,
   apiKey: string,
@@ -187,6 +208,9 @@ export function fetchAnthropicModels(
   }
 }
 
+/**
+ * Validates a selected model against an Anthropic-compatible provider catalog.
+ */
 export function validateAnthropicModel(
   endpointUrl: string,
   model: string,
@@ -217,6 +241,9 @@ export function validateAnthropicModel(
   };
 }
 
+/**
+ * Validates a selected model against an OpenAI-compatible provider catalog.
+ */
 export function validateOpenAiLikeModel(
   label: string,
   endpointUrl: string,

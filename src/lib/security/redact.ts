@@ -30,6 +30,7 @@ const SENSITIVE_ENV_ASSIGNMENT_KEYS = [
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
   ...listMessagingCredentialMetadata().map((credential) => credential.providerEnvKey),
 ];
 

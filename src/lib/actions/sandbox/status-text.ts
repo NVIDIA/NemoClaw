@@ -9,7 +9,7 @@ import type { ProviderHealthStatus } from "../../inference/health";
 import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
-import type { SandboxGpuProofResult, SandboxEntry } from "../../state/registry";
+import type { SandboxEntry, SandboxGpuProofResult } from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
@@ -210,14 +210,17 @@ function printAgentVersion(context: SandboxStatusTextContext, sandbox: SandboxEn
         `    Agent:    ${agentName} version not verified (expected v${versionCheck.expectedVersion})`,
       );
     }
-    if (versionCheck.isStale) {
+    if (versionCheck.isStale && versionCheck.schemeMismatch) {
+      console.log(
+        `    ${YW}Update:   scheme mismatch (runtime v${versionCheck.sandboxVersion} vs expected v${versionCheck.expectedVersion})${R}`,
+      );
+      console.log(
+        `              Run \`${CLI_NAME} ${sandboxName} rebuild\` to realign version schemes`,
+      );
+    } else if (versionCheck.isStale) {
       console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
       console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
-    } else if (
-      shouldProbe &&
-      versionCheck.detectionMethod === "unavailable" &&
-      versionCheck.expectedVersion
-    ) {
+    } else if (shouldProbe && versionCheck.verificationFailed && versionCheck.expectedVersion) {
       console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
       console.log(
         `              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`,
@@ -235,6 +238,7 @@ export function printSandboxDetails(context: SandboxStatusTextContext): SandboxS
   if (!sb) return { exitCode: null };
 
   console.log("");
+  console.log(`  Sandbox-scoped status for '${sb.name}':`);
   console.log(`  Sandbox: ${sb.name}`);
   console.log(`    Model:    ${currentModel}`);
   console.log(`    Provider: ${currentProvider}`);

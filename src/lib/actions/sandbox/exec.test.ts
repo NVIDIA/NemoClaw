@@ -3,6 +3,9 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The multi-line guard suites (findMultilineExecArg, multilineExecMessage, and
+// the execSandbox dispatch guard for #5980) live in exec.multiline-guard.test.ts
+// so this file stays focused on argv construction and the workdir probe.
 import {
   buildOpenshellExecArgs,
   buildWorkdirProbeArgs,

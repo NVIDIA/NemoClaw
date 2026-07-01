@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
+export { createNvidiaFeaturedModelSession } from "./nvidia-featured-model-selection";
+
 export type SetupNimSelectionBackNavigation = Readonly<{ kind: "NEMOCLAW_BACK_TO_SELECTION" }>;
 
 export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
@@ -16,6 +20,7 @@ export type SetupNimSelectionState<THermesAuthMethod = unknown> = {
   allowToolsIncompatible: boolean;
   skipHostInferenceSmoke?: boolean;
   reuseGatewayCredentialWithoutLocalKey?: boolean;
+  nvidiaFeaturedModels?: NvidiaFeaturedModelSession;
 };
 
 export type CloudFallbackConfig = {

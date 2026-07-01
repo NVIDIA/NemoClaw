@@ -134,6 +134,56 @@ describe("OpenClaw shields top-config transaction", () => {
     expect(restoreStateSpy).not.toHaveBeenCalled();
   });
 
+  it("repairs doctor-tightened permissions without starting a shields transition (#6047)", () => {
+    dockerExecSpy.mockImplementation((cmd) => {
+      const argv = cmd as string[];
+      switch (argv[0]) {
+        case "/usr/bin/id":
+          return "1000\n";
+        case "/usr/bin/python3":
+          return "";
+        default:
+          throw new Error(`unexpected privileged command: ${argv.join(" ")}`);
+      }
+    });
+
+    expect(shields.repairMutableConfigPerms("openclaw")).toEqual({
+      applied: true,
+      verified: true,
+      errors: [],
+    });
+
+    const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
+    expect(commands).toEqual([
+      ["/usr/bin/id", "-u", "sandbox"],
+      ["/usr/bin/id", "-g", "sandbox"],
+      [
+        "/usr/bin/python3",
+        "-I",
+        "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py",
+        "/sandbox/.openclaw",
+        "1000",
+        "1000",
+      ],
+    ]);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when mutable repair cannot resolve the sandbox identity (#6047)", () => {
+    dockerExecSpy.mockReturnValue("root\n");
+
+    expect(shields.repairMutableConfigPerms("openclaw")).toEqual({
+      applied: true,
+      verified: false,
+      errors: ["sandbox identity lookup returned an invalid UID"],
+    });
+
+    expect(dockerExecSpy).toHaveBeenCalledTimes(1);
+    expect(guardSpy).not.toHaveBeenCalled();
+    expect(applyStateSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the protected top binding until recursive unlock is ready", () => {
     dockerExecSpy.mockImplementation((cmd) => {
       const argv = cmd as string[];
@@ -166,28 +216,6 @@ describe("OpenClaw shields top-config transaction", () => {
       /recursive unlock failed/,
     );
     expect(events).toEqual(["top:preflight", "state:unlock", "top:lock", "state:restore:locked"]);
-  });
-
-  it("repairs mutable top-config permissions without starting a recursive shields unlock", () => {
-    const result = shields.repairMutableConfigPerms("openclaw");
-
-    expect(result).toEqual({ applied: true, verified: true, errors: [] });
-    expect(guardSpy).not.toHaveBeenCalled();
-    expect(applyStateSpy).not.toHaveBeenCalled();
-    expect(restoreStateSpy).not.toHaveBeenCalled();
-
-    const commands = dockerExecSpy.mock.calls.map((call) => call[0] as string[]);
-    const repair = commands.find(
-      (cmd) => cmd[0] === "python3" && cmd[1] === "-I" && cmd[2] === "-c",
-    );
-    expect(repair).toBeDefined();
-    expect(repair?.[4]).toBe("660");
-    expect(repair?.[5]).toBe("2770");
-    expect(repair?.[6]).toBe("sandbox:sandbox");
-    expect(repair?.[7]).toBe("/sandbox/.openclaw");
-    expect(repair).toContain("/sandbox/.openclaw/openclaw.json");
-    expect(repair).toContain("/sandbox/.openclaw/.config-hash");
-    expect(repair).not.toContain("/sandbox/.openclaw/devices");
   });
 
   it("reports a failed mutable top-config transition without falling back to recursive unlock", () => {
