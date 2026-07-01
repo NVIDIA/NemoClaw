@@ -129,6 +129,13 @@ To avoid these issues, install the prerequisites in the following order before r
 
 1. Install Xcode Command Line Tools (`xcode-select --install`). These are needed by the installer and Node.js toolchain.
 2. Install and start a supported container runtime (Docker Desktop or Colima). Without a running runtime, the installer cannot connect to Docker.
+   If you use Colima through Homebrew, install both Colima and the Docker CLI:
+
+   ```bash
+   brew install colima docker
+   colima start --cpu 4 --memory 8
+   docker info
+   ```
 
 ### Permission errors during installation
 
@@ -500,6 +507,13 @@ If neither is found, verify that Colima is running:
 
 ```bash
 colima status
+```
+
+If `colima status` succeeds but `docker info` or `which docker` fails with a missing `docker` command, install the Docker CLI separately:
+
+```bash
+brew install docker
+docker info
 ```
 
 ### Sandbox build is slow or hangs (under-provisioned container runtime)
