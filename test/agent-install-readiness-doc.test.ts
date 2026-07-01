@@ -13,17 +13,28 @@ const readinessDoc = readFileSync(
 
 describe("agent install readiness docs", () => {
   it("keeps the #5051 validation matrix grounded in the accepted workflows", () => {
-    for (const requiredText of [
+    const headings = [...readinessDoc.matchAll(/^## (.+)$/gm)].map((match) => match[1]);
+    expect(headings).toEqual([
+      "Validation Scope",
       "Baseline Workflow",
       "Improved Workflow",
-      "Skills already available",
-      "Skills missing",
-      "Stale skills",
-      "privileged or destructive setup actions",
-      "nemoclaw <sandbox-name> status",
-      "NemoClaw is ready",
-    ]) {
-      expect(readinessDoc).toContain(requiredText);
-    }
+      "Evidence To Record",
+      "Pass Criteria",
+    ]);
+
+    const frontmatter = readinessDoc.match(/^---\n(?<body>[\s\S]+?)\n---/)?.groups?.body ?? "";
+    expect(frontmatter).toContain('title: "Validate Agent-Supported Install Readiness"');
+    expect(frontmatter).toContain("issue #5051");
+
+    const skillStateRows = [...readinessDoc.matchAll(/^\| (Skills [^|]+) \|/gm)].map(
+      (match) => match[1],
+    );
+    expect(skillStateRows).toEqual(["Skills already available", "Skills missing"]);
+    expect(readinessDoc).toMatch(/^\| Stale skills \|/m);
+
+    const baselineIds = [...readinessDoc.matchAll(/^\| (B\d) \|/gm)].map((match) => match[1]);
+    const improvedIds = [...readinessDoc.matchAll(/^\| (I\d) \|/gm)].map((match) => match[1]);
+    expect(baselineIds).toEqual(["B1", "B2", "B3", "B4"]);
+    expect(improvedIds).toEqual(["I1", "I2", "I3", "I4", "I5", "I6", "I7", "I8"]);
   });
 });
