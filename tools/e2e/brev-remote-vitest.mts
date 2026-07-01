@@ -5,6 +5,12 @@ import { shellQuote } from "../../src/lib/core/shell-quote";
 
 export type BrevVitestProject = "cli" | "e2e-live";
 
+const BREV_SUITES_WITHOUT_HARNESS_SANDBOX = new Set(["all", "full", "gpu"]);
+
+export function brevSuiteNeedsHarnessSandbox(testSuite: string): boolean {
+  return !BREV_SUITES_WITHOUT_HARNESS_SANDBOX.has(testSuite);
+}
+
 export function buildBrevRemoteVitestCommand(project: BrevVitestProject, target: string): string {
   const vitestCommand = [
     "./node_modules/.bin/vitest",

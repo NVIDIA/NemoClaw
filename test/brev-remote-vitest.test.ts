@@ -8,7 +8,10 @@ import path from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { buildBrevRemoteVitestCommand } from "../tools/e2e/brev-remote-vitest.mts";
+import {
+  brevSuiteNeedsHarnessSandbox,
+  buildBrevRemoteVitestCommand,
+} from "../tools/e2e/brev-remote-vitest.mts";
 
 const TARGET = "test/e2e/live/credential-sanitization.test.ts";
 
@@ -84,6 +87,18 @@ function expectedVitestLog(): string {
 }
 
 describe("Brev remote Vitest command", () => {
+  it("does not seed shared harness state for suites that own their sandbox lifecycle", () => {
+    expect(brevSuiteNeedsHarnessSandbox("all")).toBe(false);
+    expect(brevSuiteNeedsHarnessSandbox("full")).toBe(false);
+    expect(brevSuiteNeedsHarnessSandbox("gpu")).toBe(false);
+  });
+
+  it("preserves harness onboarding for single-target suites", () => {
+    expect(brevSuiteNeedsHarnessSandbox("credential-sanitization")).toBe(true);
+    expect(brevSuiteNeedsHarnessSandbox("telegram-injection")).toBe(true);
+    expect(brevSuiteNeedsHarnessSandbox("messaging-providers")).toBe(true);
+  });
+
   it("uses the repository-local Vitest binary without invoking a package runner", () => {
     const fixture = createFixture();
     try {

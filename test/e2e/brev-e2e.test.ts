@@ -54,7 +54,10 @@ import { execFileSync, execSync, type StdioOptions, spawnSync } from "node:child
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../../src/lib/core/shell-quote";
-import { buildBrevRemoteVitestCommand } from "../../tools/e2e/brev-remote-vitest.mts";
+import {
+  brevSuiteNeedsHarnessSandbox,
+  buildBrevRemoteVitestCommand,
+} from "../../tools/e2e/brev-remote-vitest.mts";
 
 // Instance configuration
 const BREV_MIN_VCPU = parseInt(process.env.BREV_MIN_VCPU || "4", 10);
@@ -873,7 +876,13 @@ function bootstrapLaunchable(elapsed: () => string): { remoteDir: string; needsO
   );
   console.log(`[${elapsed()}] nemoclaw CLI linked`);
 
-  return { remoteDir: resolvedRemoteDir, needsOnboard: true };
+  return {
+    remoteDir: resolvedRemoteDir,
+    // The composite security suite provisions and tears down its own sandbox
+    // in each live target. Seeding a second harness-owned registry here leaves
+    // stale state after the first target destroys the shared gateway.
+    needsOnboard: brevSuiteNeedsHarnessSandbox(TEST_SUITE),
+  };
 }
 
 /**
@@ -1130,7 +1139,7 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     }
 
     // Verify sandbox registry (only when beforeAll created a sandbox)
-    if (TEST_SUITE !== "full" && !GPU_TEST_SUITE) {
+    if (brevSuiteNeedsHarnessSandbox(TEST_SUITE) && !GPU_TEST_SUITE) {
       console.log(`[${elapsed()}] Verifying sandbox registry...`);
       const registry = JSON.parse(ssh(`cat ~/.nemoclaw/sandboxes.json`, { timeout: 10_000 }));
       expect(registry.defaultSandbox).toBe("e2e-test");
@@ -1158,10 +1167,9 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
     deleteBrevInstance(requireInstanceName());
   }, 120_000); // 2 min for cleanup
 
-  // NOTE: The full E2E test runs install.sh --non-interactive which destroys and
-  // rebuilds the sandbox from scratch. It cannot run alongside the security tests
-  // (credential-sanitization, telegram-injection) which depend on the sandbox
-  // that beforeAll already created. Run it only when TEST_SUITE=full.
+  // NOTE: The full E2E test runs install.sh --non-interactive and owns the
+  // complete sandbox lifecycle. The composite security suite also lets each
+  // remote target own that lifecycle, without a shared harness registry.
   it.runIf(TEST_SUITE === "full")(
     "full E2E suite passes on remote VM",
     () => {
