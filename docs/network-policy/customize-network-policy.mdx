@@ -57,6 +57,7 @@ That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 </AgentOnly>
 <AgentOnly variant="hermes">
 Open the Hermes policy additions and shared sandbox policy files under `agents/hermes/` and `nemoclaw-blueprint/policies/`, then add or modify endpoint entries.
+Messaging channel policies are channel-owned; edit `src/lib/messaging/channels/<channel>/policy/hermes.yaml` when changing the maintained Hermes preset for Telegram, Discord, Slack, WeChat, WhatsApp, or Microsoft Teams.
 
 To include a built-in preset in the baseline policy, merge its `network_policies` entries into the appropriate policy file and re-run `$$nemoclaw onboard`.
 
@@ -197,7 +198,7 @@ Use this flow to test a destination before you decide whether it belongs in a pe
 
 ## Policy Presets
 
-NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
+NemoClaw ships preset policy files for common non-messaging integrations in `nemoclaw-blueprint/policies/presets/` and channel-owned messaging policy files under `src/lib/messaging/channels/<channel>/policy/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
 For guided post-install examples, refer to [Common Integration Policy Examples](integration-policy-examples).
 
@@ -220,6 +221,7 @@ Available presets:
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
+| `teams` | Microsoft Teams bot, OAuth, and webhook endpoints |
 | `telegram` | Telegram Bot API |
 | `wechat` | WeChat (personal) iLink Bot API (experimental) |
 | `whatsapp` | WhatsApp Web messaging (experimental) |

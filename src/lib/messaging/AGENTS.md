@@ -11,21 +11,24 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 
 ## Data Flow
 
-1. Channel manifests live in `channels/<channel>/manifest.ts` and are registered by `channels/built-ins.ts`.
-2. `MessagingWorkflowPlanner` selects the right workflow shape for onboard, add, remove, start, stop, or rebuild.
-3. `ManifestCompiler` and `compiler/engines/*` compile manifests into a `SandboxMessagingPlan`.
-4. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64`.
-5. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
-6. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
-7. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
-8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
+1. Channel code lives in `channels/<channel>/` and is exposed by a `defineMessagingChannel(...)` module in `channels/<channel>/index.ts`.
+2. `channels/built-ins.ts` discovers built-in channel modules through `channels/discovery.ts`; future package/directory discovery should feed the same module contract.
+3. `MessagingCatalog` creates manifest registries, hook registries, template resolvers, policy loaders, and workflow planners from discovered channel modules.
+4. `MessagingWorkflowPlanner` selects the right workflow shape for onboard, add, remove, start, stop, or rebuild.
+5. `ManifestCompiler` and `compiler/engines/*` compile manifests into a `SandboxMessagingPlan`.
+6. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64`.
+7. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
+8. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
+9. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
+10. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
 
 ## Package Map
 
 | Path | Ownership |
 |---|---|
+| `catalog.ts` | Catalog boundary used by core callers to obtain registries, hooks, template resolvers, policies, and planners. |
 | `manifest/` | Serializable manifest and plan contracts. Keep these JSON-compatible. |
-| `channels/` | Built-in channel manifests, channel metadata helpers, template resolvers, runtime preload assets, and channel hook implementations. |
+| `channels/` | Built-in channel modules, manifests, discovery validation, metadata helpers, template resolvers, runtime preload assets, channel-owned policy YAML, and channel hook implementations. |
 | `compiler/` | Manifest-to-plan compilation. It may resolve env/config inputs and run enrollment/reachability/build hooks, but should not mutate OpenShell or registry state directly. |
 | `hooks/` | Hook contracts, registries, runner validation, common prompt/static-output helpers, and conflict error types. |
 | `applier/` | Host/OpenShell side effects: plan env serialization, provider upsert/reuse, policy apply, agent config writes, hook phase execution, conflict detection, registry persistence, and build-time applier. |
@@ -52,10 +55,11 @@ Start with `channels/<channel>/manifest.ts`.
 1. Declare `auth`, `inputs`, `credentials`, `policyPresets`, `render`, `runtime`, `agentPackages`, `state`, and `hooks` in the manifest.
 2. Add template placeholders to `channels/<channel>/template-resolver.ts` when static render data needs derived values such as allowlists, booleans, proxy URLs, or Hermes/OpenClaw schema differences.
 3. Add hook implementations under `channels/<channel>/hooks/` only for side effects or checks that cannot be represented as static manifest data.
-4. Register hook handlers in the channel `hooks/index.ts` and in `hooks/builtins.ts`.
-5. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot/connect-time shims or diagnostics.
-6. Add or update `channels/<channel>/policy/<agent-or-shared>.yaml` and expose it through the channel module `policies()` method when the manifest declares a channel policy preset.
-7. Cover the behavior with manifest/compiler tests plus applier/onboard/channel CLI tests when host effects change.
+4. Add `channels/<channel>/index.ts` with `defineMessagingChannel(...)`; expose `manifest()`, `hooks()`, `templates()`, and `policies()` from the module as needed.
+5. Add the built-in module discovery entry in `channels/built-ins.ts`. Future package or directory discovery should feed the same `MessagingChannelModule` contract.
+6. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot/connect-time shims or diagnostics.
+7. Add or update `channels/<channel>/policy/openclaw.yaml`, `channels/<channel>/policy/hermes.yaml`, or another agent-specific policy file and expose it through the channel module `policies()` method when the manifest declares a channel policy preset.
+8. Cover the behavior with manifest/discovery/compiler tests plus applier/onboard/channel CLI tests when host effects change.
 
 ## Where Changes Belong
 

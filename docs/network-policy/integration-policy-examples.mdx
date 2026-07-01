@@ -14,7 +14,7 @@ skill:
 import { AgentOnly } from "../_components/AgentGuide";
 
 Use these examples when a sandbox is already installed and an integration needs network access.
-This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML under `nemoclaw-blueprint/policies/presets/`.
+This page covers only integrations that NemoClaw currently ships as maintained policy preset YAML, either under `nemoclaw-blueprint/policies/presets/` or under channel-owned messaging policy directories in `src/lib/messaging/channels/<channel>/policy/`.
 For complete blueprint examples that combine a model, agent harness, OpenShell policy, and integration workflow, refer to [NemoClaw Community](https://github.com/NVIDIA/nemoclaw-community).
 Integration setup usually has two separate parts:
 
@@ -46,7 +46,7 @@ An approval updates the running policy, but it does not create a reviewable Nemo
 
 ## Supported Integration Presets
 
-NemoClaw ships maintained policy presets for common services in `nemoclaw-blueprint/policies/presets/`.
+NemoClaw ships maintained policy presets for common services in `nemoclaw-blueprint/policies/presets/` and channel-owned messaging policy directories.
 
 | Workflow | Preset |
 |----------|--------|
@@ -63,6 +63,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Public reference APIs | `public-reference` |
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
+| Microsoft Teams messaging | `teams` |
 | Telegram Bot API | `telegram` |
 | Weather and geocoding APIs | `weather` |
 | WeChat (personal) iLink Bot API (experimental) | `wechat` |
@@ -128,7 +129,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `teams`, `wechat`, or `whatsapp`).
 
 ## Slack or Discord Messaging
 

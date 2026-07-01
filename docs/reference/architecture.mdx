@@ -178,8 +178,8 @@ nemoclaw-blueprint/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy for the OpenClaw profile
 ```
 
-Hermes keeps its agent-owned image, plugin, config, entrypoint, and policy additions under `agents/hermes/`.
-The default Hermes policy starts from `agents/hermes/policy-additions.yaml`.
+Hermes keeps its agent-owned image, plugin, config, entrypoint, and baseline policy additions under `agents/hermes/`.
+Messaging channel egress is channel-owned: Hermes channel presets live under `src/lib/messaging/channels/<channel>/policy/hermes.yaml` and are applied only when that channel or preset is selected.
 
 The current blueprint runner implementation lives in the `nemoclaw/` TypeScript package:
 

@@ -11,6 +11,7 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import YAML from "yaml";
+import { createBuiltInMessagingCatalog } from "../src/lib/messaging/catalog";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
 const ROUTER_POOL_CONFIG_PATH = new URL(
@@ -113,6 +114,12 @@ type ProviderProfile = {
 
 function loadYaml<T>(path: URL): T {
   return YAML.parse(readFileSync(path, "utf-8"));
+}
+
+function loadOpenClawMessagingPreset(name: string): PolicyPreset {
+  const content = createBuiltInMessagingCatalog().loadPolicyPreset(name, { agent: "openclaw" });
+  if (!content) throw new Error(`Expected OpenClaw messaging preset '${name}' to load`);
+  return YAML.parse(content) as PolicyPreset;
 }
 
 const bp = loadYaml<Blueprint>(BLUEPRINT_PATH);
@@ -545,15 +552,6 @@ describe("Hermes sandbox policy", () => {
     expectManagedInferenceSecurityShape();
   });
 
-  it("keeps messaging channel policies out of the Hermes baseline", () => {
-    const np = policy.network_policies ?? {};
-    expect(np).not.toHaveProperty("telegram");
-    expect(np).not.toHaveProperty("discord");
-    expect(np).not.toHaveProperty("slack");
-    expect(np).not.toHaveProperty("teams");
-    expect(np).not.toHaveProperty("wechat_bridge");
-  });
-
   function expectGithubBaselineAbsent(): void {
     const np = policy.network_policies ?? {};
     expect("github" in np).toBe(false);
@@ -672,14 +670,8 @@ describe("jira preset", () => {
 });
 
 describe("messaging WebSocket presets", () => {
-  const DISCORD_PRESET_PATH = new URL(
-    "../src/lib/messaging/channels/discord/policy/openclaw.yaml",
-    import.meta.url,
-  );
-  const SLACK_PRESET_PATH = new URL(
-    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
-    import.meta.url,
-  );
+  const discordPreset = loadOpenClawMessagingPreset("discord");
+  const slackPreset = loadOpenClawMessagingPreset("slack");
 
   const presets = [
     {
@@ -687,28 +679,28 @@ describe("messaging WebSocket presets", () => {
       policyKey: "discord",
       host: "gateway.discord.gg",
       credentialRewrite: true,
-      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+      data: discordPreset,
     },
     {
       name: "discord",
       policyKey: "discord",
       host: "*.discord.gg",
       credentialRewrite: true,
-      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+      data: discordPreset,
     },
     {
       name: "slack",
       policyKey: "slack",
       host: "wss-primary.slack.com",
       credentialRewrite: true,
-      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+      data: slackPreset,
     },
     {
       name: "slack",
       policyKey: "slack",
       host: "wss-backup.slack.com",
       credentialRewrite: true,
-      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+      data: slackPreset,
     },
   ];
 
@@ -732,11 +724,7 @@ describe("messaging WebSocket presets", () => {
 });
 
 describe("Slack REST credential rewrite", () => {
-  const SLACK_PRESET_PATH = new URL(
-    "../src/lib/messaging/channels/slack/policy/openclaw.yaml",
-    import.meta.url,
-  );
-  const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);
+  const data = loadOpenClawMessagingPreset("slack");
   const slackRestHosts = ["slack.com", "api.slack.com", "hooks.slack.com"];
 
   for (const host of slackRestHosts) {

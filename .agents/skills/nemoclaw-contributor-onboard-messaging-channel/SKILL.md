@@ -55,10 +55,11 @@ Start with the manifest. Add core code only when the manifest vocabulary cannot 
 1. Add `src/lib/messaging/channels/<channel>/manifest.ts` with `auth`, `inputs`, `credentials`, `policyPresets`, `render`, `runtime`, `agentPackages`, `state`, and `hooks` as needed.
 2. Add `channels/<channel>/template-resolver.ts` only for derived render values, such as allowlist normalization, booleans, proxy URLs, or agent-specific schema differences.
 3. Add hooks under `channels/<channel>/hooks/` only for enrollment, external reachability checks, QR capture, conflict checks, runtime status, or health probes that cannot be static manifest data.
-4. Register the manifest in `channels/built-ins.ts`, template resolver in `channels/template-resolver.ts`, and hook handlers in `hooks/builtins.ts`.
-5. Add `src/lib/messaging/channels/<channel>/policy/<agent-or-shared>.yaml` and expose it through the channel module `policies()` method when the manifest declares a policy preset. Keep messaging-specific egress opt-in unless the project policy says otherwise.
-6. Declare channel support only in `src/lib/messaging/channels/<channel>/manifest.ts` through `supportedAgents`. Do not edit agent manifests for channel availability unless a separate agent contract changed.
-7. Add agent package install metadata when the channel needs an external agent plugin. For OpenClaw plugin packages, use this shape unless source evidence says otherwise:
+4. Add `src/lib/messaging/channels/<channel>/index.ts` with `defineMessagingChannel(...)`; expose `manifest()`, `hooks()`, `templates()`, and `policies()` from that module as needed.
+5. Add the built-in module discovery entry in `channels/built-ins.ts`. Future package or directory plugins should feed the same `MessagingChannelModule` contract through `channels/discovery.ts`.
+6. Add `src/lib/messaging/channels/<channel>/policy/openclaw.yaml`, `src/lib/messaging/channels/<channel>/policy/hermes.yaml`, or another agent-specific policy file and expose it through the channel module `policies()` method when the manifest declares a policy preset. Keep messaging-specific egress opt-in unless the project policy says otherwise.
+7. Declare channel support only in `src/lib/messaging/channels/<channel>/manifest.ts` through `supportedAgents`. Do not edit agent manifests for channel availability unless a separate agent contract changed.
+8. Add agent package install metadata when the channel needs an external agent plugin. For OpenClaw plugin packages, use this shape unless source evidence says otherwise:
 
    ```ts
    agentPackages: [
@@ -73,7 +74,7 @@ Start with the manifest. Add core code only when the manifest vocabulary cannot 
    ],
    ```
 
-8. Update docs for user-facing behavior, usually `docs/manage-sandboxes/messaging-channels.mdx`, command references, network policy references, and troubleshooting.
+9. Update docs for user-facing behavior, usually `docs/manage-sandboxes/messaging-channels.mdx`, command references, network policy references, and troubleshooting.
 
 ## Quality Gates
 
@@ -94,6 +95,7 @@ Use the narrowest tests that cover the changed behavior:
 npm run build:cli
 npm run typecheck:cli
 npx vitest run src/lib/messaging/channels/manifests.test.ts src/lib/messaging/channels/metadata.test.ts src/lib/messaging/compiler/manifest-compiler.test.ts
+npx vitest run src/lib/messaging/channels/discovery.test.ts src/lib/messaging/catalog.test.ts
 npx vitest run src/lib/messaging/channels/<channel>/hooks
 npx vitest run test/messaging-build-applier.test.ts
 ```

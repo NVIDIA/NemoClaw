@@ -239,6 +239,7 @@ When the same failure happens on a re-add of an already-enabled channel, NemoCla
 It flags `gateway-providers` as residual because the in-flight upsert can leave the gateway with the new token.
 Verify the gateway bridge before relying on the channel.
 Restore the preset YAML and re-run `$$nemoclaw <sandbox> channels add <channel>`.
+Messaging preset YAML lives under `src/lib/messaging/channels/<channel>/policy/openclaw.yaml` for OpenClaw and `src/lib/messaging/channels/<channel>/policy/hermes.yaml` for Hermes.
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, Slack, and Microsoft Teams, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `TELEGRAM_GROUP_POLICY`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, `SLACK_ALLOWED_CHANNELS`, `TEAMS_ALLOWED_USERS`, `MSTEAMS_PORT`, or `TEAMS_REQUIRE_MENTION`, export them before the rebuild starts.

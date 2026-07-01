@@ -14,6 +14,8 @@ Channel-specific behavior belongs in manifests, template resolvers, hook handler
 ```mermaid
 flowchart TD
   manifest["channels/<channel>/manifest.ts"]
+  module["channels/<channel>/index.ts"]
+  catalog["MessagingCatalog"]
   registry["ChannelManifestRegistry"]
   planner["MessagingWorkflowPlanner"]
   compiler["ManifestCompiler"]
@@ -25,7 +27,9 @@ flowchart TD
   state["MessagingHostStateApplier and sandbox registry"]
   rebuild["rebuild hydration"]
 
-  manifest --> registry
+  manifest --> module
+  module --> catalog
+  catalog --> registry
   registry --> planner
   planner --> compiler
   compiler --> plan
@@ -41,14 +45,16 @@ flowchart TD
 
 The workflow has these stages.
 
-1. Built-in manifests live under `channels/<channel>/manifest.ts` and are registered by `channels/built-ins.ts`.
-2. `MessagingWorkflowPlanner` chooses the workflow shape for onboard, add, remove, start, stop, or rebuild.
-3. `ManifestCompiler` filters supported channels, resolves inputs, runs compiler-time hooks, and compiles a `SandboxMessagingPlan`.
-4. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64` and applies provider, policy, agent config, and hook phases on the host side.
-5. `src/lib/onboard/dockerfile-patch.ts` passes the encoded plan into image builds.
-6. `applier/build/messaging-build-applier.mts` applies build-time package installs, render entries, post-agent-install files, and the reduced runtime plan artifact.
-7. `MessagingHostStateApplier` persists compact plan state under the sandbox registry entry.
-8. Rebuild hydrates persisted plans from current manifests so compacted render, host-forward, package, runtime, and hook fields stay current.
+1. Built-in channel code lives under `channels/<channel>/` and is exposed by a channel module in `channels/<channel>/index.ts`.
+2. `channels/built-ins.ts` discovers built-in modules through `channels/discovery.ts`, preserving the user-facing channel order while validating module and manifest shape.
+3. `MessagingCatalog` creates manifest registries, hook registries, template resolvers, policy loaders, and workflow planners from channel modules.
+4. `MessagingWorkflowPlanner` chooses the workflow shape for onboard, add, remove, start, stop, or rebuild.
+5. `ManifestCompiler` filters supported channels, resolves inputs, runs compiler-time hooks, and compiles a `SandboxMessagingPlan`.
+6. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64` and applies provider, policy, agent config, and hook phases on the host side.
+7. `src/lib/onboard/dockerfile-patch.ts` passes the encoded plan into image builds.
+8. `applier/build/messaging-build-applier.mts` applies build-time package installs, render entries, post-agent-install files, and the reduced runtime plan artifact.
+9. `MessagingHostStateApplier` persists compact plan state under the sandbox registry entry.
+10. Rebuild hydrates persisted plans from current manifests so compacted render, host-forward, package, runtime, and hook fields stay current.
    Non-empty persisted `networkPolicy` entries are preserved and regenerated only when they are absent or empty.
 
 ## Class Diagram
@@ -155,8 +161,9 @@ classDiagram
 
 | Path | Role |
 |---|---|
+| `catalog.ts` | Channel catalog boundary for manifest registries, hooks, templates, policies, and workflow planners. |
 | `manifest/` | Serializable manifest and plan contracts plus `ChannelManifestRegistry`. |
-| `channels/` | Built-in channel manifests, channel metadata, template resolvers, runtime preload assets, and channel hook implementations. |
+| `channels/` | Built-in channel modules, manifests, discovery validation, metadata, template resolvers, runtime preload assets, channel-owned policies, and hook implementations. |
 | `compiler/` | Manifest-to-plan compilation for inputs, credentials, policy, render, host forwards, build steps, runtime setup, state, and health checks. |
 | `hooks/` | Hook contracts, registries, runner validation, common handlers, and conflict errors. |
 | `applier/` | Host/OpenShell side effects for credentials, policy, config writes, hook phase execution, plan env serialization, filtering, conflicts, registry persistence, and build-time application. |
@@ -228,7 +235,8 @@ The runner enforces three invariants.
 
 ### Hook Registration
 
-Register built-in handlers in the channel's `hooks/index.ts`, then add the channel registration factory to `hooks/builtins.ts`.
+Register built-in handlers in the channel's `hooks/index.ts`, then expose that registration factory through the channel module's `hooks()` method in `channels/<channel>/index.ts`.
+Keep `hooks/builtins.ts` compatible only when a lower-level test or legacy factory still needs the direct built-in hook registry.
 
 ```ts
 export function createTeamsHookRegistrations(
@@ -370,11 +378,54 @@ export const exampleManifest = {
 } as const satisfies ChannelManifest;
 ```
 
+## Channel Module Skeleton
+
+Each channel directory exposes a `MessagingChannelModule` from `channels/<channel>/index.ts`.
+The module is the plugin-style boundary the catalog discovers.
+
+```ts
+import { defineMessagingChannel, type MessagingPolicyContribution } from "../module";
+import { exampleManifest } from "./manifest";
+import { resolveExampleTemplateReference } from "./template-resolver";
+
+const examplePolicyContributions = [
+  {
+    preset: "example",
+    agent: "openclaw",
+    sourceRoot: __dirname,
+    source: "policy/openclaw.yaml",
+  },
+] as const satisfies readonly MessagingPolicyContribution[];
+
+export const exampleChannelModule = defineMessagingChannel({
+  kind: "nemoclaw.messaging.channel",
+  apiVersion: 1,
+  id: "example",
+  manifest: () => exampleManifest,
+  policies: () => examplePolicyContributions,
+  hooks: (options?: unknown) => {
+    const { createExampleHookRegistrations } =
+      require("./hooks") as typeof import("./hooks");
+    return createExampleHookRegistrations(options);
+  },
+  templates: () => [
+    {
+      namespace: "example",
+      resolve: resolveExampleTemplateReference,
+    },
+  ],
+});
+```
+
+Keep `hooks()` lazy when hook implementation modules import lower-level messaging helpers.
+This avoids channel-index cycles while still giving the catalog a uniform module interface.
+
 ## Template Resolution
 
 Render values may contain template references such as `{{credential.exampleApiToken.placeholder}}` or `{{allowedIds.example.values}}`.
 The compiler resolves credential placeholders generically from `manifest.credentials`.
-Channel-specific derived values belong in `channels/<channel>/template-resolver.ts` and are registered from `channels/template-resolver.ts`.
+Channel-specific derived values belong in `channels/<channel>/template-resolver.ts` and are exposed from the channel module's `templates()` method.
+Keep `channels/template-resolver.ts` compatible only when a lower-level test or legacy factory still needs the direct built-in resolver.
 
 Template resolvers should return `undefined` when a reference belongs to a different channel.
 They should validate derived values near the channel boundary, such as checking that a webhook port is an integer between `1` and `65535`.
@@ -401,18 +452,9 @@ Most callers should use `MessagingWorkflowPlanner`, not `ManifestCompiler` direc
 The planner understands lifecycle workflows and persisted sandbox state.
 
 ```ts
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInMessagingHookRegistry,
-  createBuiltInRenderTemplateResolver,
-  MessagingWorkflowPlanner,
-} from "../messaging";
+import { createBuiltInMessagingCatalog } from "../messaging";
 
-const planner = new MessagingWorkflowPlanner(
-  createBuiltInChannelManifestRegistry(),
-  createBuiltInMessagingHookRegistry(),
-  createBuiltInRenderTemplateResolver(),
-);
+const planner = createBuiltInMessagingCatalog().createWorkflowPlanner();
 
 const plan = await planner.buildPlan({
   sandboxName: "dev-sandbox",
@@ -463,12 +505,11 @@ Add the channel through the manifest-first path.
 1. Create `channels/<channel>/manifest.ts`.
 2. Add template derivation in `channels/<channel>/template-resolver.ts` only when static manifest data needs computed values.
 3. Add hook handlers under `channels/<channel>/hooks/` only for side effects, enrollment, checks, diagnostics, status, or host-only conflict detection.
-4. Register the manifest in `channels/built-ins.ts`.
-5. Register template resolution in `channels/template-resolver.ts`.
-6. Register hook handlers in `channels/<channel>/hooks/index.ts` and `hooks/builtins.ts`.
-7. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot or connect-time shims.
-8. Add `channels/<channel>/policy/<agent-or-shared>.yaml` and expose it through the channel module `policies()` method when `policyPresets` declares a new policy preset.
-9. Add manifest, compiler, applier, lifecycle, build-applier, and policy tests for the behavior you changed.
+4. Create `channels/<channel>/index.ts` with `defineMessagingChannel({ kind: "nemoclaw.messaging.channel", apiVersion: 1, ... })`, and expose `manifest()`, `hooks()`, `templates()`, and `policies()` from that module as needed.
+5. Add the channel module to the built-in discovery entries in `channels/built-ins.ts`. External or future package plugins should feed equivalent discovery entries through `discoverMessagingChannelModules()` or directory entries through `discoverMessagingChannelModulesFromDirectory()`.
+6. Add runtime preload assets under `channels/<channel>/runtime/` only when the agent runtime needs boot or connect-time shims.
+7. Add `channels/<channel>/policy/openclaw.yaml`, `channels/<channel>/policy/hermes.yaml`, or another agent-specific policy file and expose it through the channel module `policies()` method when `policyPresets` declares a new policy preset.
+8. Add manifest, discovery, compiler, applier, lifecycle, build-applier, and policy tests for the behavior you changed.
 
 ## Invariants
 

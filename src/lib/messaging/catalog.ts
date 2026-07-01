@@ -25,6 +25,10 @@ import {
   validateMessagingChannelModule,
 } from "./channels/module";
 
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const DIST_CHANNELS_ROOT = path.join(REPO_ROOT, "dist", "lib", "messaging", "channels");
+const SRC_CHANNELS_ROOT = path.join(REPO_ROOT, "src", "lib", "messaging", "channels");
+
 export interface MessagingWorkflowPlannerOptions {
   readonly hooks?: "built-in" | "none";
   readonly hookOptions?: BuiltInMessagingHookOptions;
@@ -346,7 +350,26 @@ function resolvePolicyContributionSourcePath(
 ): string | null {
   const sourceRoot = path.resolve(contribution.sourceRoot ?? fallbackRoot);
   const sourcePath = path.resolve(sourceRoot, contribution.source);
-  return sourcePath === sourceRoot || sourcePath.startsWith(`${sourceRoot}${path.sep}`)
+  if (sourcePath !== sourceRoot && !sourcePath.startsWith(`${sourceRoot}${path.sep}`)) {
+    return null;
+  }
+  if (fs.existsSync(sourcePath)) return sourcePath;
+  return resolveCompiledChannelPolicySourcePath(sourceRoot, contribution.source) ?? sourcePath;
+}
+
+function resolveCompiledChannelPolicySourcePath(sourceRoot: string, source: string): string | null {
+  const relativeChannelRoot = path.relative(DIST_CHANNELS_ROOT, sourceRoot);
+  if (
+    !relativeChannelRoot ||
+    relativeChannelRoot.startsWith("..") ||
+    path.isAbsolute(relativeChannelRoot)
+  ) {
+    return null;
+  }
+  const sourceChannelRoot = path.resolve(SRC_CHANNELS_ROOT, relativeChannelRoot);
+  const sourcePath = path.resolve(sourceChannelRoot, source);
+  return sourcePath === sourceChannelRoot ||
+    sourcePath.startsWith(`${sourceChannelRoot}${path.sep}`)
     ? sourcePath
     : null;
 }

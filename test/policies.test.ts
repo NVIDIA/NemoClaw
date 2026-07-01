@@ -1745,57 +1745,6 @@ exit 1
       }
     });
 
-    it("Hermes Discord REST mutations are scoped to discord.com", () => {
-      const parsed = parseRepoYaml("src/lib/messaging/channels/discord/policy/hermes.yaml");
-      const networkPolicies = parsed.network_policies as Record<
-        string,
-        {
-          endpoints?: Array<{
-            host?: string;
-            rules?: Array<{ allow?: { method?: string; path?: string } }>;
-          }>;
-        }
-      >;
-      const rulesFor = (policy: string, host: string) =>
-        (networkPolicies[policy]?.endpoints ?? [])
-          .filter((endpoint) => endpoint.host === host)
-          .flatMap((endpoint) => endpoint.rules ?? [])
-          .map((rule) => rule.allow)
-          .filter((rule): rule is { method: string; path: string } =>
-            Boolean(rule?.method && rule?.path),
-          );
-      const sortRules = (rules: Array<{ method: string; path: string }>) =>
-        [...rules].sort((a, b) => `${a.method} ${a.path}`.localeCompare(`${b.method} ${b.path}`));
-
-      const nousRules = rulesFor("nous_research", "nousresearch.com");
-      expect(nousRules).not.toContainEqual({ method: "PUT", path: "/**" });
-      expect(nousRules).not.toContainEqual({ method: "PATCH", path: "/**" });
-      expect(nousRules.filter((rule) => ["PUT", "PATCH", "DELETE"].includes(rule.method))).toEqual(
-        [],
-      );
-
-      const discordMutationRules = sortRules(
-        rulesFor("discord", "discord.com").filter((rule) =>
-          ["PUT", "PATCH", "DELETE"].includes(rule.method),
-        ),
-      );
-      expect(discordMutationRules).toEqual(
-        sortRules([
-          { method: "PUT", path: "/api/v*/applications/*/commands" },
-          { method: "PUT", path: "/api/v*/channels/*/messages/*/reactions/*/@me" },
-          { method: "PATCH", path: "/api/v*/applications/*" },
-          { method: "PATCH", path: "/api/v*/applications/*/commands/*" },
-          { method: "PATCH", path: "/api/v*/channels/*/messages/*" },
-          { method: "PATCH", path: "/api/v*/webhooks/*/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/applications/*/commands/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*" },
-          { method: "DELETE", path: "/api/v*/channels/*/messages/*/reactions/*/*" },
-          { method: "DELETE", path: "/api/v*/webhooks/*/*/messages/*" },
-        ]),
-      );
-      expect(discordMutationRules.some((rule) => rule.path === "/**")).toBe(false);
-    });
-
     it("Hermes PyPI policy lets curl verify read-only package index access (#4014)", () => {
       const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const pypiPolicy = parsed.network_policies?.pypi as

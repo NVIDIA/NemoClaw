@@ -18,7 +18,7 @@ OpenShell intercepts any request to an unlisted destination and prompts the oper
 The baseline policy is defined in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
 
 <Note>
-Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
+Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model. Messaging channel egress is not part of that baseline; Hermes channel presets live under `src/lib/messaging/channels/<channel>/policy/hermes.yaml` and are applied only when that channel or preset is selected.
 </Note>
 
 ### Filesystem
@@ -54,7 +54,7 @@ GitHub access (`github.com`, `api.github.com`) is not included in the baseline p
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 Refer to [Customize the Network Policy](../network-policy/customize-network-policy).
 
-The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, or WhatsApp.
+The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, WeChat, WhatsApp, or Microsoft Teams.
 Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 WeChat and WhatsApp are experimental.
 Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
@@ -70,7 +70,7 @@ The baseline policy is always applied regardless of the selected tier.
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. Restricted mode suppresses agent-required preset additions, such as OpenClaw pricing fetches; reapply them later with `policy-add` if cost recording or other agent-side features are needed. |
 | Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. Apply the `weather` preset explicitly if your agent needs read-only weather lookups. |
-| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `weather`, `public-reference`, `slack`, `discord`, `telegram`, `teams`, `wechat` (experimental), `whatsapp` (experimental), `jira`, `outlook` | Broad access across third-party services including messaging, productivity, weather, and public-reference APIs. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.
