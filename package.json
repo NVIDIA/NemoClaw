@@ -80,6 +80,7 @@
     "bin/",
     "dist/",
     "nemoclaw/dist/",
+    "nemoclaw/shared/",
     "nemoclaw/openclaw.plugin.json",
     "nemoclaw/package.json",
     "nemoclaw-blueprint/",

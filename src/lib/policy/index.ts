@@ -15,7 +15,11 @@ import {
   buildPolicyGetFullCommand,
   buildPolicySetCommand,
 } from "./commands";
-import { stripProviderComposedPolicies, withoutProviderComposedPolicies } from "./merge";
+import {
+  parseOpenShellPolicy,
+  stripProviderComposedPolicies,
+  withoutProviderComposedPolicies,
+} from "./merge";
 
 const fs = require("fs");
 const path = require("path");
@@ -310,26 +314,13 @@ function extractPresetEntries(presetContent: string | null | undefined): string 
  * metadata header (Version, Hash, etc.) followed by `---` and then the actual
  * YAML.
  */
-function parseCurrentPolicy(raw: string | null | undefined): string {
+function parseCurrentPolicyOrEmpty(raw: string | null | undefined): string {
   if (!raw) return "";
-  const sep = raw.indexOf("---");
-  const candidate = (sep === -1 ? raw : raw.slice(sep + 3)).trim();
-  if (!candidate) return "";
-  if (/^(error|failed|invalid|warning|status)\b/i.test(candidate)) {
-    return "";
-  }
-  if (!/^[a-z_][a-z0-9_]*\s*:/m.test(candidate)) {
-    return "";
-  }
   try {
-    const parsed = YAML.parse(candidate);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return "";
-    }
+    return parseOpenShellPolicy(raw, { allowUnmarkedPolicyBody: true }).yamlBody;
   } catch {
     return "";
   }
-  return candidate;
 }
 
 /**
@@ -384,7 +375,7 @@ function assertOpenshellResolvable(): void {
  * @returns {string} Merged YAML
  */
 function mergePresetIntoPolicy(currentPolicy: string, presetEntries: string): string {
-  const parsedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const parsedCurrentPolicy = parseCurrentPolicyOrEmpty(currentPolicy);
   if (currentPolicy.trim() && !parsedCurrentPolicy) {
     throw new Error(
       "Cannot merge policy preset: the current policy is not a valid YAML mapping. " +
@@ -488,7 +479,7 @@ function removePresetFromPolicy(
   currentPolicy: string,
   presetEntries: string | null | undefined,
 ): string {
-  const parsedCurrentPolicy = parseCurrentPolicy(currentPolicy);
+  const parsedCurrentPolicy = parseCurrentPolicyOrEmpty(currentPolicy);
   if (currentPolicy.trim() && !parsedCurrentPolicy) {
     throw new Error(
       "Cannot remove policy preset: the current policy is not a valid YAML mapping. " +
@@ -606,7 +597,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
     /* ignored */
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
   if (!currentPolicy) {
     console.error(`  Could not read current policy for sandbox '${sandboxName}'.`);
     return false;
@@ -759,7 +750,7 @@ function applyPresetContent(
     /* Refused below. */
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
   if (rawPolicy === null || (rawPolicy.trim() && !currentPolicy)) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply '${presetName}' to avoid overwriting it.`,
@@ -878,7 +869,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
     /* Refused below. */
   }
 
-  let merged = parseCurrentPolicy(rawPolicy);
+  let merged = parseCurrentPolicyOrEmpty(rawPolicy);
   if (rawPolicy === null || (rawPolicy.trim() && !merged)) {
     console.error(
       `  Could not read the current policy for sandbox '${sandboxName}'; refusing to apply presets to avoid overwriting it.`,
@@ -1141,7 +1132,7 @@ function getGatewayPresets(sandboxName: string): string[] | null {
     return null;
   }
 
-  const currentPolicy = parseCurrentPolicy(rawPolicy);
+  const currentPolicy = parseCurrentPolicyOrEmpty(rawPolicy);
   if (!currentPolicy) return null;
 
   let parsed;
@@ -1311,7 +1302,7 @@ export {
   mergePresetNamesIntoPolicy,
   PERMISSIVE_POLICY_PATH,
   PRESETS_DIR,
-  parseCurrentPolicy,
+  parseCurrentPolicyOrEmpty as parseCurrentPolicy,
   parsePresetPolicyKeys,
   removePreset,
   removePresetFromPolicy,

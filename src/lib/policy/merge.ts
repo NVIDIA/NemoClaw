@@ -1,36 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import YAML from "yaml";
+import {
+  parseOpenShellPolicy as parseCanonicalOpenShellPolicy,
+  stripProviderComposedPolicies as stripCanonicalProviderComposedPolicies,
+  withoutProviderComposedPolicies as withoutCanonicalProviderComposedPolicies,
+} from "../../../nemoclaw/shared/openshell-policy-boundary.cjs";
 
-import type { JsonObject, JsonValue } from "../core/json-types";
+import type { JsonObject } from "../core/json-types";
 
-function isPolicyObject(value: JsonValue): value is JsonObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+// sourceOfTruth: nemoclaw/shared/openshell-policy-boundary.cjs
+// stableBoundary: source tests and both published runtimes load this exact
+// package-root module. Keep this typed wrapper implementation-free.
+export const parseOpenShellPolicy = parseCanonicalOpenShellPolicy;
+export const stripProviderComposedPolicies = stripCanonicalProviderComposedPolicies;
 
-// This package-local implementation and the separately published ESM runner's
-// equivalent are kept in behavioral parity by package-contract coverage. A
-// cross-root import would either violate both TypeScript rootDir boundaries or
-// make one published package depend on generated dist output.
-// removalCondition: revalidate at every stable OpenShell pin after 0.0.72;
-// remove only when the supported base-policy contract guarantees provider
-// entries are absent from every mutation read.
 export function withoutProviderComposedPolicies(policies: JsonObject): JsonObject {
-  return Object.fromEntries(
-    Object.entries(policies).filter(([name]) => !name.startsWith("_provider_")),
-  );
-}
-
-export function stripProviderComposedPolicies(policy: string): string {
-  try {
-    const parsed = YAML.parse(policy);
-    if (!isPolicyObject(parsed) || !isPolicyObject(parsed.network_policies)) return policy;
-    const filtered = withoutProviderComposedPolicies(parsed.network_policies);
-    if (Object.keys(filtered).length === Object.keys(parsed.network_policies).length) return policy;
-    return YAML.stringify({ ...parsed, network_policies: filtered });
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`Cannot filter provider-composed policy entries from invalid YAML: ${detail}`);
-  }
+  return withoutCanonicalProviderComposedPolicies(policies) as JsonObject;
 }

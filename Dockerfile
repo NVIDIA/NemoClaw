@@ -22,6 +22,7 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
+COPY nemoclaw/shared/ /opt/nemoclaw/shared/
 WORKDIR /opt/nemoclaw
 RUN npm ci && npm run build
 
@@ -83,6 +84,7 @@ RUN set -eu; \
 
 # Copy built plugin and blueprint into the sandbox
 COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
+COPY --from=builder /opt/nemoclaw/shared/ /opt/nemoclaw/shared/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -100,6 +102,7 @@ ENV NPM_CONFIG_AUDIT=false \
 RUN npm ci --omit=dev \
     && test -f /usr/local/bin/node \
     && test -d /opt/nemoclaw/node_modules/json5 \
+    && node -e 'const boundary = require("/opt/nemoclaw/shared/openshell-policy-boundary.cjs"); if (typeof boundary.parseOpenShellPolicy !== "function") throw new Error("OpenShell policy boundary is unavailable")' \
     && node_unsafe="$(find -L /usr/local/bin/node -maxdepth 0 \( ! -user root -o -perm /022 \) -print -quit)" \
     && test -z "$node_unsafe" \
     && json5_unsafe="$(find -L /opt/nemoclaw/node_modules/json5 \( ! -user root -o -perm /022 \) -print -quit)" \

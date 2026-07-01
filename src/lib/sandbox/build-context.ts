@@ -98,6 +98,9 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), {
     recursive: true,
   });
+  fs.cpSync(path.join(sourceNemoclawDir, "shared"), path.join(stagedNemoclawDir, "shared"), {
+    recursive: true,
+  });
   normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
