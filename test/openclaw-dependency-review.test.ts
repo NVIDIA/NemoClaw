@@ -125,6 +125,18 @@ describe("OpenClaw 2026.6.9 dependency review contract", () => {
     expect(review).toContain("unsafe reported archive filenames");
     expect(review).toContain("no installer code consumes raw `npm pack --json` filenames");
     expect(review).toContain("The #4434 compatibility-shim disposition is explicitly accepted");
+    expect(review).toContain(
+      "The assembled-image and rebuilt-sandbox proof residual is explicitly accepted",
+    );
+    expect(review).toContain(
+      "No single lane combines the final production image, a live `host.openshell.internal` SSRF-negative matrix",
+    );
+    expect(review).toContain(
+      "The literal issue #2478 Local Ollama plus Telegram inbound recovery residual is explicitly accepted",
+    );
+    expect(review).toContain(
+      "This does not reproduce `nemotron-3-super:120b` on Local Ollama or originate a Telegram inbound update after the crash",
+    );
     expect(review).not.toContain("PRA-5");
     expect(review).toContain("3/3 fields are present in the NemoClaw-patched runtime output");
     expect(review).toContain(
