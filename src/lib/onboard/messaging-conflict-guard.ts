@@ -19,11 +19,8 @@ import {
   findChannelConflictsFromPlan,
   MessagingSetupApplier,
 } from "../messaging/applier";
-import {
-  createBuiltInMessagingHookRegistry,
-  isMessagingHookConflictError,
-  runMessagingHook,
-} from "../messaging/hooks";
+import { createBuiltInMessagingCatalog } from "../messaging/catalog";
+import { isMessagingHookConflictError, runMessagingHook } from "../messaging/hooks";
 import type { SandboxMessagingPlan } from "../messaging/manifest";
 
 export interface MessagingConflictGuardDeps {
@@ -127,7 +124,7 @@ async function enforceMessagingPreEnableHooks(
   const requests = MessagingSetupApplier.listPreEnableChecks(currentPlan);
   if (requests.length === 0) return;
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const hookRegistry = createBuiltInMessagingCatalog().hookRegistry;
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: deps.sandboxName,
     currentGatewayName: deps.gatewayName,

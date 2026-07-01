@@ -41,8 +41,7 @@ import type {
   SandboxMessagingPlan,
 } from "../../messaging";
 import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   isMessagingSupportedAgent,
   listSupportedMessagingChannelIdsForAgent,
   MessagingSetupApplier,
@@ -222,7 +221,8 @@ export async function stageMessagingManifestPlanForRebuild(
   log: (msg: string) => void,
 ): Promise<SandboxMessagingPlan | null> {
   const agent = loadAgent(rebuildAgent || "openclaw");
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const catalog = createBuiltInMessagingCatalog();
+  const manifestRegistry = catalog.manifestRegistry;
   const manifests = manifestRegistry.list();
   const agentId = tryGetMessagingAgentId(agent, manifests);
   if (agentId === null) {
@@ -243,7 +243,7 @@ export async function stageMessagingManifestPlanForRebuild(
   const planner = new MessagingWorkflowPlanner(
     manifestRegistry,
     undefined,
-    createBuiltInRenderTemplateResolver(),
+    catalog.renderTemplateResolver,
   );
   const plan = await planner.buildRebuildPlanFromSandboxEntry({
     sandboxName,

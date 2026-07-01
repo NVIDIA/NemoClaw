@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createBuiltInMessagingHookRegistry, runMessagingHook } from "../../hooks";
+import { createBuiltInMessagingCatalog } from "../../catalog";
+import { runMessagingHook } from "../../hooks";
 import { COMMON_STATIC_OUTPUTS_HOOK_HANDLER_ID } from "../../hooks/common/static-outputs";
 import type {
   ChannelHookSpec,
@@ -29,7 +30,7 @@ export async function planAgentRender(
   manifest: ChannelManifest,
   context: ManifestCompilerContext,
   inputs: readonly SandboxMessagingInputReference[] = [],
-  hooks = createBuiltInMessagingHookRegistry(),
+  hooks = createBuiltInMessagingCatalog().hookRegistry,
   referenceResolver?: RenderTemplateReferenceResolver,
 ): Promise<SandboxMessagingAgentRenderPlan[]> {
   const plans: SandboxMessagingAgentRenderPlan[] = [];

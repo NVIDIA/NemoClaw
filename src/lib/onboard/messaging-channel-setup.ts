@@ -6,11 +6,10 @@ import { getCredential, normalizeCredentialValue } from "../credentials/store";
 import {
   type ChannelInputSpec,
   type ChannelManifest,
-  createBuiltInChannelManifestRegistry,
-  createBuiltInMessagingHookRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   getMessagingManifestAvailabilityContext,
   hasMessagingManifestRequiredInputs,
+  type MessagingCatalog,
   MessagingHostStateApplier,
   MessagingSetupApplier,
   MessagingWorkflowPlanner,
@@ -38,6 +37,7 @@ export interface SetupSelectedMessagingChannelsOptions {
   readonly agent?: { readonly name?: string } | null;
   readonly sandboxName?: string | null;
   readonly interactive?: boolean;
+  readonly catalog?: MessagingCatalog;
 }
 
 export interface SetupMessagingChannelsDeps {
@@ -68,7 +68,7 @@ const getMessagingInputValue = (input: ChannelInputSpec): string | null => {
  * presets are not messaging channel selection.
  */
 export function detectMessagingChannelsFromEnv(agent: AgentDefinition | null = null): string[] {
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = createBuiltInMessagingCatalog().manifestRegistry;
   const availabilityContext = getMessagingManifestAvailabilityContext(
     agent,
     manifestRegistry.list(),
@@ -99,7 +99,8 @@ export async function setupMessagingChannels(
   const note = deps.note ?? console.log;
   const isNonInteractive =
     deps.isNonInteractive ?? (() => process.env.NEMOCLAW_NON_INTERACTIVE === "1");
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const catalog = createBuiltInMessagingCatalog();
+  const manifestRegistry = catalog.manifestRegistry;
   const availabilityContext = getMessagingManifestAvailabilityContext(
     agent,
     manifestRegistry.list(),
@@ -121,6 +122,7 @@ export async function setupMessagingChannels(
         agent,
         interactive: false,
         sandboxName: deps.sandboxName,
+        catalog,
       });
     } else {
       MessagingSetupApplier.clearPlanEnv();
@@ -167,6 +169,7 @@ export async function setupMessagingChannels(
   await setupSelectedMessagingChannels(selected, enabled, availableChannels, {
     agent,
     sandboxName: deps.sandboxName,
+    catalog,
   });
   console.log("");
 
@@ -187,7 +190,8 @@ export async function setupSelectedMessagingChannels(
   messagingChannels: readonly ChannelManifest[],
   options: SetupSelectedMessagingChannelsOptions = {},
 ): Promise<SandboxMessagingPlan | null> {
-  const registry = createBuiltInChannelManifestRegistry();
+  const catalog = options.catalog ?? createBuiltInMessagingCatalog();
+  const registry = catalog.manifestRegistry;
   const supportedChannelIds = messagingChannels.map((channel) => channel.id);
   const selectedChannels = uniqueSelectedChannels(selected, supportedChannelIds, registry);
   if (selectedChannels.length === 0) {
@@ -199,8 +203,8 @@ export async function setupSelectedMessagingChannels(
   const sandboxName = resolveMessagingSetupSandboxName(options);
   const planner = new MessagingWorkflowPlanner(
     registry,
-    createBuiltInMessagingHookRegistry(),
-    createBuiltInRenderTemplateResolver(),
+    catalog.hookRegistry,
+    catalog.renderTemplateResolver,
   );
 
   if (options.interactive === false) {
@@ -246,7 +250,7 @@ export async function setupSelectedMessagingChannels(
 function uniqueSelectedChannels(
   selected: readonly string[],
   supportedChannelIds: readonly string[],
-  registry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  registry: MessagingCatalog["manifestRegistry"],
 ): string[] {
   const supported = new Set(supportedChannelIds);
   const result: string[] = [];
@@ -269,7 +273,7 @@ function logEnrollmentHelp(manifest: ChannelManifest): void {
 }
 
 function buildCredentialAvailability(
-  registry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  registry: MessagingCatalog["manifestRegistry"],
   channelIds: readonly string[],
 ): Record<string, boolean> {
   const availability: Record<string, boolean> = {};

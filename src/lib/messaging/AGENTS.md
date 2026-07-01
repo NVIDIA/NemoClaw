@@ -12,13 +12,14 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 ## Data Flow
 
 1. Channel manifests live in `channels/<channel>/manifest.ts` and are registered by `channels/built-ins.ts`.
-2. `MessagingWorkflowPlanner` selects the right workflow shape for onboard, add, remove, start, stop, or rebuild.
-3. `ManifestCompiler` and `compiler/engines/*` compile manifests into a `SandboxMessagingPlan`.
-4. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64`.
-5. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
-6. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
-7. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
-8. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
+2. `catalog/` packages the built-in manifests, hook registry, template resolver, and policy-source metadata behind one application-facing boundary.
+3. `MessagingWorkflowPlanner` selects the right workflow shape for onboard, add, remove, start, stop, or rebuild.
+4. `ManifestCompiler` and `compiler/engines/*` compile manifests into a `SandboxMessagingPlan`.
+5. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64`.
+6. `onboard/dockerfile-patch.ts` bakes the plan into the sandbox build.
+7. `applier/build/messaging-build-applier.mts` applies agent install, render, post-agent-install build files, and writes the reduced runtime plan artifact.
+8. `MessagingHostStateApplier` persists durable plan state under the sandbox registry entry.
+9. Rebuild reads the persisted plan, stages a fresh build plan, and reapplies OpenClaw render/post-install hooks after `openclaw doctor` rewrites config.
 
 ## Package Map
 
@@ -26,6 +27,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 |---|---|
 | `manifest/` | Serializable manifest and plan contracts. Keep these JSON-compatible. |
 | `channels/` | Built-in channel manifests, channel metadata helpers, template resolvers, runtime preload assets, and channel hook implementations. |
+| `catalog/` | Application-facing catalog assembly for built-in manifests, hooks, render-template resolution, and policy-source metadata. |
 | `compiler/` | Manifest-to-plan compilation. It may resolve env/config inputs and run enrollment/reachability/build hooks, but should not mutate OpenShell or registry state directly. |
 | `hooks/` | Hook contracts, registries, runner validation, common prompt/static-output helpers, and conflict error types. |
 | `applier/` | Host/OpenShell side effects: plan env serialization, provider upsert/reuse, policy apply, agent config writes, hook phase execution, conflict detection, registry persistence, and build-time applier. |
@@ -43,7 +45,7 @@ The design goal is to keep messaging channel behavior out of core onboard/rebuil
 - Channel render/build-file targets must stay inside `/sandbox/.openclaw` or `/sandbox/.hermes`; rely on existing applier validation instead of bypassing it.
 - Disabled channels are not active. Always filter effects through `enabledPlanChannels()` or `filterEnabledPlanEntries()` when applying providers, policies, render, hooks, runtime setup, or conflicts.
 - Conflict detection has two axes: generic credential-hash overlap in `applier/conflict-detection/` and channel-owned `pre-enable` hooks such as Slack Socket Mode gateway checks.
-- Keep transitional compatibility tables derived from manifests. `src/lib/sandbox/channels.ts` intentionally builds legacy CLI metadata from `listBuiltInMessagingChannelManifests()`.
+- Keep transitional compatibility tables derived from built-in manifests. `src/lib/sandbox/channels.ts` intentionally builds legacy CLI metadata from `listBuiltInMessagingChannelManifests()` because common hook registration depends on that legacy table.
 
 ## Adding or Changing a Channel
 

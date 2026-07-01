@@ -19,7 +19,7 @@ import {
   type MessagingChannelDiagnosticSpec,
 } from "../../messaging/diagnostics";
 import {
-  createBuiltInChannelManifestRegistry,
+  createBuiltInMessagingCatalog,
   getMessagingManifestAvailabilityContext,
 } from "../../messaging";
 import * as policies from "../../policy";
@@ -99,7 +99,7 @@ export type ChannelStatusReport =
 // channels status from inheriting that hang.
 const WHATSAPP_PROBE_TIMEOUT_MS = 8_000;
 const CHANNEL_STATUS_DIAGNOSTICS = collectBuiltInMessagingChannelDiagnostics();
-const channelManifestRegistry = createBuiltInChannelManifestRegistry();
+const channelManifestRegistry = createBuiltInMessagingCatalog().manifestRegistry;
 
 const SHELL_OK = "NEMOCLAW_WA_DIAG_OK";
 const HEARTBEAT_BEGIN = "NEMOCLAW_WA_HEARTBEAT_BEGIN";

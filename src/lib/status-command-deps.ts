@@ -17,8 +17,8 @@ import type {
   ShowStatusCommandDeps,
 } from "./inventory";
 import { findAllOverlaps } from "./messaging/applier";
-import { createBuiltInChannelManifestRegistry } from "./messaging/channels";
-import { createBuiltInMessagingHookRegistry, runMessagingHookSync } from "./messaging/hooks";
+import { createBuiltInMessagingCatalog, type MessagingCatalog } from "./messaging/catalog";
+import { runMessagingHookSync } from "./messaging/hooks";
 import type {
   ChannelHookSpec,
   MessagingAgentId,
@@ -59,14 +59,16 @@ function checkMessagingBridgeHealth(
     channels: channelSet,
     currentSandbox: sandboxName,
     registryEntries: safeListRegistryEntries(),
-    hookRegistry: createBuiltInMessagingHookRegistry({
-      telegram: {
-        gatewayConflictStatus: {
-          executeSandboxCommand: (name, command, timeoutMs) =>
-            executeSandboxCommand(rootDir, openshell, name, command, timeoutMs),
+    hookRegistry: createBuiltInMessagingCatalog({
+      hooks: {
+        telegram: {
+          gatewayConflictStatus: {
+            executeSandboxCommand: (name, command, timeoutMs) =>
+              executeSandboxCommand(rootDir, openshell, name, command, timeoutMs),
+          },
         },
       },
-    }),
+    }).hookRegistry,
   }).flatMap(readBridgeHealthOutputs);
 }
 
@@ -102,7 +104,7 @@ interface MessagingStatusHookRunOptions {
   readonly channels?: ReadonlySet<string>;
   readonly currentSandbox?: string;
   readonly registryEntries?: readonly registry.SandboxEntry[];
-  readonly hookRegistry?: ReturnType<typeof createBuiltInMessagingHookRegistry>;
+  readonly hookRegistry?: MessagingCatalog["hookRegistry"];
 }
 
 type MessagingStatusHookRunResult = {
@@ -114,8 +116,9 @@ type MessagingStatusHookRunResult = {
 function runMessagingStatusHooks(
   options: MessagingStatusHookRunOptions,
 ): MessagingStatusHookRunResult[] {
-  const hookRegistry = options.hookRegistry ?? createBuiltInMessagingHookRegistry();
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const catalog = createBuiltInMessagingCatalog();
+  const hookRegistry = options.hookRegistry ?? catalog.hookRegistry;
+  const manifestRegistry = catalog.manifestRegistry;
   const agents: ReadonlySet<MessagingAgentId> = options.agent
     ? new Set<MessagingAgentId>([options.agent])
     : (options.agents ?? new Set<MessagingAgentId>(["openclaw"]));

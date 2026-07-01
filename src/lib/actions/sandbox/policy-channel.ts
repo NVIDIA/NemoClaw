@@ -10,9 +10,7 @@ import { prompt as askPrompt, getCredential } from "../../credentials/store";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import {
   type ChannelManifest,
-  createBuiltInChannelManifestRegistry,
-  createBuiltInMessagingHookRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   createMessagingPreEnableHookInputs,
   formatSupportedMessagingAgentIds,
   getMessagingManifestAvailabilityContext,
@@ -72,7 +70,8 @@ type ChannelMutationOptions = {
   force?: boolean;
 };
 
-const messagingManifestRegistry = createBuiltInChannelManifestRegistry();
+const messagingCatalog = createBuiltInMessagingCatalog();
+const messagingManifestRegistry = messagingCatalog.manifestRegistry;
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -386,9 +385,7 @@ async function checkChannelAddConflict(
   // what planToConflictChannelRequests() produces from bindings. QR-only
   // channels (e.g. WhatsApp) have no manifest credentials → early exit with no
   // conflict possible. Unknown channelName → also exits early.
-  const channelManifest = createBuiltInChannelManifestRegistry()
-    .list()
-    .find((m) => m.id === channelName);
+  const channelManifest = messagingManifestRegistry.get(channelName);
   if (!channelManifest || channelManifest.credentials.length === 0) return true;
 
   const credentialHashes: Record<string, string> = {};
@@ -478,7 +475,7 @@ async function checkMessagingPreEnableHooks(
     return true;
   }
 
-  const hookRegistry = createBuiltInMessagingHookRegistry();
+  const hookRegistry = createBuiltInMessagingCatalog().hookRegistry;
   const currentGatewayName = getSandboxTargetGatewayName(sandboxName);
   const additionalInputs = createMessagingPreEnableHookInputs({
     currentSandbox: sandboxName,
@@ -699,13 +696,15 @@ async function runMessagingHealthChecksAfterRebuild(
 ): Promise<void> {
   if (MessagingSetupApplier.listHealthChecks(plan).length === 0) return;
 
-  const hookRegistry = createBuiltInMessagingHookRegistry({
-    openclawBridgeHealth: {
-      sandboxName,
-      executeSandboxCommand: (command, timeoutMs) =>
-        executeSandboxExecCommand(sandboxName, command, timeoutMs),
+  const hookRegistry = createBuiltInMessagingCatalog({
+    hooks: {
+      openclawBridgeHealth: {
+        sandboxName,
+        executeSandboxCommand: (command, timeoutMs) =>
+          executeSandboxExecCommand(sandboxName, command, timeoutMs),
+      },
     },
-  });
+  }).hookRegistry;
   try {
     await MessagingSetupApplier.applyHealthChecks(plan, {
       runHook: (request) =>
@@ -742,8 +741,8 @@ async function planSandboxChannelAdd(
 ): Promise<SandboxMessagingPlan> {
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
-    createBuiltInMessagingHookRegistry(),
-    createBuiltInRenderTemplateResolver(),
+    createBuiltInMessagingCatalog().hookRegistry,
+    messagingCatalog.renderTemplateResolver,
   );
   const availableChannels = availableManifestChannelsForAgent(agent);
   const supportedChannelIds = availableChannels.map((manifest) => manifest.id);
@@ -782,7 +781,7 @@ export async function persistManifestChannelDisabledPlan(
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     undefined,
-    createBuiltInRenderTemplateResolver(),
+    messagingCatalog.renderTemplateResolver,
   );
   const context = {
     sandboxName,
@@ -815,7 +814,7 @@ export async function persistManifestChannelRemovePlan(
   const planner = new MessagingWorkflowPlanner(
     messagingManifestRegistry,
     undefined,
-    createBuiltInRenderTemplateResolver(),
+    messagingCatalog.renderTemplateResolver,
   );
   const plan = await planner.buildChannelRemovePlanFromSandboxEntry({
     sandboxName,

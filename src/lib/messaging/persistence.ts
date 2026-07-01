@@ -1,10 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInRenderTemplateResolver,
-} from "./channels";
+import { createBuiltInMessagingCatalog, type MessagingCatalog } from "./catalog";
 import { planCredentialBindings } from "./compiler/engines/credential-binding-engine";
 import { planHealthChecks } from "./compiler/engines/health-check-engine";
 import { planHostForward } from "./compiler/engines/host-forward-engine";
@@ -22,7 +19,7 @@ import {
 } from "./compiler/engines/template";
 import type { ManifestCompilerContext } from "./compiler/types";
 import type { MessagingHookInputMap, MessagingHookOutputMap } from "./hooks";
-import { BUILT_IN_MESSAGING_HOOK_REGISTRY, runMessagingHookSync } from "./hooks";
+import { runMessagingHookSync } from "./hooks";
 import type {
   ChannelHookSpec,
   ChannelInputSpec,
@@ -46,6 +43,13 @@ import {
   normalizeFullPersistedCredentialBindings,
   normalizePersistedAgentCredentialPlaceholders,
 } from "./persisted-placeholders";
+
+let cachedBuiltInMessagingCatalog: MessagingCatalog | undefined;
+
+function getBuiltInMessagingCatalog(): MessagingCatalog {
+  cachedBuiltInMessagingCatalog ??= createBuiltInMessagingCatalog();
+  return cachedBuiltInMessagingCatalog;
+}
 
 export type PersistedSandboxMessagingInputReference = Pick<
   SandboxMessagingInputReference,
@@ -150,7 +154,7 @@ export function compactSandboxMessagingPlanForPersistence(
 export function hydrateDerivedSandboxMessagingPlanFields(
   plan: SandboxMessagingPlan,
 ): SandboxMessagingPlan {
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = getBuiltInMessagingCatalog().manifestRegistry;
   const channels = plan.channels.map((channel) =>
     hydrateChannelFromManifest(plan, channel, manifestRegistry.get(channel.channelId)),
   );
@@ -187,7 +191,7 @@ export function hydrateDerivedSandboxMessagingPlanFields(
 export function normalizePersistedSandboxMessagingPlanShape(
   plan: MaybeCompactMessagingPlan,
 ): SandboxMessagingPlan {
-  const manifestRegistry = createBuiltInChannelManifestRegistry();
+  const manifestRegistry = getBuiltInMessagingCatalog().manifestRegistry;
   const disabledChannels = plan.disabledChannels.filter(
     (channelId) => typeof channelId === "string",
   );
@@ -249,7 +253,12 @@ function normalizePersistedChannel(
   const active =
     channel.active ?? (configured && !disabled && requiredInputsAvailable(manifest, inputs));
   const hostForward = manifest
-    ? planHostForward(manifest, inputs, active && !disabled, createBuiltInRenderTemplateResolver())
+    ? planHostForward(
+        manifest,
+        inputs,
+        active && !disabled,
+        getBuiltInMessagingCatalog().renderTemplateResolver,
+      )
     : undefined;
 
   return {
@@ -362,7 +371,7 @@ function requiredInputsAvailable(
 function normalizePersistedCredentialBindings(
   plan: MaybeCompactMessagingPlan,
   channels: readonly SandboxMessagingChannelPlan[],
-  manifestRegistry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  manifestRegistry: MessagingCatalog["manifestRegistry"],
 ): SandboxMessagingCredentialBindingPlan[] {
   const persisted = plan.credentialBindings ?? [];
   if (
@@ -409,7 +418,7 @@ function hydrateChannelFromManifest(
   const configured = channel.configured;
   const active = channel.active && !disabled;
   const hostForward = manifest
-    ? planHostForward(manifest, inputs, active, createBuiltInRenderTemplateResolver())
+    ? planHostForward(manifest, inputs, active, getBuiltInMessagingCatalog().renderTemplateResolver)
     : undefined;
   return {
     ...channelWithoutHostForward,
@@ -546,7 +555,7 @@ function buildHookOutputs(
   hook: ChannelHookSpec,
   channel: SandboxMessagingChannelPlan,
 ): MessagingHookOutputMap {
-  return runMessagingHookSync(hook, BUILT_IN_MESSAGING_HOOK_REGISTRY, {
+  return runMessagingHookSync(hook, getBuiltInMessagingCatalog().hookRegistry, {
     channelId: manifest.id,
     inputs: selectHookInputs(buildHookInputMap(channel, plan.credentialBindings), hook.inputs),
   }).outputs;
@@ -660,10 +669,10 @@ function channelHooksFromManifest(
 
 function agentRenderFromManifests(
   plan: SandboxMessagingPlan,
-  manifestRegistry: ReturnType<typeof createBuiltInChannelManifestRegistry>,
+  manifestRegistry: MessagingCatalog["manifestRegistry"],
 ): SandboxMessagingAgentRenderPlan[] {
   const render: SandboxMessagingAgentRenderPlan[] = [];
-  const referenceResolver = createBuiltInRenderTemplateResolver();
+  const referenceResolver = getBuiltInMessagingCatalog().renderTemplateResolver;
   for (const channel of plan.channels) {
     const manifest = manifestRegistry.get(channel.channelId);
     if (!manifest) continue;

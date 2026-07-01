@@ -14,6 +14,7 @@ Channel-specific behavior belongs in manifests, template resolvers, hook handler
 ```mermaid
 flowchart TD
   manifest["channels/<channel>/manifest.ts"]
+  catalog["MessagingCatalog"]
   registry["ChannelManifestRegistry"]
   planner["MessagingWorkflowPlanner"]
   compiler["ManifestCompiler"]
@@ -25,7 +26,8 @@ flowchart TD
   state["MessagingHostStateApplier and sandbox registry"]
   rebuild["rebuild hydration"]
 
-  manifest --> registry
+  manifest --> catalog
+  catalog --> registry
   registry --> planner
   planner --> compiler
   compiler --> plan
@@ -42,13 +44,14 @@ flowchart TD
 The workflow has these stages.
 
 1. Built-in manifests live under `channels/<channel>/manifest.ts` and are registered by `channels/built-ins.ts`.
-2. `MessagingWorkflowPlanner` chooses the workflow shape for onboard, add, remove, start, stop, or rebuild.
-3. `ManifestCompiler` filters supported channels, resolves inputs, runs compiler-time hooks, and compiles a `SandboxMessagingPlan`.
-4. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64` and applies provider, policy, agent config, and hook phases on the host side.
-5. `src/lib/onboard/dockerfile-patch.ts` passes the encoded plan into image builds.
-6. `applier/build/messaging-build-applier.mts` applies build-time package installs, render entries, post-agent-install files, and the reduced runtime plan artifact.
-7. `MessagingHostStateApplier` persists compact plan state under the sandbox registry entry.
-8. Rebuild hydrates persisted plans from current manifests so compacted render, host-forward, package, runtime, and hook fields stay current.
+2. `MessagingCatalog` packages the manifest registry, hook registry, render-template resolver, and policy-source metadata used by application code.
+3. `MessagingWorkflowPlanner` chooses the workflow shape for onboard, add, remove, start, stop, or rebuild.
+4. `ManifestCompiler` filters supported channels, resolves inputs, runs compiler-time hooks, and compiles a `SandboxMessagingPlan`.
+5. `MessagingSetupApplier` serializes the plan through `NEMOCLAW_MESSAGING_PLAN_B64` and applies provider, policy, agent config, and hook phases on the host side.
+6. `src/lib/onboard/dockerfile-patch.ts` passes the encoded plan into image builds.
+7. `applier/build/messaging-build-applier.mts` applies build-time package installs, render entries, post-agent-install files, and the reduced runtime plan artifact.
+8. `MessagingHostStateApplier` persists compact plan state under the sandbox registry entry.
+9. Rebuild hydrates persisted plans from current manifests so compacted render, host-forward, package, runtime, and hook fields stay current.
    Non-empty persisted `networkPolicy` entries are preserved and regenerated only when they are absent or empty.
 
 ## Class Diagram
@@ -96,6 +99,14 @@ classDiagram
     +listAvailable(ctx)
   }
 
+  class MessagingCatalog {
+    manifests: ChannelManifest[]
+    manifestRegistry: ChannelManifestRegistry
+    hookRegistry: MessagingHookRegistry
+    renderTemplateResolver
+    policySources
+  }
+
   class MessagingWorkflowPlanner {
     -compiler: ManifestCompiler
     +buildPlan(context)
@@ -141,6 +152,8 @@ classDiagram
     +applyPlanToRegistry(sandboxName, plan, options)
   }
 
+  MessagingCatalog --> ChannelManifestRegistry
+  MessagingCatalog --> MessagingHookRegistry
   ChannelManifestRegistry "1" o-- "*" ChannelManifest
   MessagingWorkflowPlanner --> ManifestCompiler
   ManifestCompiler --> ChannelManifestRegistry
@@ -157,6 +170,7 @@ classDiagram
 |---|---|
 | `manifest/` | Serializable manifest and plan contracts plus `ChannelManifestRegistry`. |
 | `channels/` | Built-in channel manifests, channel metadata, template resolvers, runtime preload assets, and channel hook implementations. |
+| `catalog/` | Application-facing assembly of manifests, registries, render-template resolution, and policy-source metadata. |
 | `compiler/` | Manifest-to-plan compilation for inputs, credentials, policy, render, host forwards, build steps, runtime setup, state, and health checks. |
 | `hooks/` | Hook contracts, registries, runner validation, common handlers, and conflict errors. |
 | `applier/` | Host/OpenShell side effects for credentials, policy, config writes, hook phase execution, plan env serialization, filtering, conflicts, registry persistence, and build-time application. |
@@ -402,16 +416,15 @@ The planner understands lifecycle workflows and persisted sandbox state.
 
 ```ts
 import {
-  createBuiltInChannelManifestRegistry,
-  createBuiltInMessagingHookRegistry,
-  createBuiltInRenderTemplateResolver,
+  createBuiltInMessagingCatalog,
   MessagingWorkflowPlanner,
 } from "../messaging";
 
+const catalog = createBuiltInMessagingCatalog();
 const planner = new MessagingWorkflowPlanner(
-  createBuiltInChannelManifestRegistry(),
-  createBuiltInMessagingHookRegistry(),
-  createBuiltInRenderTemplateResolver(),
+  catalog.manifestRegistry,
+  catalog.hookRegistry,
+  catalog.renderTemplateResolver,
 );
 
 const plan = await planner.buildPlan({

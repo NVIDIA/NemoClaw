@@ -4,10 +4,10 @@
 // Policy preset management — list, load, merge, and apply presets.
 
 import type { JsonObject, JsonValue } from "../core/json-types";
+import { createBuiltInMessagingCatalog } from "../messaging/catalog";
 import {
   getMessagingPolicyKeyAliases,
   getMessagingPolicyPresetValidationWarnings,
-  listBuiltInMessagingChannelManifests,
   listMessagingPolicyPresetMetadata,
 } from "../messaging/channels";
 
@@ -26,6 +26,7 @@ const openshellResolveModule = require("../adapters/openshell/resolve");
 const PRESETS_DIR = path.join(ROOT, "nemoclaw-blueprint", "policies", "presets");
 
 const MAX_PRESET_FILE_BYTES = 10_000_000;
+const builtInMessagingCatalog = createBuiltInMessagingCatalog();
 
 type PresetInfo = {
   file: string;
@@ -115,7 +116,7 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
 }
 
 const AGENT_PRESET_KEY_ALIASES: Readonly<Record<string, readonly string[]>> =
-  getMessagingPolicyKeyAliases();
+  getMessagingPolicyKeyAliases({ manifests: builtInMessagingCatalog.manifests });
 
 function selectAgentPolicyKeys(
   agentPolicies: PolicyObject,
@@ -209,16 +210,16 @@ function getPresetEndpoints(content: string): string[] {
  * without a running bridge. See #1691.
  */
 const MESSAGING_PRESET_LABELS: Readonly<Record<string, string>> = Object.fromEntries(
-  listMessagingPolicyPresetMetadata().flatMap((preset) => {
-    const manifest = listBuiltInMessagingChannelManifests().find(
-      (entry) => entry.id === preset.channelId,
-    );
-    return manifest ? [[preset.presetName, manifest.displayName]] : [];
-  }),
+  listMessagingPolicyPresetMetadata({ manifests: builtInMessagingCatalog.manifests }).flatMap(
+    (preset) => {
+      const manifest = builtInMessagingCatalog.manifestRegistry.get(preset.channelId);
+      return manifest ? [[preset.presetName, manifest.displayName]] : [];
+    },
+  ),
 );
 
 const MESSAGING_PRESET_VALIDATION_WARNING_LINES: Readonly<Record<string, readonly string[]>> =
-  getMessagingPolicyPresetValidationWarnings();
+  getMessagingPolicyPresetValidationWarnings({ manifests: builtInMessagingCatalog.manifests });
 
 function getPresetValidationWarning(presetName: string): string | null {
   if (presetName === "jira") {

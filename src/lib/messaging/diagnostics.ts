@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createBuiltInChannelManifestRegistry } from "./channels";
+import { createBuiltInMessagingCatalog } from "./catalog";
 import type { ChannelManifest, ChannelPolicyPresetReference, MessagingAgentId } from "./manifest";
 
 export interface MessagingChannelDiagnosticSpec {
@@ -19,7 +19,7 @@ export function collectBuiltInMessagingChannelDiagnostics(
   options: { readonly agent?: MessagingAgentId } = {},
 ): MessagingChannelDiagnosticSpec[] {
   return collectMessagingChannelDiagnostics(
-    createBuiltInChannelManifestRegistry().listAvailable(
+    createBuiltInMessagingCatalog().manifestRegistry.listAvailable(
       options.agent ? { agent: options.agent } : undefined,
     ),
   );
