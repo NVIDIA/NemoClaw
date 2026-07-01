@@ -281,7 +281,7 @@ describe("shields command flow", () => {
     expect(harness.logSpy.mock.calls.flat().join("\n")).toContain(
       "Config unlocked for openclaw (no auto-lockdown timer",
     );
-  }, 15_000);
+  });
 
   it("binds manual shields-up to the active auto-restore timer generation", () => {
     const stateDir = path.join(tmpDir, ".nemoclaw", "state");
