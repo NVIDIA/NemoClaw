@@ -127,7 +127,7 @@ describe("sandbox operations workflow boundary", () => {
 
     const broadInferenceSecret = readSandboxOperationsWorkflow();
     broadInferenceSecret.jobs["sandbox-operations"].steps!.find(
-      (step) => step.name === "Build CLI",
+      (step) => step.name === "Prepare E2E workspace",
     )!.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
     expect(validateSandboxOperationsWorkflow(broadInferenceSecret)).toContain(
       "sandbox-operations exposes the inference key outside the live test step",
@@ -188,12 +188,12 @@ describe("sandbox operations workflow boundary", () => {
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Build CLI\n        run: npm run build:cli",
+            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
             [
-              "      - name: Build CLI",
+              "      - name: Prepare E2E workspace",
               "        env:",
               "          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}",
-              "        run: npm run build:cli",
+              "        uses: ./.github/actions/prepare-e2e",
             ].join("\n"),
           ),
         ),
@@ -205,47 +205,50 @@ describe("sandbox operations workflow boundary", () => {
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Build CLI\n        run: npm run build:cli",
+            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
             [
-              "      - name: Build CLI",
+              "      - name: Prepare E2E workspace",
               "        env:",
               '          DOCKER_CONFIG: "${{ runner.temp }}/docker"',
-              "        run: npm run build:cli",
+              "        uses: ./.github/actions/prepare-e2e",
             ].join("\n"),
           ),
         ),
-      expected: "sandbox-operations must not expose DOCKER_CONFIG through step 'Build CLI'",
+      expected:
+        "sandbox-operations must not expose DOCKER_CONFIG through step 'Prepare E2E workspace'",
     },
     {
       label: "persistent environment write outside the configure step",
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) =>
           jobSource.replace(
-            "      - name: Build CLI\n        run: npm run build:cli",
+            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e",
             [
-              "      - name: Build CLI",
+              "      - name: Prepare E2E workspace",
               "        run: |",
-              "          npm run build:cli",
               '          echo "DOCKER_CONFIG=${{ github.workspace }}/docker" >> "$GITHUB_ENV"',
+              "        uses: ./.github/actions/prepare-e2e",
             ].join("\n"),
           ),
         ),
-      expected: "sandbox-operations step 'Build CLI' must not write persistent environment",
+      expected:
+        "sandbox-operations step 'Prepare E2E workspace' must not write persistent environment",
     },
     {
       label: "a persistent workspace Docker config outside shared auth",
       mutate: (source: string) =>
         mutateSandboxOperationsJob(source, (jobSource) => {
-          const buildMarker = "      - name: Build CLI\n";
-          expect(jobSource).toContain(buildMarker);
+          const prepareMarker =
+            "      - name: Prepare E2E workspace\n        uses: ./.github/actions/prepare-e2e\n";
+          expect(jobSource).toContain(prepareMarker);
           return jobSource.replace(
-            buildMarker,
+            prepareMarker,
             [
               "      - name: Persist workspace Docker config",
               "        run: |",
               '          echo "DOCKER_CONFIG=${{ github.workspace }}/docker" >> "$GITHUB_ENV"',
               "",
-              buildMarker.trimEnd(),
+              prepareMarker.trimEnd(),
               "",
             ].join("\n"),
           );

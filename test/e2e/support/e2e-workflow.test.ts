@@ -1057,16 +1057,6 @@ jobs:
       if (typeof step.uses === "string" && step.uses.startsWith("actions/checkout@")) {
         step.with = { ...(step.with as Record<string, unknown>), "persist-credentials": true };
       }
-      if (step.name === "Set up Node") {
-        step.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
-      }
-      if (step.name === "Install root dependencies") {
-        step.env = {
-          DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
-          DOCKERHUB_TOKEN: "${{ secrets.DOCKERHUB_TOKEN }}",
-        };
-        step.run = "npm install";
-      }
       if (step.name === "Run snapshot commands live test") {
         step.run = String(step.run).replace(
           "test/e2e/live/snapshot-commands.test.ts",
@@ -1090,12 +1080,8 @@ jobs:
           "snapshot-commands job must not set DOCKER_CONFIG at job level",
           "snapshot-commands checkout step must set persist-credentials=false",
           "snapshot-commands job env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands step 'Set up Node' env must not include NVIDIA_INFERENCE_API_KEY",
-          "snapshot-commands step 'Install root dependencies' env must not include DOCKERHUB_USERNAME",
-          "snapshot-commands step 'Install root dependencies' env must not include DOCKERHUB_TOKEN",
           "snapshot-commands artifact upload must set include-hidden-files: false",
           "artifact upload path must include e2e-artifacts/live/snapshot-commands/",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Run snapshot commands live test' run script must include test/e2e/live/snapshot-commands.test.ts",
         ]),
       );
@@ -1205,10 +1191,6 @@ jobs:
       "persist-credentials": true,
     };
 
-    const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(installRootStep).toBeDefined();
-    installRootStep!.run = "npm install";
-
     const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
     expect(installOpenShellStep).toBeDefined();
     installOpenShellStep!.run = "bash scripts/install-openshell.sh";
@@ -1249,7 +1231,6 @@ jobs:
           "channels-stop-start job env must not include DOCKER_CONFIG",
           "channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "channels-stop-start checkout step must set persist-credentials=false",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "channels-stop-start step must set the fake Telegram token",
@@ -1302,9 +1283,9 @@ jobs:
     };
     const steps = workflow.jobs["messaging-compatible-endpoint"]?.steps;
     expect(steps).toEqual(expect.any(Array));
-    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -1372,9 +1353,9 @@ jobs:
       NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}",
       GITHUB_TOKEN: "${{ github.token }}",
     };
-    const setupNodeIndex = job.steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    job.steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = job.steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    job.steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",
@@ -1424,9 +1405,9 @@ jobs:
     };
     const steps = workflow.jobs["hermes-root-entrypoint-smoke"]?.steps;
     expect(steps).toEqual(expect.any(Array));
-    const setupNodeIndex = steps.findIndex((step) => step.name === "Set up Node");
-    expect(setupNodeIndex).toBeGreaterThan(0);
-    steps.splice(setupNodeIndex, 0, {
+    const prepareIndex = steps.findIndex((step) => step.name === "Prepare E2E workspace");
+    expect(prepareIndex).toBeGreaterThan(0);
+    steps.splice(prepareIndex, 0, {
       name: "Authenticate to Docker Hub",
       env: {
         DOCKERHUB_USERNAME: "${{ secrets.DOCKERHUB_USERNAME }}",

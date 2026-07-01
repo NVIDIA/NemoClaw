@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import { PREPARE_E2E_ACTION } from "./prepare-e2e-workflow-boundary.mts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DEFAULT_WORKFLOW_PATH = join(REPO_ROOT, ".github", "workflows", "e2e.yaml");
@@ -122,7 +123,7 @@ export function validateSecurityPostureWorkflow(workflow: WorkflowRecord): strin
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
   }
   for (const step of jobSteps.filter((entry) => entry.uses)) {
-    if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
+    if (step.uses !== PREPARE_E2E_ACTION && !FULL_SHA_ACTION.test(step.uses ?? "")) {
       errors.push(`${JOB_NAME} action '${step.name ?? step.uses}' must pin a full SHA`);
     }
   }

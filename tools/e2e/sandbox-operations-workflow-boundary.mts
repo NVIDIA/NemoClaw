@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+import { PREPARE_E2E_ACTION, PREPARE_E2E_STEP } from "./prepare-e2e-workflow-boundary.mts";
 
 // Current-state security boundary for the default sandbox-operations job.
 // The shared workflow boundary owns the guarded Docker login and cleanup
@@ -92,7 +93,7 @@ export function validateSandboxOperationsWorkflow(workflow: {
     errors.push(`${JOB_NAME} checkout must disable persisted credentials`);
   }
   for (const step of steps.filter((entry) => entry.uses)) {
-    if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
+    if (step.uses !== PREPARE_E2E_ACTION && !FULL_SHA_ACTION.test(step.uses ?? "")) {
       errors.push(`${JOB_NAME} action '${step.name ?? step.uses}' must pin a full SHA`);
     }
   }
@@ -140,8 +141,8 @@ export function validateSandboxOperationsWorkflow(workflow: {
     }
   }
 
-  requireStepOrder(errors, steps, authenticate.name ?? "", "Build CLI");
-  requireStepOrder(errors, steps, "Build CLI", verifyLauncher.name ?? "");
+  requireStepOrder(errors, steps, authenticate.name ?? "", PREPARE_E2E_STEP);
+  requireStepOrder(errors, steps, PREPARE_E2E_STEP, verifyLauncher.name ?? "");
   requireStepOrder(errors, steps, verifyLauncher.name ?? "", "Install OpenShell CLI");
   requireStepOrder(errors, steps, "Install OpenShell CLI", "Run sandbox operations live test");
 
