@@ -6,6 +6,34 @@ import { InferenceSetError, runInferenceSet } from "./inference-set";
 import { createDeps } from "./inference-set.test-support";
 
 describe("runInferenceSet failure handling", () => {
+  it("resolves the OpenShell runner before entering the async mutation lock", async () => {
+    const deps = createDeps({
+      config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+      prepareRunOpenshell: () => {
+        throw new Error("openshell CLI not found");
+      },
+    });
+
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        deps,
+      ),
+    ).rejects.toThrow("openshell CLI not found");
+    expect(deps.calls.prepareRunOpenshell).toHaveBeenCalledOnce();
+    expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+
+    // A failed preflight cannot leave a transition lock behind: retrying with
+    // a valid runner proceeds immediately in the same process.
+    deps.calls.prepareRunOpenshell.mockImplementation(() => undefined);
+    await expect(
+      runInferenceSet(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        deps,
+      ),
+    ).resolves.toMatchObject({ sandboxName: "alpha" });
+  });
+
   it("refuses unsupported agent sandboxes before changing OpenShell inference", async () => {
     const deps = createDeps({
       config: {},

@@ -4,7 +4,7 @@
 import { vi } from "vitest";
 import type { ValidationResult } from "../inference/local";
 import type { AgentConfigTarget } from "../sandbox/config";
-import type { ConfigObject } from "../security/credential-filter";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
 import type { Session } from "../state/onboard-session";
 import type { SandboxEntry } from "../state/registry";
 import type { InferenceSetDeps } from "./inference-set";
@@ -82,6 +82,9 @@ export function createDeps(options: {
   localValidation?: ValidationResult;
   localReachable?: boolean;
   contextWindow?: number | null;
+  shieldsMutable?: boolean;
+  prepareRunOpenshell?: () => void;
+  rewriteConfigUrlsWithDnsPinning?: (value: ConfigValue) => Promise<ConfigValue>;
 }): InferenceSetDeps & {
   calls: {
     captureOpenshell: ReturnType<typeof vi.fn>;
@@ -95,6 +98,8 @@ export function createDeps(options: {
     validateLocalProvider: ReturnType<typeof vi.fn>;
     ensureLocalProviderReachable: ReturnType<typeof vi.fn>;
     resolveContextWindowForModel: ReturnType<typeof vi.fn>;
+    prepareRunOpenshell: ReturnType<typeof vi.fn>;
+    rewriteConfigUrlsWithDnsPinning: ReturnType<typeof vi.fn>;
   };
   getSession: () => Session | null;
 } {
@@ -129,6 +134,10 @@ export function createDeps(options: {
     resolveContextWindowForModel: vi.fn((_provider: string, _model: string) =>
       options.contextWindow === undefined ? null : options.contextWindow,
     ),
+    prepareRunOpenshell: vi.fn(options.prepareRunOpenshell ?? (() => undefined)),
+    rewriteConfigUrlsWithDnsPinning: vi.fn(
+      options.rewriteConfigUrlsWithDnsPinning ?? (async (value: ConfigValue) => value),
+    ),
   };
   return {
     getDefaultSandbox: () => defaultSandbox,
@@ -142,6 +151,7 @@ export function createDeps(options: {
     readSandboxConfig: calls.readSandboxConfig,
     writeSandboxConfig: calls.writeSandboxConfig,
     recomputeSandboxConfigHash: calls.recomputeSandboxConfigHash,
+    prepareRunOpenshell: calls.prepareRunOpenshell,
     captureOpenshell: calls.captureOpenshell,
     appendAuditEntry: calls.appendAuditEntry,
     log: calls.log,
@@ -150,6 +160,8 @@ export function createDeps(options: {
     validateLocalProvider: calls.validateLocalProvider,
     ensureLocalProviderReachable: calls.ensureLocalProviderReachable,
     resolveContextWindowForModel: calls.resolveContextWindowForModel,
+    isSandboxConfigMutable: () => options.shieldsMutable ?? true,
+    rewriteConfigUrlsWithDnsPinning: calls.rewriteConfigUrlsWithDnsPinning,
     calls,
     getSession: () => session,
   };

@@ -60,6 +60,7 @@ export type PrepareSandboxCreatePlanInput = {
   messagingTokenDefs: MessagingTokenDef[];
   reusableMessagingChannels: string[];
   reusableMessagingProviders: string[];
+  extraProviders?: readonly string[];
   hermesToolGateways: string[];
   sandboxGpuConfig: SandboxGpuCreateConfig;
   dockerDriverGateway: boolean;
@@ -220,6 +221,7 @@ export function prepareSandboxCreatePlan({
   messagingTokenDefs,
   reusableMessagingChannels,
   reusableMessagingProviders,
+  extraProviders,
   hermesToolGateways,
   sandboxGpuConfig,
   dockerDriverGateway,
@@ -290,6 +292,12 @@ export function prepareSandboxCreatePlan({
   }
   if (hermesToolGateways.length > 0) {
     createArgs.push("--provider", getHermesToolGatewayProviderName(sandboxName));
+  }
+  const dedupedExtraProviders = [...new Set(extraProviders ?? [])].filter(
+    (name) => name && !messagingProviders.includes(name),
+  );
+  for (const provider of dedupedExtraProviders) {
+    createArgs.push("--provider", provider);
   }
 
   return {

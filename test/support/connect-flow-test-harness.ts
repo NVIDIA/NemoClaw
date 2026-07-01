@@ -38,6 +38,8 @@ export type ConnectHarnessOptions = {
     wasRunning?: boolean;
     recovered?: boolean;
     forwardRecovered?: boolean;
+    forwardRecoveryFailed?: boolean;
+    forwardRecoveryFailureDetail?: string;
     secretBoundaryRefused?: boolean;
     secretBoundaryReason?: SecretBoundaryRefusalReason;
   };

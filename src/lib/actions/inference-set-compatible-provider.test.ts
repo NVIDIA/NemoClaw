@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ConfigObject } from "../security/credential-filter";
 import { runInferenceSet } from "./inference-set";
 import { baseSession, createDeps } from "./inference-set.test-support";
@@ -185,5 +185,53 @@ describe("runInferenceSet compatible providers", () => {
       preferredInferenceApi: "anthropic-messages",
       nimContainer: null,
     });
+    expect(deps.calls.rewriteConfigUrlsWithDnsPinning).not.toHaveBeenCalled();
   });
+
+  for (const provider of ["compatible-endpoint", "compatible-anthropic-endpoint"]) {
+    it.each([
+      ["loopback", "http://127.0.0.1:8000/v1", "93.184.216.34"],
+      ["localhost", "http://localhost:8000/v1", "93.184.216.34"],
+      ["link-local", "http://169.254.169.254/latest", "93.184.216.34"],
+      ["RFC1918", "http://10.0.0.1:8000/v1", "93.184.216.34"],
+      ["non-allowlisted internal", "http://evil.host.openshell.internal:18767/v1", "93.184.216.34"],
+      ["HTTPS bridge", "https://host.openshell.internal:18767/v1", "93.184.216.34"],
+      ["privileged-port bridge", "http://host.openshell.internal:80/v1", "93.184.216.34"],
+      ["DNS-private", "https://private-resolution.example/v1", "10.0.0.8"],
+    ])(`rejects %s endpoint metadata for ${provider}`, async (_kind, endpointUrl, resolvedAddress) => {
+      const actualConfig =
+        await vi.importActual<typeof import("../sandbox/config")>("../sandbox/config");
+      const lookup = vi.fn(async () => [{ address: resolvedAddress, family: 4 }]);
+      const deps = createDeps({
+        config: { agents: { defaults: { model: { primary: "inference/nvidia/model-a" } } } },
+        entry: {
+          name: "alpha",
+          agent: "openclaw",
+          provider: "nvidia-prod",
+          model: "nvidia/model-a",
+        },
+        rewriteConfigUrlsWithDnsPinning: (value) =>
+          actualConfig.rewriteConfigUrlsWithDnsPinning(value, lookup),
+      });
+
+      await expect(
+        runInferenceSet(
+          {
+            provider,
+            model: "mock-model",
+            noVerify: true,
+            endpointUrl,
+            credentialEnv:
+              provider === "compatible-endpoint"
+                ? "COMPATIBLE_API_KEY"
+                : "COMPATIBLE_ANTHROPIC_API_KEY",
+          },
+          deps,
+        ),
+      ).rejects.toThrow(/endpoint-url is not allowed:.*private\/internal address/i);
+
+      expect(deps.calls.captureOpenshell).not.toHaveBeenCalled();
+      expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    });
+  }
 });

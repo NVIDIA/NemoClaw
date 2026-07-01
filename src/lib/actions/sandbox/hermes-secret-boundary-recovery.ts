@@ -1,12 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  buildHermesEnvFileBoundaryStandaloneCheck,
-  SECRET_BOUNDARY_OK_MARKER,
-  SECRET_BOUNDARY_REFUSED_MARKER,
-  SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER,
-} from "../../agent/hermes-recovery-boundary";
 import * as agentRuntime from "../../agent/runtime";
 import { R } from "../../cli/terminal-style";
 import * as registry from "../../state/registry";
@@ -23,9 +17,9 @@ export type HermesSecretBoundaryEnforcement =
   | { refused: false }
   | { refused: true; reason: SecretBoundaryRefusalReason; stderr: string };
 
-type SandboxExec = (
+type GatewaySupervisorRequest = (
   sandboxName: string,
-  command: string,
+  action: "restart" | "recover" | "probe",
   timeout?: number,
 ) => SandboxCommandResult | null;
 
@@ -41,13 +35,15 @@ function printValidatorStderr(stderr: string): void {
 }
 
 /**
- * Re-run the Hermes env-file secret-boundary validator against a running
- * gateway, before the probe path returns control to the caller.
+ * Re-run the Hermes env-file secret boundary through the authenticated PID 1
+ * control path before a healthy recover returns. PID 1 owns the exact gateway
+ * child, so a raw-secret refusal can stop the listener without regex matching
+ * or a second process racing the supervisor.
  */
 export function enforceHermesSecretBoundaryOnRunningGateway(
   sandboxName: string,
   agent: ReturnType<typeof agentRuntime.getSessionAgent>,
-  executeSandboxExecCommand: SandboxExec,
+  requestGatewaySupervisorAction: GatewaySupervisorRequest,
 ): HermesSecretBoundaryEnforcement | null {
   const persistedAgent = registry.getSandbox(sandboxName)?.agent;
   if (persistedAgent !== "hermes") return null;
@@ -59,8 +55,7 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
     console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "agent-missing", stderr: "" };
   }
-  const script = buildHermesEnvFileBoundaryStandaloneCheck();
-  const result = executeSandboxExecCommand(sandboxName, script, 30000);
+  const result = requestGatewaySupervisorAction(sandboxName, "recover");
   if (!result) {
     console.error("");
     console.error(
@@ -69,11 +64,11 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
     console.error("  Refusing recovery to keep the validator-enforced boundary intact.");
     return { refused: true, reason: "exec-failed", stderr: "" };
   }
-  const stdoutMarker = result.stdout
-    .split(/\r?\n/)
-    .reverse()
-    .find((line) => line.trim().startsWith("SECRET_BOUNDARY_"));
-  if (stdoutMarker === SECRET_BOUNDARY_REFUSED_MARKER) {
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.status === 0 && result.stdout.includes("GATEWAY_PID=")) {
+    return { refused: false };
+  }
+  if (output.includes("SECRET_BOUNDARY_REFUSED")) {
     printValidatorStderr(result.stderr);
     console.error("");
     console.error(
@@ -85,10 +80,7 @@ export function enforceHermesSecretBoundaryOnRunningGateway(
     );
     return { refused: true, reason: "raw-secret", stderr: result.stderr };
   }
-  if (stdoutMarker === SECRET_BOUNDARY_OK_MARKER) {
-    return { refused: false };
-  }
-  if (stdoutMarker === SECRET_BOUNDARY_VALIDATOR_MISSING_MARKER) {
+  if (output.includes("SECRET_BOUNDARY_VALIDATOR_MISSING")) {
     printValidatorStderr(result.stderr);
     console.error("");
     console.error(

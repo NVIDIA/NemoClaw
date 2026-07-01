@@ -12,6 +12,7 @@ import {
   trustedSandboxShellScript,
   validateSandboxName,
 } from "../fixtures/clients/sandbox.ts";
+import { requireHostedInferenceConfig } from "../fixtures/hosted-inference.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
 
@@ -31,7 +32,10 @@ export function commandEnv(apiKey?: string): NodeJS.ProcessEnv {
     NEMOCLAW_SANDBOX_NAME: SANDBOX_NAME,
     OPENSHELL_GATEWAY: process.env.OPENSHELL_GATEWAY ?? "nemoclaw",
   };
-  apiKey && Object.assign(env, { NVIDIA_INFERENCE_API_KEY: apiKey });
+  if (apiKey) {
+    const hosted = requireHostedInferenceConfig({ required: () => apiKey });
+    Object.assign(env, hosted.env);
+  }
   return env;
 }
 
@@ -102,7 +106,7 @@ export async function installDeviceAuthSandbox(
 ): Promise<ShellProbeResult> {
   let install: ShellProbeResult | undefined;
   for (let attempt = 1; attempt <= INSTALL_ATTEMPTS; attempt += 1) {
-    install = await host.command("bash", ["install.sh", "--non-interactive"], {
+    install = await host.command("bash", ["install.sh", "--non-interactive", "--fresh"], {
       artifactName:
         attempt === 1
           ? "phase-1-install-device-auth-health"
