@@ -32,6 +32,7 @@ import {
 } from "../fixtures/inference-switch-retry.ts";
 import { shouldRunLiveE2E } from "../fixtures/live-project-gate.ts";
 import type { ShellProbeResult } from "../fixtures/shell-probe.ts";
+import { agentReplyContainsToken } from "./openclaw-inference-switch-helpers.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CLI_ENTRYPOINT = path.join(REPO_ROOT, "bin", "nemoclaw.js");
@@ -693,12 +694,6 @@ function collectOpenClawAgentText(value: unknown, parts: string[], visited: Set<
   }
 }
 
-function agentReplyContainsToken(reply: string, expected: string): boolean {
-  const normalizedReply = reply.replace(/\s+/gu, "").toUpperCase();
-  const normalizedExpected = expected.replace(/\s+/gu, "").toUpperCase();
-  return normalizedExpected.length > 0 && normalizedReply === normalizedExpected;
-}
-
 function parseOpenClawAgentText(raw: string): string {
   if (!raw.trim()) return "";
   const parts: string[] = [];
@@ -793,16 +788,6 @@ exit "$rc"
     ].join("; "),
   );
 }
-
-test("openclaw-inference-switch agent reply matching tolerates wrapped PONG", () => {
-  expect(agentReplyContainsToken("P\nO N G", "PONG")).toBe(true);
-  expect(agentReplyContainsToken("wrapped: p o\nng", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("the answer is PONG", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("PONG because the route works", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("PANG", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("SPONGE", "PONG")).toBe(false);
-  expect(agentReplyContainsToken("pingpong", "PONG")).toBe(false);
-});
 
 function isExternalProviderValidationFailure(text: string): boolean {
   return (
