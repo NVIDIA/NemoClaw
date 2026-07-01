@@ -56,7 +56,6 @@ export const CLOUD_MODEL_OPTIONS = [
   { id: "nvidia/nemotron-3-super-120b-a12b", label: "Nemotron 3 Super 120B" },
   { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra 550B" },
   { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", label: "Nemotron 3 Nano Omni 30B" },
-  { id: "z-ai/glm-5.1", label: "GLM-5" },
   { id: "minimaxai/minimax-m2.7", label: "MiniMax M2.7" },
   { id: "moonshotai/kimi-k2.6", label: "Kimi K2.6" },
   { id: "openai/gpt-oss-120b", label: "GPT-OSS 120B" },
