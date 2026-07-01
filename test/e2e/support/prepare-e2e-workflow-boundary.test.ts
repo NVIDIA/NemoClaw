@@ -55,6 +55,24 @@ describe("prepare-e2e workflow boundary", () => {
     }
   });
 
+  it("rejects semantic-neutral content drift from the immutable action pin", () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "prepare-e2e-provenance-"));
+    const actionPath = path.join(directory, "action.yaml");
+    const source = fs.readFileSync(
+      path.join(process.cwd(), ".github/actions/prepare-e2e/action.yaml"),
+      "utf8",
+    );
+    fs.writeFileSync(actionPath, `${source}# unreviewed drift\n`);
+
+    try {
+      expect(validatePrepareE2eAction(actionPath)).toEqual([
+        "prepare-e2e content must match the action reviewed at its immutable commit pin",
+      ]);
+    } finally {
+      fs.rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   it("rejects build-mode, duplicate-step, and ordering drift", () => {
     const workflow = readWorkflow() as Workflow;
     const buildJob = workflow.jobs["sandbox-operations"];
