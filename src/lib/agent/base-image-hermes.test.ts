@@ -114,8 +114,7 @@ describe("agent base image provisioning", () => {
         );
       });
     } finally {
-      if (prior === undefined) delete process.env[envVar];
-      else process.env[envVar] = prior;
+      prior === undefined ? delete process.env[envVar] : (process.env[envVar] = prior);
     }
   });
 
