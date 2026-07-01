@@ -40,6 +40,7 @@ type ShieldsHarness = {
 let tmpDir: string;
 
 type HarnessOptions = {
+  directSandboxUnavailable?: boolean;
   dockerExecFileSync?: (argv: unknown) => string;
   failOpenClawGuardActions?: Array<"lock" | "unlock">;
   invokedAs?: "nemoclaw" | "nemohermes";
@@ -62,6 +63,10 @@ type HarnessOptions = {
   };
   run?: (cmd: unknown) => { status: number };
 };
+
+function throwHarnessError(error: Error): never {
+  throw error;
+}
 
 function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   vi.stubEnv("NEMOCLAW_INVOKED_AS", options.invokedAs ?? "nemoclaw");
@@ -106,14 +111,23 @@ function createHarness(options: HarnessOptions = {}): ShieldsHarness {
   });
   vi.spyOn(registry, "getSandbox").mockReturnValue({ name: "openclaw", openshellDriver: "docker" });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [{ name: "openclaw" }] });
+  const directSandboxUnavailableError = new Error(
+    "No running direct OpenShell sandbox container found for 'openclaw' (driver: docker). Expected a running container named openshell-openclaw or openshell-openclaw-*. Is the sandbox running?",
+  );
+  vi.spyOn(privilegedExec, "isDirectSandboxFallbackUnavailableError").mockReturnValue(
+    Boolean(options.directSandboxUnavailable),
+  );
   vi.spyOn(privilegedExec, "privilegedSandboxExecArgv").mockImplementation(
-    (_sandboxName: unknown, cmd: unknown) => [
-      "exec",
-      "--user",
-      "root",
-      "openshell-openclaw",
-      ...(Array.isArray(cmd) ? cmd.map(String) : []),
-    ],
+    (_sandboxName: unknown, cmd: unknown) =>
+      options.directSandboxUnavailable
+        ? throwHarnessError(directSandboxUnavailableError)
+        : [
+            "exec",
+            "--user",
+            "root",
+            "openshell-openclaw",
+            ...(Array.isArray(cmd) ? cmd.map(String) : []),
+          ],
   );
   vi.spyOn(dockerExec, "dockerSpawnSync").mockImplementation((argv: unknown) => {
     const args = Array.isArray(argv) ? argv.map(String) : [];
@@ -708,6 +722,20 @@ describe("shields command flow", () => {
     const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw", "nemohermes");
     expect(output).not.toContain("`nemoclaw openclaw shields up`");
     expect(output).not.toContain("`nemoclaw openclaw rebuild --yes`");
+  });
+
+  it("reports staged recovery when a stopped sandbox prevents config relock (#6126)", () => {
+    const harness = createHarness({ directSandboxUnavailable: true });
+
+    expect(() => harness.shieldsUp("openclaw", { throwOnError: true })).toThrow(
+      /No running direct OpenShell sandbox container found/,
+    );
+
+    const output = expectStagedDriverNeutralRecovery(harness.errorSpy, "openclaw");
+    expect(output).toContain(
+      "Warning: OpenClaw lock rollback could not restore the trusted posture",
+    );
+    expect(output).not.toContain("CRITICAL: OpenClaw lock rollback");
   });
 
   it("retains critical recovery for non-transient OpenClaw rollback failures (#6126)", () => {

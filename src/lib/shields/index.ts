@@ -30,6 +30,7 @@ const {
   dockerSpawnSync,
 }: typeof import("../adapters/docker/exec") = require("../adapters/docker/exec");
 const {
+  isDirectSandboxFallbackUnavailableError,
   privilegedSandboxExecArgv,
 }: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
 const {
@@ -315,6 +316,9 @@ function stopTimedOutShieldsDownTree(ownerPid: number, ownerStartIdentity: strin
  * Keep this driver-neutral because docker and VM sandboxes have no Kubernetes
  * control plane. Rebuild remains an escalation after the sandbox-ready retry
  * rather than an equivalent first step. (#6126)
+ *
+ * Recovery is: confirm readiness and retry `<cli> <sandbox> shields up`; only
+ * then escalate to `<cli> <sandbox> rebuild --yes` if the retry still fails.
  */
 function printManualRelockRecoveryHint(sandboxName: string): void {
   console.error(
@@ -331,9 +335,24 @@ function printManualRelockRecoveryHint(sandboxName: string): void {
 const OPENCLAW_STARTUP_NOT_READY_DIAGNOSTIC =
   /^(?:top-level config rollback failed: )?Config not locked: OpenClaw config guard lock \[startup-not-ready\] \/run\/nemoclaw\/openclaw-config-ready\.json: OpenClaw startup is not ready for host config mutations$/;
 
-function isOpenClawStartupNotReadyFailure(value: unknown): boolean {
+function isOpenClawReadinessFailure(value: unknown): boolean {
   const message = value instanceof Error ? value.message : String(value);
-  return OPENCLAW_STARTUP_NOT_READY_DIAGNOSTIC.test(message);
+  return (
+    isDirectSandboxFallbackUnavailableError(value) ||
+    OPENCLAW_STARTUP_NOT_READY_DIAGNOSTIC.test(message)
+  );
+}
+
+type OpenClawRollbackIssue = {
+  message: string;
+  readinessFailure: boolean;
+};
+
+function openClawRollbackIssue(prefix: string, error: unknown): OpenClawRollbackIssue {
+  return {
+    message: `${prefix}: ${error instanceof Error ? error.message : String(error)}`,
+    readinessFailure: isOpenClawReadinessFailure(error),
+  };
 }
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[], timeout = 15000): void {
@@ -2021,13 +2040,13 @@ function lockAgentConfigUnderMutationLock(
         );
       }
     } else if (openClawProtocol && openClawMutationStarted) {
-      const rollbackIssues: string[] = [];
+      const rollbackIssues: OpenClawRollbackIssue[] = [];
       const restoreTop = (action: "lock" | "unlock") => {
         try {
           transitionOpenClawTopConfig(sandboxName, target, action);
         } catch (rollbackError) {
           rollbackIssues.push(
-            `top-level config rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            openClawRollbackIssue("top-level config rollback failed", rollbackError),
           );
         }
       };
@@ -2038,11 +2057,11 @@ function lockAgentConfigUnderMutationLock(
               stateDirLockExec(sandboxName),
               target.configDir,
               rollbackLocked,
-            ),
+            ).map((message) => ({ message, readinessFailure: false })),
           );
         } catch (rollbackError) {
           rollbackIssues.push(
-            `state-directory rollback failed: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`,
+            openClawRollbackIssue("state-directory rollback failed", rollbackError),
           );
         }
       };
@@ -2057,16 +2076,17 @@ function lockAgentConfigUnderMutationLock(
         restoreTop("lock");
       }
       if (rollbackIssues.length > 0) {
+        const rollbackSummary = rollbackIssues.map(({ message }) => message).join(", ");
         if (
-          isOpenClawStartupNotReadyFailure(error) &&
-          rollbackIssues.every(isOpenClawStartupNotReadyFailure)
+          isOpenClawReadinessFailure(error) &&
+          rollbackIssues.every(({ readinessFailure }) => readinessFailure)
         ) {
           console.error(
-            `  Warning: OpenClaw lock rollback could not restore the trusted posture. Confirm the sandbox is running and ready, then retry the operation before rebuilding. ${rollbackIssues.join(", ")}`,
+            `  Warning: OpenClaw lock rollback could not restore the trusted posture. Confirm the sandbox is running and ready, then retry the operation before rebuilding. ${rollbackSummary}`,
           );
         } else {
           console.error(
-            `  CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackIssues.join(", ")}`,
+            `  CRITICAL: OpenClaw lock rollback could not restore the trusted posture. Restore from a trusted backup and recreate the sandbox. ${rollbackSummary}`,
           );
         }
       }
