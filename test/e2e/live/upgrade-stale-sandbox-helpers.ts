@@ -143,6 +143,14 @@ export function writeStaleRegistryEntry(): void {
     sandboxes?: Record<string, Record<string, unknown>>;
     defaultSandbox?: string;
   }>(REGISTRY_FILE, {});
+  const dashboardPort = registry.sandboxes?.[SANDBOX_NAME]?.dashboardPort;
+  expect(
+    typeof dashboardPort === "number" &&
+      Number.isInteger(dashboardPort) &&
+      dashboardPort > 0 &&
+      dashboardPort <= 65535,
+    "initial onboard must persist the dashboard port used by authoritative rebuild",
+  ).toBe(true);
   registry.sandboxes = registry.sandboxes ?? {};
   registry.sandboxes[SANDBOX_NAME] = {
     name: SANDBOX_NAME,
@@ -153,6 +161,7 @@ export function writeStaleRegistryEntry(): void {
     policies: [],
     policyTier: null,
     fromDockerfile: null,
+    dashboardPort,
     agent: null,
     agentVersion: OLD_OPENCLAW_VERSION,
   };
