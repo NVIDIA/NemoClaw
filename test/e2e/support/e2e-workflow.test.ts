@@ -602,8 +602,11 @@ describe("e2e workflow boundary", () => {
         "gateway-health-honest",
         "concurrent-gateway-ports",
         "openclaw-channels-conflict-guard",
+        "openclaw-channels-token-rotation",
         "openclaw-channels-add-remove",
         "hermes-channels-add-remove",
+        "openclaw-channels-stop-start",
+        "hermes-channels-stop-start",
       ]) {
         for (const selector of ["targets", "jobs"] as const) {
           expect(evaluateE2eWorkflowDispatchSelectors({ [selector]: job })).toMatchObject({
@@ -616,6 +619,30 @@ describe("e2e workflow boundary", () => {
       }
     },
   );
+
+  it("free-standing E2E workflow jobs reference existing test/e2e/live files", () => {
+    const workflow = readWorkflow() as {
+      jobs: Record<
+        string,
+        { env?: Record<string, unknown>; steps?: Array<Record<string, unknown>> }
+      >;
+    };
+    const missing: string[] = [];
+    for (const [jobName, job] of Object.entries(workflow.jobs)) {
+      if (job.env?.E2E_JOB !== "1") continue;
+      for (const step of job.steps ?? []) {
+        const run = typeof step.run === "string" ? step.run : "";
+        for (const match of run.matchAll(/test\/e2e\/live\/[A-Za-z0-9_.\/-]+\.test\.ts/g)) {
+          const testPath = match[0];
+          if (!fs.existsSync(path.join(process.cwd(), testPath))) {
+            missing.push(`${jobName} -> ${testPath}`);
+          }
+        }
+      }
+    }
+
+    expect(missing).toEqual([]);
+  });
 
   it("derives the free-standing inventory from workflow job metadata", { timeout: 60_000 }, () => {
     const inventory = readFreeStandingJobsInventory();
@@ -1128,7 +1155,7 @@ jobs:
     }
   });
 
-  it("rejects GITHUB_TOKEN exposure in channel credential rewrite and injection safety steps", () => {
+  it("rejects GITHUB_TOKEN exposure in channel live-test steps", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = readWorkflow() as {
@@ -1143,6 +1170,7 @@ jobs:
         "openclaw-channels-telegram-injection-safety",
         "Run OpenClaw channels Telegram injection safety live test",
       ],
+      ["openclaw-channels-token-rotation", "Run OpenClaw channels token rotation live test"],
     ]) {
       const step = workflow.jobs[jobName]?.steps.find((item) => item.name === stepName);
       expect(step, `${jobName} ${stepName}`).toBeDefined();
@@ -1159,6 +1187,7 @@ jobs:
         expect.arrayContaining([
           "openclaw-channels-credential-rewrite step 'Run OpenClaw channels credential rewrite live Vitest test' env must not include GITHUB_TOKEN",
           "openclaw-channels-telegram-injection-safety step 'Run OpenClaw channels Telegram injection safety live test' env must not include GITHUB_TOKEN",
+          "openclaw-channels-token-rotation step env must not include GITHUB_TOKEN",
         ]),
       );
     } finally {

@@ -207,12 +207,14 @@ describe("agent base image provisioning", () => {
         ".e2e/nemoclaw-agent-build-context-test/state.json",
         "e2e-artifacts/nemoclaw-agent-build-context-test/result.json",
         "worktrees/nemoclaw-agent-build-context-test/file.txt",
+        "docs/_build/nemoclaw-agent-build-context-test/index.html",
       ];
       const cleanupDirs = [
         ".tmp/nemoclaw-agent-build-context-test",
         ".e2e/nemoclaw-agent-build-context-test",
         "e2e-artifacts/nemoclaw-agent-build-context-test",
         "worktrees/nemoclaw-agent-build-context-test",
+        "docs/_build/nemoclaw-agent-build-context-test",
       ];
       let buildCtx = path.join(root, ".nonexistent-agent-build-context-test");
 
@@ -236,12 +238,13 @@ describe("agent base image provisioning", () => {
         expect(fs.existsSync(path.join(buildCtx, ".e2e"))).toBe(false);
         expect(fs.existsSync(path.join(buildCtx, "e2e-artifacts"))).toBe(false);
         expect(fs.existsSync(path.join(buildCtx, "worktrees"))).toBe(false);
+        expect(fs.existsSync(path.join(buildCtx, "docs", "_build"))).toBe(false);
       } finally {
         fs.rmSync(buildCtx, { recursive: true, force: true });
         for (const relativeDir of cleanupDirs) {
           fs.rmSync(path.join(root, relativeDir), { recursive: true, force: true });
         }
-        for (const relativeDir of [".tmp", ".e2e", "e2e-artifacts", "worktrees"]) {
+        for (const relativeDir of [".tmp", ".e2e", "e2e-artifacts", "worktrees", "docs/_build"]) {
           removeEmptyDir(path.join(root, relativeDir));
         }
       }

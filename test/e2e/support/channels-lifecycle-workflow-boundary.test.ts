@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
+import { knownChannelNames } from "../../../src/lib/sandbox/channels";
+import { CHANNELS } from "../live/channels-lifecycle-helpers.ts";
 
 function readWorkflow(): Record<string, unknown> {
   return YAML.parse(
@@ -17,6 +19,10 @@ function readWorkflow(): Record<string, unknown> {
 }
 
 describe("channels lifecycle workflow boundary", () => {
+  it("keeps lifecycle channel coverage aligned with the channel registry", () => {
+    expect([...CHANNELS]).toEqual(knownChannelNames());
+  });
+
   it("rejects OpenClaw channels stop/start workflow-boundary drift for secret and artifact handling", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
@@ -87,6 +93,7 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start checkout step must set persist-credentials=false",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
+          "openclaw-channels-stop-start step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY",
           "openclaw-channels-stop-start step must set fake TELEGRAM_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake DISCORD_BOT_TOKEN",
           "openclaw-channels-stop-start step must set fake MSTEAMS_APP_PASSWORD",

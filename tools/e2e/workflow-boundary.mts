@@ -1830,11 +1830,12 @@ function validateOpenClawChannelsTokenRotationJob(errors: string[], jobs: Workfl
     runVitestEnv,
     "NVIDIA_INFERENCE_API_KEY",
   );
-  if (runVitestEnv.GITHUB_TOKEN !== "${{ github.token }}") {
-    errors.push(
-      "openclaw-channels-token-rotation step must receive GITHUB_TOKEN from github.token",
-    );
-  }
+  requireEnvDoesNotExposeSecret(
+    errors,
+    "openclaw-channels-token-rotation step",
+    runVitestEnv,
+    "GITHUB_TOKEN",
+  );
   for (const tokenName of [
     "TELEGRAM_BOT_TOKEN_A",
     "TELEGRAM_BOT_TOKEN_B",
@@ -3783,10 +3784,7 @@ function validateChannelLifecycleJob(
   if (runVitestEnv.NVIDIA_INFERENCE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(`${jobName} step must receive NVIDIA_INFERENCE_API_KEY from secrets`);
   }
-  if (
-    kind === "add-remove" &&
-    runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}"
-  ) {
+  if (runVitestEnv.COMPATIBLE_API_KEY !== "${{ secrets.NVIDIA_INFERENCE_API_KEY }}") {
     errors.push(`${jobName} step must stage NVIDIA_INFERENCE_API_KEY as COMPATIBLE_API_KEY`);
   }
   for (const tokenName of [

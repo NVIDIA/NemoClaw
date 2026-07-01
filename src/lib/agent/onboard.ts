@@ -23,44 +23,13 @@ import {
   SANDBOX_BASE_TAG,
 } from "../sandbox-base-image";
 import { describeAgentBinaryFailure, verifyAgentBinaryAvailable } from "./binary-availability";
+import { shouldCopyAgentBuildContextPath } from "./build-context";
 import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, isTerminalAgent, loadAgent, resolveAgentName } from "./defs";
 import { runAgentSmokeCommands } from "./terminal-smoke";
 import { printBearerTokenApiAccess } from "./web-auth-ui";
 
 export { verifyAgentBinaryAvailable } from "./binary-availability";
-
-const AGENT_BUILD_CONTEXT_EXCLUDED_BASENAMES = new Set([
-  ".claude",
-  ".e2e",
-  ".git",
-  ".idea",
-  ".mypy_cache",
-  ".nemoclaw-maintainer",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".tmp",
-  ".venv",
-  ".vscode",
-  "__pycache__",
-  "coverage",
-  "dist",
-  "e2e-artifacts",
-  "node_modules",
-  "worktrees",
-]);
-
-function shouldCopyAgentBuildContextPath(src: string): boolean {
-  const relativePath = path.relative(ROOT, src);
-  if (relativePath === "") return true;
-  if (
-    relativePath === "docs/_build" ||
-    relativePath.startsWith(`docs${path.sep}_build${path.sep}`)
-  ) {
-    return false;
-  }
-  return !AGENT_BUILD_CONTEXT_EXCLUDED_BASENAMES.has(path.basename(src));
-}
 
 export interface OnboardContext {
   step: (current: number, total: number, message: string) => void;

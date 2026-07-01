@@ -40,7 +40,7 @@ import {
   outputText,
   pluginEnabled,
   policyTextHasHost,
-  premergeSlackPolicyIfNeeded,
+  assertSlackPolicyPresetIsCheckedIn,
   REBUILD_TIMEOUT_MS,
   rawTokenSurfaceProbe,
   readOpenClawConfig,
@@ -110,8 +110,7 @@ runLiveTest(
       },
     );
 
-    const restoreSlackPolicy = await premergeSlackPolicyIfNeeded();
-    cleanup.add("restore messaging E2E Slack policy pre-merge", restoreSlackPolicy);
+    assertSlackPolicyPresetIsCheckedIn();
 
     await bestEffort(() =>
       runHost(host, "node", [CLI_ENTRYPOINT, SANDBOX_NAME, "destroy", "--yes"], {

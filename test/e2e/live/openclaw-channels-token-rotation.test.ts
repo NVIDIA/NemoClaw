@@ -87,7 +87,6 @@ function onboardEnv(endpointUrl: string, tokens: TokenSet): NodeJS.ProcessEnv {
     NEMOCLAW_SKIP_TELEGRAM_REACHABILITY: "1",
     NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1",
     NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
-    GITHUB_TOKEN: process.env.GITHUB_TOKEN,
   };
 }
 
@@ -156,7 +155,6 @@ function redactionValues(): string[] {
   return [
     "openclaw-channels-token-rotation-compatible-e2e",
     process.env.NVIDIA_INFERENCE_API_KEY,
-    process.env.GITHUB_TOKEN,
     ...Object.values(TOKEN_A),
     ...Object.values(TOKEN_B),
   ].filter((value): value is string => typeof value === "string" && value.length > 0);

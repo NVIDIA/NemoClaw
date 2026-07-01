@@ -384,60 +384,24 @@ export function policyTextHasHost(text: string, host: string): boolean {
   return text.split(/\r?\n/).some((line) => accepted.has(line.trim()));
 }
 
-export async function premergeSlackPolicyIfNeeded(): Promise<() => void> {
-  const original = fs.readFileSync(BASE_POLICY, "utf8");
-  if (policyTextHasHost(original, "api.slack.com")) {
-    return () => {};
-  }
-  fs.appendFileSync(
-    BASE_POLICY,
-    `
-
-  # Slack - pre-merged for messaging provider E2E (#2340)
-  slack:
-    name: slack
-    endpoints:
-      - host: slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: api.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: hooks.slack.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: wss-primary.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-      - host: wss-backup.slack.com
-        port: 443
-        protocol: websocket
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-      - { path: /usr/bin/node }
-`,
+export function assertSlackPolicyPresetIsCheckedIn(): void {
+  const slackPreset = path.join(
+    REPO_ROOT,
+    "nemoclaw-blueprint",
+    "policies",
+    "presets",
+    "slack.yaml",
   );
-  return () => fs.writeFileSync(BASE_POLICY, original);
+  const text = fs.readFileSync(slackPreset, "utf8");
+  for (const host of [
+    "slack.com",
+    "api.slack.com",
+    "hooks.slack.com",
+    "wss-primary.slack.com",
+    "wss-backup.slack.com",
+  ]) {
+    expect(policyTextHasHost(text, host), `${slackPreset} missing ${host}`).toBe(true);
+  }
 }
 
 export async function readOpenClawConfig(
