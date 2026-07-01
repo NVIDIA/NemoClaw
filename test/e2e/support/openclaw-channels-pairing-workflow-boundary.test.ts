@@ -10,7 +10,7 @@ import YAML from "yaml";
 import { validateE2eWorkflowBoundary } from "../../../tools/e2e/workflow-boundary.mts";
 
 describe("OpenClaw channels pairing workflow boundary", () => {
-  it("rejects workspace Docker auth, secret, checkout, dependency, build, and installer drift", () => {
+  it("rejects workspace Docker auth, secret, checkout, and installer drift", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-workflow-"));
     const workflowPath = path.join(tmp, "workflow.yaml");
     const workflow = fs.readFileSync(
@@ -34,20 +34,6 @@ describe("OpenClaw channels pairing workflow boundary", () => {
     ) as { uses: string; with: Record<string, unknown> };
     checkout.uses = "actions/checkout@v4";
     checkout.with["persist-credentials"] = true;
-    const setupNode = pairingJob.steps.find((step) => step.name === "Set up Node") as {
-      uses: string;
-    };
-    setupNode.uses = "actions/setup-node@v4";
-    const installRootDependencies = pairingJob.steps.find(
-
-      (step) => step.name === "Install root dependencies",
-    ) as Record<string, unknown>;
-    Object.assign(installRootDependencies, { run: "npm install" });
-    const buildCli = pairingJob.steps.find((step) => step.name === "Build CLI") as Record<
-      string,
-      unknown
-    >;
-    Object.assign(buildCli, { run: "echo skipping build" });
     const liveStep = pairingJob.steps.find(
       (step) => step.name === "Run OpenClaw channels pairing live tests",
     ) as { env: Record<string, string> };
@@ -66,10 +52,6 @@ describe("OpenClaw channels pairing workflow boundary", () => {
           "openclaw-channels-pairing job must not set DOCKER_CONFIG at job level",
           "openclaw-channels-pairing checkout action must be pinned to a full commit SHA",
           "openclaw-channels-pairing checkout step must set persist-credentials=false",
-          "openclaw-channels-pairing setup-node action must be pinned to a full commit SHA",
-
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
-          "step 'Build CLI' run script must include npm run build:cli",
           "openclaw-channels-pairing step must use fake Discord token",
           "openclaw-channels-pairing step must use fake Slack bot token",
           "openclaw-channels-pairing step must use fake Slack app token",

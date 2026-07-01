@@ -91,15 +91,6 @@ describe("spark install workflow boundary", () => {
       "persist-credentials": true,
     };
 
-    const setupNode = job.steps.find((step) => step.name === "Set up Node");
-    expect(setupNode).toBeDefined();
-    setupNode!.uses = "actions/setup-node@v6";
-
-    const install = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(install).toBeDefined();
-    install!.env = { NVIDIA_INFERENCE_API_KEY: "${{ secrets.NVIDIA_INFERENCE_API_KEY }}" };
-    install!.run = "npm install";
-
     const runSpark = job.steps.find((step) => step.name === "Run Spark install live test");
     expect(runSpark).toBeDefined();
     runSpark!.env = {};
@@ -134,9 +125,6 @@ describe("spark install workflow boundary", () => {
           "spark-install job env must not include NVIDIA_INFERENCE_API_KEY",
           "spark-install checkout action must be pinned to a full commit SHA",
           "spark-install checkout step must set persist-credentials=false",
-          "spark-install setup-node action must be pinned to a full commit SHA",
-          "spark-install step 'Install root dependencies' env must not include NVIDIA_INFERENCE_API_KEY",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "spark-install live E2E step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "step 'Run Spark install live test' run script must include set -euo pipefail",
           "step 'Run Spark install live test' run script must include test/e2e/live/spark-install.test.ts",

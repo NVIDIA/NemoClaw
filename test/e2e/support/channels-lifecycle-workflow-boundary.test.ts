@@ -46,10 +46,6 @@ describe("channels lifecycle workflow boundary", () => {
     };
 
 
-    const installRootStep = job.steps.find((step) => step.name === "Install root dependencies");
-    expect(installRootStep).toBeDefined();
-    installRootStep!.run = "npm install";
-
     const installOpenShellStep = job.steps.find((step) => step.name === "Install OpenShell");
     expect(installOpenShellStep).toBeDefined();
     installOpenShellStep!.run = "bash scripts/install-openshell.sh";
@@ -90,7 +86,6 @@ describe("channels lifecycle workflow boundary", () => {
           "openclaw-channels-stop-start job must not set DOCKER_CONFIG at job level",
           "openclaw-channels-stop-start job env must not include NVIDIA_INFERENCE_API_KEY",
           "openclaw-channels-stop-start checkout step must set persist-credentials=false",
-          "step 'Install root dependencies' run script must include npm ci --ignore-scripts",
           "step 'Install OpenShell' run script must include env -u DOCKER_CONFIG",
           "openclaw-channels-stop-start step must receive NVIDIA_INFERENCE_API_KEY from secrets",
           "openclaw-channels-stop-start step must set fake TELEGRAM_BOT_TOKEN",

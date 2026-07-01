@@ -37,6 +37,7 @@ describe("E2E operations workflow boundary", () => {
 
   it("rejects aggregation, permission, and secret-scope drift", () => {
     const workflow = readE2eOperationsWorkflow();
+    workflow.jobs.scorecard.needs = [...(workflow.jobs.scorecard.needs as string[])];
     (workflow.jobs.scorecard.needs as string[]).pop();
     workflow.jobs.scorecard.permissions = {
       actions: "read",
