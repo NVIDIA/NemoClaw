@@ -8,7 +8,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
+const NORMALIZER_SCRIPT = path.join(
+  import.meta.dirname,
+  "..",
+  "scripts",
+  "lib",
+  "normalize_mutable_config_perms.py",
+);
 const startSource = fs.readFileSync(START_SCRIPT, "utf-8");
+const normalizerSource = fs.readFileSync(NORMALIZER_SCRIPT, "utf-8");
 
 function extractShellFunction(name: string): string {
   const match = startSource.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
@@ -47,7 +55,6 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
-      "lock_openclaw_config_baseline_if_present() { return 0; }",
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -141,6 +148,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
     fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
     fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
+    const initialProtectedMode = mode(protectedTarget);
 
     const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
       'local config_dir="/sandbox/.openclaw"',
@@ -148,7 +156,6 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     );
     const script = [
       "set -euo pipefail",
-      "lock_openclaw_config_baseline_if_present() { return 0; }",
       normalizeFunction,
       oneShotFunction,
       "rc=0",
@@ -161,13 +168,101 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("rc=1");
       expect(result.stderr).toContain(
-        "Refusing mutable config permission normalization — descriptor-safe repair detected a symlink, race, or metadata failure",
+        "Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state",
       );
       expect(result.stderr).toContain(
         "[one-shot] command status=42; permission cleanup status=1; returning cleanup failure",
       );
-      expect(mode(protectedTarget)).toBe(0o640);
+      expect(mode(protectedTarget)).toBe(initialProtectedMode);
       expect(fs.lstatSync(path.join(configDir, "openclaw.json")).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlinked config directory without following a non-directory target (#6047)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-dir-symlink-"));
+    const configDir = path.join(root, ".openclaw");
+    const protectedTarget = path.join(root, "protected-target");
+    fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
+    const initialProtectedMode = mode(protectedTarget);
+    fs.symlinkSync(protectedTarget, configDir);
+
+    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    );
+    const script = [
+      "set -euo pipefail",
+      normalizeFunction,
+      "rc=0",
+      "normalize_mutable_config_perms || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("rc=1");
+      expect(result.stderr).toContain(
+        "Refusing mutable config permission normalization — descriptor-safe classification failed",
+      );
+      expect(mode(protectedTarget)).toBe(initialProtectedMode);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a config replacement while the owner descriptor remains pinned (#6047)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-config-dir-phase-race-"));
+    const configDir = path.join(root, ".openclaw");
+    const normalizedDir = path.join(root, ".openclaw-normalized");
+    const normalizerPath = path.join(root, "normalize-mutable-config.py");
+    fs.mkdirSync(configDir);
+    fs.writeFileSync(path.join(configDir, "openclaw.json"), "{}\n");
+    fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
+    fs.chmodSync(configDir, 0o700);
+    fs.chmodSync(path.join(configDir, "openclaw.json"), 0o600);
+
+    const injectedNormalizer = normalizerSource.replace(
+      "        return root_fd, capture_source_fd\n",
+      [
+        `        os.rename(config_dir, ${JSON.stringify(normalizedDir)})`,
+        "        os.mkdir(config_dir, 0o700)",
+        '        with open(os.path.join(config_dir, "openclaw.json"), "w", encoding="utf-8") as config_file:',
+        '            config_file.write("{}\\n")',
+        '        with open(os.path.join(config_dir, ".config-hash"), "w", encoding="utf-8") as hash_file:',
+        '            hash_file.write("hash\\n")',
+        '        os.chmod(os.path.join(config_dir, "openclaw.json"), 0o600)',
+        '        os.chmod(os.path.join(config_dir, ".config-hash"), 0o600)',
+        "        return root_fd, capture_source_fd",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(normalizerPath, injectedNormalizer);
+    const normalizeFunction = extractShellFunction("normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    );
+    const script = [
+      "set -euo pipefail",
+      `export NEMOCLAW_MUTABLE_CONFIG_NORMALIZER=${JSON.stringify(normalizerPath)}`,
+      normalizeFunction,
+      "rc=0",
+      "normalize_mutable_config_perms || rc=$?",
+      'printf "rc=%s\\n" "$rc"',
+    ].join("\n");
+
+    try {
+      const result = runBash(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("rc=1");
+      expect(result.stderr).toContain(
+        "Refusing mutable config permission normalization — descriptor-safe repair detected an unsafe link, race, owner, or metadata state",
+      );
+      expect(mode(normalizedDir)).toBe(0o2770);
+      expect(mode(configDir)).toBe(0o700);
+      expect(mode(path.join(configDir, "openclaw.json"))).toBe(0o600);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
@@ -183,6 +278,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
     fs.writeFileSync(path.join(configDir, ".config-hash"), "hash\n");
     fs.writeFileSync(racePath, "mutable\n");
     fs.writeFileSync(protectedTarget, "protected\n", { mode: 0o640 });
+    const initialProtectedMode = mode(protectedTarget);
     for (let index = 0; index < 300; index++) {
       fs.writeFileSync(path.join(configDir, `filler-${index}`), "x\n");
     }
@@ -225,7 +321,7 @@ describe("nemoclaw-start one-shot command lifecycle", () => {
       const result = runBash(script);
       expect(result.status).toBe(0);
       expect(result.stdout).toMatch(/rc=(?:1|42)/);
-      expect(mode(protectedTarget)).toBe(0o640);
+      expect(mode(protectedTarget)).toBe(initialProtectedMode);
     } finally {
       mutator.kill("SIGKILL");
       await stopped;
