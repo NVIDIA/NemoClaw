@@ -12,8 +12,10 @@ import {
   BREV_MESSAGING_COMPAT_TIMEOUT_MS,
   BREV_MESSAGING_PROVIDER_TIMEOUT_MS,
   BREV_REMOTE_WRAPPER_GRACE_MS,
+  BREV_WORKFLOW_OWNERSHIP_ENV,
   brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
+  brevWorkflowOwnsInstance,
   buildBrevRemoteVitestCommand,
 } from "../tools/e2e/brev-remote-vitest.mts";
 
@@ -94,7 +96,14 @@ describe("Brev remote Vitest command", () => {
   it("leaves each messaging target inside the fresh-instance job budget", () => {
     expect(BREV_MESSAGING_PROVIDER_TIMEOUT_MS).toBe(70 * 60_000);
     expect(BREV_MESSAGING_COMPAT_TIMEOUT_MS).toBe(40 * 60_000);
-    expect(BREV_REMOTE_WRAPPER_GRACE_MS).toBe(60_000);
+    expect(BREV_REMOTE_WRAPPER_GRACE_MS).toBe(120_000);
+  });
+
+  it("recognizes workflow ownership only from the explicit sentinel", () => {
+    expect(BREV_WORKFLOW_OWNERSHIP_ENV).toBe("NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE");
+    expect(brevWorkflowOwnsInstance({ NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE: "1" })).toBe(true);
+    expect(brevWorkflowOwnsInstance({ NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE: "0" })).toBe(false);
+    expect(brevWorkflowOwnsInstance({})).toBe(false);
   });
 
   it("does not seed shared harness state for suites that own their sandbox lifecycle", () => {

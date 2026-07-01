@@ -258,6 +258,7 @@ jobs:
       - name: Run ephemeral Brev E2E
         env:
           NEMOCLAW_RUN_BRANCH_VALIDATION_E2E: "1"
+          NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE: "1"
           BREV_API_TOKEN: ${{ secrets.BREV_API_TOKEN }}
           NVIDIA_INFERENCE_API_KEY: ${{ secrets.NVIDIA_INFERENCE_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
@@ -303,7 +304,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: brev-debug-bundle
+          name: brev-debug-bundle-${{ inputs.test_suite }}
           path: brev-debug-bundle/
           if-no-files-found: ignore
 
@@ -311,9 +312,46 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-branch-validation-logs
+          name: e2e-branch-validation-logs-${{ inputs.test_suite }}
           path: /tmp/brev-e2e-*.log
           if-no-files-found: ignore
+
+      - name: Delete Brev instance
+        if: always() && !inputs.keep_alive
+        env:
+          INSTANCE: ${{ env.BREV_E2E_INSTANCE_NAME }}
+        run: |
+          set -euo pipefail
+
+          if ! command -v brev >/dev/null 2>&1; then
+            echo "Brev CLI is unavailable; the validation step could not have created ${INSTANCE}."
+            exit 0
+          fi
+
+          for attempt in 1 2 3; do
+            if output="$(brev delete "$INSTANCE" 2>&1)"; then
+              printf '%s\n' "$output"
+              echo "Brev deletion requested for ${INSTANCE}."
+              exit 0
+            else
+              status=$?
+            fi
+
+            if grep -Eqi 'not found|does not exist|no (such )?(workspace|instance)' <<<"$output"; then
+              echo "Brev instance ${INSTANCE} is already absent."
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              printf '%s\n' "$output" >&2
+              echo "::error::Failed to delete Brev instance ${INSTANCE} after ${attempt} attempts."
+              exit "$status"
+            fi
+
+            echo "::warning::Brev delete attempt ${attempt} failed; refreshing before retry."
+            brev refresh >/dev/null 2>&1 || true
+            sleep "$((attempt * 5))"
+          done
 
   report-pr:
     name: Report Brev E2E result

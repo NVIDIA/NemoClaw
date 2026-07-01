@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
+import { BREV_WORKFLOW_OWNERSHIP_ENV } from "../tools/e2e/brev-remote-vitest.mts";
 import { readYaml } from "./helpers/e2e-workflow-contract";
 
 type ReusableCallerJob = {
@@ -13,6 +14,7 @@ type ReusableCallerJob = {
   "timeout-minutes"?: number;
   steps?: Array<{
     env?: Record<string, unknown>;
+    if?: string;
     name?: string;
     run?: string;
     uses?: string;
@@ -128,6 +130,33 @@ describe("Brev nightly workflow contract", () => {
       "full",
     ]);
     expect(branchValidation.jobs?.["e2e-branch-validation"]?.["timeout-minutes"]).toBe(130);
+  });
+
+  it("keeps failure diagnostics ahead of workflow-owned instance deletion", () => {
+    const steps = branchValidation.jobs?.["e2e-branch-validation"]?.steps ?? [];
+    const run = steps.find((step) => step.name === "Run ephemeral Brev E2E");
+    const collect = steps.find((step) => step.name === "Collect Brev debug bundle on failure");
+    const uploadDebug = steps.find((step) => step.name === "Upload Brev debug bundle on failure");
+    const uploadLogs = steps.find((step) => step.name === "Upload test logs");
+    const cleanup = steps.find((step) => step.name === "Delete Brev instance");
+
+    expect(run?.env?.[BREV_WORKFLOW_OWNERSHIP_ENV]).toBe("1");
+    expect(cleanup?.if).toBe("always() && !inputs.keep_alive");
+    expect(cleanup?.env?.INSTANCE).toBe("${{ env.BREV_E2E_INSTANCE_NAME }}");
+    expect(uploadDebug?.with?.name).toBe("brev-debug-bundle-${{ inputs.test_suite }}");
+    expect(uploadLogs?.with?.name).toBe("e2e-branch-validation-logs-${{ inputs.test_suite }}");
+    expect(cleanup?.run).toContain("for attempt in 1 2 3");
+    expect(cleanup?.run).toContain('brev delete "$INSTANCE"');
+    expect(cleanup?.run).toContain("not found|does not exist");
+    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
+      steps.indexOf(collect as NonNullable<typeof collect>),
+    );
+    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
+      steps.indexOf(uploadDebug as NonNullable<typeof uploadDebug>),
+    );
+    expect(steps.indexOf(cleanup as NonNullable<typeof cleanup>)).toBeGreaterThan(
+      steps.indexOf(uploadLogs as NonNullable<typeof uploadLogs>),
+    );
   });
 
   it("keeps manual dispatch inputs out of the Brev credential boundary", () => {

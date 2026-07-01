@@ -59,6 +59,7 @@ import {
   BREV_REMOTE_WRAPPER_GRACE_MS,
   brevSuiteHarnessSandboxName,
   brevSuiteNeedsHarnessSandbox,
+  brevWorkflowOwnsInstance,
   buildBrevRemoteVitestCommand,
 } from "../../tools/e2e/brev-remote-vitest.mts";
 
@@ -1149,10 +1150,17 @@ describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
 
   afterAll(() => {
     if (!instanceCreated) return;
-    if (process.env.KEEP_ALIVE === "true") {
-      console.log(`\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`);
-      console.log(`  To connect: brev refresh && ssh ${INSTANCE_NAME}`);
-      console.log(`  To delete:  brev delete ${INSTANCE_NAME}\n`);
+    const keepAlive = process.env.KEEP_ALIVE === "true";
+    const workflowOwnsInstance = brevWorkflowOwnsInstance();
+    if (keepAlive || workflowOwnsInstance) {
+      const lines = keepAlive
+        ? [
+            `\n  Instance "${INSTANCE_NAME}" kept alive for debugging.`,
+            `  To connect: brev refresh && ssh ${INSTANCE_NAME}`,
+            `  To delete:  brev delete ${INSTANCE_NAME}\n`,
+          ]
+        : [`Instance "${INSTANCE_NAME}" deletion deferred to workflow-owned cleanup.`];
+      console.log(lines.join("\n"));
       return;
     }
     deleteBrevInstance(requireInstanceName());

@@ -7,7 +7,8 @@ export type BrevVitestProject = "cli" | "e2e-live";
 
 export const BREV_MESSAGING_PROVIDER_TIMEOUT_MS = 70 * 60_000;
 export const BREV_MESSAGING_COMPAT_TIMEOUT_MS = 40 * 60_000;
-export const BREV_REMOTE_WRAPPER_GRACE_MS = 60_000;
+export const BREV_REMOTE_WRAPPER_GRACE_MS = 120_000;
+export const BREV_WORKFLOW_OWNERSHIP_ENV = "NEMOCLAW_BREV_WORKFLOW_OWNS_INSTANCE";
 
 const BREV_SUITES_WITHOUT_HARNESS_SANDBOX = new Set([
   "all",
@@ -23,6 +24,10 @@ export function brevSuiteNeedsHarnessSandbox(testSuite: string): boolean {
 
 export function brevSuiteHarnessSandboxName(testSuite: string): string | undefined {
   return brevSuiteNeedsHarnessSandbox(testSuite) ? "e2e-test" : undefined;
+}
+
+export function brevWorkflowOwnsInstance(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[BREV_WORKFLOW_OWNERSHIP_ENV] === "1";
 }
 
 export function buildBrevRemoteVitestCommand(project: BrevVitestProject, target: string): string {
