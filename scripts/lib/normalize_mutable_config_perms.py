@@ -291,6 +291,7 @@ def open_baseline_capture_source(
             BASELINE_NAME, dir_fd=root_fd, follow_symlinks=False
         )
     except FileNotFoundError:
+        # The baseline is optional until the first successful capture.
         pass
     except OSError as exc:
         raise UnsafeTree() from exc
@@ -492,6 +493,7 @@ def stage_owner_file(
                 if inode_key(current) == identity:
                     os.unlink(temp_name, dir_fd=root_fd)
             except (OSError, UnboundLocalError):
+                # Preserve the primary staging error; an unmatched temp is never unlinked.
                 pass
         raise
 
@@ -514,6 +516,7 @@ def cleanup_staged_file(
                 os.unlink(temp_name, dir_fd=root_fd)
                 os.fsync(root_fd)
         except OSError:
+            # Best-effort cleanup must not replace the operation's primary failure.
             pass
     if temp_fd >= 0:
         os.close(temp_fd)
@@ -945,6 +948,7 @@ def lock_recovery_baseline(
                     os.unlink(temp_name, dir_fd=root_fd)
                     os.fsync(root_fd)
             except OSError:
+                # Best-effort cleanup must not replace the operation's primary failure.
                 pass
         if temp_fd >= 0:
             os.close(temp_fd)
@@ -1104,6 +1108,7 @@ def capture_recovery_baseline(
                     os.unlink(temp_name, dir_fd=root_fd)
                     os.fsync(root_fd)
             except OSError:
+                # Best-effort cleanup must not replace the operation's primary failure.
                 pass
         if temp_fd >= 0:
             os.close(temp_fd)
@@ -1114,6 +1119,7 @@ def close_fds(fds: list[int]) -> None:
         try:
             os.close(fd)
         except OSError:
+            # Rejecting malformed ancillary data may encounter duplicate closed FDs.
             pass
 
 
@@ -1230,7 +1236,6 @@ def run_root_supervisor(
         parent_socket.close()
         root_fd = -1
         capture_source_fd: int | None = None
-        exit_code = 1
         try:
             drop_to_owner(sandbox_uid, sandbox_gid)
             root_fd, capture_source_fd = normalize_owner_tree(
@@ -1319,6 +1324,7 @@ def run_root_supervisor(
             try:
                 os.waitpid(child_pid, 0)
             except ChildProcessError:
+                # The child was already reaped while handling the primary failure.
                 pass
         if root_fd >= 0:
             os.close(root_fd)
