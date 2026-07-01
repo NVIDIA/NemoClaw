@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import credentialBoundaryManifest from "../src/lib/actions/sandbox/openshell-child-visible-credentials.v0.0.72.json";
 import { buildRebuildHermesChildEnv } from "./e2e/live/rebuild-hermes-env.ts";
 
 const SCRIPT = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
@@ -22,7 +23,7 @@ const PINNED_OPEN_SHELL_SHA256 = {
   sandboxBinaryLinuxX64: "f9f991a24d10772ad5d24ae27a8ea6baad8cac671695bd90fcd0355e0e0ad198",
 };
 const ZERO_SHA256 = "0000000000000000000000000000000000000000000000000000000000000000";
-const REQUIRED_OPENSHELL_VERSION = "0.0.72";
+const REQUIRED_OPENSHELL_VERSION = credentialBoundaryManifest.openshellVersion;
 const LEGACY_OPENSHELL_VERSION = "0.0.44";
 const OPENSHELL_REWRITE_FEATURE_MARKERS =
   "request-body-credential-rewrite websocket-credential-rewrite";

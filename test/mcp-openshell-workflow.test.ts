@@ -18,10 +18,6 @@ type E2eWorkflow = {
   jobs?: Record<string, { env?: Record<string, unknown> }>;
 };
 
-function shellAssignment(script: string, name: string): string | undefined {
-  return script.match(new RegExp(`^${name}="([^"]+)"$`, "m"))?.[1];
-}
-
 describe("MCP OpenShell workflow boundary", () => {
   it("keeps the setup docs aligned with the stable default", () => {
     const setupDocs = fs.readFileSync("docs/deployment/set-up-mcp-bridge.mdx", "utf8");
@@ -41,12 +37,9 @@ describe("MCP OpenShell workflow boundary", () => {
 
   it("keeps the credential manifest aligned with every shipping OpenShell version pin", () => {
     const expected = credentialBoundaryManifest.openshellVersion;
-    const installer = fs.readFileSync("scripts/install-openshell.sh", "utf8");
     const blueprint = readYaml<Blueprint>("nemoclaw-blueprint/blueprint.yaml");
     const workflow = readYaml<E2eWorkflow>(".github/workflows/e2e.yaml");
 
-    expect(shellAssignment(installer, "MIN_VERSION")).toBe(expected);
-    expect(shellAssignment(installer, "MAX_VERSION")).toBe(expected);
     expect(blueprint.min_openshell_version).toBe(expected);
     expect(blueprint.max_openshell_version).toBe(expected);
     expect(
