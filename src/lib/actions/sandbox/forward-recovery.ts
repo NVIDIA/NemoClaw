@@ -116,6 +116,12 @@ export function ensureSandboxPortForwardForPort(sandboxName: string, port: numbe
   // Preserve authoritative owner metadata while waiting: accept a target-
   // owned forward that recovered on its own, reject another sandbox, and only
   // start after an otherwise-unowned local listener has actually quiesced.
+  // NemoClaw must compensate while the already-released OpenShell 0.0.72
+  // contract remains supported; test/process-recovery.test.ts locks both the
+  // delayed-release and fail-closed cases. Remove this wait only after every
+  // supported OpenShell release either waits for host-listener release before
+  // `forward stop` returns or exposes an authoritative listener-released state
+  // that this path consumes instead.
   if (waitMs > 0 && isLocalForwardReachable(port)) {
     const stopState: { health: SandboxForwardHealth; portReleased: boolean } = {
       health: forwardHealth,
