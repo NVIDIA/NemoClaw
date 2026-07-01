@@ -17,9 +17,8 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
-      # Deep Agents Code executes network clients through its managed,
-      # read-only Python environment. Keep this scoped to that interpreter;
-      # arbitrary system and project Python remain denied.
+      # OpenShell attributes Deep Agents Code Tavily requests to this managed
+      # Python venv, which its strict Landlock policy mounts read-only.
       - { path: /opt/venv/bin/python3* }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }

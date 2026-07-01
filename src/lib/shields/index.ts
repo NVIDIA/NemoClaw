@@ -98,6 +98,7 @@ const HERMES_RUNTIME_CONFIG_GUARD = "/usr/local/lib/nemoclaw/hermes-runtime-conf
 const HERMES_PYTHON = "/opt/hermes/.venv/bin/python";
 const HERMES_RESTART_SEAL_STATE = "/run/nemoclaw/hermes-restart-seal.json";
 const HERMES_CONFIG_HASH = "/etc/nemoclaw/hermes.config-hash";
+const MUTABLE_CONFIG_NORMALIZER = "/usr/local/lib/nemoclaw/normalize_mutable_config_perms.py";
 const STATE_DIR_GUARD_TIMEOUT_MS = 15 * 60 * 1000;
 const OPENCLAW_CONFIG_GUARD_TIMEOUT_MS = 6 * 60 * 1000;
 const HERMES_CONFIG_GUARD_TIMEOUT_MS = 11 * 60 * 1000;
@@ -320,6 +321,28 @@ function privilegedSandboxExecCapture(sandboxName: string, cmd: string[], timeou
     stdio: ["ignore", "pipe", "pipe"],
     timeout,
   }).trim();
+}
+
+function sandboxIdentityId(sandboxName: string, flag: "-u" | "-g"): string {
+  const id = privilegedSandboxExecCapture(sandboxName, ["/usr/bin/id", flag, "sandbox"]);
+  if (!/^[1-9][0-9]*$/.test(id)) {
+    const kind = flag === "-u" ? "UID" : "GID";
+    throw new Error(`sandbox identity lookup returned an invalid ${kind}`);
+  }
+  return id;
+}
+
+function normalizeMutableOpenClawConfig(sandboxName: string, configDir: string): void {
+  const sandboxUid = sandboxIdentityId(sandboxName, "-u");
+  const sandboxGid = sandboxIdentityId(sandboxName, "-g");
+  privilegedSandboxExec(sandboxName, [
+    "/usr/bin/python3",
+    "-I",
+    MUTABLE_CONFIG_NORMALIZER,
+    configDir,
+    sandboxUid,
+    sandboxGid,
+  ]);
 }
 
 function hermesShieldsGuardArgs(
@@ -1787,7 +1810,7 @@ function repairMutableConfigPerms(sandboxName: string): MutableConfigRepairResul
     return repairMutableConfigPermsCore(
       target,
       getShieldsPostureWithoutHostLock(sandboxName, true).mode,
-      () => unlockAgentConfig(sandboxName, target),
+      () => normalizeMutableOpenClawConfig(sandboxName, target.configDir),
     );
   });
 }

@@ -959,6 +959,8 @@ When that happens, OpenClaw commands may report that the config is empty instead
 
 Current NemoClaw sandboxes capture a known-good config baseline after a successful startup.
 On the next sandbox startup, NemoClaw restores `openclaw.json` from OpenClaw's last-good copy when available, or from the NemoClaw baseline.
+Recovery validates the config tree and selected source before atomically replacing `openclaw.json` and `.config-hash`.
+If it detects an unsafe link, unexpected owner, or path change, startup fails closed without following or modifying the unsafe target.
 If the sandbox still cannot start or reports that no baseline is available, rebuild it from the host:
 
 ```bash
@@ -1052,14 +1054,27 @@ Current NemoClaw rebuilds bake Telegram in the account-based layout and set Tele
 In a mutable NemoClaw sandbox, the gateway UID and the sandbox UID share the `sandbox` group, so `/sandbox/.openclaw` is setgid and group-writable (`2770`) and `openclaw.json` is group-writable (`660`).
 OpenClaw's `openclaw doctor --fix` enforces its own single-user `700/600` layout, so running it inside the sandbox strips group write and breaks gateway-side config writes (for example, control-UI toggles that mutate `openclaw.json`).
 
-Repair the mutable contract without rebuilding:
+When you invoke the command through the host-side one-shot path, NemoClaw restores the mutable contract as the command exits:
 
 ```bash
-nemoclaw <sandbox> doctor --fix
+$$nemoclaw <sandbox> exec -- openclaw doctor --fix
 ```
 
-`nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
-Restarting the sandbox repairs the same drift automatically, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+When cleanup succeeds, `exec` preserves the `openclaw doctor --fix` exit code.
+If cleanup cannot inspect, restore, or verify the mutable config permission contract, it returns a cleanup failure instead and prints `OpenClaw permission cleanup failed (...)` with the command and cleanup statuses.
+Do not recursively change ownership or permissions over a config tree that failed this safety check.
+Inspect the reported condition and rebuild from trusted host-side configuration if the tree or image boundary is not the expected NemoClaw layout.
+
+If you ran `openclaw doctor --fix` from an interactive `connect` shell or use an older sandbox image, repair the mutable contract without rebuilding:
+
+```bash
+$$nemoclaw <sandbox> doctor --fix
+```
+
+`$$nemoclaw <sandbox> doctor` reports the drift as a `Config permissions` warning, and `--fix` restores `2770/660`.
+Restarting the sandbox repairs the same drift automatically when the config tree passes its safety checks, and NemoClaw's own `rebuild` re-applies the contract after its post-upgrade `openclaw doctor --fix` step.
+If startup reports `[SECURITY] Refusing mutable config permission normalization`, NemoClaw stops startup without following or modifying the unsafe target; safe permission repairs completed before detection are not rolled back.
+Rebuild with the current image and trusted host-side configuration instead of repairing the tree recursively.
 
 When verifying gateway write access by hand, step down to the gateway UID with the image's installed mechanism so the `sandbox` group membership is initialized:
 
@@ -1075,7 +1090,7 @@ A NemoClaw sandbox has two intentional permission states for `/sandbox/.openclaw
 
 - **Mutable default:** `/sandbox/.openclaw` is `2770 sandbox:sandbox` and `openclaw.json` is `660 sandbox:sandbox`. Both the sandbox user and the gateway (same `sandbox` group, different UID) can write config, so control-UI toggles persist.
 - **Host-locked state:** `openclaw.json` is read-only for in-sandbox writers and the config dir is owned by `root`, with the immutable bit set where available. No in-sandbox writes are expected; use the host-side `nemoclaw <sandbox> config set` flow described in [`openclaw config set` fails with a permission error on Brev](#openclaw-config-set-fails-with-a-permission-error-on-brev).
-- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `nemoclaw <sandbox> doctor --fix` or a sandbox restart.
+- **`700/600` (drift):** the layout that upstream `openclaw doctor --fix` imposes inside a mutable sandbox. It is not a supported NemoClaw state; recover with `$$nemoclaw <sandbox> doctor --fix` or a sandbox restart.
 
 ### Discord bot logs in, but the channel still does not work
 
