@@ -70,3 +70,22 @@ export function makeActiveTeamsMessagingPlan() {
     healthChecks: [],
   };
 }
+
+export function makePreparedRecoveryManifest() {
+  return {
+    version: 1,
+    sandboxName: "alpha",
+    timestamp: "2026-07-01T06-50-42-044Z",
+    agentType: "openclaw",
+    agentVersion: "0.1.0",
+    expectedVersion: "0.2.0",
+    stateDirs: ["workspace"],
+    backedUpDirs: ["workspace"],
+    stateFiles: [],
+    dir: "/sandbox/.openclaw",
+    backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T06-50-42-044Z",
+    blueprintDigest: null,
+    policyPresets: ["npm"],
+    customPolicies: [],
+  };
+}

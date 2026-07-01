@@ -31,6 +31,7 @@ export NEMOCLAW_AGENT=hermes
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The hosted installer follows the last-known-good (`lkg`) release tag by default, so this command installs the maintained Hermes-capable build without a version override.
 To expose the Hermes dashboard from a headless host through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
 Use the externally reachable origin for the dashboard port `18789`.
 NemoClaw derives the forwarded dashboard port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final dashboard URL in the ready summary.

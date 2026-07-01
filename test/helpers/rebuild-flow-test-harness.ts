@@ -3,6 +3,7 @@
 
 import { createRequire } from "node:module";
 import { afterEach, beforeEach, vi } from "vitest";
+import { makePreparedRecoveryManifest } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import {
   createRebuildFlowSession,
   installTerminalStepFailureMock,
@@ -65,7 +66,10 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcPreflightIssue").mockReturnValue(null);
   vi.spyOn(gatewayDrift, "detectOpenShellStateRpcResultIssue").mockReturnValue(null);
   vi.spyOn(sandboxList, "captureSandboxListWithGatewayRecovery").mockResolvedValue({
-    result: { status: 0, output: overrides.staleRecovery ? "" : "alpha Ready" },
+    result: {
+      status: 0,
+      output: overrides.sandboxListOutput ?? (overrides.staleRecovery ? "" : "alpha Ready"),
+    },
   });
   vi.spyOn(gatewayState, "getReconciledSandboxGatewayState").mockResolvedValue({
     state: overrides.staleRecovery ? "missing" : "present",
@@ -115,6 +119,7 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
     model: "nvidia/nemotron",
     policies: ["npm"],
     agent: null,
+    agentVersion: "0.1.0",
     nimContainer: null,
     nemoclawVersion: "0.1.0",
     dashboardPort: 18789,
@@ -124,9 +129,24 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
   };
   vi.spyOn(registry, "getSandbox").mockReturnValue(sandboxEntry);
   vi.spyOn(registry, "getDefault").mockReturnValue(overrides.defaultSandbox ?? null);
-  vi.spyOn(registry, "load").mockReturnValue({
-    sandboxes: { alpha: sandboxEntry },
-    defaultSandbox: overrides.defaultSandbox ?? null,
+  let registryLoadCount = 0;
+  vi.spyOn(registry, "load").mockImplementation(() => {
+    const isPreDeleteRead = registryLoadCount > 0;
+    registryLoadCount++;
+    const defaultSandbox = isPreDeleteRead
+      ? overrides.preDeleteDefaultSandbox !== undefined
+        ? overrides.preDeleteDefaultSandbox
+        : (overrides.defaultSandbox ?? null)
+      : (overrides.defaultSandbox ?? null);
+    return {
+      sandboxes: {
+        alpha:
+          isPreDeleteRead && overrides.preDeleteSandboxEntry
+            ? overrides.preDeleteSandboxEntry
+            : sandboxEntry,
+      },
+      defaultSandbox,
+    };
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({ sandboxes: [] });
   const registryUpdateSpy = vi.spyOn(registry, "updateSandbox").mockReturnValue(true);
@@ -161,6 +181,21 @@ export function createRebuildFlowHarness(overrides: RebuildFlowOverrides = {}): 
       policyPresets: overrides.backupPolicyPresets ?? ["npm", "bad", "throw"],
     },
   });
+  vi.spyOn(sandboxState, "validateRebuildRecoveryManifest").mockImplementation(
+    (...args: unknown[]) => {
+      const manifest = args[2] as Record<string, unknown>;
+      return overrides.recoveryManifestValidation?.(manifest) ?? { ok: true, manifest };
+    },
+  );
+  vi.spyOn(sandboxState, "getLatestBackup").mockImplementation(
+    () =>
+      (overrides.preDeleteLatestManifest === undefined
+        ? makePreparedRecoveryManifest()
+        : overrides.preDeleteLatestManifest) as ReturnType<typeof sandboxState.getLatestBackup>,
+  );
+  vi.spyOn(sandboxState, "hasPositiveManagedImageEvidence").mockReturnValue(
+    overrides.managedImageEvidence ?? true,
+  );
   const restoreSandboxStateSpy = vi.spyOn(sandboxState, "restoreSandboxState").mockImplementation(
     overrides.restoreSandboxState ??
       (() => ({

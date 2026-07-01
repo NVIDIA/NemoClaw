@@ -3,6 +3,7 @@
 
 import type { RebuildSandboxOptions } from "../../domain/lifecycle/options";
 import type { SandboxMessagingPlan } from "../../messaging";
+import type { RebuildManifest } from "../../state/sandbox";
 import type { RebuildBail, RebuildLog } from "./rebuild-credential-preflight";
 import {
   type RebuildAgentBaseImagePreflight,
@@ -26,6 +27,10 @@ import {
   isSingleAgentRebuildSupported,
 } from "./rebuild-preflight-guards";
 import { prepareRebuildTargetPreflights } from "./rebuild-preflight-target-phase";
+import {
+  type RebuildSandboxExecutionOptions,
+  validatePreparedRecoveryManifest,
+} from "./rebuild-prepared-recovery";
 import type { RebuildTargetConfig } from "./rebuild-target-preflight";
 
 export interface RebuildPreflightPhaseResult {
@@ -37,6 +42,7 @@ export interface RebuildPreflightPhaseResult {
   messagingPlan: SandboxMessagingPlan | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
   liveState: RebuildLiveState;
+  recoveryManifest: RebuildManifest | null;
   releaseOnboardLock: () => void;
   log: RebuildLog;
   bail: RebuildBail;
@@ -52,13 +58,19 @@ export interface RebuildPreflightPhaseResult {
 export async function runRebuildPreflightPhase(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
-  opts: { throwOnError?: boolean } = {},
+  opts: RebuildSandboxExecutionOptions = {},
 ): Promise<RebuildPreflightPhaseResult | null> {
   const { log, bail, skipConfirm } = createRebuildCommandContext(options, opts);
   const activeSessionCount = countActiveSandboxSessionsForRebuild(sandboxName);
   const sandboxEntry = getRebuildSandboxEntryOrBail(sandboxName, bail);
   if (!sandboxEntry) return null;
   const confirmedEntrySnapshot = JSON.stringify(sandboxEntry);
+  const recoveryManifest = validatePreparedRecoveryManifest(
+    sandboxName,
+    sandboxEntry,
+    opts.recoveryManifest,
+    bail,
+  );
   if (!isSingleAgentRebuildSupported(sandboxEntry, bail)) return null;
 
   const rebuildAgent = sandboxEntry.agent || null;
@@ -98,6 +110,7 @@ export async function runRebuildPreflightPhase(
       versionCheck,
       ...preparedTarget,
       liveState,
+      recoveryManifest,
       releaseOnboardLock,
       log,
       bail,

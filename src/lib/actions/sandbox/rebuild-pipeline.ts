@@ -7,6 +7,7 @@ import { MESSAGING_SETUP_APPLIER_ENV_KEY } from "../../messaging/applier/types";
 import { MESSAGING_CHANNEL_CONFIG_ENV_KEYS } from "../../messaging-channel-config";
 import { DOCKER_GPU_PATCH_NETWORK_ENV } from "../../onboard/docker-gpu-patch";
 import { withMcpLifecycleLock } from "../../state/mcp-lifecycle-lock";
+import * as registry from "../../state/registry";
 import { runRebuildBackupPhase } from "./rebuild-backup-phase";
 import { buildRefreshMutableOpenClawConfigHashCommand } from "./rebuild-config-hash";
 import { runRebuildDestroyPhase } from "./rebuild-destroy-phase";
@@ -14,6 +15,10 @@ import { REBUILD_HERMES_DASHBOARD_ENV_KEYS } from "./rebuild-durable-config";
 import { stageMessagingManifestPlanForRebuild } from "./rebuild-messaging-phase";
 import { runRebuildPostRestorePhase } from "./rebuild-post-restore-phase";
 import { runRebuildPreflightPhase } from "./rebuild-preflight-phase";
+import {
+  type RebuildSandboxExecutionOptions,
+  revalidatePreparedRecoveryBeforeDelete,
+} from "./rebuild-prepared-recovery";
 import { runRebuildRecreatePhase } from "./rebuild-recreate-phase";
 import { runRebuildRestorePhase } from "./rebuild-restore-phase";
 import { runRebuildShieldsPhase } from "./rebuild-shields-phase";
@@ -29,7 +34,7 @@ export { buildRefreshMutableOpenClawConfigHashCommand, stageMessagingManifestPla
 export async function rebuildSandbox(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions = {},
-  opts: { throwOnError?: boolean } = {},
+  opts: RebuildSandboxExecutionOptions = {},
 ): Promise<void> {
   return withMcpLifecycleLock(sandboxName, async () => {
     const scopedEnvKeys = [
@@ -58,7 +63,7 @@ export async function rebuildSandbox(
 async function rebuildSandboxUnlocked(
   sandboxName: string,
   options: string[] | RebuildSandboxOptions,
-  opts: { throwOnError?: boolean },
+  opts: RebuildSandboxExecutionOptions,
 ): Promise<void> {
   const preflight = await runRebuildPreflightPhase(sandboxName, options, opts);
   if (!preflight) return;
@@ -71,6 +76,7 @@ async function rebuildSandboxUnlocked(
     messagingPlan,
     baseImagePreflight,
     liveState,
+    recoveryManifest: validatedRecoveryManifest,
     releaseOnboardLock,
     log,
     bail,
@@ -85,8 +91,19 @@ async function rebuildSandboxUnlocked(
     credentialEnv,
     fromDockerfile,
   } = targetConfig;
-  const { staleRecovery, staleRegistrySnapshot } = liveState;
-  const shieldsPhase = runRebuildShieldsPhase(sandboxName, staleRecovery, releaseOnboardLock, bail);
+  const { staleRecovery } = liveState;
+  let recoveryManifest = validatedRecoveryManifest;
+  const preparedBackupRecovery = recoveryManifest !== null;
+  const recoveryRecreate = staleRecovery || preparedBackupRecovery;
+  let recoveryRegistrySnapshot = preparedBackupRecovery
+    ? JSON.parse(JSON.stringify(registry.load()))
+    : liveState.staleRegistrySnapshot;
+  const shieldsPhase = runRebuildShieldsPhase(
+    sandboxName,
+    recoveryRecreate,
+    releaseOnboardLock,
+    bail,
+  );
   if (!shieldsPhase) return;
   const {
     window: rebuildShieldsWindow,
@@ -96,10 +113,21 @@ async function rebuildSandboxUnlocked(
   let sandboxStillExists = true;
 
   try {
+    const preDeleteRecovery = revalidatePreparedRecoveryBeforeDelete(
+      sandboxName,
+      sandboxEntry,
+      recoveryManifest,
+      recoveryRegistrySnapshot,
+      bail,
+    );
+    recoveryManifest = preDeleteRecovery.manifest;
+    recoveryRegistrySnapshot = preDeleteRecovery.registrySnapshot;
+
     const backup = runRebuildBackupPhase({
       sandboxName,
       sandboxEntry,
       staleRecovery,
+      preparedRecoveryManifest: recoveryManifest,
       messagingPlan,
       log,
       bail,
@@ -138,8 +166,8 @@ async function rebuildSandboxUnlocked(
       sessionPolicyPresets: backup.sessionPolicyPresets,
       credentialEnv,
       baseImagePreflight,
-      staleRecovery,
-      staleRegistrySnapshot,
+      recoveryRecreate,
+      recoveryRegistrySnapshot,
       backupManifest: backup.backupManifest,
       mcpEntries: mcpPreparation.entries,
       rebuildShieldsWindow,
@@ -168,6 +196,8 @@ async function rebuildSandboxUnlocked(
       restoredPresets: restored.restoredPresets,
       failedPresets: restored.failedPresets,
       staleRecovery,
+      recoveryRecreate,
+      preparedBackupRecovery,
       staleSandboxWasLocked,
       versionCheck,
       relockShieldsIfNeeded,

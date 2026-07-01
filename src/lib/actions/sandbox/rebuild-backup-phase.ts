@@ -16,6 +16,7 @@ export interface RebuildBackupPhaseInput {
   sandboxName: string;
   sandboxEntry: RebuildSandboxEntry;
   staleRecovery: boolean;
+  preparedRecoveryManifest: RebuildBackupManifest;
   messagingPlan: SandboxMessagingPlan | null;
   log: RebuildLog;
   bail: RebuildBail;
@@ -31,14 +32,16 @@ export interface RebuildBackupPhaseResult {
 export function runRebuildBackupPhase(
   input: RebuildBackupPhaseInput,
 ): RebuildBackupPhaseResult | null {
-  const backupManifest = backupSandboxStateForRebuild(
-    input.sandboxName,
-    input.sandboxEntry,
-    input.staleRecovery,
-    input.log,
-    input.relockShieldsIfNeeded,
-    input.bail,
-  );
+  const backupManifest =
+    input.preparedRecoveryManifest ??
+    backupSandboxStateForRebuild(
+      input.sandboxName,
+      input.sandboxEntry,
+      input.staleRecovery,
+      input.log,
+      input.relockShieldsIfNeeded,
+      input.bail,
+    );
   if (backupManifest === undefined) return null;
 
   const registryPolicyPresets = Array.isArray(input.sandboxEntry.policies)

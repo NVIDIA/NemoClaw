@@ -33,6 +33,8 @@ export interface RebuildPostRestorePhaseInput {
   restoredPresets: string[];
   failedPresets: string[];
   staleRecovery: boolean;
+  recoveryRecreate: boolean;
+  preparedBackupRecovery: boolean;
   staleSandboxWasLocked: boolean;
   versionCheck: ReturnType<typeof sandboxVersion.checkAgentVersion>;
   relockShieldsIfNeeded: (sandboxStillExists: boolean) => boolean;
@@ -58,6 +60,8 @@ export async function runRebuildPostRestorePhase(
     restoredPresets,
     failedPresets,
     staleRecovery,
+    recoveryRecreate,
+    preparedBackupRecovery,
     staleSandboxWasLocked,
     versionCheck,
     relockShieldsIfNeeded,
@@ -149,18 +153,17 @@ export async function runRebuildPostRestorePhase(
   }
 
   console.log("");
-  if (
-    postRestoreCompleted({
-      messagingHostForwardUnverified,
-      mcpBridgeRestoreUnverified,
-      mutableConfigHashRefreshUnverified,
-      mutablePermsRepairUnverified,
-      policyPresetRestoreIncomplete,
-      restoreSucceeded,
-    })
-  ) {
+  const postRestoreComplete = postRestoreCompleted({
+    messagingHostForwardUnverified,
+    mcpBridgeRestoreUnverified,
+    mutableConfigHashRefreshUnverified,
+    mutablePermsRepairUnverified,
+    policyPresetRestoreIncomplete,
+    restoreSucceeded,
+  });
+  if (postRestoreComplete) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
-    if (staleRecovery) {
+    if (staleRecovery && !backupManifest) {
       console.log(
         `    ${D}Recovered from a stale registry entry \u2014 no prior workspace state was available to restore.${R}`,
       );
@@ -199,9 +202,14 @@ export async function runRebuildPostRestorePhase(
       );
     }
   }
-  if (staleRecovery && staleSandboxWasLocked) {
+  if (recoveryRecreate && staleSandboxWasLocked) {
     console.log(
       `    ${YW}\u26a0${R} Shields were previously enabled but the recreated sandbox starts unlocked \u2014 run \`${CLI_NAME} ${sandboxName} shields up\` to restore lockdown.`,
+    );
+  }
+  if (preparedBackupRecovery && !postRestoreComplete) {
+    bail(
+      `Prepared backup recovery for '${sandboxName}' completed with unverified post-restore state.`,
     );
   }
 }

@@ -18,7 +18,7 @@ export interface RebuildShieldsPhaseResult {
  */
 export function runRebuildShieldsPhase(
   sandboxName: string,
-  staleRecovery: boolean,
+  recoveryRecreate: boolean,
   releaseOnboardLock: () => void,
   bail: RebuildBail,
 ): RebuildShieldsPhaseResult | null {
@@ -27,7 +27,7 @@ export function runRebuildShieldsPhase(
   try {
     ({ rebuildShieldsWindow: window, staleSandboxWasLocked } = openRebuildShieldsWindowForState(
       sandboxName,
-      staleRecovery,
+      recoveryRecreate,
     ));
   } catch (error) {
     process.removeListener("exit", releaseOnboardLock);

@@ -46,7 +46,15 @@ export type RebuildFlowOverrides = {
   buildMessagingRebuildPlan?: () => Promise<unknown> | unknown;
   sandboxEntry?: Record<string, unknown>;
   sessionSandboxName?: string;
+  sandboxListOutput?: string;
   defaultSandbox?: string | null;
+  preDeleteSandboxEntry?: Record<string, unknown>;
+  preDeleteDefaultSandbox?: string | null;
+  preDeleteLatestManifest?: Record<string, unknown> | null;
+  recoveryManifestValidation?: (
+    manifest: Record<string, unknown>,
+  ) => { ok: true; manifest: Record<string, unknown> } | { ok: false; reason: string };
+  managedImageEvidence?: boolean;
   staleRecovery?: boolean;
   mcpPreparation?: {
     entries: Array<Record<string, unknown>>;

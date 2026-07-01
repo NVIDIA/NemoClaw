@@ -182,9 +182,9 @@ export async function resolveRebuildLiveState(
 
 export function openRebuildShieldsWindowForState(
   sandboxName: string,
-  staleRecovery: boolean,
+  recoveryRecreate: boolean,
 ): { rebuildShieldsWindow: RebuildShieldsWindow | null; staleSandboxWasLocked: boolean } {
-  if (staleRecovery) {
+  if (recoveryRecreate) {
     return {
       staleSandboxWasLocked: !shields.isShieldsDown(sandboxName),
       rebuildShieldsWindow: { relocked: false, wasLocked: false },

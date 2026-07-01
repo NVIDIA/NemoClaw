@@ -47,8 +47,8 @@ export interface RebuildRecreatePhaseInput {
   sessionPolicyPresets: string[] | null;
   credentialEnv: string | null;
   baseImagePreflight: RebuildAgentBaseImagePreflight;
-  staleRecovery: boolean;
-  staleRegistrySnapshot: ReturnType<typeof registry.load> | null;
+  recoveryRecreate: boolean;
+  recoveryRegistrySnapshot: ReturnType<typeof registry.load> | null;
   backupManifest: RebuildBackupManifest;
   mcpEntries: McpRebuildPreparation["entries"];
   rebuildShieldsWindow: RebuildShieldsWindow;
@@ -81,8 +81,8 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     sessionPolicyPresets: rebuildSessionPolicyPresets,
     credentialEnv: rebuildCredentialEnv,
     baseImagePreflight: rebuildBaseImagePreflight,
-    staleRecovery,
-    staleRegistrySnapshot,
+    recoveryRecreate,
+    recoveryRegistrySnapshot,
     backupManifest,
     mcpEntries: rebuildMcpEntries,
     rebuildShieldsWindow,
@@ -203,24 +203,22 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
       /* best effort */
     }
 
-    const snapshotEntry = staleRegistrySnapshot?.sandboxes?.[sandboxName];
-    if (staleRecovery && snapshotEntry) {
+    const snapshotEntry = recoveryRegistrySnapshot?.sandboxes?.[sandboxName];
+    if (recoveryRecreate && snapshotEntry) {
       try {
         registry.restoreSandboxEntry(snapshotEntry, {
           reclaimDefault:
-            staleRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
+            recoveryRegistrySnapshot?.defaultSandbox === sandboxName ? sandboxName : null,
         });
-        log("Stale-recovery recreate failed: restored preserved registry entry for retry");
+        log("Recovery recreate failed: restored preserved registry entry for retry");
       } catch (error) {
-        log(
-          `Failed to restore registry entry after stale-recovery recreate failure: ${String(error)}`,
-        );
+        log(`Failed to restore registry entry after recovery recreate failure: ${String(error)}`);
       }
     }
-    restoreMcpRegistryForRebuildRetry(staleRecovery, rebuildMcpEntries, sb, log);
+    restoreMcpRegistryForRebuildRetry(recoveryRecreate, rebuildMcpEntries, sb, log);
 
     console.error("");
-    if (staleRecovery) {
+    if (recoveryRecreate) {
       console.error(`  ${_RD}Recovery recreate failed.${R}`);
       console.error(
         "  Your local registry entry has been preserved — you can retry once the issue above is fixed.",
@@ -251,7 +249,7 @@ export async function runRebuildRecreatePhase(input: RebuildRecreatePhaseInput):
     return false;
   }
 
-  if (staleRecovery) shields.clearShieldsState(sandboxName);
+  if (recoveryRecreate) shields.clearShieldsState(sandboxName);
   const preservedRegistryFields = {
     ...(hasRebuildHermesToolGateways ? { hermesToolGateways: [...rebuildHermesToolGateways] } : {}),
   };

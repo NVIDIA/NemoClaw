@@ -60,6 +60,8 @@ export type {
   RestartSandboxGatewayOptions,
 } from "./gateway-restart";
 
+export { buildSandboxExecMarkedCommand } from "./sandbox-exec-output";
+
 export type SandboxCommandResult = {
   status: number;
   stdout: string;

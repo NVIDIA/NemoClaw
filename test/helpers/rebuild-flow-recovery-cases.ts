@@ -2,12 +2,232 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
-import { makeActiveTeamsMessagingPlan } from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
+import {
+  makeActiveTeamsMessagingPlan,
+  makePreparedRecoveryManifest,
+} from "../../src/lib/actions/sandbox/rebuild-flow-test-fixtures";
 import { createRebuildFlowHarness, installRebuildFlowTestHooks } from "./rebuild-flow-test-harness";
 
 export function registerRebuildFlowRecoveryTests(): void {
   describe("rebuildSandbox flow: recovery", () => {
     installRebuildFlowTestHooks();
+
+    it("restores a validated prepared manifest without taking a second backup (#6114)", async () => {
+      const harness = createRebuildFlowHarness({ sandboxListOutput: "alpha Error" });
+      const recoveryManifest = makePreparedRecoveryManifest();
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest,
+        }),
+      ).resolves.toBeUndefined();
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.objectContaining({ ignoreError: true }),
+      );
+      expect(harness.restoreSandboxStateSpy).toHaveBeenCalledWith(
+        "alpha",
+        recoveryManifest.backupPath,
+      );
+    });
+
+    it("rejects a mismatched prepared manifest before deleting the sandbox (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        recoveryManifestValidation: () => ({
+          ok: false,
+          reason: "manifest sandbox 'beta' does not match 'alpha'",
+        }),
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Invalid recovery manifest");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+      expect(harness.onboardSpy).not.toHaveBeenCalled();
+    });
+
+    it("revalidates a prepared manifest immediately before deletion (#6114)", async () => {
+      let validationCount = 0;
+      const harness = createRebuildFlowHarness({
+        recoveryManifestValidation: (manifest) => {
+          validationCount++;
+          return validationCount === 1
+            ? { ok: true, manifest }
+            : { ok: false, reason: "persisted backup identity changed during validation" };
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Invalid recovery manifest");
+
+      expect(validationCount).toBe(2);
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    });
+
+    it("rejects registry configuration drift before prepared recovery deletion (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        preDeleteSandboxEntry: {
+          name: "alpha",
+          provider: "compatible-endpoint",
+          model: "new-model",
+          policies: ["npm", "github"],
+          agent: null,
+          agentVersion: "0.1.0",
+          nemoclawVersion: "0.0.71",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Recovery registry configuration changed during preflight");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    });
+
+    it("uses the refreshed registry snapshot for prepared-recovery rollback (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        defaultSandbox: "alpha",
+        preDeleteDefaultSandbox: "beta",
+        onboard: () => {
+          throw new Error("recreate failed");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
+        { reclaimDefault: null },
+      );
+    });
+
+    it("rejects a latest-backup change before prepared recovery deletion (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        preDeleteLatestManifest: {
+          ...makePreparedRecoveryManifest(),
+          timestamp: "2026-07-01T07-00-00-000Z",
+          backupPath: "/tmp/rebuild-backups/alpha/2026-07-01T07-00-00-000Z",
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Recovery backup identity changed during preflight");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.runOpenshellSpy).not.toHaveBeenCalledWith(
+        ["sandbox", "delete", "alpha"],
+        expect.anything(),
+      );
+    });
+
+    it("restores the registry entry when prepared-backup recreation fails (#6114)", async () => {
+      const harness = createRebuildFlowHarness({
+        defaultSandbox: "alpha",
+        onboard: () => {
+          throw new Error("recreate failed");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.backupSandboxStateSpy).not.toHaveBeenCalled();
+      expect(harness.restoreSandboxEntrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "alpha", agentVersion: "0.1.0" }),
+        { reclaimDefault: "alpha" },
+      );
+      expect(harness.restoreSandboxStateSpy).not.toHaveBeenCalled();
+    });
+
+    it("performs exactly one prepared-recovery rollback when MCP state is present", async () => {
+      const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+      const harness = createRebuildFlowHarness({
+        defaultSandbox: "alpha",
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [mcpEntry],
+        },
+        onboard: () => {
+          throw new Error("recreate failed");
+        },
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Recreate failed");
+
+      expect(harness.restoreSandboxEntrySpy.mock.calls).toEqual([
+        [expect.objectContaining({ name: "alpha" }), { reclaimDefault: "alpha" }],
+      ]);
+    });
+
+    it("blocks installer recovery when MCP post-restore verification is incomplete", async () => {
+      const mcpEntry = { server: "github", providerName: "nemoclaw-mcp-alpha-github" };
+      const harness = createRebuildFlowHarness({
+        mcpPreparation: {
+          entries: [mcpEntry],
+          detachedProviderEntries: [mcpEntry],
+          scrubbedAdapterEntries: [mcpEntry],
+        },
+        restoreMcpBridgesAfterRebuild: () => Promise.reject(new Error("MCP restore boom")),
+      });
+
+      await expect(
+        harness.rebuildSandbox("alpha", ["--yes"], {
+          throwOnError: true,
+          recoveryManifest: makePreparedRecoveryManifest(),
+        }),
+      ).rejects.toThrow("Prepared backup recovery");
+
+      expect(harness.errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("MCP bridge restore incomplete: MCP restore boom"),
+      );
+      expect(harness.relockSpy).toHaveBeenCalled();
+    });
+
     it("prunes the disabled Teams preset from the final registry policies after rebuild", async () => {
       const disabledTeamsPlan = {
         schemaVersion: 1,
