@@ -9,8 +9,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+import { createBearerAuthConfig } from "../adapters/http/auth-config";
 import { buildValidatedCurlCommandArgs } from "../adapters/http/curl-args";
-import type { CurlProbeResult } from "../adapters/http/probe";
+import type { CurlProbeOptions, CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
@@ -230,7 +231,7 @@ export interface LocalProviderHealthStatus {
 }
 
 export interface LocalProviderHealthProbeOptions {
-  runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  runCurlProbeImpl?: (argv: string[], opts?: CurlProbeOptions) => CurlProbeResult;
   /**
    * Lets callers that perform their own Ollama auth-proxy check avoid the
    * legacy inline proxy subprobe. The inline subprobe is retained for status
@@ -258,8 +259,8 @@ function defaultLoadOllamaProxyToken(): string | null {
   return null;
 }
 
-function runLocalCurlProbe(argv: string[]): CurlProbeResult {
-  return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
+function runLocalCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlProbeResult {
+  return runCurlProbe(argv, { ...opts, env: buildSubprocessEnv(), replaceEnv: true });
 }
 
 // A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
@@ -435,16 +436,16 @@ export function probeOllamaAuthProxyHealth(
   }
   const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
-  const result = runCurlProbeImpl([
-    "-sS",
-    "--connect-timeout",
-    "3",
-    "--max-time",
-    "5",
-    "-H",
-    `Authorization: Bearer ${token}`,
-    endpoint,
-  ]);
+  const authConfig = createBearerAuthConfig(token);
+  let result: CurlProbeResult;
+  try {
+    result = runCurlProbeImpl(
+      ["-sS", "--connect-timeout", "3", "--max-time", "5", ...authConfig.args, endpoint],
+      { trustedConfigFiles: authConfig.trustedConfigFiles },
+    );
+  } finally {
+    authConfig.cleanup();
+  }
 
   const base = {
     providerLabel: "Ollama auth proxy",

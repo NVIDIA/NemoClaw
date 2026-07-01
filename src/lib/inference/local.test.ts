@@ -347,11 +347,15 @@ describe("local inference helpers", () => {
   // probe to :11434 that ignored the auth proxy at :11435 entirely, so a
   // broken proxy hid behind a "healthy" backend.
   it("attaches a healthy auth-proxy subprobe when ollama backend is up", () => {
-    const responses: Array<{ args: string[]; status: number }> = [];
+    const responses: Array<{
+      args: string[];
+      opts?: { trustedConfigFiles?: readonly string[] };
+      status: number;
+    }> = [];
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
-      runCurlProbeImpl: (argv: string[]) => {
-        responses.push({ args: argv, status: 200 });
+      runCurlProbeImpl: (argv: string[], opts?: { trustedConfigFiles?: readonly string[] }) => {
+        responses.push({ args: argv, opts, status: 200 });
         return {
           ok: true,
           httpStatus: 200,
@@ -365,7 +369,10 @@ describe("local inference helpers", () => {
     const proxyCall = responses.find((r) =>
       r.args.some((a) => typeof a === "string" && a.includes("11435")),
     );
-    expect(proxyCall?.args).toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.args).toContain("--config");
+    expect(proxyCall?.args.join(" ")).not.toContain("test-token");
+    expect(proxyCall?.args).not.toContain("Authorization: Bearer test-token");
+    expect(proxyCall?.opts?.trustedConfigFiles ?? []).not.toHaveLength(0);
     expect(result?.ok).toBe(true);
     expect(result?.subprobes).toHaveLength(1);
     expect(result?.subprobes?.[0]).toMatchObject({
