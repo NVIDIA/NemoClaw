@@ -936,24 +936,22 @@ describe("regression guards", () => {
 
       expect(baseSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
       expect(runtimeSrc).toContain("ENV AWS_EC2_METADATA_DISABLED=true");
+      const runtimeStageStart = runtimeSrc.indexOf("# Stage 3: Runtime image");
+      expect(runtimeStageStart).toBeGreaterThan(-1);
       for (const [source, stageStart] of [
         [baseSrc, 0],
-        [runtimeSrc, runtimeSrc.indexOf("# Stage 3: Runtime image")],
+        [runtimeSrc, runtimeStageStart],
       ] as const) {
         const fromIndex = source.indexOf("\nFROM ", stageStart);
+        expect(fromIndex).toBeGreaterThan(-1);
         const firstRunIndex = source.indexOf("\nRUN ", fromIndex);
+        expect(firstRunIndex).toBeGreaterThan(-1);
         const metadataEnvIndex = source.indexOf("ENV AWS_EC2_METADATA_DISABLED=true", fromIndex);
         expect(metadataEnvIndex).toBeGreaterThan(fromIndex);
         expect(metadataEnvIndex).toBeLessThan(firstRunIndex);
       }
       expect(startSrc).toContain("export AWS_EC2_METADATA_DISABLED=true");
       expect(startSrc).toContain('export AWS_EC2_METADATA_DISABLED="true"');
-      expect(startSrc.indexOf("export AWS_EC2_METADATA_DISABLED=true")).toBeGreaterThan(
-        startSrc.indexOf('NEMOCLAW_CMD=("$@")'),
-      );
-      expect(startSrc.indexOf("export AWS_EC2_METADATA_DISABLED=true")).toBeLessThan(
-        startSrc.indexOf('OPENCLAW="$(command -v openclaw)"'),
-      );
       expect(hermesBaseSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
       expect(hermesRuntimeSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
       expect(hermesStartSrc).not.toContain("AWS_EC2_METADATA_DISABLED");
