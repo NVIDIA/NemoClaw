@@ -614,7 +614,11 @@ NemoClaw uses two gateway layers:
 - The OpenClaw gateway runs inside the sandbox container and serves the OpenClaw dashboard, agent API, and sub-agent WebSocket traffic.
 
 Start and recover them in that order: container runtime, OpenShell gateway, sandbox container, then the in-sandbox OpenClaw gateway.
-Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy, because NemoClaw cannot select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+
+<Warning>
+Do not start the OpenClaw gateway by hand before the OpenShell gateway is healthy.
+NemoClaw cannot select, inspect, or reconnect the sandbox until OpenShell can see the owning gateway.
+</Warning>
 
 If the host rebooted or the OpenShell gateway is down, first run:
 
