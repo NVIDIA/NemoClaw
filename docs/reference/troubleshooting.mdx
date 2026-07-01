@@ -410,6 +410,19 @@ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $$nemoclaw onboard
 ```
 
+### Onboard fails with "Kubernetes namespace not ready"
+
+This error usually means a previous install or onboard attempt left the local OpenShell/Kubernetes state partially initialized.
+Clean up the failed setup state, then run the installer again:
+
+```bash
+$$nemoclaw uninstall --yes
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+The `$$nemoclaw uninstall` command runs the version-pinned `uninstall.sh` that shipped with the installed CLI and preserves user data such as rebuild backups, workspace backups, and the sandbox registry unless you pass `--destroy-user-data`.
+If the CLI is missing or broken, use the hosted `uninstall.sh` fallback from [Uninstall](../manage-sandboxes/lifecycle#uninstall), then rerun the installer.
+
 ### `connect` exits because the gateway is down
 
 `$$nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
