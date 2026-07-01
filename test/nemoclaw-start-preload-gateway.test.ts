@@ -6,75 +6,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { extractShellFunctionFromSource } from "./support/shell-function-extractor.ts";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "scripts", "nemoclaw-start.sh");
 const PRELOAD_SCRIPTS = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "scripts");
-const CHANNEL_RUNTIME_SCRIPTS = path.join(import.meta.dirname, "..", "src/lib/messaging/channels");
-
-function startScriptHeredoc(src: string, marker: string): string {
-  const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
-  if (match) return match[1];
-  const preloadByMarker: Record<string, string> = {
-    CIAO_GUARD_EOF: "ciao-network-guard.js",
-    SAFETY_NET_EOF: "sandbox-safety-net.js",
-  };
-  const preload = preloadByMarker[marker];
-  if (preload) return fs.readFileSync(path.join(PRELOAD_SCRIPTS, preload), "utf-8");
-  const channelPreload =
-    marker === "SLACK_GUARD_EOF"
-      ? ["slack", "slack-channel-guard.ts"]
-      : marker === "TELEGRAM_DIAGNOSTICS_EOF"
-        ? ["telegram", "telegram-diagnostics.ts"]
-        : undefined;
-  expect(channelPreload).toBeTruthy();
-  const preloadPath = path.join(
-    CHANNEL_RUNTIME_SCRIPTS,
-    channelPreload[0],
-    "runtime",
-    channelPreload[1],
-  );
-  const preloadSource = fs.readFileSync(preloadPath, "utf-8");
-  if (!preloadPath.endsWith(".ts")) return preloadSource;
-  return ts.transpileModule(preloadSource, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  }).outputText;
-}
-
-function extractShellFunctionFromSource(src: string, name: string): string {
-  const header = `${name}() {`;
-  const start = src.indexOf(header);
-  if (start === -1) {
-    throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
-  }
-  const bodyStart = start + header.length;
-  const lines = src.slice(bodyStart).split(/(?<=\n)/);
-  let offset = 0;
-  let heredocEnd: string | undefined;
-  for (const line of lines) {
-    const bareLine = line.replace(/\r?\n$/, "");
-    if (heredocEnd) {
-      offset += line.length;
-      if (bareLine === heredocEnd) {
-        heredocEnd = undefined;
-      }
-      continue;
-    }
-    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
-    if (heredoc) {
-      heredocEnd = heredoc[1];
-    }
-    if (bareLine === "}") {
-      return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
-    }
-    offset += line.length;
-  }
-  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
-}
 
 function runEmbeddedPreload(
   script: string,
@@ -97,9 +33,14 @@ ${script}`,
 }
 
 describe("nemoclaw-start gateway preload process detection (#2478)", () => {
-  const src = fs.readFileSync(START_SCRIPT, "utf-8");
-  const safetyNetScript = startScriptHeredoc(src, "SAFETY_NET_EOF");
-  const ciaoGuardScript = startScriptHeredoc(src, "CIAO_GUARD_EOF");
+  const safetyNetScript = fs.readFileSync(
+    path.join(PRELOAD_SCRIPTS, "sandbox-safety-net.js"),
+    "utf-8",
+  );
+  const ciaoGuardScript = fs.readFileSync(
+    path.join(PRELOAD_SCRIPTS, "ciao-network-guard.js"),
+    "utf-8",
+  );
 
   it("activates the safety net for the re-execed openclaw-gateway child", () => {
     const run = runEmbeddedPreload(safetyNetScript, "/usr/local/bin/openclaw-gateway", "--port");
