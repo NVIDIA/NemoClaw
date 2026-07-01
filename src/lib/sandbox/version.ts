@@ -228,15 +228,16 @@ export function checkAgentVersion(
     };
   }
 
-  let sb = registry.getSandbox(sandboxName);
+  const sb = registry.getSandbox(sandboxName);
 
   // Fast path: version already cached in registry. A scheme mismatch here
   // means the cached value predates the current expected-version scheme
   // (e.g. a calendar tag left over before Hermes moved to semver, #6049)
-  // rather than an actual version disagreement. Invalidate the entry and
-  // fall through to the SSH probe so the current runtime version — which is
+  // rather than an actual version disagreement. Invalidate the entry — a
+  // single atomic write, no follow-up read that could race — and fall
+  // through to the SSH probe so the current runtime version, which is
   // guaranteed to share the manifest scheme once the sandbox is rebuilt or
-  // reprobed — replaces it. This closes the fail-open path where a stale
+  // reprobed, replaces it. This closes the fail-open path where a stale
   // cross-scheme cache would otherwise remain forever without triggering a
   // rebuild.
   if (sb?.agentVersion && !opts?.forceProbe) {
@@ -256,7 +257,6 @@ export function checkAgentVersion(
       };
     }
     registry.updateSandbox(sandboxName, { agentVersion: null });
-    sb = registry.getSandbox(sandboxName);
   }
 
   if (opts?.skipProbe && !opts.forceProbe) {
