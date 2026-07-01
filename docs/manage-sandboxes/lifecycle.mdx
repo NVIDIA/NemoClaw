@@ -267,6 +267,9 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_INSTALL_TAG=lkg bash
 ```
 
 Before upgrade work, the installer runs `$$nemoclaw backup-all` when the installed CLI supports it.
+After the host CLI and OpenShell update, the installer runs `$$nemoclaw upgrade-sandboxes --auto` before generic onboarding.
+If an existing sandbox is non-Ready, the automatic path requires a validated latest backup whose sandbox and agent identity match the registry and positive evidence that NemoClaw managed the image.
+The installer attempts every eligible recovery, exits with a nonzero status if any recovery fails, and does not continue to generic onboarding after that failure.
 For manual upgrade flows, create a snapshot first and then run the update or rebuild command you need:
 
 ```bash
