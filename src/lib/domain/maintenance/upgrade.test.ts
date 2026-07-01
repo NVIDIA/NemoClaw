@@ -139,6 +139,43 @@ describe("upgrade sandboxes helpers", () => {
     });
   });
 
+  it("routes verification-failed sandboxes to the unknown bucket so upgrade does not silently skip them (#6049)", () => {
+    const checks: Record<string, SandboxVersionCheck> = {
+      schemeMismatch: {
+        isStale: false,
+        sandboxVersion: "0.17.0",
+        expectedVersion: "2026.6.19",
+        detectionMethod: "registry",
+        verificationFailed: true,
+      },
+      probeFailed: {
+        isStale: false,
+        sandboxVersion: null,
+        expectedVersion: "0.17.0",
+        detectionMethod: "unknown",
+        verificationFailed: true,
+      },
+      current: {
+        isStale: false,
+        sandboxVersion: "0.17.0",
+        expectedVersion: "0.17.0",
+        detectionMethod: "registry",
+        verificationFailed: false,
+      },
+    };
+
+    const classification = classifyUpgradeableSandboxes(
+      [{ name: "schemeMismatch" }, { name: "probeFailed" }, { name: "current" }],
+      new Set(["schemeMismatch", "current"]),
+      (name) => checks[name],
+    );
+    expect(classification.stale).toEqual([]);
+    expect(classification.unknown).toEqual([
+      { name: "schemeMismatch", expected: "2026.6.19", running: true },
+      { name: "probeFailed", expected: "0.17.0", running: false },
+    ]);
+  });
+
   it("splits stale sandboxes into rebuildable and stopped groups", () => {
     expect(
       splitRebuildableSandboxes([
