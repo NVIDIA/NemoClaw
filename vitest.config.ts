@@ -125,6 +125,7 @@ export default defineConfig({
           name: "e2e-support",
           alias: canonicalOpenShellPolicyAlias,
           testTimeout: testTimeout(),
+          setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["test/e2e/support/**/*.test.ts"],
         },
       },
