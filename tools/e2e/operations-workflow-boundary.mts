@@ -14,6 +14,14 @@ const META_JOBS = new Set(["report-to-pr", "scorecard"]);
 const FULL_SHA_ACTION = /^[^\s@]+@[0-9a-f]{40}$/u;
 const GITHUB_SCRIPT_NODE24_ACTION =
   "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3";
+const ISSUE_API_REFERENCE = /\bgithub\.rest\.issues\b/u;
+const ISSUE_MUTATION_BEYOND_COMMENT =
+  /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
+const GENERIC_GITHUB_WRITE_SURFACE = /github\.(?:graphql|request)\s*\(|\bfetch\s*\(|\bgh\s+api\b/u;
+const GENERIC_ISSUE_REST_MUTATION =
+  /github\.request\s*\(\s*["'`](?:POST|PATCH|PUT|DELETE)\s+\/repos\/[^/\s]+\/[^/\s]+\/issues(?:\/|\b)/u;
+const GENERIC_ISSUE_GRAPHQL_MUTATION =
+  /github\.graphql\s*\(\s*["'`]\s*mutation\b[\s\S]*?\b(?:addComment|closeIssue|createIssue|reopenIssue|updateIssue)\b/u;
 
 type WorkflowStep = {
   env?: Record<string, unknown>;
@@ -72,6 +80,13 @@ function findStep(job: WorkflowJob, name: string): WorkflowStep {
   return job.steps?.find((step) => step.name === name) ?? {};
 }
 
+function executableSource(job: WorkflowJob): string {
+  return (job.steps ?? [])
+    .flatMap((step) => [step.run, step.with?.script])
+    .filter((value): value is string => typeof value === "string")
+    .join("\n");
+}
+
 function requirePinnedAction(errors: string[], step: WorkflowStep, owner: string): void {
   if (!FULL_SHA_ACTION.test(step.uses ?? "")) {
     errors.push(`${owner} must pin its action to a full SHA`);
@@ -112,12 +127,9 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
     errors.push("E2E workflow must not grant top-level issues: write");
   }
 
-  const issueMutation =
-    /github\.rest\.issues\.(?:addAssignees|addLabels|create|createComment|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
-  const issueMutationBeyondComment =
-    /github\.rest\.issues\.(?:addAssignees|addLabels|create|deleteComment|lock|removeAssignees|removeLabel|setLabels|unlock|update|updateComment)\s*\(/u;
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const permissions = permissionMap(job.permissions);
+    const jobSource = executableSource(job);
     if (job.permissions === "write-all" || permissions.issues === "write") {
       errors.push(`${name} must not hold issues: write`);
     }
@@ -138,7 +150,6 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
       }
       requireNode24GithubScript(errors, report, "report-to-pr");
       const reportScript = String(report.with?.script ?? "");
-      const jobSource = JSON.stringify(job);
       const commentCalls = jobSource.match(/github\.rest\.issues\.createComment\s*\(/gu);
       const issueNamespaceReferences = reportScript.match(/github\.rest\.issues\b/gu);
       const prScopedComment =
@@ -148,19 +159,21 @@ function validateIssueRoutingRetirement(errors: string[], workflow: OperationsWo
           "report-to-pr must limit issue mutation to one validated PR-scoped createComment call",
         );
       }
-      const genericGithubWriteSurface =
-        /github\.(?:graphql|request)\s*\(|\bfetch\s*\(|\bgh\s+api\b/u;
       if (
         issueNamespaceReferences?.length !== 1 ||
-        issueMutationBeyondComment.test(jobSource) ||
-        genericGithubWriteSurface.test(jobSource)
+        ISSUE_MUTATION_BEYOND_COMMENT.test(jobSource) ||
+        GENERIC_GITHUB_WRITE_SURFACE.test(jobSource)
       ) {
         errors.push("report-to-pr must not use issue mutations or generic GitHub write surfaces");
       }
       continue;
     }
 
-    if (issueMutation.test(JSON.stringify(job))) {
+    if (
+      ISSUE_API_REFERENCE.test(jobSource) ||
+      GENERIC_ISSUE_REST_MUTATION.test(jobSource) ||
+      GENERIC_ISSUE_GRAPHQL_MUTATION.test(jobSource)
+    ) {
       errors.push(`${name} must not mutate GitHub issues`);
     }
   }

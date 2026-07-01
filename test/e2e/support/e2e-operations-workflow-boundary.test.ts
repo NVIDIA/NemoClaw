@@ -115,6 +115,23 @@ describe("E2E operations workflow boundary", () => {
     );
   });
 
+  it.each([
+    ["an aliased issue API", "const issues = github.rest.issues; await issues.create({});"],
+    ["a bracketed issue API", 'await github.rest.issues["create"]({});'],
+    ["a generic REST request", 'await github.request("POST /repos/{owner}/{repo}/issues", {});'],
+    [
+      "a GraphQL mutation",
+      "await github.graphql(`mutation { createIssue(input: {}) { issue { id } } }`);",
+    ],
+  ])("rejects %s outside the PR reporter", (_label, mutation) => {
+    const workflow = readE2eOperationsWorkflow();
+    workflow.jobs.scorecard.steps!.push({ run: mutation });
+
+    expect(validateE2eOperationsWorkflow(workflow)).toContain(
+      "scorecard must not mutate GitHub issues",
+    );
+  });
+
   it("pins the Node 24 helper runtime and separate always-on raw trace cleanup", () => {
     const workflow = readE2eOperationsWorkflow();
     workflow.jobs["cloud-onboard"].env!.NEMOCLAW_TRACE_DIR =
