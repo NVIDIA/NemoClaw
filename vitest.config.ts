@@ -37,8 +37,7 @@ export default defineConfig({
       {
         test: {
           name: "cli",
-          testTimeout: testTimeout(20_000),
-          hookTimeout: testTimeout(20_000),
+          testTimeout: testTimeout(),
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           include: ["src/**/*.test.ts"],
           exclude: ["**/node_modules/**", "**/.claude/**"],
@@ -53,11 +52,14 @@ export default defineConfig({
           setupFiles: ["test/helpers/onboard-script-mocks.cjs"],
           // Integration fixtures often spawn short Node programs. Keep those
           // programs on the same source graph as their parent test process.
-          // The integration suite shells out heavily and one file (onboard
-          // provider selection) needs several GiB under coverage. Run files in
-          // parallel for speed but cap the worker count so the summed fork heap
-          // (raised via NODE_OPTIONS in CI) stays within the runner's RAM.
-          maxWorkers: 2,
+          // The integration suite shells out heavily, and stacking multiple
+          // forks of the require-hook transpile cache on the 7 GiB ubuntu
+          // runner reliably exhausts physical RAM when coverage is on.
+          // Disable file parallelism for the integration project so the test
+          // files run serially against a single worker (vitest 4 dropped
+          // poolOptions.forks.singleFork; fileParallelism: false is the
+          // documented replacement).
+          fileParallelism: false,
           env: { NODE_OPTIONS: sourceNodeOptions },
           include: ["test/**/*.test.{js,ts}"],
           exclude: [
