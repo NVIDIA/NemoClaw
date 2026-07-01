@@ -226,10 +226,15 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       );
       const wrapperSrc = fs
         .readFileSync(WRAPPER, "utf-8")
-        .replace(/_TRUSTED_PYTHON3 = \([\s\S]*?\)/, `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`);
+        .replace(
+          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
+          `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`,
+        );
       fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
       fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
       const run = spawnSync(path.join(dir, "hermes"), ["gateway", "run"], {
         encoding: "utf-8",
         timeout: 10_000,
@@ -264,10 +269,15 @@ describe.skipIf(!canRun)("agents/hermes/hermes-wrapper.py", () => {
       );
       const wrapperSrc = fs
         .readFileSync(WRAPPER, "utf-8")
-        .replace(/_TRUSTED_PYTHON3 = \([\s\S]*?\)/, `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`);
+        .replace(
+          /_TRUSTED_PYTHON3 = \([\s\S]*?\)/,
+          `_TRUSTED_PYTHON3 = (${JSON.stringify(stubPython)},)`,
+        );
       fs.writeFileSync(path.join(dir, "hermes"), wrapperSrc, { mode: 0o755 });
       fs.copyFileSync(VALIDATOR, path.join(dir, "validate-env-secret-boundary.py"));
-      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(dir, "hermes.real"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
       const run = spawnSync(path.join(dir, "hermes"), ["config", "show"], {
         encoding: "utf-8",
         timeout: 10_000,
