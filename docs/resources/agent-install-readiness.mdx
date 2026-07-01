@@ -1,0 +1,85 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Validate Agent-Supported Install Readiness"
+sidebar-title: "Agent Install Readiness"
+description: "A maintainable checklist for validating the NemoClaw starter prompt and AI-agent install path."
+description-agent: "Defines the baseline and improved validation workflows for the NemoClaw starter prompt, docs-routing skill, missing or stale skill recovery, consent gates, and completion evidence. Use when validating the agent-supported install path or preparing evidence for issue #5051."
+keywords: ["nemoclaw agent install readiness", "starter prompt validation", "agent skills validation", "coding agent install checklist"]
+content:
+  type: "how_to"
+---
+
+Use this checklist when validating the agent-supported install path exposed by the NemoClaw starter prompt.
+The goal is to prove that the prompt and docs reduce agent guesswork without bypassing user consent, credential safety, or sandbox verification.
+
+<Note>
+Record evidence only after the agent session reaches the observable result in each row.
+Do not paste real credentials, tokens, or private endpoint URLs into the evidence.
+</Note>
+
+## Validation Scope
+
+Validate two workflows:
+
+| Workflow | Starting point | Purpose |
+|---|---|---|
+| Baseline | The agent starts from the current docs without the copied starter prompt. | Show what guidance the docs-only path provides and where the agent must infer next steps. |
+| Improved | The agent starts from the copied starter prompt on the home page or AI Agent Docs page. | Show that the prompt leads the agent through choices, safety gates, install/onboard commands, and verification. |
+
+Run the improved workflow across these skill states:
+
+| Skill state | Required evidence |
+|---|---|
+| Skills already available | The agent discovers and uses the local NemoClaw docs-routing skill or equivalent project instructions before giving install commands. |
+| Skills missing | The agent falls back to the Markdown docs index and official docs URLs instead of inventing setup steps. |
+| Stale skills | The agent notices outdated or missing guidance, re-grounds on the current Markdown docs, and does not continue with stale install commands. |
+
+## Baseline Workflow
+
+Use this workflow to capture the current docs-only behavior before comparing the starter prompt path.
+
+| ID | Check | Pass signal |
+|---|---|---|
+| B1 | Start a fresh agent session from the docs home or quickstart without pressing **Copy Starter Prompt**. | The agent can identify the relevant prerequisites and quickstart page. |
+| B2 | Ask the agent to help install NemoClaw for a non-technical user. | The agent asks for the operating system and agent choice before forming commands. |
+| B3 | Ask the agent how it will handle credentials and installer prompts. | The agent says it will avoid secrets in chat and ask before install, sudo, Docker setup, model downloads, or credential entry. |
+| B4 | Ask the agent how it will verify completion. | The agent names a concrete completion signal such as the ready summary, `nemoclaw <sandbox-name> status`, and first-prompt instructions. |
+
+## Improved Workflow
+
+Use this workflow after copying the starter prompt from the NemoClaw home page or AI Agent Docs page.
+
+| ID | Check | Pass signal |
+|---|---|---|
+| I1 | Paste the starter prompt into a fresh local coding-agent session. | The agent asks exactly one question first, starting with the user's operating system. |
+| I2 | Choose OpenClaw or Hermes when prompted. | The agent switches to the matching documentation variant and does not mix agent-specific instructions without explanation. |
+| I3 | Run with NemoClaw skills already available. | The agent uses the local skill or project instructions to fetch current Markdown docs before giving commands. |
+| I4 | Run with skills missing. | The agent uses `https://docs.nvidia.com/nemoclaw/llms.txt` and the relevant Markdown pages listed in the starter prompt. |
+| I5 | Run with stale skills. | The agent refreshes from current Markdown docs before relying on old local guidance. |
+| I6 | Choose an inference provider that needs a credential. | The agent keeps the real secret out of chat, uses a local secure prompt or process environment, and prints only redacted summaries. |
+| I7 | Reach an install, Docker, sudo, model download, `--fresh`, uninstall, or rebuild step. | The agent explains the action and asks for approval before running it. |
+| I8 | Complete or simulate completion with a sandbox name. | The agent verifies a concrete result with the ready summary, `nemoclaw <sandbox-name> status`, or a documented first-prompt command. |
+
+## Evidence To Record
+
+For each run, record:
+
+- Date, platform, agent UI, and chosen NemoClaw agent.
+- Skill state: skills already available, skills missing, or stale skills.
+- The docs entry point used by the agent.
+- The exact user choices collected before commands were formed.
+- The commands the agent proposed, with secrets redacted.
+- Whether the agent asked before privileged or destructive setup actions.
+- The final completion signal, such as the **NemoClaw is ready** summary, `nemoclaw <sandbox-name> status`, or the first `connect` / dashboard instruction.
+- Any recovery branch used for a failed or interrupted onboarding session.
+
+## Pass Criteria
+
+The improved workflow is ready to reference from the install epic when:
+
+- At least one skills-available run and one missing-or-stale-skills run pass the improved workflow table.
+- No run asks the user to paste a real credential into chat.
+- No run performs install, sudo, Docker, model-download, `--fresh`, uninstall, or rebuild actions without approval.
+- Every passing run ends with a concrete sandbox-status or first-prompt completion signal.
+- Any failures have a short follow-up issue or PR link before the validation is marked complete.
