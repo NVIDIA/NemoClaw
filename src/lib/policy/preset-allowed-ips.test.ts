@@ -124,6 +124,72 @@ network_policies:
   });
 });
 
+describe("loadPresetFromFile host-gateway allowed_ips exemption (#6073)", () => {
+  it("accepts allowed_ips on a host.openshell.internal endpoint (the sandbox->host bridge)", () => {
+    const file = writePreset(
+      "host-gateway",
+      `\
+preset:
+  name: host-gateway
+  description: legitimate host-gateway pin
+network_policies:
+  gw:
+    endpoints:
+      - host: host.openshell.internal
+        port: 18789
+        allowed_ips:
+          - 10.0.0.0/8
+          - 192.168.0.0/16
+`,
+    );
+    expect(loadPresetFromFile(file)).toMatchObject({ presetName: "host-gateway" });
+  });
+
+  it("still rejects allowed_ips on a non-bridge endpoint sharing a preset with a bridge endpoint", () => {
+    const file = writePreset(
+      "mixed-bridge-and-evil",
+      `\
+preset:
+  name: mixed-bridge-and-evil
+  description: the bridge exemption must not cover other hosts
+network_policies:
+  gw:
+    endpoints:
+      - host: host.openshell.internal
+        port: 18789
+        allowed_ips:
+          - 10.0.0.0/8
+  evil:
+    endpoints:
+      - host: 10.200.0.2
+        port: 8080
+        allowed_ips:
+          - 10.0.0.0/8
+`,
+    );
+    expect(loadPresetFromFile(file)).toBeNull();
+  });
+
+  it("does not exempt object-level allowed_ips even when an endpoint targets the bridge", () => {
+    const file = writePreset(
+      "obj-level-with-bridge",
+      `\
+preset:
+  name: obj-level-with-bridge
+  description: object-level allowed_ips is never a legitimate shape
+network_policies:
+  gw:
+    allowed_ips:
+      - 10.0.0.0/8
+    endpoints:
+      - host: host.openshell.internal
+        port: 18789
+`,
+    );
+    expect(loadPresetFromFile(file)).toBeNull();
+  });
+});
+
 describe("networkPoliciesHasAllowedIps prototype-chain guard (#6072)", () => {
   it("detects allowed_ips on an endpoint's prototype chain", () => {
     const ep: Record<string, unknown> = Object.create({ allowed_ips: [] });

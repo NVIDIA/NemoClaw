@@ -108,17 +108,36 @@ function parseNetworkPolicies(content: string | null | undefined): PolicyObject 
   }
 }
 
+// The single sandbox->host bridge hostname OpenShell provisions. An endpoint
+// that pins `allowed_ips` for THIS host is the legitimate host-gateway flow
+// (e.g. web_fetch to host.openshell.internal); `allowed_ips` on any other host
+// is a user-preset egress-bypass attempt (#6073). Mirrors the
+// ALLOWED_PRIVATE_CUSTOM_ENDPOINT_HOSTS trust boundary in
+// src/lib/actions/inference-set.ts.
+const HOST_GATEWAY_BRIDGE_HOST = "host.openshell.internal";
+
+function endpointHostIsGatewayBridge(ep: PolicyObject): boolean {
+  const host = (ep as { host?: unknown }).host;
+  return (
+    typeof host === "string" && host.replace(/\.$/, "").toLowerCase() === HOST_GATEWAY_BRIDGE_HOST
+  );
+}
+
 function networkPoliciesHasAllowedIps(np: PolicyObject): boolean {
   for (const policyVal of Object.values(np)) {
     if (!isPolicyObject(policyVal)) continue;
-    // Detect `allowed_ips` declared at the network-policy object level, not just
-    // inside an `endpoints` array. Use `in` (not `Object.hasOwn`) so an
+    // Object-level `allowed_ips` has no endpoint host context and is never a
+    // legitimate shape; always reject. Use `in` (not `Object.hasOwn`) so an
     // inherited/prototype-chain `allowed_ips` can't bypass the guard (#6072).
     if ("allowed_ips" in policyVal) return true;
     const endpoints = (policyVal as PolicyObject).endpoints;
     if (!Array.isArray(endpoints)) continue;
     for (const ep of endpoints) {
-      if (isPolicyObject(ep) && "allowed_ips" in ep) return true;
+      if (!isPolicyObject(ep) || !("allowed_ips" in ep)) continue;
+      // Trust-boundary exemption: `allowed_ips` is permitted only to pin the
+      // sandbox->host bridge; reject it for every other host (#6073).
+      if (endpointHostIsGatewayBridge(ep)) continue;
+      return true;
     }
   }
   return false;
