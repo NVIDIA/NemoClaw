@@ -205,6 +205,44 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
+# ── Test 13a: Final image enforces the gateway-control boundary ──
+
+info "13a. Final image keeps gateway control root-only with required group access"
+# shellcheck disable=SC2016 # The container-side bash expands these expressions.
+ROOT_CONTROL_OUT=$(run_as_root '
+  set -eu
+  [ "$(stat -c "%U:%G %a" /usr/local/bin/nemoclaw-gateway-control)" = "root:root 700" ]
+  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/managed-gateway-control.py)" = "root:root 500" ]
+  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/state-dir-guard.py)" = "root:root 500" ]
+  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/openclaw-config-guard.py)" = "root:root 500" ]
+  [ "$(stat -c "%U:%G %a" /usr/local/lib/nemoclaw/gateway-supervisor.sh)" = "root:root 444" ]
+  echo META_OK
+  id -nG gateway | tr " " "\n" | grep -qx sandbox
+  id -nG root | tr " " "\n" | grep -qx sandbox
+  echo GROUPS_OK
+  nonce=$(printf "%064d" 0)
+  rc=0
+  /usr/local/bin/nemoclaw-gateway-control probe "$nonce" >/tmp/gateway-control-probe.out 2>&1 || rc=$?
+  cat /tmp/gateway-control-probe.out
+  [ "$rc" -ne 0 ]
+  grep -qx SUPERVISOR_UNAVAILABLE /tmp/gateway-control-probe.out
+  echo ROOT_PROBE_OK
+' 2>&1 || true)
+# shellcheck disable=SC2016 # The container-side bash expands these expressions.
+SANDBOX_CONTROL_OUT=$(run_as_sandbox '
+  nonce=$(printf "%064d" 0)
+  /usr/local/bin/nemoclaw-gateway-control probe "$nonce"
+' 2>&1 || true)
+if echo "$ROOT_CONTROL_OUT" | grep -q META_OK \
+  && echo "$ROOT_CONTROL_OUT" | grep -q GROUPS_OK \
+  && echo "$ROOT_CONTROL_OUT" | grep -q ROOT_PROBE_OK \
+  && echo "$SANDBOX_CONTROL_OUT" | grep -qi "permission denied" \
+  && ! echo "$SANDBOX_CONTROL_OUT" | grep -q PRIVILEGED_CONTROL_UNAVAILABLE; then
+  pass "gateway control modes, group access, root probe, and sandbox-user refusal are enforced"
+else
+  fail "gateway control boundary mismatch: root=[$ROOT_CONTROL_OUT] sandbox=[$SANDBOX_CONTROL_OUT]"
+fi
+
 # ── Test 14: Dangerous capabilities are dropped by entrypoint ────
 
 info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from sandbox-user bounding set"

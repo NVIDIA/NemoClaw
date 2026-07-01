@@ -13,7 +13,13 @@ type OpenshellCaptureResult = {
   error?: Error;
   signal?: NodeJS.Signals | null;
 };
-type SandboxRecord = { name: string; agent?: string | null };
+type SandboxRecord = {
+  name: string;
+  agent?: string | null;
+  gatewayName?: string | null;
+  imageTag?: string | null;
+  openshellDriver?: string | null;
+};
 type DcodeProbeState = "active" | "idle" | "unverifiable" | "no-runtime";
 
 function dcodeProbeOutput(state: DcodeProbeState, extra = ""): string {
@@ -39,13 +45,36 @@ function defaultOpenshellResponses(args: string[]): OpenshellCaptureResult {
 
 const shieldsMock = vi.hoisted(() => {
   const isShieldsDownMock = vi.fn(() => true);
+  const repairMutableConfigPermsMock = vi.fn(() => ({
+    applied: true,
+    verified: true,
+    errors: [],
+  }));
+  const shieldsUpMock = vi.fn();
   let isShieldsDownExport: unknown = isShieldsDownMock;
   return {
     isShieldsDownMock,
+    repairMutableConfigPermsMock,
+    shieldsUpMock,
     getIsShieldsDownExport: () => isShieldsDownExport,
     setIsShieldsDownExport: (value: unknown) => {
       isShieldsDownExport = value;
     },
+  };
+});
+
+const lifecycleMock = vi.hoisted(() => {
+  const events: string[] = [];
+  return {
+    events,
+    cleanupShieldsDestroyArtifactsMock: vi.fn(() => events.push("cleanup-shields")),
+    readTimerMarkerMock: vi.fn(() => null as Record<string, unknown> | null),
+    withTimerBoundMock: vi.fn(
+      (_sandboxName: string, command: string, fn: () => unknown): unknown => {
+        events.push(`lock:${command}`);
+        return fn();
+      },
+    ),
   };
 });
 
@@ -71,6 +100,15 @@ const listBackupsMock = vi.fn<() => Array<Record<string, unknown>>>(() => []);
 const parseLiveSandboxNamesMock = vi.fn(() => new Set(["alpha"]));
 const registerSandboxMock = vi.fn();
 const restoreSandboxStateMock = vi.fn();
+const runOpenshellMock = vi.fn((args: string[]) => {
+  args[0] === "sandbox" && args[1] === "delete" && lifecycleMock.events.push("delete");
+  return { status: 0, output: "" };
+});
+const streamSandboxCreateMock = vi.fn(async () => ({
+  status: 0,
+  output: "",
+  forcedReady: false,
+}));
 const dcodeSandboxEntry = {
   name: "alpha",
   agent: "langchain-deepagents-code",
@@ -84,7 +122,7 @@ vi.mock("../../adapters/docker", () => ({
 vi.mock("../../adapters/openshell/runtime", () => ({
   captureOpenshell: captureOpenshellMock,
   getOpenshellBinary: vi.fn(() => "openshell"),
-  runOpenshell: vi.fn(() => ({ status: 0, output: "" })),
+  runOpenshell: runOpenshellMock,
 }));
 
 vi.mock("../../credentials/store", () => ({
@@ -93,6 +131,11 @@ vi.mock("../../credentials/store", () => ({
 
 vi.mock("../../domain/sandbox/destroy", () => ({
   getSandboxDeleteOutcome: vi.fn(() => ({ alreadyGone: false })),
+}));
+
+vi.mock("../../inference/nim", () => ({
+  stopNimContainer: vi.fn(),
+  stopNimContainerByName: vi.fn(),
 }));
 
 vi.mock("../../policy", () => ({
@@ -106,7 +149,7 @@ vi.mock("../../runner", () => ({
   ROOT: "/repo",
   run: vi.fn(() => ({ status: 0 })),
   shellQuote: (value: string) => `'${value}'`,
-  validateName: vi.fn(),
+  validateName: vi.fn((value: string) => value),
 }));
 
 vi.mock("../../runtime-recovery", () => ({
@@ -117,11 +160,20 @@ vi.mock("../../shields", () => ({
   get isShieldsDown() {
     return shieldsMock.getIsShieldsDownExport();
   },
-  repairMutableConfigPerms: vi.fn(() => ({
-    applied: true,
-    verified: true,
-    errors: [],
-  })),
+  repairMutableConfigPerms: shieldsMock.repairMutableConfigPermsMock,
+  shieldsUp: shieldsMock.shieldsUpMock,
+}));
+
+vi.mock("../../shields/timer-bound-lock", () => ({
+  withTimerBoundShieldsMutationLock: lifecycleMock.withTimerBoundMock,
+}));
+
+vi.mock("../../shields/timer-control", () => ({
+  readTimerMarker: lifecycleMock.readTimerMarkerMock,
+}));
+
+vi.mock("../../sandbox/create-stream", () => ({
+  streamSandboxCreate: streamSandboxCreateMock,
 }));
 
 vi.mock("../../state/gateway", () => ({
@@ -147,7 +199,7 @@ vi.mock("../../state/sandbox", () => ({
 }));
 
 vi.mock("./destroy", () => ({
-  cleanupShieldsDestroyArtifacts: vi.fn(),
+  cleanupShieldsDestroyArtifacts: lifecycleMock.cleanupShieldsDestroyArtifactsMock,
   removeSandboxRegistryEntry: vi.fn(),
 }));
 
@@ -156,6 +208,9 @@ describe("runSandboxSnapshot", () => {
     vi.clearAllMocks();
     shieldsMock.setIsShieldsDownExport(shieldsMock.isShieldsDownMock);
     shieldsMock.isShieldsDownMock.mockReturnValue(true);
+    shieldsMock.shieldsUpMock.mockImplementation(() => lifecycleMock.events.push("harden"));
+    lifecycleMock.events.length = 0;
+    lifecycleMock.readTimerMarkerMock.mockReturnValue(null);
     captureOpenshellMock.mockImplementation((args) => defaultOpenshellResponses(args));
     dockerInspectMock.mockReturnValue({ status: 0, stdout: "true\n" });
     findBackupMock.mockReturnValue({ match: null });
@@ -502,7 +557,7 @@ describe("runSandboxSnapshot", () => {
       });
     }
     expect(consoleLog.mock.calls.flat().join("\n")).toContain("Snapshot v3 created");
-  });
+  }, 15_000);
 
   it("renders a stable snapshot list with versions, names, timestamps, and paths", async () => {
     const consoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -556,6 +611,100 @@ describe("runSandboxSnapshot", () => {
     expect(output).toContain("Using latest snapshot v4 name=stable");
     expect(output).toContain("Restoring snapshot into 'alpha'");
     expect(output).toContain("Restored 1 directories, 1 files");
+  });
+
+  it("keeps active-timer restore, permission repair, and policy reconciliation serialized", async () => {
+    lifecycleMock.readTimerMarkerMock.mockReturnValue({
+      pid: 4242,
+      sandboxName: "alpha",
+      snapshotPath: "/tmp/policy.yaml",
+      restoreAt: "2026-06-27T06:00:00.000Z",
+      processToken: "a".repeat(32),
+    });
+    getLatestBackupMock.mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+      policyPresets: ["github"],
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["openclaw.json"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", { kind: "restore" });
+
+    expect(lifecycleMock.events).toContain("lock:restore sandbox snapshot");
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("alpha", "/tmp/backup-alpha");
+    expect(shieldsMock.repairMutableConfigPermsMock).toHaveBeenCalledWith("alpha");
+    expect(applyPresetMock).toHaveBeenCalledWith("alpha", "github");
+  });
+
+  it("hardens an active timer window before force-deleting a restore destination", async () => {
+    lifecycleMock.readTimerMarkerMock.mockReturnValue({
+      pid: 4242,
+      sandboxName: "beta",
+      snapshotPath: "/tmp/policy.yaml",
+      restoreAt: "2026-06-27T06:00:00.000Z",
+      processToken: "b".repeat(32),
+    });
+    getSandboxMock.mockImplementation((name) =>
+      name === "alpha"
+        ? {
+            name: "alpha",
+            agent: "openclaw",
+            imageTag: "nemoclaw-alpha:test",
+            openshellDriver: "docker",
+          }
+        : {
+            name: "beta",
+            agent: "openclaw",
+            imageTag: "nemoclaw-beta:test",
+            openshellDriver: "docker",
+          },
+    );
+    parseLiveSandboxNamesMock.mockReturnValue(new Set(["alpha", "beta"]));
+    captureOpenshellMock.mockImplementation((args) =>
+      openshellResponses(args, {
+        "sandbox exec": { status: 0, output: dcodeProbeOutput("no-runtime") },
+        "sandbox list": { status: 0, output: "alpha Ready\nbeta Ready\n" },
+      }),
+    );
+    getLatestBackupMock.mockReturnValue({
+      timestamp: "2026-06-15T00:00:00.000Z",
+      backupPath: "/tmp/backup-alpha",
+    });
+    restoreSandboxStateMock.mockReturnValue({
+      success: true,
+      restoredDirs: ["workspace"],
+      restoredFiles: ["user.md"],
+      failedDirs: [],
+      failedFiles: [],
+    });
+    const { runSandboxSnapshot } = await import("./snapshot");
+
+    await runSandboxSnapshot("alpha", {
+      kind: "restore",
+      to: "beta",
+      force: true,
+      yes: true,
+    });
+
+    expect(shieldsMock.shieldsUpMock).toHaveBeenCalledWith("beta", {
+      throwOnError: true,
+      allowLegacyHermesProtocol: true,
+    });
+    expect(lifecycleMock.events.indexOf("harden")).toBeLessThan(
+      lifecycleMock.events.indexOf("delete"),
+    );
+    expect(lifecycleMock.events.indexOf("delete")).toBeLessThan(
+      lifecycleMock.events.indexOf("cleanup-shields"),
+    );
+    expect(streamSandboxCreateMock).toHaveBeenCalled();
+    expect(restoreSandboxStateMock).toHaveBeenCalledWith("beta", "/tmp/backup-alpha");
   });
 
   it("refuses snapshot creation before backup when the sandbox is not live", async () => {
