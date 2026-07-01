@@ -28,6 +28,7 @@ import {
   requirePolicyPresetNumber,
 } from "./network-policy-interactive.ts";
 import { isTransientProviderValidationFailure } from "./network-policy-transient-provider.ts";
+import { assertRawOpenShellAllowedIpsRebindingDenied } from "./openshell-allowed-ips-rebinding.ts";
 import {
   ensureDockerAvailable,
   runRestrictedOnboardWithRetry,
@@ -409,6 +410,7 @@ RUN_NETWORK_POLICY_TEST(
         "inference.local exemption with direct-provider denial",
         "SSRF private-address rejection",
         "OpenClaw web_fetch host-gateway policy allow/deny",
+        "raw OpenShell allowed_ips DNS rebinding denial with exact 403 and zero upstream requests",
         "permissive policy mode",
       ],
     });
@@ -870,6 +872,20 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
       await Promise.all([approvedServer.close(), deniedServer.close()]);
     }
 
+    // This contract deliberately bypasses `nemoclaw mcp` and every agent
+    // adapter. It applies raw OpenShell policy, rebinds the pinned hostname to
+    // a reachable private runner address, and requires an exact data-plane 403
+    // before the upstream server can observe a request.
+    await assertRawOpenShellAllowedIpsRebindingDenied({
+      artifacts,
+      env: baseEnv(),
+      host,
+      policySettleMs: POLICY_SETTLE_MS,
+      sandbox,
+      sandboxName: SANDBOX_NAME,
+      timeoutMs: SANDBOX_EXEC_TIMEOUT_MS,
+    });
+
     const permissiveApply = await sandbox.openshell(
       ["policy", "set", "--policy", PERMISSIVE_POLICY, "--wait", SANDBOX_NAME],
       {
@@ -900,6 +916,7 @@ nemoclaw-start node /tmp/nemoclaw-web-fetch-e2e.mjs 'http://host.openshell.inter
         inferenceExemption: true,
         ssrfValidation: true,
         hostGatewayWebFetch: true,
+        rawOpenShellAllowedIpsRebinding: true,
         permissiveMode: true,
       },
     });
